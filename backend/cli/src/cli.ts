@@ -309,6 +309,16 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
     },
   );
 
+  // For Claude Code's MCP `headersHelper`: prints {"Authorization": "Bearer …"} from the same
+  // credentials the CLI uses, so .mcp.json needs no exported variable.
+  program
+    .command("mcp-headers")
+    .description("print MCP request headers as JSON (for Claude Code's headersHelper)")
+    .action(async () => {
+      const { token } = await credentialsFor(options);
+      stdout.write(`${JSON.stringify({ Authorization: `Bearer ${token}` })}\n`);
+    });
+
   withJson(program.command("projects").description("list projects")).action(async (opts: JsonOption) => {
     const { sdk, org } = conn();
     const { items } = await (await sdk()).projects.list(await org());

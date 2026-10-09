@@ -112,6 +112,12 @@ describe("exit codes", () => {
     }
   });
 
+  test("mcp-headers prints the Authorization header for Claude Code", async () => {
+    const result = await cli(["mcp-headers"]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer spt_secret" });
+  });
+
   test("parse errors are JSON on stderr under --json", async () => {
     const result = await cli(["task", "list", "--json", "--bogus"]);
     expect(result.code).toBe(2);

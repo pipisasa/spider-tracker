@@ -3,9 +3,7 @@
     "spider": {
       "type": "http",
       "url": "https://tracker-api.batele.plus/mcp",
-      "headers": {
-        "Authorization": "Bearer ${SPIDER_TOKEN}"
-      }
+      "headersHelper": "bun backend/cli/src/index.ts mcp-headers"
     }
   }
 }

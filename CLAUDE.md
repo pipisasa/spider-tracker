@@ -59,7 +59,7 @@ Tests: `bun run test`. Database tests run only when `TEST_DATABASE_URL` points t
 
 ### Working with the tracker
 
-The roadmap lives in Spider Tracker itself (project `ST`). The `spider-tracker` skill (`.claude/skills/spider-tracker/SKILL.md`) describes how to pick up, start and hand off tasks. `bun run claude:channel` starts a session with `spider channel`, which pushes the agent's tracker inbox (mentions, assignments, replies) into it (docs/agents.md). `.mcp.json` registers the `spider` MCP server with `Authorization: Bearer ${SPIDER_TOKEN}`; export `SPIDER_TOKEN` (an agent API key) before starting Claude Code, otherwise use `bun run spider … --json`.
+The roadmap lives in Spider Tracker itself (project `ST`). The `spider-tracker` skill (`.claude/skills/spider-tracker/SKILL.md`) describes how to pick up, start and hand off tasks. `bun run claude:channel` starts a session with `spider channel`, which pushes the agent's tracker inbox (mentions, assignments, replies) into it (docs/agents.md). `.mcp.json` registers the `spider` MCP server; its `headersHelper` (`spider mcp-headers`) supplies the key from `SPIDER_TOKEN` or `spider login`. Without either, use `bun run spider … --json` with `SPIDER_TOKEN` set.
 
 ## Conventions
 

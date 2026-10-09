@@ -76,7 +76,7 @@ It authenticates like the CLI (`SPIDER_TOKEN`, else the key from `spider login`)
 ### Distribution
 For now, this repository carries the pieces itself:
 
-- **`.mcp.json`** registers the `spider` MCP server over HTTP with `Authorization: Bearer ${SPIDER_TOKEN}`. Claude Code expands the variable at startup, so no secret is committed: export `SPIDER_TOKEN` before running `claude` (e.g. `set -a; . ~/.config/spider-tracker/agent.env; set +a`) and approve the project server when asked.
+- **`.mcp.json`** registers the `spider` MCP server over HTTP. Its `headersHelper` (`bun backend/cli/src/index.ts mcp-headers`) prints `{"Authorization": "Bearer …"}` from `SPIDER_TOKEN` or, if unset, the key saved by `spider login`, so no secret is committed and nothing needs exporting. Run `spider login` once, start `claude` in the repo and approve the project server when asked.
 - **`.claude/skills/spider-tracker/SKILL.md`** tells Claude Code how to work with the tracker: find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `bun run spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes.
 
 - **`.claude/channel.mcp.json`** + `bun run claude:channel` start a session with the `spider channel` (see above).

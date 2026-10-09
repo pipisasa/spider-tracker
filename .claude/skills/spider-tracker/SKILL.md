@@ -9,7 +9,7 @@ Spider Tracker is this repository's issue tracker, and its roadmap lives there (
 
 ## Pick a transport
 
-1. **MCP (preferred)** — if the `spider` MCP server is connected (tools such as `whoami`, `list_tasks`, `start_task`), use it. It is registered in the repo's `.mcp.json` and reads `SPIDER_TOKEN` from the environment Claude Code was started in.
+1. **MCP (preferred)** — if the `spider` MCP server is connected (tools such as `whoami`, `list_tasks`, `start_task`), use it. It is registered in the repo's `.mcp.json`; its headers come from `spider mcp-headers` (`SPIDER_TOKEN`, else the key saved by `spider login`).
 2. **CLI (fallback)** — otherwise use the `spider` CLI from the repo root, always with `--json`:
 
    ```bash
