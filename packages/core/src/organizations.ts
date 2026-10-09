@@ -60,3 +60,12 @@ export async function listMemberships(db: Db, userId: string) {
     .where(and(eq(actors.userId, userId), isNull(actors.deactivatedAt)))
     .orderBy(organizations.createdAt);
 }
+
+/** Active members (people and agents) of an organization. */
+export async function listMembers(db: Db, orgId: string) {
+  return db
+    .select()
+    .from(actors)
+    .where(and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt)))
+    .orderBy(actors.name);
+}

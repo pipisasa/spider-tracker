@@ -36,3 +36,50 @@ export type AuthProvider = "magic-link" | "github" | "batele-id";
 export interface AuthProvidersResponse {
   providers: AuthProvider[];
 }
+
+export type StatusCategory = "backlog" | "todo" | "in_progress" | "in_review" | "done" | "canceled";
+
+export interface StatusDto {
+  id: string;
+  name: string;
+  category: StatusCategory;
+  color: string | null;
+  position: number;
+}
+
+export interface ProjectDto {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface ProjectDetailDto extends ProjectDto {
+  statuses: StatusDto[];
+}
+
+/** 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
+export type Priority = 0 | 1 | 2 | 3 | 4;
+
+export interface TaskDto {
+  id: string;
+  key: string;
+  number: number;
+  projectId: string;
+  title: string;
+  description: string | null;
+  statusId: string;
+  priority: Priority;
+  parentId: string | null;
+  sortKey: string;
+  assigneeIds: string[];
+  creatorId: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface ListResponse<T> {
+  items: T[];
+}

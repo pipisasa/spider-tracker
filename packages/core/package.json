@@ -17,6 +17,7 @@
   "dependencies": {
     "@repo/db": "*",
     "drizzle-orm": "^0.45.4",
+    "fractional-indexing": "^4.0.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
