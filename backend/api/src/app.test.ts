@@ -121,3 +121,79 @@ withDb("magic link sign-in → organization", () => {
     expect(after.memberships.map((m) => m.organization.slug)).toEqual([slug]);
   });
 });
+
+async function signIn(email: string): Promise<string> {
+  await app.request("/api/auth/sign-in/magic-link", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: env.WEB_ORIGIN },
+    body: JSON.stringify({ email, callbackURL: `${env.WEB_ORIGIN}/` }),
+  });
+  const link = new URL(sentLinks.get(email) ?? "");
+  const verify = await app.request(link.pathname + link.search, { redirect: "manual" });
+  return verify.headers
+    .getSetCookie()
+    .map((c) => c.split(";")[0])
+    .join("; ");
+}
+
+withDb("projects and tasks API", () => {
+  const stamp = Date.now();
+  const ownerEmail = `owner-${stamp}@example.com`;
+  const outsiderEmail = `outsider-${stamp}@example.com`;
+  const slug = `api-${stamp}`;
+  let owner = "";
+  let outsider = "";
+
+  const call = (cookie: string, method: string, path: string, body?: unknown) =>
+    app.request(`/v1/orgs/${slug}${path}`, {
+      method,
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  afterAll(async () => {
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    for (const email of [ownerEmail, outsiderEmail]) await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  test("project → tasks → move → delete", async () => {
+    owner = await signIn(ownerEmail);
+    outsider = await signIn(outsiderEmail);
+    await app.request("/v1/organizations", {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "API Org", slug }),
+    });
+
+    const project = await call(owner, "POST", "/projects", { name: "Spider", key: "SPI" });
+    expect(project.status).toBe(201);
+    const { statuses } = (await project.json()) as { statuses: { id: string; category: string }[] };
+    const done = statuses.find((s) => s.category === "done")?.id;
+
+    const members = (await (await call(owner, "GET", "/members")).json()) as { items: { id: string }[] };
+    const created = await call(owner, "POST", "/projects/SPI/tasks", {
+      title: "Ship it",
+      assigneeIds: [members.items[0]?.id],
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ key: "SPI-1", title: "Ship it" });
+
+    const invalid = await call(owner, "POST", "/projects/SPI/tasks", { title: "" });
+    expect(invalid.status).toBe(400);
+
+    const moved = await call(owner, "PATCH", "/tasks/SPI-1", { statusId: done });
+    expect(moved.status).toBe(200);
+    expect(((await moved.json()) as { completedAt: string | null }).completedAt).not.toBeNull();
+
+    const tasks = (await (await call(owner, "GET", "/projects/SPI/tasks")).json()) as { items: unknown[] };
+    expect(tasks.items).toHaveLength(1);
+
+    expect((await call(owner, "DELETE", "/tasks/SPI-1")).status).toBe(204);
+    expect((await call(owner, "GET", "/tasks/SPI-1")).status).toBe(404);
+  });
+
+  test("non-members get 404 for the whole organization", async () => {
+    expect((await call(outsider, "GET", "/projects")).status).toBe(404);
+    expect((await call(outsider, "POST", "/projects", { name: "x", key: "XX" })).status).toBe(404);
+  });
+});

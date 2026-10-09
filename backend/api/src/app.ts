@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AuthProvidersResponse, MeResponse, MembershipDto } from "@repo/core";
+import type { ApiErrorBody, AuthProvidersResponse, MeResponse } from "@repo/core";
 import { DomainError, createOrganization, listMemberships } from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
@@ -6,16 +6,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { enabledAuthProviders, type Auth } from "./auth";
+import { toMembership } from "./dto";
 import type { Env } from "./env";
-
-type SessionData = NonNullable<Awaited<ReturnType<Auth["api"]["getSession"]>>>;
-
-type AppEnv = {
-  Variables: {
-    user: SessionData["user"];
-    session: SessionData["session"];
-  };
-};
+import { orgRoutes } from "./routes/orgs";
+import type { AppEnv } from "./types";
 
 const errorStatus: Record<DomainError["code"], ContentfulStatusCode> = {
   validation: 400,
@@ -80,6 +74,8 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     return c.json(toMembership(created), 201);
   });
 
+  app.route("/v1/orgs/:orgSlug", orgRoutes(db));
+
   app.notFound((c) => c.json(errorBody("not_found", "Route not found"), 404));
 
   app.onError((err, c) => {
@@ -91,19 +87,4 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   });
 
   return app;
-}
-
-function toMembership(row: Awaited<ReturnType<typeof listMemberships>>[number]): MembershipDto {
-  const { organization, actor } = row;
-  return {
-    organization: { id: organization.id, slug: organization.slug, name: organization.name },
-    actor: {
-      id: actor.id,
-      type: actor.type,
-      name: actor.name,
-      handle: actor.handle,
-      avatarUrl: actor.avatarUrl,
-      role: actor.role,
-    },
-  };
 }
