@@ -12,7 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as AuthedOrgSlugRouteImport } from './routes/_authed/$orgSlug'
+import { Route as AuthedAccountRouteImport } from './routes/_authed/account'
 import { Route as AuthedOnboardingRouteImport } from './routes/_authed/onboarding'
+import { Route as AuthedOrgSlugIndexRouteImport } from './routes/_authed/$orgSlug/index'
+import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from './routes/_authed/$orgSlug/projects/$projectKey'
+import { Route as AuthedOrgSlugTasksTaskKeyRouteImport } from './routes/_authed/$orgSlug/tasks/$taskKey'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -28,35 +33,101 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedOrgSlugRoute = AuthedOrgSlugRouteImport.update({
+  id: '/$orgSlug',
+  path: '/$orgSlug',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedAccountRoute = AuthedAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedOnboardingRoute = AuthedOnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedOrgSlugIndexRoute = AuthedOrgSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedOrgSlugRoute,
+} as any)
+const AuthedOrgSlugProjectsProjectKeyRoute =
+  AuthedOrgSlugProjectsProjectKeyRouteImport.update({
+    id: '/projects/$projectKey',
+    path: '/projects/$projectKey',
+    getParentRoute: () => AuthedOrgSlugRoute,
+  } as any)
+const AuthedOrgSlugTasksTaskKeyRoute =
+  AuthedOrgSlugTasksTaskKeyRouteImport.update({
+    id: '/tasks/$taskKey',
+    path: '/tasks/$taskKey',
+    getParentRoute: () => AuthedOrgSlugRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
+  '/$orgSlug': typeof AuthedOrgSlugRouteWithChildren
+  '/account': typeof AuthedAccountRoute
   '/onboarding': typeof AuthedOnboardingRoute
+  '/$orgSlug/': typeof AuthedOrgSlugIndexRoute
+  '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
+  '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/account': typeof AuthedAccountRoute
   '/onboarding': typeof AuthedOnboardingRoute
   '/': typeof AuthedIndexRoute
+  '/$orgSlug': typeof AuthedOrgSlugIndexRoute
+  '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
+  '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
+  '/_authed/$orgSlug': typeof AuthedOrgSlugRouteWithChildren
+  '/_authed/account': typeof AuthedAccountRoute
   '/_authed/onboarding': typeof AuthedOnboardingRoute
   '/_authed/': typeof AuthedIndexRoute
+  '/_authed/$orgSlug/': typeof AuthedOrgSlugIndexRoute
+  '/_authed/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
+  '/_authed/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/onboarding'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/$orgSlug'
+    | '/account'
+    | '/onboarding'
+    | '/$orgSlug/'
+    | '/$orgSlug/projects/$projectKey'
+    | '/$orgSlug/tasks/$taskKey'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/onboarding' | '/'
-  id: '__root__' | '/_authed' | '/login' | '/_authed/onboarding' | '/_authed/'
+  to:
+    | '/login'
+    | '/account'
+    | '/onboarding'
+    | '/'
+    | '/$orgSlug'
+    | '/$orgSlug/projects/$projectKey'
+    | '/$orgSlug/tasks/$taskKey'
+  id:
+    | '__root__'
+    | '/_authed'
+    | '/login'
+    | '/_authed/$orgSlug'
+    | '/_authed/account'
+    | '/_authed/onboarding'
+    | '/_authed/'
+    | '/_authed/$orgSlug/'
+    | '/_authed/$orgSlug/projects/$projectKey'
+    | '/_authed/$orgSlug/tasks/$taskKey'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -87,6 +158,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedIndexRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/$orgSlug': {
+      id: '/_authed/$orgSlug'
+      path: '/$orgSlug'
+      fullPath: '/$orgSlug'
+      preLoaderRoute: typeof AuthedOrgSlugRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/account': {
+      id: '/_authed/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AuthedAccountRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/onboarding': {
       id: '/_authed/onboarding'
       path: '/onboarding'
@@ -94,15 +179,56 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedOnboardingRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/$orgSlug/': {
+      id: '/_authed/$orgSlug/'
+      path: '/'
+      fullPath: '/$orgSlug/'
+      preLoaderRoute: typeof AuthedOrgSlugIndexRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
+    '/_authed/$orgSlug/projects/$projectKey': {
+      id: '/_authed/$orgSlug/projects/$projectKey'
+      path: '/projects/$projectKey'
+      fullPath: '/$orgSlug/projects/$projectKey'
+      preLoaderRoute: typeof AuthedOrgSlugProjectsProjectKeyRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
+    '/_authed/$orgSlug/tasks/$taskKey': {
+      id: '/_authed/$orgSlug/tasks/$taskKey'
+      path: '/tasks/$taskKey'
+      fullPath: '/$orgSlug/tasks/$taskKey'
+      preLoaderRoute: typeof AuthedOrgSlugTasksTaskKeyRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
   }
 }
 
+interface AuthedOrgSlugRouteChildren {
+  AuthedOrgSlugIndexRoute: typeof AuthedOrgSlugIndexRoute
+  AuthedOrgSlugProjectsProjectKeyRoute: typeof AuthedOrgSlugProjectsProjectKeyRoute
+  AuthedOrgSlugTasksTaskKeyRoute: typeof AuthedOrgSlugTasksTaskKeyRoute
+}
+
+const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
+  AuthedOrgSlugIndexRoute: AuthedOrgSlugIndexRoute,
+  AuthedOrgSlugProjectsProjectKeyRoute: AuthedOrgSlugProjectsProjectKeyRoute,
+  AuthedOrgSlugTasksTaskKeyRoute: AuthedOrgSlugTasksTaskKeyRoute,
+}
+
+const AuthedOrgSlugRouteWithChildren = AuthedOrgSlugRoute._addFileChildren(
+  AuthedOrgSlugRouteChildren,
+)
+
 interface AuthedRouteChildren {
+  AuthedOrgSlugRoute: typeof AuthedOrgSlugRouteWithChildren
+  AuthedAccountRoute: typeof AuthedAccountRoute
   AuthedOnboardingRoute: typeof AuthedOnboardingRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedOrgSlugRoute: AuthedOrgSlugRouteWithChildren,
+  AuthedAccountRoute: AuthedAccountRoute,
   AuthedOnboardingRoute: AuthedOnboardingRoute,
   AuthedIndexRoute: AuthedIndexRoute,
 }

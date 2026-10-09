@@ -25,12 +25,11 @@ function OnboardingPage() {
   const create = useMutation({
     mutationFn: createOrganization,
     onSuccess: async (membership) => {
-      // Update the cache before navigating: the home route's guard reads it and
-      // would otherwise see no memberships and bounce back here.
+      // Update the cache before navigating: the org route's guard reads memberships from it.
       queryClient.setQueryData(meQuery.queryKey, (me) =>
         me ? { ...me, memberships: [...me.memberships, membership] } : me,
       );
-      await navigate({ to: "/", replace: true });
+      await navigate({ to: "/$orgSlug", params: { orgSlug: membership.organization.slug }, replace: true });
     },
     onError: (err) => setError(err instanceof ApiError ? err.message : "Something went wrong"),
   });

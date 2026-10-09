@@ -28,7 +28,7 @@ export function LinkedAccounts({ linkError }: { linkError?: string }) {
 
   async function link(provider: (typeof linkable)[number]["id"]) {
     setError(null);
-    const here = `${window.location.origin}/`;
+    const here = `${window.location.origin}/account`;
     const { error } = await authClient.linkSocial({ provider, callbackURL: here, errorCallbackURL: here });
     if (error) setError(error.message ?? "Could not link this account");
   }
