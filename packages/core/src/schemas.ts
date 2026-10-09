@@ -74,3 +74,21 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
   if (!match?.[1] || !match[2]) return null;
   return { projectKey: match[1].toUpperCase(), number: Number(match[2]) };
 }
+
+export const createAgentInput = z.object({
+  name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
+  handle: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
+    .max(32)
+    .optional(),
+  description: z.string().trim().max(500).optional(),
+});
+
+export type CreateAgentInput = z.infer<typeof createAgentInput>;
+
+export const createApiKeyInput = z.object({
+  name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
+});

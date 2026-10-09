@@ -7,3 +7,4 @@ export * from "./access";
 export * from "./projects";
 export * from "./tasks";
 export * from "./validate";
+export * from "./agents";

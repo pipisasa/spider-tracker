@@ -83,3 +83,31 @@ export interface TaskDto {
 export interface ListResponse<T> {
   items: T[];
 }
+
+export interface ApiKeyDto {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+/** Returned once, when a key is created: `secret` is never shown again. */
+export interface CreatedApiKeyDto {
+  key: ApiKeyDto;
+  secret: string;
+}
+
+export interface AgentDto {
+  actor: ActorDto;
+  ownerId: string;
+  description: string | null;
+  keys: ApiKeyDto[];
+}
+
+/** Who the current credentials act as (session user or API key). */
+export interface WhoAmIResponse {
+  actor: ActorDto;
+  organization: OrganizationDto;
+}
