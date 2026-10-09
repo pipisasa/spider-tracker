@@ -72,6 +72,8 @@ export interface TaskDto {
   statusId: string;
   priority: Priority;
   parentId: string | null;
+  /** The parent's key, e.g. "ST-3", when parentId is set. */
+  parentKey: string | null;
   sortKey: string;
   assigneeIds: string[];
   tagIds: string[];

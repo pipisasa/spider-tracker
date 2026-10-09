@@ -14,6 +14,7 @@ import {
   listProjects,
   createTag,
   listComments,
+  listSubtasks,
   listTags,
   listTaskActivity,
   listInbox,
@@ -129,6 +130,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     priority: PRIORITY_NAMES[task.priority],
     assignees: await Promise.all(task.assigneeIds.map(handleOf)),
     tags: await tagNames(task.tagIds),
+    parent: task.parentKey,
     ...(detail
       ? {
           description: task.description,
@@ -223,13 +225,22 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   server.registerTool(
     "get_task",
     {
-      description: "Get a task by key, with its description, status name and assignee handles.",
+      description: "Get a task by key, with its description, status name, assignee handles, parent and sub-tasks.",
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) =>
       run(async () => {
         const task = await getTask(db, ctx.orgId, taskKey);
-        return describeTask(task, await projectOfTask(task.key), true);
+        const subtasks = await listSubtasks(db, ctx.orgId, task.key);
+        return {
+          ...(await describeTask(task, await projectOfTask(task.key), true)),
+          subtasks: await Promise.all(
+            subtasks.map(async (t) => {
+              const { key, title, status } = await describeTask(t, await projectOfTask(t.key));
+              return { key, title, status };
+            }),
+          ),
+        };
       }),
   );
 
@@ -245,9 +256,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
+        parent: z.string().optional().describe('Parent task key, e.g. "ST-3", to create a sub-task'),
       },
     },
-    ({ projectKey, title, description, status, priority, assignees, tags }) =>
+    ({ projectKey, title, description, status, priority, assignees, tags, parent }) =>
       run(async () => {
         const project = await getProject(db, ctx.orgId, projectKey);
         const task = await createTask(db, ctx, project.key, {
@@ -257,6 +269,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           statusId: status ? resolveStatus(project, status).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
+          parentId: parent ? (await getTask(db, ctx.orgId, parent)).id : undefined,
         });
         return describeTask(task, project, true);
       }),
@@ -274,9 +287,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
+        parent: z.string().nullable().optional().describe('Parent task key; null makes it a top-level task'),
       },
     },
-    ({ key: taskKey, title, description, status, priority, assignees, tags }) =>
+    ({ key: taskKey, title, description, status, priority, assignees, tags, parent }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
         const task = await updateTask(db, ctx, taskKey, {
@@ -286,6 +300,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           statusId: status ? resolveStatus(project, status).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
+          parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx.orgId, parent)).id,
         });
         return describeTask(task, project, true);
       }),

@@ -162,6 +162,18 @@ withDb("MCP server", () => {
     expect(JSON.parse((await call(client, "list_tags")).text)).toEqual([{ name: "infra", color: null }]);
   });
 
+  test("sub-tasks: create with a parent key, see them on the parent, clear the parent", async () => {
+    const child = (await call(client, "create_task", { projectKey: "SPI", title: "Child", parent: "SPI-1" })).json() as {
+      key: string;
+      parent: string | null;
+    };
+    expect(child.parent).toBe("SPI-1");
+    const parent = (await call(client, "get_task", { key: "SPI-1" })).json() as { subtasks: { key: string }[] };
+    expect(parent.subtasks.map((t) => t.key)).toContain(child.key);
+    const cleared = await call(client, "update_task", { key: child.key, parent: null });
+    expect(cleared.json()).toMatchObject({ parent: null });
+  });
+
   test("statuses can be given by category, like the CLI", async () => {
     const moved = await call(client, "update_task", { key: "SPI-1", status: "in_review" });
     expect(moved.isError).toBeFalsy();

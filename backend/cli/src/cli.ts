@@ -64,6 +64,7 @@ interface TaskFields extends JsonOption {
   priority?: string;
   assign?: string[];
   tag?: string[];
+  parent?: string;
 }
 
 /** Repeatable, comma-separable --assign. */
@@ -192,6 +193,7 @@ function taskDetail(task: CliTask): string {
     `Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
     `Created ${task.createdAt} · Updated ${task.updatedAt}${task.completedAt ? ` · Completed ${task.completedAt}` : ""}`,
   ];
+  if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
   if (task.description) lines.push("", task.description);
   return lines.join("\n");
 }
@@ -233,6 +235,10 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       input.assigneeIds = resolveAssignees(await conn().members(), actor.id, opts.assign);
     }
     if (opts.tag !== undefined) input.tagIds = resolveTags(await conn().tags(), opts.tag);
+    if (opts.parent !== undefined) {
+      const { sdk, org } = conn();
+      input.parentId = opts.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(opts.parent, cwd))).id;
+    }
     return input;
   };
 
@@ -243,7 +249,8 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
         .option("--status <name>", "status name or category, e.g. \"In Progress\" or in_progress")
         .option("--priority <0-4>", "0 none, 1 urgent, 2 high, 3 medium, 4 low")
         .option("--assign <handle>", "assignee handle or \"me\"; repeatable or comma-separated", collect)
-        .option("--tag <name>", "tag name; repeatable or comma-separated (replaces the tags on update)", collect),
+        .option("--tag <name>", "tag name; repeatable or comma-separated (replaces the tags on update)", collect)
+        .option("--parent <key>", 'parent task key, making this a sub-task ("" makes it top-level)'),
     );
 
   /** Updates a task and prints the result. */
@@ -392,8 +399,19 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
   withJson(task.command("view").description("show a task (default: the current branch's)").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
       const { sdk, org, describe } = conn();
-      const found = await describe(await (await sdk()).tasks.get(await org(), taskKey(key, cwd)));
-      output(opts, found, () => taskDetail(found));
+      const client = await sdk();
+      const resolved = taskKey(key, cwd);
+      const [found, subtasks] = await Promise.all([
+        client.tasks.get(await org(), resolved).then(describe),
+        // Servers from before sub-tasks (ST-9) have no such route.
+        client.tasks
+          .subtasks(await org(), resolved)
+          .then(async (r) => Promise.all(r.items.map(describe)))
+          .catch(() => [] as CliTask[]),
+      ]);
+      output(opts, { ...found, subtasks }, () =>
+        subtasks.length ? `${taskDetail(found)}\n\nSub-tasks:\n${taskLines(subtasks)}` : taskDetail(found),
+      );
     },
   );
 

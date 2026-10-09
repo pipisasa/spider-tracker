@@ -5,6 +5,7 @@ import {
   createTag,
   deleteTag,
   listTags,
+  listSubtasks,
   listTaskActivity,
   listComments,
   listInbox,
@@ -129,6 +130,10 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
+  );
+
+  app.get("/tasks/:taskKey/subtasks", async (c) =>
+    c.json(list(await listSubtasks(db, c.get("actor").orgId, c.req.param("taskKey")))),
   );
 
   app.get("/tasks/:taskKey/activity", async (c) =>

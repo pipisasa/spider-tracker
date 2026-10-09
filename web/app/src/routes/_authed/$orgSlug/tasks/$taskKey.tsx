@@ -1,3 +1,4 @@
+import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
 import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
@@ -69,10 +70,26 @@ function TaskPage() {
             {project.name}
           </Link>
           <ChevronRightIcon className="size-4" />
+          {task.parentKey && (
+            <>
+              <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.parentKey }} className="hover:text-foreground">
+                {task.parentKey}
+              </Link>
+              <ChevronRightIcon className="size-4" />
+            </>
+          )}
           <span>{task.key}</span>
         </nav>
         {/* Keyed by task so local edits reset when navigating between tasks. */}
         <TaskText key={task.id} task={task} onSave={save} />
+        <Subtasks
+          key={`subtasks-${task.id}`}
+          orgSlug={orgSlug}
+          task={task}
+          projectKey={project.key}
+          statuses={project.statuses}
+          members={members}
+        />
         <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
       </main>
 

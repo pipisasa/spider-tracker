@@ -24,12 +24,17 @@ export function useOrgEvents(orgSlug: string) {
       if (connectedBefore) void qc.invalidateQueries({ queryKey: ["orgs", orgSlug] });
       connectedBefore = true;
     });
+    // A child's change can alter any parent's sub-task list; those lists are small.
+    const refreshSubtasks = () =>
+      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "orgs" && q.queryKey[1] === orgSlug && q.queryKey[4] === "subtasks" });
     on("task.changed", (e) => {
+      refreshSubtasks();
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       void qc.invalidateQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
     });
     on("task.deleted", (e) => {
+      refreshSubtasks();
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       qc.removeQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
     });

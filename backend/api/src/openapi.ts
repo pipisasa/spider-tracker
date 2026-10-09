@@ -74,6 +74,7 @@ const schemas: Record<string, JsonSchema> = {
     statusId: string({ format: "uuid" }),
     priority: { type: "integer", enum: [0, 1, 2, 3, 4], description: "0 none, 1 urgent, 2 high, 3 medium, 4 low" },
     parentId: nullable("string", { format: "uuid" }),
+    parentKey: nullable("string", { examples: ["SPI-3"] }),
     sortKey: string(),
     assigneeIds: { type: "array", items: string({ format: "uuid" }) },
     tagIds: { type: "array", items: string({ format: "uuid" }) },
@@ -214,6 +215,10 @@ const paths = {
       summary: "Delete a task",
       responses: { "204": { description: "Deleted" }, ...errors },
     },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/subtasks": {
+    parameters: [orgSlug, taskKey],
+    get: { operationId: "listSubtasks", summary: "Direct sub-tasks of a task", responses: { "200": ok("Sub-tasks", "TaskList"), ...errors } },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/comments": {
     parameters: [orgSlug, taskKey],

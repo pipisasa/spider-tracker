@@ -35,6 +35,7 @@ export const keys = {
   task: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey] as const,
   comments: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "comments"] as const,
   activity: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "activity"] as const,
+  subtasks: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "subtasks"] as const,
 };
 
 export const membersQuery = (org: string) =>
@@ -218,3 +219,9 @@ export function useCreateTag(org: string) {
       ),
   });
 }
+
+export const subtasksQuery = (org: string, taskKey: string) =>
+  queryOptions({
+    queryKey: keys.subtasks(org, taskKey),
+    queryFn: async () => (await api<ListResponse<TaskDto>>(`${orgPath(org)}/tasks/${taskKey}/subtasks`)).items,
+  });

@@ -22,6 +22,7 @@ const task = {
   statusId: "s1",
   priority: 0,
   parentId: null,
+  parentKey: null,
   sortKey: "a0",
   assigneeIds: [],
   tagIds: [],

@@ -301,4 +301,15 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "update", key, "--tag", "", "--json")).json()).toMatchObject({ tags: [] });
   });
 
+  test("sub-tasks: --parent on create, shown by view, cleared with an empty --parent", async () => {
+    const child = await spider("task", "create", "--project", "SPI", "--title", "Child", "--parent", "spi-1", "--json");
+    expect(child.json()).toMatchObject({ parentKey: "SPI-1" });
+    const key = child.json().key as string;
+    const parent = await spider("task", "view", "SPI-1", "--json");
+    expect((parent.json().subtasks as { key: string }[]).map((t) => t.key)).toContain(key);
+    expect((await spider("task", "view", "SPI-1")).stdout).toContain("Sub-tasks:");
+    expect((await spider("task", "view", key)).stdout).toContain("Parent: SPI-1");
+    expect((await spider("task", "update", key, "--parent", "", "--json")).json()).toMatchObject({ parentKey: null });
+  });
+
 });

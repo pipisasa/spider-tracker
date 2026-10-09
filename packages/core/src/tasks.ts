@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { aliasedTable, and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { assertCanWrite, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
@@ -21,9 +21,10 @@ const CLOSED: StatusRow["category"][] = ["done", "canceled"];
 interface TaskLinks {
   assigneeIds: string[];
   tagIds: string[];
+  parentKey: string | null;
 }
 
-function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds }: TaskLinks): TaskDto {
+function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, parentKey }: TaskLinks): TaskDto {
   return {
     id: row.id,
     key: `${projectKey}-${row.number}`,
@@ -34,6 +35,7 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds }: Ta
     statusId: row.statusId,
     priority: row.priority as Priority,
     parentId: row.parentId,
+    parentKey: row.parentId ? parentKey : null,
     sortKey: row.sortKey,
     assigneeIds,
     tagIds,
@@ -44,9 +46,9 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds }: Ta
   };
 }
 
-/** Assignees and tags of each task. */
+/** Assignees, tags and parent key of each task. */
 async function linksByTask(db: Db | Tx, taskIds: string[]) {
-  const map = new Map<string, TaskLinks>(taskIds.map((id) => [id, { assigneeIds: [], tagIds: [] }]));
+  const map = new Map<string, TaskLinks>(taskIds.map((id) => [id, { assigneeIds: [], tagIds: [], parentKey: null }]));
   if (taskIds.length === 0) return map;
   const [assigneeRows, tagRows] = await Promise.all([
     db
@@ -63,10 +65,22 @@ async function linksByTask(db: Db | Tx, taskIds: string[]) {
   ]);
   for (const row of assigneeRows) map.get(row.taskId)?.assigneeIds.push(row.actorId);
   for (const row of tagRows) map.get(row.taskId)?.tagIds.push(row.tagId);
+
+  const parent = aliasedTable(tasks, "parent");
+  const parentRows = await db
+    .select({ taskId: tasks.id, number: parent.number, projectKey: projects.key })
+    .from(tasks)
+    .innerJoin(parent, eq(tasks.parentId, parent.id))
+    .innerJoin(projects, eq(parent.projectId, projects.id))
+    .where(inArray(tasks.id, taskIds));
+  for (const row of parentRows) {
+    const links = map.get(row.taskId);
+    if (links) links.parentKey = `${row.projectKey}-${row.number}`;
+  }
   return map;
 }
 
-const noLinks: TaskLinks = { assigneeIds: [], tagIds: [] };
+const noLinks: TaskLinks = { assigneeIds: [], tagIds: [], parentKey: null };
 
 async function assertTagsInOrg(tx: Tx, orgId: string, tagIds: string[]) {
   if (tagIds.length === 0) return;
@@ -97,14 +111,25 @@ async function assertActorsInOrg(tx: Tx, orgId: string, actorIds: string[]) {
   if (rows.length !== unique.length) throw new DomainError("validation", "Assignees must be members of this organization");
 }
 
+const MAX_TASK_DEPTH = 20;
+
+/** The parent must exist in the organization, and must not be the task itself or one of its sub-tasks. */
 async function assertParent(tx: Tx, orgId: string, parentId: string, selfId?: string) {
   if (parentId === selfId) throw new DomainError("validation", "A task can't be its own parent");
-  const [parent] = await tx
-    .select({ id: tasks.id })
-    .from(tasks)
-    .where(and(eq(tasks.id, parentId), eq(tasks.orgId, orgId), isNull(tasks.deletedAt)))
-    .limit(1);
-  if (!parent) throw new DomainError("validation", "Parent task not found");
+  let current: string | null = parentId;
+  for (let depth = 0; current; depth++) {
+    if (depth >= MAX_TASK_DEPTH) throw new DomainError("validation", `Sub-tasks can nest at most ${MAX_TASK_DEPTH} levels`);
+    const [row] = await tx
+      .select({ id: tasks.id, parentId: tasks.parentId })
+      .from(tasks)
+      .where(and(eq(tasks.id, current), eq(tasks.orgId, orgId), isNull(tasks.deletedAt)))
+      .limit(1);
+    if (!row) throw new DomainError("validation", depth === 0 ? "Parent task not found" : "Parent chain is broken");
+    if (selfId && row.parentId === selfId) {
+      throw new DomainError("validation", "That task is a sub-task of this one; it can't also be its parent");
+    }
+    current = row.parentId;
+  }
 }
 
 /** Sort key placing a task after `afterId` and before `beforeId` in a status column (end if neither). */
@@ -202,7 +227,8 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     });
 
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
-    return toTaskDto(task, project.key, { assigneeIds, tagIds });
+    const parentKey = task.parentId ? ((await linksByTask(tx, [task.id])).get(task.id)?.parentKey ?? null) : null;
+    return toTaskDto(task, project.key, { assigneeIds, tagIds, parentKey });
   });
 }
 
@@ -245,6 +271,22 @@ export async function getTask(db: Db, orgId: string, taskKey: string): Promise<T
   const { task, projectKey } = await findTask(db, orgId, taskKey);
   const links = await linksByTask(db, [task.id]);
   return toTaskDto(task, projectKey, links.get(task.id) ?? noLinks);
+}
+
+/** Direct sub-tasks of a task (any project), oldest first. */
+export async function listSubtasks(db: Db, orgId: string, taskKey: string): Promise<TaskDto[]> {
+  const { task } = await findTask(db, orgId, taskKey);
+  const rows = await db
+    .select({ task: tasks, projectKey: projects.key })
+    .from(tasks)
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt)))
+    .orderBy(asc(tasks.createdAt));
+  const links = await linksByTask(
+    db,
+    rows.map((r) => r.task.id),
+  );
+  return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
 }
 
 export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<TaskDto> {
@@ -323,7 +365,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     }
 
     const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined || changes.tagIds !== undefined;
-    if (!touched) return toTaskDto(task, projectKey, { assigneeIds, tagIds });
+    if (!touched) return toTaskDto(task, projectKey, { assigneeIds, tagIds, parentKey: current.parentKey });
 
     const [updated] = await tx
       .update(tasks)
@@ -337,7 +379,8 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
     }
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
-    return toTaskDto(updated, projectKey, { assigneeIds, tagIds });
+    const parentKey = updated.parentId ? ((await linksByTask(tx, [updated.id])).get(updated.id)?.parentKey ?? null) : null;
+    return toTaskDto(updated, projectKey, { assigneeIds, tagIds, parentKey });
   });
 }
 

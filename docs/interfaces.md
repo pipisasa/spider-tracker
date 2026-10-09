@@ -62,8 +62,8 @@ Inside this repository, the project `.mcp.json` already registers it: its `heade
 | `whoami` | The agent and organization the key acts as |
 | `list_projects`, `get_project` | Projects; a project's statuses in board order, with categories |
 | `list_tasks` | Tasks in a project; filters: `status` (name or category), `assignee` (`me` or a handle), `query` (title text), `limit` |
-| `get_task` | One task by key, with status name and assignee handles |
-| `create_task`, `update_task` | Status by name, priority 0–4, assignees as handles or `me`; `update_task` replaces the assignee list |
+| `get_task` | One task by key, with status name, assignee handles, tags, parent and sub-tasks |
+| `create_task`, `update_task` | Status by name, priority 0–4, assignees as handles or `me`, `parent` as a task key (null on update makes it top-level); `update_task` replaces the assignee list |
 | `assign_to_me` | Adds the agent to a task's assignees |
 | `start_task` | Assigns the agent and moves the task to the project's first in-progress status |
 | `list_members` | People and agents with their handles |
@@ -111,6 +111,7 @@ spider task start [ST-12]   # assign me + the project's first in-progress status
 spider task done [ST-12]    # the project's first done status
 spider tags
 spider task create … [--tag bug --tag agent]   # also on update (replaces; --tag "" clears)
+spider task create … --parent ST-3              # a sub-task; on update --parent "" makes it top-level
 spider comment [ST-12] "text with @mentions"
 spider comments [ST-12]
 spider inbox [--all] [--wait 25] [--mark-read]
