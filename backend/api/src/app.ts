@@ -1,5 +1,5 @@
-import type { ApiErrorBody, AuthProvidersResponse, MeResponse } from "@repo/core";
-import { DomainError, createOrganization, listMemberships } from "@repo/core";
+import type { ApiErrorBody, AuthProvidersResponse, MeResponse, WhoAmIResponse } from "@repo/core";
+import { DomainError, authenticateApiKey, createOrganization, listMemberships } from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -49,8 +49,15 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
-  // Everything under /v1 requires a signed-in user.
+  // Everything under /v1 requires a browser session or an agent API key (Bearer spt_…).
   app.use("/v1/*", async (c, next) => {
+    const bearer = c.req.header("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (bearer) {
+      const key = await authenticateApiKey(db, bearer.trim());
+      if (!key) return c.json(errorBody("unauthorized", "Invalid or revoked API key"), 401);
+      c.set("apiKey", key);
+      return next();
+    }
     const data = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!data) return c.json(errorBody("unauthorized", "Sign in required"), 401);
     c.set("user", data.user);
@@ -58,8 +65,19 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     await next();
   });
 
+  app.get("/v1/whoami", async (c) => {
+    const key = c.get("apiKey");
+    if (key) {
+      const body: WhoAmIResponse = toMembership(key);
+      return c.json(body);
+    }
+    // Browser sessions span organizations; /v1/me lists them.
+    return c.json(errorBody("bad_request", "Use /v1/me for browser sessions"), 400);
+  });
+
   app.get("/v1/me", async (c) => {
     const user = c.get("user");
+    if (!user) return c.json(errorBody("forbidden", "API keys act inside one organization; use /v1/whoami"), 403);
     const rows = await listMemberships(db, user.id);
     const body: MeResponse = {
       user: { id: user.id, name: user.name, email: user.email, image: user.image ?? null },
@@ -69,8 +87,10 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   });
 
   app.post("/v1/organizations", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json(errorBody("forbidden", "Only people can create organizations"), 403);
     const input: unknown = await c.req.json().catch(() => null);
-    const created = await createOrganization(db, c.get("user"), input);
+    const created = await createOrganization(db, user, input);
     return c.json(toMembership(created), 201);
   });
 

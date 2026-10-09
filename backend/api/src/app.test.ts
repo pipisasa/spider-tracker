@@ -197,3 +197,61 @@ withDb("projects and tasks API", () => {
     expect((await call(outsider, "POST", "/projects", { name: "x", key: "XX" })).status).toBe(404);
   });
 });
+
+withDb("agent API keys", () => {
+  const stamp = Date.now();
+  const ownerEmail = `keys-owner-${stamp}@example.com`;
+  const slug = `keys-${stamp}`;
+  const otherSlug = `keys-other-${stamp}`;
+
+  afterAll(async () => {
+    for (const s of [slug, otherSlug]) await db.delete(schema.organizations).where(eq(schema.organizations.slug, s));
+    await db.delete(schema.user).where(eq(schema.user.email, ownerEmail));
+  });
+
+  test("an agent key works inside its organization only", async () => {
+    const owner = await signIn(ownerEmail);
+    const asOwner = (method: string, path: string, body?: unknown) =>
+      app.request(path, {
+        method,
+        headers: { Cookie: owner, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    for (const s of [slug, otherSlug]) await asOwner("POST", "/v1/organizations", { name: s, slug: s });
+    await asOwner("POST", `/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
+
+    const agentRes = await asOwner("POST", `/v1/orgs/${slug}/agents`, { name: "Claude Code" });
+    expect(agentRes.status).toBe(201);
+    const agent = (await agentRes.json()) as { actor: { id: string; type: string } };
+    expect(agent.actor.type).toBe("agent");
+
+    const keyRes = await asOwner("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "test" });
+    expect(keyRes.status).toBe(201);
+    const { secret, key } = (await keyRes.json()) as { secret: string; key: { id: string } };
+
+    const asAgent = (method: string, path: string, body?: unknown, token = secret) =>
+      app.request(path, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+    const who = (await (await asAgent("GET", "/v1/whoami")).json()) as { actor: { id: string } };
+    expect(who.actor.id).toBe(agent.actor.id);
+
+    const task = await asAgent("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, { title: "From an agent" });
+    expect(task.status).toBe(201);
+    expect(((await task.json()) as { creatorId: string }).creatorId).toBe(agent.actor.id);
+    const log = await db.select().from(schema.activity).where(eq(schema.activity.actorId, agent.actor.id));
+    expect(log.map((e) => e.source)).toEqual(["api"]);
+
+    expect((await asAgent("GET", `/v1/orgs/${otherSlug}/projects`)).status).toBe(404);
+    expect((await asAgent("POST", `/v1/orgs/${slug}/agents`, { name: "Sneaky" })).status).toBe(403);
+    expect((await asAgent("GET", "/v1/me")).status).toBe(403);
+    expect((await asAgent("POST", "/v1/organizations", { name: "x", slug: `x-${stamp}` })).status).toBe(403);
+    expect((await asAgent("GET", "/v1/whoami", undefined, "spt_wrong")).status).toBe(401);
+
+    expect((await asOwner("DELETE", `/v1/orgs/${slug}/api-keys/${key.id}`)).status).toBe(204);
+    expect((await asAgent("GET", `/v1/orgs/${slug}/projects`)).status).toBe(401);
+  });
+});
