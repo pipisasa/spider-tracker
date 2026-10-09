@@ -546,3 +546,59 @@ withDb("realtime events (SSE)", () => {
     await reader.cancel().catch(() => {});
   });
 });
+
+withDb("sign-up allowlist", () => {
+  const stamp = Date.now();
+  const allowed = `allowed-${stamp}@example.com`;
+  const refused = `refused-${stamp}@example.com`;
+  const gated = loadEnv({
+    NODE_ENV: "test",
+    DATABASE_URL: env.DATABASE_URL,
+    API_ORIGIN: env.API_ORIGIN,
+    WEB_ORIGIN: env.WEB_ORIGIN,
+    BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
+    SIGNUP_ALLOWLIST: `${allowed}, @allowed-domain.test`,
+  });
+  const links = new Map<string, string>();
+  const gatedAuth = createAuth(db, gated, {
+    async sendMagicLink(email, url) {
+      links.set(email, url);
+    },
+  });
+  const gatedApp = createApp({ db, auth: gatedAuth, env: gated });
+  const request = (email: string) =>
+    gatedApp.request("/api/auth/sign-in/magic-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: gated.WEB_ORIGIN },
+      body: JSON.stringify({ email, callbackURL: `${gated.WEB_ORIGIN}/` }),
+    });
+
+  afterAll(async () => {
+    for (const email of [allowed, refused]) await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  test("refused emails get no link; allowed ones sign up", async () => {
+    const res = await request(refused);
+    expect(res.status).toBe(200); // Same answer either way: the form doesn't reveal the list.
+    expect(links.has(refused)).toBe(false);
+
+    expect((await request(allowed)).status).toBe(200);
+    const link = new URL(links.get(allowed) ?? "");
+    const verify = await gatedApp.request(link.pathname + link.search, { redirect: "manual" });
+    expect(verify.headers.get("location")).toStartWith(gated.WEB_ORIGIN);
+    const [user] = await db.select().from(schema.user).where(eq(schema.user.email, allowed));
+    expect(user).toBeDefined();
+    const [blocked] = await db.select().from(schema.user).where(eq(schema.user.email, refused));
+    expect(blocked).toBeUndefined();
+  });
+
+  test("validateUserInfo refuses new users outside the list, for any sign-in method", async () => {
+    const hook = gatedAuth.options.user?.validateUserInfo;
+    if (!hook) throw new Error("validateUserInfo is not configured");
+    const call = (email: string, action: "create-user" | "sign-in") =>
+      hook({ user: { email }, source: { action, method: "oauth", oauth: { providerId: "batele-id" } } });
+    expect(await call("someone@elsewhere.test", "create-user")).toMatchObject({ error: "signup_not_allowed" });
+    expect(await call("someone@allowed-domain.test", "create-user")).toBeUndefined();
+    expect(await call("someone@elsewhere.test", "sign-in")).toBeUndefined();
+  });
+});

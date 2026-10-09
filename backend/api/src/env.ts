@@ -10,6 +10,8 @@ const envSchema = z.object({
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   BATELE_ID_CLIENT_ID: z.string().optional(),
+  /** Emails and "@domain" entries allowed to create accounts; empty = anyone (ST-17). */
+  SIGNUP_ALLOWLIST: z.string().optional(),
   BATELE_ID_ISSUER: z.url().default("https://api-v2.batele.plus/auth"),
 });
 

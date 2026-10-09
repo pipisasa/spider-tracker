@@ -13,3 +13,4 @@ export * from "./devices";
 export * from "./comments";
 export * from "./inbox";
 export * from "./events";
+export * from "./signup";

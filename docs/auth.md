@@ -20,6 +20,15 @@ Spider Tracker is its own **OAuth 2.1 / OpenID Connect (OIDC) provider**: MCP cl
 | **Third-party apps** (later) | Authorization code + PKCE with a consent screen ("Sign in with Spider Tracker") | Scoped tokens + ID token |
 | **GitHub** | Separate from login: the GitHub App installation, plus each user linking their GitHub account | Commits and pull requests attributed to the right person |
 
+## Who can sign up
+
+`SIGNUP_ALLOWLIST` (API env) lists emails and `@domain` entries allowed to **create** an account; empty means anyone. Existing users always sign in.
+
+- Better Auth's `user.validateUserInfo` hook rejects `create-user` for addresses outside the list, for every method (magic link, GitHub, Batele ID). Browser flows land on `/login?error=signup_not_allowed`.
+- Magic links aren't sent to addresses that would be refused (and don't belong to an existing user); the response is the same either way, so the form doesn't reveal the list.
+- Batele users without an email have `<sub>@users.batele-id.invalid`; allow them individually or all with `@users.batele-id.invalid`.
+- Production: set on Railway (`railway variable set SIGNUP_ALLOWLIST=… -s api`).
+
 ## Better Auth plugins
 
 | Need | Plugin |

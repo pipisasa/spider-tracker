@@ -1,7 +1,9 @@
 import type { AuthProvider } from "@repo/core";
+import { isEmailAllowed, parseAllowlist } from "@repo/core";
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { betterAuth } from "better-auth";
+import { eq } from "drizzle-orm";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { magicLink } from "better-auth/plugins/magic-link";
@@ -22,6 +24,7 @@ export function createAuth(db: Db, env: Env, mailer: Mailer) {
     env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
       ? { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } }
       : undefined;
+  const allowlist = parseAllowlist(env.SIGNUP_ALLOWLIST);
   const bateleId = env.BATELE_ID_CLIENT_ID
     ? [genericOAuth({ config: [bateleIdProvider(env.BATELE_ID_CLIENT_ID, env.BATELE_ID_ISSUER)] })]
     : [];
@@ -43,10 +46,29 @@ export function createAuth(db: Db, env: Env, mailer: Mailer) {
     socialProviders: github,
     plugins: [
       magicLink({
-        sendMagicLink: ({ email, url }) => mailer.sendMagicLink(email, url),
+        sendMagicLink: async ({ email, url }) => {
+          // Don't send links that could only end in a refused sign-up; the response stays the
+          // same either way, so the form doesn't reveal who is allowed.
+          if (!isEmailAllowed(email, allowlist)) {
+            const [existing] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, email.toLowerCase())).limit(1);
+            if (!existing) return;
+          }
+          await mailer.sendMagicLink(email, url);
+        },
       }),
       ...bateleId,
     ],
+    user: {
+      // Runs before any user is created, for every sign-in method (magic link, GitHub, Batele ID).
+      validateUserInfo: ({ user, source }) => {
+        if (source.action !== "create-user") return;
+        if (typeof user.email === "string" && isEmailAllowed(user.email, allowlist)) return;
+        return {
+          error: "signup_not_allowed",
+          errorDescription: "This account isn't allowed to sign up. Ask an admin to add you.",
+        };
+      },
+    },
     account: {
       accountLinking: {
         // Never merge accounts automatically at sign-in (Batele ID emails aren't verified);

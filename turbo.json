@@ -15,7 +15,8 @@
     "BATELE_ID_CLIENT_ID",
     "BATELE_ID_ISSUER",
     "SPIDER_TOKEN",
-    "SPIDER_API_URL"
+    "SPIDER_API_URL",
+    "SIGNUP_ALLOWLIST"
   ],
   "tasks": {
     "build": {
