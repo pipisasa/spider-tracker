@@ -19,7 +19,7 @@ Agent tools come before most tracker features, so agents help build the product 
 - [x] Auth: Better Auth (magic link, GitHub, Batele ID), organizations with owner actor, onboarding
 - [x] Railway: api + Postgres 18 at `tracker-api.batele.plus`; no Railway public URL
 - [x] Cloudflare Pages at `tracker.batele.plus`, DNS for both domains
-- [x] Manual deploys (`bun run deploy:web`, `bun run deploy:api`); no CI/CD for now
+- [x] Deploys: API from GitHub via Railway on push to `main` (`.railway/railway.ts`); web with `bun run deploy:web`
 
 Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI). A sign-up allowlist (Phase 3) covers privacy instead.
 

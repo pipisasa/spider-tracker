@@ -44,16 +44,17 @@ For a preview domain, add `tracker-dev.batele.plus` to the project and point its
 
 ## API and database: Railway
 
-Deploys are **manual**: `railway up` uploads the local working tree and builds it on Railway.
+The API **deploys automatically from GitHub**: Railway builds `main` on every push that touches the API's paths. Service settings live in **`.railway/railway.ts`** (Railway infrastructure as code); change them there and run `railway config plan`, then `railway config apply --yes`.
 
 | Thing | Value |
 |---|---|
 | Workspace / project | Batele / `spider-tracker` (environment `production`) |
 | Services | `api`, `Postgres` |
 | Postgres | Railway Postgres template (`postgres-ssl:18`), private network only (no public TCP proxy) |
-| API build | `backend/api/Dockerfile`, selected by the `RAILWAY_DOCKERFILE_PATH` variable; build context is the repo root |
-| API start | Applies migrations (`packages/db/src/migrate.ts`), then starts the server on Railway's `PORT` (8080) |
-| API domain | `tracker-api.batele.plus` → port 8080; no `*.up.railway.app` domain is generated |
+| API source | GitHub `pipisasa/spider-tracker`, branch `main`; rebuilds only for `backend/api/**`, `packages/**`, `package.json`, `bun.lock`, `.railway/**` |
+| API build | Railway's default builder (Railpack): `bun install` at the repo root; no Dockerfile |
+| API deploy | pre-deploy `bun packages/db/src/migrate.ts` (migrations), start `bun backend/api/src/index.ts`, health check `/health/ready` |
+| API domain | `tracker-api.batele.plus`; no `*.up.railway.app` domain is generated |
 
 **API variables:**
 
@@ -64,18 +65,8 @@ Deploys are **manual**: `railway up` uploads the local working tree and builds i
 | `WEB_ORIGIN` | `https://tracker.batele.plus` |
 | `BETTER_AUTH_SECRET` | random, set with `--stdin` so it never appears in output |
 | `NODE_ENV` | `production` |
-| `RAILWAY_DOCKERFILE_PATH` | `backend/api/Dockerfile` |
 
-**Deploy:**
-
-```bash
-railway login            # once; interactive
-railway link             # once per checkout: project spider-tracker, environment production
-bun run deploy:api       # railway up --service api
-railway logs -s api      # follow logs
-```
-
-Migrations run on every start. That's fine while the API runs as a single instance; move them to a separate release step before scaling out.
+**Deploy:** push to `main` (`git push`). Follow it with `railway service status -s api` and `railway logs -s api`. `bun run deploy:api` (`railway up`) still uploads the working tree directly, for emergencies.
 
 **Custom domain DNS** (in the `batele.plus` zone):
 
