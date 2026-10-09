@@ -1,3 +1,4 @@
+import { matchStatuses } from "@repo/core/statuses";
 import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 
@@ -44,16 +45,9 @@ export function parseLimit(value: string): number {
   return n;
 }
 
-const byPosition = (a: StatusDto, b: StatusDto) => a.position - b.position;
+export { matchStatuses };
 
-/** Statuses matching a name or a category ("in progress", "in_progress"), case-insensitively. */
-export function matchStatuses(project: ProjectDetailDto, query: string): StatusDto[] {
-  const q = query.trim().toLowerCase();
-  const byName = project.statuses.filter((s) => s.name.toLowerCase() === q);
-  if (byName.length > 0) return byName;
-  const category = q.replace(/[\s-]+/g, "_");
-  return project.statuses.filter((s) => s.category === category).sort(byPosition);
-}
+const byPosition = (a: StatusDto, b: StatusDto) => a.position - b.position;
 
 /** The status a name refers to; a category picks its first status in board order. */
 export function resolveStatus(project: ProjectDetailDto, name: string): StatusDto {

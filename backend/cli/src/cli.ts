@@ -164,7 +164,7 @@ function taskDetail(task: CliTask): string {
 }
 
 /** Builds the command tree for one run; actions write to the run's streams. */
-function buildProgram(options: RunOptions, cwd: string) {
+function buildProgram(options: RunOptions, cwd: string, json = false) {
   const { stdout, stderr } = options;
   let api: Api | undefined;
   const conn = () => (api ??= connect(options));
@@ -179,8 +179,12 @@ function buildProgram(options: RunOptions, cwd: string) {
     .configureOutput({
       writeOut: (s) => stdout.write(s),
       writeErr: (s) => stderr.write(s),
+      // With --json, run() reports parse errors as JSON instead.
+      outputError: (s, write) => {
+        if (!json) write(s);
+      },
     })
-    .showHelpAfterError("(run with --help for usage)");
+    .showHelpAfterError(json ? false : "(run with --help for usage)");
 
   const withJson = (cmd: Command) => cmd.option("--json", "print stable JSON");
 
@@ -345,13 +349,15 @@ export async function run(argv: string[], options: RunOptions): Promise<ExitCode
   };
 
   try {
-    await buildProgram(options, options.cwd ?? process.cwd()).parseAsync(argv, { from: "user" });
+    await buildProgram(options, options.cwd ?? process.cwd(), json).parseAsync(argv, { from: "user" });
     return EXIT.ok;
   } catch (err) {
     if (err instanceof CommanderError) {
-      // Commander has already printed the message (or the help/version text). Its exitCode is 0 for
-      // --help, --version and `help`, and non-zero for real usage errors (including a bare command group).
-      return err.exitCode === 0 ? EXIT.ok : EXIT.usage;
+      // Commander's exitCode is 0 for --help, --version and `help`, and non-zero for real usage
+      // errors (including a bare command group).
+      if (err.exitCode === 0) return EXIT.ok;
+      // Without --json, commander has printed the error; with it, report it in the JSON shape.
+      return json ? fail(new CliError(EXIT.usage, err.message.replace(/^error: /, ""), "usage")) : EXIT.usage;
     }
     if (err instanceof CliError) return fail(err);
     if (err instanceof SpiderApiError) return fail(fromApiError(err));

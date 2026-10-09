@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ActorContext, ProjectDetailDto, StatusDto, TaskDto } from "@repo/core";
+import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
   authenticateApiKey,
@@ -80,7 +81,8 @@ function createMcpServer(db: Db, key: Key) {
   };
 
   const resolveStatus = (project: ProjectDetailDto, name: string): StatusDto => {
-    const status = project.statuses.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
+    // A category ("in_progress") picks its first status in board order, like the CLI.
+    const status = matchStatuses(project, name)[0];
     if (!status) {
       throw new DomainError(
         "validation",

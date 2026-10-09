@@ -112,6 +112,12 @@ describe("exit codes", () => {
     }
   });
 
+  test("parse errors are JSON on stderr under --json", async () => {
+    const result = await cli(["task", "list", "--json", "--bogus"]);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr)).toEqual({ error: { code: "usage", message: "unknown option '--bogus'" } });
+  });
+
   test("3 when the task is missing, with a JSON error on stderr under --json", async () => {
     const result = await cli(["task", "view", "ST-9", "--json"]);
     expect(result.code).toBe(3);

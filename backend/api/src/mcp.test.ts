@@ -145,6 +145,12 @@ withDb("MCP server", () => {
     expect(rows.every((r) => r.source === "mcp")).toBe(true);
   });
 
+  test("statuses can be given by category, like the CLI", async () => {
+    const moved = await call(client, "update_task", { key: "SPI-1", status: "in_review" });
+    expect(moved.isError).toBeFalsy();
+    expect(moved.text).toContain("In Review");
+  });
+
   test("unknown statuses and handles are tool errors that list the valid options", async () => {
     const badStatus = await call(client, "update_task", { key: "SPI-1", status: "Shipped" });
     expect(badStatus.isError).toBe(true);
