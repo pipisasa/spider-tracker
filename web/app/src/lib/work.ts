@@ -18,7 +18,11 @@ import type {
   CreateTaskInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "./api";
 
@@ -31,26 +35,35 @@ export const keys = {
   agents: (org: string) => ["orgs", org, "agents"] as const,
   tags: (org: string) => ["orgs", org, "tags"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
-  project: (org: string, key: string) => ["orgs", org, "projects", key] as const,
-  tasks: (org: string, key: string) => ["orgs", org, "projects", key, "tasks"] as const,
-  task: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey] as const,
-  comments: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "comments"] as const,
-  activity: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "activity"] as const,
-  subtasks: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "subtasks"] as const,
-  relations: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "relations"] as const,
+  project: (org: string, key: string) =>
+    ["orgs", org, "projects", key] as const,
+  tasks: (org: string, key: string) =>
+    ["orgs", org, "projects", key, "tasks"] as const,
+  task: (org: string, taskKey: string) =>
+    ["orgs", org, "tasks", taskKey] as const,
+  comments: (org: string, taskKey: string) =>
+    ["orgs", org, "tasks", taskKey, "comments"] as const,
+  activity: (org: string, taskKey: string) =>
+    ["orgs", org, "tasks", taskKey, "activity"] as const,
+  subtasks: (org: string, taskKey: string) =>
+    ["orgs", org, "tasks", taskKey, "subtasks"] as const,
+  relations: (org: string, taskKey: string) =>
+    ["orgs", org, "tasks", taskKey, "relations"] as const,
 };
 
 export const membersQuery = (org: string) =>
   queryOptions({
     queryKey: keys.members(org),
-    queryFn: async () => (await api<ListResponse<ActorDto>>(`${orgPath(org)}/members`)).items,
+    queryFn: async () =>
+      (await api<ListResponse<ActorDto>>(`${orgPath(org)}/members`)).items,
     staleTime: 60_000,
   });
 
 export const projectsQuery = (org: string) =>
   queryOptions({
     queryKey: keys.projects(org),
-    queryFn: async () => (await api<ListResponse<ProjectDto>>(`${orgPath(org)}/projects`)).items,
+    queryFn: async () =>
+      (await api<ListResponse<ProjectDto>>(`${orgPath(org)}/projects`)).items,
   });
 
 export const projectQuery = (org: string, key: string) =>
@@ -62,7 +75,12 @@ export const projectQuery = (org: string, key: string) =>
 export const tasksQuery = (org: string, key: string) =>
   queryOptions({
     queryKey: keys.tasks(org, key),
-    queryFn: async () => (await api<ListResponse<TaskDto>>(`${orgPath(org)}/projects/${key}/tasks`)).items,
+    queryFn: async () =>
+      (
+        await api<ListResponse<TaskDto>>(
+          `${orgPath(org)}/projects/${key}/tasks`,
+        )
+      ).items,
   });
 
 export const taskQuery = (org: string, taskKey: string) =>
@@ -71,13 +89,17 @@ export const taskQuery = (org: string, taskKey: string) =>
     queryFn: () => api<TaskDto>(`${orgPath(org)}/tasks/${taskKey}`),
   });
 
-const projectKeyOf = (taskKey: string) => taskKey.slice(0, taskKey.lastIndexOf("-"));
+const projectKeyOf = (taskKey: string) =>
+  taskKey.slice(0, taskKey.lastIndexOf("-"));
 
 export function useCreateProject(org: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateProjectInput) =>
-      api<ProjectDetailDto>(`${orgPath(org)}/projects`, { method: "POST", body: JSON.stringify(input) }),
+      api<ProjectDetailDto>(`${orgPath(org)}/projects`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     onSuccess: (project) => {
       qc.setQueryData(keys.project(org, project.key), project);
       void qc.invalidateQueries({ queryKey: keys.projects(org) });
@@ -89,9 +111,14 @@ export function useCreateTask(org: string, projectKey: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateTaskInput) =>
-      api<TaskDto>(`${orgPath(org)}/projects/${projectKey}/tasks`, { method: "POST", body: JSON.stringify(input) }),
+      api<TaskDto>(`${orgPath(org)}/projects/${projectKey}/tasks`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     onSuccess: (task) => {
-      qc.setQueryData<TaskDto[]>(keys.tasks(org, projectKey), (old) => (old ? [...old, task] : old));
+      qc.setQueryData<TaskDto[]>(keys.tasks(org, projectKey), (old) =>
+        old ? [...old, task] : old,
+      );
       qc.setQueryData(keys.task(org, task.key), task);
     },
   });
@@ -104,8 +131,18 @@ export function useCreateTask(org: string, projectKey: string) {
 export function useUpdateTask(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ taskKey, input }: { taskKey: string; input: UpdateTaskInput; optimistic?: Partial<TaskDto> }) =>
-      api<TaskDto>(`${orgPath(org)}/tasks/${taskKey}`, { method: "PATCH", body: JSON.stringify(input) }),
+    mutationFn: ({
+      taskKey,
+      input,
+    }: {
+      taskKey: string;
+      input: UpdateTaskInput;
+      optimistic?: Partial<TaskDto>;
+    }) =>
+      api<TaskDto>(`${orgPath(org)}/tasks/${taskKey}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
     onMutate: async ({ taskKey, input, optimistic }) => {
       const listKey = keys.tasks(org, projectKeyOf(taskKey));
       await qc.cancelQueries({ queryKey: listKey });
@@ -113,9 +150,14 @@ export function useUpdateTask(org: string) {
       const previousTask = qc.getQueryData<TaskDto>(keys.task(org, taskKey));
 
       const { position: _position, ...fields } = input;
-      const apply = (t: TaskDto): TaskDto => ({ ...t, ...fields, ...optimistic }) as TaskDto;
-      qc.setQueryData<TaskDto[]>(listKey, (old) => old?.map((t) => (t.key === taskKey ? apply(t) : t)));
-      qc.setQueryData<TaskDto>(keys.task(org, taskKey), (old) => (old ? apply(old) : old));
+      const apply = (t: TaskDto): TaskDto =>
+        ({ ...t, ...fields, ...optimistic }) as TaskDto;
+      qc.setQueryData<TaskDto[]>(listKey, (old) =>
+        old?.map((t) => (t.key === taskKey ? apply(t) : t)),
+      );
+      qc.setQueryData<TaskDto>(keys.task(org, taskKey), (old) =>
+        old ? apply(old) : old,
+      );
       return { listKey, previousList, previousTask, taskKey };
     },
     onError: (error, _vars, context) => {
@@ -127,7 +169,9 @@ export function useUpdateTask(org: string) {
     },
     onSuccess: (task) => {
       const listKey = keys.tasks(org, projectKeyOf(task.key));
-      qc.setQueryData<TaskDto[]>(listKey, (old) => old?.map((t) => (t.id === task.id ? task : t)));
+      qc.setQueryData<TaskDto[]>(listKey, (old) =>
+        old?.map((t) => (t.id === task.id ? task : t)),
+      );
       qc.setQueryData(keys.task(org, task.key), task);
     },
   });
@@ -136,10 +180,12 @@ export function useUpdateTask(org: string) {
 export function useDeleteTask(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (taskKey: string) => api<void>(`${orgPath(org)}/tasks/${taskKey}`, { method: "DELETE" }),
+    mutationFn: (taskKey: string) =>
+      api<void>(`${orgPath(org)}/tasks/${taskKey}`, { method: "DELETE" }),
     onSuccess: (_data, taskKey) => {
-      qc.setQueryData<TaskDto[]>(keys.tasks(org, projectKeyOf(taskKey)), (old) =>
-        old?.filter((t) => t.key !== taskKey),
+      qc.setQueryData<TaskDto[]>(
+        keys.tasks(org, projectKeyOf(taskKey)),
+        (old) => old?.filter((t) => t.key !== taskKey),
       );
       qc.removeQueries({ queryKey: keys.task(org, taskKey) });
     },
@@ -149,14 +195,18 @@ export function useDeleteTask(org: string) {
 export const agentsQuery = (org: string) =>
   queryOptions({
     queryKey: keys.agents(org),
-    queryFn: async () => (await api<ListResponse<AgentDto>>(`${orgPath(org)}/agents`)).items,
+    queryFn: async () =>
+      (await api<ListResponse<AgentDto>>(`${orgPath(org)}/agents`)).items,
   });
 
 export function useCreateAgent(org: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateAgentInput) =>
-      api<AgentDto>(`${orgPath(org)}/agents`, { method: "POST", body: JSON.stringify(input) }),
+      api<AgentDto>(`${orgPath(org)}/agents`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.agents(org) });
       void qc.invalidateQueries({ queryKey: keys.members(org) });
@@ -168,7 +218,10 @@ export function useCreateApiKey(org: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ agentId, name }: { agentId: string; name: string }) =>
-      api<CreatedApiKeyDto>(`${orgPath(org)}/agents/${agentId}/keys`, { method: "POST", body: JSON.stringify({ name }) }),
+      api<CreatedApiKeyDto>(`${orgPath(org)}/agents/${agentId}/keys`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
   });
 }
@@ -176,7 +229,8 @@ export function useCreateApiKey(org: string) {
 export function useRevokeApiKey(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (keyId: string) => api<void>(`${orgPath(org)}/api-keys/${keyId}`, { method: "DELETE" }),
+    mutationFn: (keyId: string) =>
+      api<void>(`${orgPath(org)}/api-keys/${keyId}`, { method: "DELETE" }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
   });
 }
@@ -184,29 +238,45 @@ export function useRevokeApiKey(org: string) {
 export const commentsQuery = (org: string, taskKey: string) =>
   queryOptions({
     queryKey: keys.comments(org, taskKey),
-    queryFn: async () => (await api<ListResponse<CommentDto>>(`${orgPath(org)}/tasks/${taskKey}/comments`)).items,
+    queryFn: async () =>
+      (
+        await api<ListResponse<CommentDto>>(
+          `${orgPath(org)}/tasks/${taskKey}/comments`,
+        )
+      ).items,
   });
 
 export function useAddComment(org: string, taskKey: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: string) =>
-      api<CommentDto>(`${orgPath(org)}/tasks/${taskKey}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
+    mutationFn: (input: { body: string; parentId?: string }) =>
+      api<CommentDto>(`${orgPath(org)}/tasks/${taskKey}/comments`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     onSuccess: (comment) =>
-      qc.setQueryData<CommentDto[]>(keys.comments(org, taskKey), (old) => (old ? [...old, comment] : [comment])),
+      qc.setQueryData<CommentDto[]>(keys.comments(org, taskKey), (old) =>
+        old ? [...old, comment] : [comment],
+      ),
   });
 }
 
 export const activityQuery = (org: string, taskKey: string) =>
   queryOptions({
     queryKey: keys.activity(org, taskKey),
-    queryFn: async () => (await api<ListResponse<ActivityDto>>(`${orgPath(org)}/tasks/${taskKey}/activity`)).items,
+    queryFn: async () =>
+      (
+        await api<ListResponse<ActivityDto>>(
+          `${orgPath(org)}/tasks/${taskKey}/activity`,
+        )
+      ).items,
   });
 
 export const tagsQuery = (org: string) =>
   queryOptions({
     queryKey: keys.tags(org),
-    queryFn: async () => (await api<ListResponse<TagDto>>(`${orgPath(org)}/tags`)).items,
+    queryFn: async () =>
+      (await api<ListResponse<TagDto>>(`${orgPath(org)}/tags`)).items,
     staleTime: 60_000,
   });
 
@@ -214,7 +284,10 @@ export function useCreateTag(org: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateTagInput) =>
-      api<TagDto>(`${orgPath(org)}/tags`, { method: "POST", body: JSON.stringify(input) }),
+      api<TagDto>(`${orgPath(org)}/tags`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     onSuccess: (tag) =>
       qc.setQueryData<TagDto[]>(keys.tags(org), (old) =>
         [...(old ?? []), tag].sort((a, b) => a.name.localeCompare(b.name)),
@@ -225,25 +298,50 @@ export function useCreateTag(org: string) {
 export const subtasksQuery = (org: string, taskKey: string) =>
   queryOptions({
     queryKey: keys.subtasks(org, taskKey),
-    queryFn: async () => (await api<ListResponse<TaskDto>>(`${orgPath(org)}/tasks/${taskKey}/subtasks`)).items,
+    queryFn: async () =>
+      (
+        await api<ListResponse<TaskDto>>(
+          `${orgPath(org)}/tasks/${taskKey}/subtasks`,
+        )
+      ).items,
   });
 
 export const relationsQuery = (org: string, taskKey: string) =>
   queryOptions({
     queryKey: keys.relations(org, taskKey),
-    queryFn: async () => (await api<ListResponse<RelationDto>>(`${orgPath(org)}/tasks/${taskKey}/relations`)).items,
+    queryFn: async () =>
+      (
+        await api<ListResponse<RelationDto>>(
+          `${orgPath(org)}/tasks/${taskKey}/relations`,
+        )
+      ).items,
   });
 
 export function useRelation(org: string, taskKey: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ add, kind, task }: { add: boolean; kind: RelationDto["kind"]; task: string }) => {
+    mutationFn: async ({
+      add,
+      kind,
+      task,
+    }: {
+      add: boolean;
+      kind: RelationDto["kind"];
+      task: string;
+    }) => {
       if (add) {
-        await api<RelationDto>(`${orgPath(org)}/tasks/${taskKey}/relations`, { method: "POST", body: JSON.stringify({ kind, task }) });
+        await api<RelationDto>(`${orgPath(org)}/tasks/${taskKey}/relations`, {
+          method: "POST",
+          body: JSON.stringify({ kind, task }),
+        });
       } else {
-        await api<void>(`${orgPath(org)}/tasks/${taskKey}/relations?${new URLSearchParams({ kind, task })}`, { method: "DELETE" });
+        await api<void>(
+          `${orgPath(org)}/tasks/${taskKey}/relations?${new URLSearchParams({ kind, task })}`,
+          { method: "DELETE" },
+        );
       }
     },
-    onSettled: () => void qc.invalidateQueries({ queryKey: keys.relations(org, taskKey) }),
+    onSettled: () =>
+      void qc.invalidateQueries({ queryKey: keys.relations(org, taskKey) }),
   });
 }
