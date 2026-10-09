@@ -10,3 +10,5 @@ export * from "./validate";
 export * from "./agents";
 export * from "./statuses";
 export * from "./devices";
+export * from "./comments";
+export * from "./inbox";

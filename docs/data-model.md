@@ -37,6 +37,8 @@ activity (append-only log for everything)
 | **Document** | Markdown or HTML content at organization, project or task level, with versions |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
 | **Comment** | A threaded Markdown comment on a task |
+| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task; its id is a cursor for waiting clients |
+| **Device code** | A pending `spider login` (RFC 8628): hashed device code, user code, approver, expiry |
 | **Activity** | Append-only audit log of every change |
 | **Agent run** | One execution of an agent on a task |
 | **Agent run event** | One streamed event from a run: messages, tool calls, approvals |

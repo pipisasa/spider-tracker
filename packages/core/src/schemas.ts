@@ -96,3 +96,26 @@ export const createApiKeyInput = z.object({
 export const deviceCodeInput = z.object({
   client_name: z.string().trim().min(1).max(60).default("CLI"),
 });
+
+export const createCommentInput = z.object({
+  body: z.string().trim().min(1, "Required").max(20_000, "At most 20,000 characters"),
+  parentId: z.uuid().nullable().optional(),
+});
+
+export type CreateCommentInput = z.infer<typeof createCommentInput>;
+
+export const inboxQuery = z.object({
+  after: z.coerce.number().int().nonnegative().optional(),
+  // Query strings: "true"/"1" mean yes (z.coerce.boolean would read "false" as true).
+  unread: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1")])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const markInboxReadInput = z
+  .object({
+    ids: z.array(z.number().int().positive()).max(500).optional(),
+    upTo: z.number().int().positive().optional(),
+  })
+  .refine((v) => v.ids !== undefined || v.upTo !== undefined, "Pass ids or upTo");

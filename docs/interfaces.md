@@ -28,6 +28,11 @@ See [auth.md](./auth.md) for all flows.
 - Errors are `{ "error": { "code", "message" } }` with status 400 / 401 / 403 / 404 / 409.
 - **Activity source:** browser sessions record `source = ui`. API-key clients record `api` by default and may declare `X-Spider-Source: cli | mcp | api`; other values are ignored.
 
+### Comments and inbox
+- `GET|POST /v1/orgs/:org/tasks/:key/comments` — comments, oldest first; `{ body, parentId? }` to add.
+- `GET /v1/orgs/:org/inbox?after=&unread=true&limit=&wait=` — the caller's notifications, oldest first. With `wait` (seconds, max 25) the request is held until an item newer than `after` arrives (checked every second until realtime, ST-13, replaces it).
+- `POST /v1/orgs/:org/inbox/read` — `{ ids }` or `{ upTo }`.
+
 ## SDK
 
 ```ts
@@ -62,10 +67,13 @@ Inside this repository, the project `.mcp.json` already registers it (with `${SP
 | `assign_to_me` | Adds the agent to a task's assignees |
 | `start_task` | Assigns the agent and moves the task to the project's first in-progress status |
 | `list_members` | People and agents with their handles |
+| `list_comments`, `add_comment` | A task's comments; comment with `@handle` mentions, `parent_id` to reply |
+| `get_inbox` | Your notifications (mention, assigned, comment, reply), oldest first; `after` cursor, `unread_only` (default true), `wait_seconds` (≤ 20) |
+| `mark_inbox_read` | By `ids` or `up_to` an id |
 
 Status names and handles match case-insensitively; an unknown one returns a tool error listing the valid options. Domain errors (not found, forbidden, validation) come back as tool errors (`isError`) with their message.
 
-Planned: comments, documents, custom fields.
+Planned: documents, custom fields.
 
 ## CLI
 
@@ -100,6 +108,10 @@ spider task create --project ST --title "Fix login" [--description …] [--statu
 spider task update [ST-12] [--title …] [--description …] [--status …] [--priority …] [--assign …]
 spider task start [ST-12]   # assign me + the project's first in-progress status
 spider task done [ST-12]    # the project's first done status
+spider comment [ST-12] "text with @mentions"
+spider comments [ST-12]
+spider inbox [--all] [--wait 25] [--mark-read]
+spider channel              # Claude Code channel over stdio (see agents.md)
 ```
 
 - **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
@@ -110,7 +122,7 @@ spider task done [ST-12]    # the project's first done status
 
 ### Planned
 - Keys in the OS keychain instead of a file, `spider org switch`, per-repo defaults in `.spider.json`
-- `spider comment ST-12 "…"`, `spider pr`, `spider start` creating and checking out the branch
+- `spider pr`, `spider start` creating and checking out the branch
 - `spider agent list|run|logs`, `spider doc pull|push`, `--field` / `--tag`
 - Distribution through npm and standalone binaries for Homebrew and curl installs
 - Local SQLite cache for instant reads and offline use; `spider tui` (Ink)

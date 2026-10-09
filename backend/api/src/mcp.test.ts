@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ActorContext } from "@repo/core";
-import { createAgent, createApiKey, createOrganization, createProject } from "@repo/core";
+import { addComment, createAgent, createApiKey, createOrganization, createProject } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { createApp } from "./app";
@@ -94,8 +94,12 @@ withDb("MCP server", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "add_comment",
         "assign_to_me",
         "create_task",
+        "get_inbox",
+        "list_comments",
+        "mark_inbox_read",
         "get_project",
         "get_task",
         "list_members",
@@ -149,6 +153,31 @@ withDb("MCP server", () => {
     const moved = await call(client, "update_task", { key: "SPI-1", status: "in_review" });
     expect(moved.isError).toBeFalsy();
     expect(moved.text).toContain("In Review");
+  });
+
+  test("comments and inbox: a mention reaches the agent, which replies", async () => {
+    const [org] = await db.select().from(schema.organizations).where(eq(schema.organizations.slug, slugs[0] ?? ""));
+    const [ownerRow] = await db
+      .select()
+      .from(schema.actors)
+      .where(and(eq(schema.actors.orgId, org?.id ?? ""), eq(schema.actors.type, "human")));
+    const ownerCtx: ActorContext = { orgId: org?.id ?? "", actorId: ownerRow?.id ?? "", role: "owner", source: "ui" };
+    await addComment(db, ownerCtx, "SPI-1", { body: "@claude-code status?" });
+
+    const inbox = await call(client, "get_inbox", { wait_seconds: 2 });
+    const items = JSON.parse(inbox.text) as { id: number; kind: string; task: string; comment: { id: string } }[];
+    const mention = items.find((i) => i.kind === "mention");
+    expect(mention).toMatchObject({ task: "SPI-1" });
+
+    const reply = await call(client, "add_comment", { key: "SPI-1", body: "Almost done", parent_id: mention?.comment.id });
+    expect(reply.isError).toBeFalsy();
+    const thread = JSON.parse((await call(client, "list_comments", { key: "SPI-1" })).text) as { author: string }[];
+    expect(thread.map((c) => c.author)).toEqual([ownerRow?.handle ?? "", "claude-code"]);
+
+    expect(JSON.parse((await call(client, "mark_inbox_read", { up_to: mention?.id })).text)).toMatchObject({
+      updated: expect.any(Number),
+    });
+    expect(JSON.parse((await call(client, "get_inbox", {})).text)).toEqual([]);
   });
 
   test("unknown statuses and handles are tool errors that list the valid options", async () => {

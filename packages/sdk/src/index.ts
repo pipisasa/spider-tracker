@@ -1,6 +1,8 @@
 import type {
   ActorDto,
   ApiErrorBody,
+  CommentDto,
+  InboxItemDto,
   DeviceCodeResponse,
   DeviceTokenResponse,
   ListResponse,
@@ -10,7 +12,7 @@ import type {
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import type { CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
+import type { CreateCommentInput, CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
 // of @repo/core, so it stays free of the database and runs in browsers too.
@@ -116,6 +118,25 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       list: (orgSlug: string) => request<ListResponse<ProjectDto>>("GET", `${org(orgSlug)}/projects`),
       get: (orgSlug: string, projectKey: string) =>
         request<ProjectDetailDto>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}`),
+    },
+
+    comments: {
+      list: (orgSlug: string, taskKey: string) =>
+        request<ListResponse<CommentDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/comments`),
+      create: (orgSlug: string, taskKey: string, input: CreateCommentInput) =>
+        request<CommentDto>("POST", `${org(orgSlug)}/tasks/${seg(taskKey)}/comments`, input),
+    },
+
+    inbox: {
+      /** Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items. */
+      list: (orgSlug: string, query: { after?: number; unread?: boolean; limit?: number; wait?: number } = {}) => {
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<InboxItemDto>>("GET", `${org(orgSlug)}/inbox${qs}`);
+      },
+      markRead: (orgSlug: string, input: { ids?: number[]; upTo?: number }) =>
+        request<{ updated: number }>("POST", `${org(orgSlug)}/inbox/read`, input),
     },
 
     tasks: {

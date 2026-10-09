@@ -11,4 +11,5 @@ const app = createApp({ db, auth, env });
 
 console.info(`api listening on ${env.API_ORIGIN}`);
 
-export default { port: env.PORT, fetch: app.fetch };
+// Long enough for waiting inbox requests (up to 25 s); Bun's default is 10 s.
+export default { port: env.PORT, fetch: app.fetch, idleTimeout: 60 };

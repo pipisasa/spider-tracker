@@ -1,4 +1,4 @@
-export type DomainErrorCode = "validation" | "not_found" | "conflict" | "forbidden";
+export type DomainErrorCode = "validation" | "not_found" | "conflict" | "forbidden" | "rate_limited";
 
 export class DomainError extends Error {
   constructor(

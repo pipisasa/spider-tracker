@@ -186,7 +186,7 @@ withDb("spider CLI against the API", () => {
         });
         expect(res.status).toBe(204);
         approved = true;
-        await db.update(schema.deviceCodes).set({ lastPolledAt: null });
+        await db.update(schema.deviceCodes).set({ lastPolledAt: null }).where(eq(schema.deviceCodes.userCode, userCode));
       },
     });
     expect(login.code).toBe(0);
@@ -206,5 +206,80 @@ withDb("spider CLI against the API", () => {
     expect((await app.request("/v1/whoami", { headers: { Authorization: `Bearer ${saved}` } })).status).toBe(401);
     expect((await as(["whoami"])).code).toBe(4);
     rmSync(configDir, { recursive: true, force: true });
+  });
+  test("comments, inbox and the Claude Code channel", async () => {
+    // The owner, in the browser, mentions the agent (handle "cli-bot") on SPI-1.
+    await app.request("/api/auth/sign-in/magic-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: env.WEB_ORIGIN },
+      body: JSON.stringify({ email: ownerEmail, callbackURL: `${env.WEB_ORIGIN}/` }),
+    });
+    const link = new URL(links.get(ownerEmail) ?? "");
+    const cookie = (await app.request(link.pathname + link.search, { redirect: "manual" })).headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    const ownerComment = (cookieBody: string) =>
+      app.request(`/v1/orgs/${slug}/tasks/SPI-1/comments`, {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ body: cookieBody }),
+      });
+
+    // CLI: comment, then the inbox shows nothing for the commenter itself.
+    const commented = await spider("comment", "SPI-1", "Picked", "this", "up", "--json");
+    expect(commented.code).toBe(0);
+    expect(commented.json()).toMatchObject({ taskKey: "SPI-1", body: "Picked this up" });
+    expect((await spider("comment", "--json")).code).toBe(2);
+
+    expect((await ownerComment("@cli-bot did the CLI ship?")).status).toBe(201);
+    const inbox = await spider("inbox", "--json", "--mark-read");
+    const items = inbox.json().items as { kind: string; task: { key: string } }[];
+    expect(items.map((i) => [i.kind, i.task.key])).toContainEqual(["mention", "SPI-1"]);
+    expect((await spider("inbox", "--json")).json()).toEqual({ items: [] });
+    expect((await spider("comments", "SPI-1")).stdout).toContain("did the CLI ship?");
+
+    // Channel: a new mention is pushed into the "session"; the session replies with the tool.
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+    const { createChannel } = await import("./channel");
+    const { createClient } = await import("@repo/sdk");
+    const channel = createChannel({
+      client: createClient({ baseUrl: env.API_ORIGIN, token, source: "cli", fetch: (i, init) => app.request(i, init) }),
+      org: slug,
+      handle: "cli-bot",
+      waitSeconds: 2,
+      retryMs: 100,
+    });
+    const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
+    const session = new Client({ name: "claude-code-test", version: "0" });
+    const pushed: { content: string; meta: Record<string, string> }[] = [];
+    session.fallbackNotificationHandler = async (n) => {
+      if (n.method === "notifications/claude/channel") pushed.push(n.params as (typeof pushed)[number]);
+    };
+    await channel.server.connect(serverSide);
+    await session.connect(clientSide);
+    expect(session.getServerCapabilities()?.experimental).toHaveProperty("claude/channel");
+    expect(session.getInstructions()).toContain("@cli-bot");
+
+    const stop = new AbortController();
+    const pumping = channel.pump(stop.signal);
+    await ownerComment("@cli-bot please also check the docs");
+    for (let i = 0; i < 50 && pushed.length === 0; i++) await Bun.sleep(100);
+    expect(pushed[0]?.meta).toMatchObject({ task: "SPI-1", kind: "mention", from_type: "human" });
+    expect(pushed[0]?.content).toContain("please also check the docs");
+
+    const reply = await session.callTool({
+      name: "reply",
+      arguments: { task: "SPI-1", text: "Docs checked", reply_to: pushed[0]?.meta.comment_id },
+    });
+    expect(reply.isError).toBeFalsy();
+    const thread = await app.request(`/v1/orgs/${slug}/tasks/SPI-1/comments`, { headers: { Cookie: cookie } });
+    const comments = ((await thread.json()) as { items: { body: string; parentId: string | null }[] }).items;
+    expect(comments.at(-1)).toMatchObject({ body: "Docs checked", parentId: pushed[0]?.meta.comment_id });
+
+    stop.abort();
+    await pumping;
+    await session.close();
   });
 });

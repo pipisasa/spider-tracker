@@ -19,7 +19,8 @@
     "db:studio": "bun run --cwd packages/db db:studio",
     "spider": "bun backend/cli/src/index.ts",
     "deploy:web": "bun run --cwd web/app deploy",
-    "deploy:api": "railway up --service api --detach"
+    "deploy:api": "railway up --service api --detach",
+    "claude:channel": "claude --mcp-config .claude/channel.mcp.json --dangerously-load-development-channels server:spider-channel"
   },
   "devDependencies": {
     "prettier": "^3.7.4",

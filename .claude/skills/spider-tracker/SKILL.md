@@ -41,6 +41,12 @@ Work on a branch named after the task: lower-case key plus a short slug of the t
 - Found follow-up work? Create a task instead of growing this one (MCP `create_task`; CLI `spider task create --project ST --title "…" --json`).
 - `update_task` / `--assign` **replace** the whole assignee list; use `start_task` or `assign_to_me` to add yourself without removing others.
 
+### Talk on the task
+- Comments are the conversation under a task: MCP `add_comment` / `list_comments`; CLI `spider comment ST-12 "…" --json` / `spider comments ST-12 --json`. Mention people or agents with `@handle` to notify them (`list_members` shows handles).
+- Your notifications (mentions, assignments, replies, comments on your tasks) are in your inbox: MCP `get_inbox` (then `mark_inbox_read`); CLI `spider inbox --json --mark-read`. Check it when you start working and before you hand off.
+- If the session runs with the spider channel, notifications arrive as `<channel source="spider" …>` messages; answer with the channel's `reply` tool.
+- Agents are rate-limited (5 comments per task per minute) and can't comment once the last 6 comments on a task are all from agents. A `rate_limited` error means stop and wait for a person; don't retry in a loop.
+
 ### Hand off
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.
 - Only mark a task **Done** (`spider task done`) when the user asks or the work is merged and released; review is a person's call.

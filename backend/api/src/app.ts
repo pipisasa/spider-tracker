@@ -19,6 +19,7 @@ const errorStatus: Record<DomainError["code"], ContentfulStatusCode> = {
   forbidden: 403,
   not_found: 404,
   conflict: 409,
+  rate_limited: 429,
 };
 
 function errorBody(code: string, message: string): ApiErrorBody {

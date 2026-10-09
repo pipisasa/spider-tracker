@@ -1,6 +1,10 @@
 import type { ActivitySource, ActorRole, AgentDto, ListResponse } from "@repo/core";
 import {
   DomainError,
+  addComment,
+  listComments,
+  listInbox,
+  markInboxRead,
   createAgent,
   createApiKey,
   createProject,
@@ -28,6 +32,10 @@ function clientSource(header: string | undefined): ActivitySource {
   const value = header?.trim().toLowerCase();
   return clientSources.find((s) => s === value) ?? "api";
 }
+
+const MAX_INBOX_WAIT_SECONDS = 25;
+// Until realtime (ST-13) lands, waiting requests re-check the database at this interval.
+const INBOX_POLL_MS = 1000;
 
 /** Organization-scoped routes, mounted at /v1/orgs/:orgSlug. */
 export function orgRoutes(db: Db) {
@@ -106,6 +114,31 @@ export function orgRoutes(db: Db) {
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
   );
+
+  app.get("/tasks/:taskKey/comments", async (c) =>
+    c.json(list(await listComments(db, c.get("actor").orgId, c.req.param("taskKey")))),
+  );
+
+  app.post("/tasks/:taskKey/comments", async (c) =>
+    c.json(await addComment(db, c.get("actor"), c.req.param("taskKey"), await body(c)), 201),
+  );
+
+  // The caller's inbox. With ?wait=N (seconds, max 25) it holds the request until an item
+  // newer than ?after arrives, so agents and the Claude Code channel can wait cheaply.
+  app.get("/inbox", async (c) => {
+    const query = c.req.query();
+    const wait = Math.min(Math.max(Number(query.wait) || 0, 0), MAX_INBOX_WAIT_SECONDS);
+    const deadline = Date.now() + wait * 1000;
+    const signal = c.req.raw.signal;
+    let items = await listInbox(db, c.get("actor"), query);
+    while (items.length === 0 && Date.now() < deadline && !signal.aborted) {
+      await Bun.sleep(INBOX_POLL_MS);
+      items = await listInbox(db, c.get("actor"), query);
+    }
+    return c.json(list(items));
+  });
+
+  app.post("/inbox/read", async (c) => c.json({ updated: await markInboxRead(db, c.get("actor"), await body(c)) }));
 
   app.delete("/tasks/:taskKey", async (c) => {
     await deleteTask(db, c.get("actor"), c.req.param("taskKey"));

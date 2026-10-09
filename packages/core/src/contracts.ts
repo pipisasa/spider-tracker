@@ -137,3 +137,26 @@ export interface DeviceTokenResponse {
   actor: ActorDto;
   organization: OrganizationDto;
 }
+
+export interface CommentDto {
+  id: string;
+  taskKey: string;
+  parentId: string | null;
+  authorId: string;
+  body: string;
+  createdAt: string;
+  editedAt: string | null;
+}
+
+export type InboxKind = "mention" | "assigned" | "comment" | "reply";
+
+export interface InboxItemDto {
+  /** Increasing; pass the last one seen as `after` to get only newer items. */
+  id: number;
+  kind: InboxKind;
+  createdAt: string;
+  readAt: string | null;
+  task: { key: string; title: string };
+  comment: { id: string; body: string } | null;
+  from: { id: string; handle: string; name: string; type: "human" | "agent" };
+}

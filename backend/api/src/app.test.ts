@@ -405,7 +405,7 @@ withDb("device login (spider login)", () => {
     });
     expect(approve.status).toBe(204);
 
-    await db.update(schema.deviceCodes).set({ lastPolledAt: null });
+    await db.update(schema.deviceCodes).set({ lastPolledAt: null }).where(eq(schema.deviceCodes.userCode, code.user_code));
     const granted = await token();
     expect(granted.status).toBe(200);
     const body = (await granted.json()) as { access_token: string; actor: { name: string }; organization: { slug: string } };
@@ -422,5 +422,68 @@ withDb("device login (spider login)", () => {
     const start = (await (await app.request("/device/code", { method: "POST" })).json()) as { user_code: string };
     const res = await app.request(`/v1/device/${start.user_code}`, { headers: { Authorization: "Bearer spt_nope" } });
     expect(res.status).toBe(401);
+  });
+});
+
+withDb("comments and inbox API", () => {
+  const stamp = Date.now();
+  const email = `inbox-${stamp}@example.com`;
+  const slug = `inbox-${stamp}`;
+
+  afterAll(async () => {
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  test("a waiting inbox request returns as soon as someone mentions the agent", async () => {
+    const cookie = await signIn(email);
+    const asOwner = (method: string, path: string, body?: unknown) =>
+      app.request(path, {
+        method,
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    await asOwner("POST", "/v1/organizations", { name: "Inbox Org", slug });
+    await asOwner("POST", `/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
+    await asOwner("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, { title: "Talk to me" });
+    const agent = (await (await asOwner("POST", `/v1/orgs/${slug}/agents`, { name: "Claude" })).json()) as {
+      actor: { id: string };
+    };
+    const { secret } = (await (await asOwner("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "t" })).json()) as {
+      secret: string;
+    };
+    const asAgent = (method: string, path: string, body?: unknown) =>
+      app.request(path, {
+        method,
+        headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+    const started = Date.now();
+    const waiting = asAgent("GET", `/v1/orgs/${slug}/inbox?wait=10&unread=true`);
+    await Bun.sleep(300);
+    const posted = await asOwner("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "@claude what's the status?" });
+    expect(posted.status).toBe(201);
+
+    const inbox = (await (await waiting).json()) as { items: { id: number; kind: string; comment: { body: string } }[] };
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(inbox.items.map((i) => i.kind)).toEqual(["mention"]);
+    expect(inbox.items[0]?.comment.body).toContain("status");
+
+    const reply = await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "Working on it" });
+    expect(reply.status).toBe(201);
+    const thread = (await (await asOwner("GET", `/v1/orgs/${slug}/tasks/SPI-1/comments`)).json()) as {
+      items: { authorId: string }[];
+    };
+    expect(thread.items.map((c) => c.authorId).at(-1)).toBe(agent.actor.id);
+
+    const read = await asAgent("POST", `/v1/orgs/${slug}/inbox/read`, { upTo: inbox.items[0]?.id });
+    expect(await read.json()).toEqual({ updated: 1 });
+    const empty = (await (await asAgent("GET", `/v1/orgs/${slug}/inbox?unread=true`)).json()) as { items: unknown[] };
+    expect(empty.items).toEqual([]);
+
+    // The loop guard surfaces as 429.
+    for (let i = 0; i < 4; i++) await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: `note ${i}` });
+    expect((await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "too much" })).status).toBe(429);
   });
 });

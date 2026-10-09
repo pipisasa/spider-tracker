@@ -1,4 +1,10 @@
-import { createProjectInput, createTaskInput, updateTaskInput } from "@repo/core/schemas";
+import {
+  createCommentInput,
+  createProjectInput,
+  createTaskInput,
+  markInboxReadInput,
+  updateTaskInput,
+} from "@repo/core/schemas";
 import { z } from "zod";
 
 // OpenAPI 3.1 description of the public API, served at GET /openapi.json.
@@ -74,6 +80,29 @@ const schemas: Record<string, JsonSchema> = {
     updatedAt: string({ format: "date-time" }),
     completedAt: nullable("string", { format: "date-time" }),
   }),
+  Comment: object({
+    id: string({ format: "uuid" }),
+    taskKey: string(),
+    parentId: nullable("string", { format: "uuid" }),
+    authorId: string({ format: "uuid" }),
+    body: string({ description: "Markdown; @handle mentions notify members" }),
+    createdAt: string({ format: "date-time" }),
+    editedAt: nullable("string", { format: "date-time" }),
+  }),
+  InboxItem: object({
+    id: { type: "integer", description: "Increasing; use as the `after` cursor" },
+    kind: string({ enum: ["mention", "assigned", "comment", "reply"] }),
+    createdAt: string({ format: "date-time" }),
+    readAt: nullable("string", { format: "date-time" }),
+    task: object({ key: string(), title: string() }),
+    comment: { oneOf: [object({ id: string({ format: "uuid" }), body: string() }), { type: "null" }] },
+    from: object({ id: string({ format: "uuid" }), handle: string(), name: string(), type: string({ enum: ["human", "agent"] }) }),
+  }),
+  CommentList: listOf("Comment"),
+  InboxList: listOf("InboxItem"),
+  MarkedCount: object({ updated: { type: "integer" } }),
+  CreateCommentInput: fromZod(createCommentInput),
+  MarkInboxReadInput: fromZod(markInboxReadInput),
   ActorList: listOf("Actor"),
   ProjectList: listOf("Project"),
   TaskList: listOf("Task"),
@@ -89,6 +118,7 @@ const errors = {
   "401": { description: "Missing or invalid credentials", ...json("Error") },
   "403": { description: "Not allowed", ...json("Error") },
   "404": { description: "Not found (also for organizations you are not a member of)", ...json("Error") },
+  "429": { description: "Rate-limited (agent comment loop guards)", ...json("Error") },
 };
 const pathParam = (name: string, description: string) => ({
   name,
@@ -178,6 +208,50 @@ const paths = {
       operationId: "deleteTask",
       summary: "Delete a task",
       responses: { "204": { description: "Deleted" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/comments": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "listComments",
+      summary: "Comments on a task, oldest first",
+      responses: { "200": ok("Comments", "CommentList"), ...errors },
+    },
+    post: {
+      operationId: "addComment",
+      summary: "Comment on a task; @mentions, replies and assignees are notified",
+      requestBody: body("CreateCommentInput"),
+      responses: { "201": ok("Created comment", "Comment"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/inbox": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listInbox",
+      summary: "The caller's notifications, oldest first; can wait for new items",
+      parameters: [
+        { name: "after", in: "query", schema: { type: "integer" }, description: "Only items with a larger id" },
+        { name: "unread", in: "query", schema: { type: "boolean" }, description: "Only unread items" },
+        { name: "limit", in: "query", schema: { type: "integer", maximum: 100 } },
+        { name: "wait", in: "query", schema: { type: "integer", maximum: 25 }, description: "Seconds to wait for a new item" },
+      ],
+      responses: { "200": ok("Inbox items", "InboxList"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/inbox/read": {
+    parameters: [orgSlug],
+    post: {
+      operationId: "markInboxRead",
+      summary: "Mark items read, by ids or up to an id",
+      requestBody: body("MarkInboxReadInput"),
+      responses: { "200": ok("Number of items marked", "MarkedCount"), ...errors },
+    },
+  },
+  "/v1/api-keys/current": {
+    delete: {
+      operationId: "revokeCurrentApiKey",
+      summary: "Revoke the API key this request is made with (spider logout)",
+      responses: { "204": { description: "Revoked" }, ...errors },
     },
   },
 };

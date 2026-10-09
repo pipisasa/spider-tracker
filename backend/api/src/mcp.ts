@@ -5,13 +5,17 @@ import type { ActorContext, ProjectDetailDto, StatusDto, TaskDto } from "@repo/c
 import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
+  addComment,
   authenticateApiKey,
   createTask,
   getProject,
   getTask,
   listMembers,
   listProjects,
+  listComments,
+  listInbox,
   listTasks,
+  markInboxRead,
   updateTask,
 } from "@repo/core";
 import type { Db, schema } from "@repo/db";
@@ -292,6 +296,89 @@ function createMcpServer(db: Db, key: Key) {
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) => run(() => takeTask(taskKey, true)),
+  );
+
+  server.registerTool(
+    "list_comments",
+    {
+      description: "Read the comments under a task, oldest first, with author handles.",
+      inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
+    },
+    ({ key: taskKey }) =>
+      run(async () =>
+        Promise.all(
+          (await listComments(db, ctx.orgId, taskKey)).map(async (c) => ({
+            id: c.id,
+            author: await handleOf(c.authorId),
+            body: c.body,
+            parentId: c.parentId,
+            createdAt: c.createdAt,
+          })),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "add_comment",
+    {
+      description:
+        "Comment on a task (Markdown). Mention people or agents with @handle to notify them; set parent_id to reply to a comment. Agents are rate-limited and must wait for a person after a long agent-only thread.",
+      inputSchema: {
+        key: z.string().describe('Task key, e.g. "ST-12"'),
+        body: z.string().min(1).describe("Comment text (Markdown). Never include secrets"),
+        parent_id: z.string().optional().describe("Id of the comment you are replying to"),
+      },
+    },
+    ({ key: taskKey, body, parent_id }) =>
+      run(async () => {
+        const comment = await addComment(db, ctx, taskKey, { body, parentId: parent_id ?? null });
+        return { id: comment.id, task: comment.taskKey, createdAt: comment.createdAt };
+      }),
+  );
+
+  server.registerTool(
+    "get_inbox",
+    {
+      description:
+        "Your notifications: mentions, assignments, comments and replies on your tasks, oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
+      inputSchema: {
+        unread_only: z.boolean().optional().describe("Only items not marked read (default true)"),
+        after: z.number().int().nonnegative().optional().describe("Only items with a larger id"),
+        wait_seconds: z.number().int().min(0).max(20).optional().describe("Wait up to this long for new items"),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    ({ unread_only, after, wait_seconds, limit }) =>
+      run(async () => {
+        const query = { unread: unread_only ?? true, after, limit };
+        const deadline = Date.now() + (wait_seconds ?? 0) * 1000;
+        let items = await listInbox(db, ctx, query);
+        while (items.length === 0 && Date.now() < deadline) {
+          await Bun.sleep(1000);
+          items = await listInbox(db, ctx, query);
+        }
+        return items.map((i) => ({
+          id: i.id,
+          kind: i.kind,
+          task: i.task.key,
+          title: i.task.title,
+          from: i.from.handle,
+          comment: i.comment ? { id: i.comment.id, body: i.comment.body } : null,
+          createdAt: i.createdAt,
+        }));
+      }),
+  );
+
+  server.registerTool(
+    "mark_inbox_read",
+    {
+      description: "Mark inbox items read, by ids or everything up to an id.",
+      inputSchema: {
+        ids: z.array(z.number().int().positive()).optional(),
+        up_to: z.number().int().positive().optional(),
+      },
+    },
+    ({ ids, up_to }) => run(async () => ({ updated: await markInboxRead(db, ctx, { ids, upTo: up_to }) })),
   );
 
   server.registerTool(

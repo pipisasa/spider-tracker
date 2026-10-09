@@ -1,6 +1,7 @@
 import type {
   ActorDto,
   AgentDto,
+  CommentDto,
   CreatedApiKeyDto,
   ListResponse,
   ProjectDetailDto,
@@ -23,6 +24,7 @@ export const keys = {
   project: (org: string, key: string) => ["orgs", org, "projects", key] as const,
   tasks: (org: string, key: string) => ["orgs", org, "projects", key, "tasks"] as const,
   task: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey] as const,
+  comments: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "comments"] as const,
 };
 
 export const membersQuery = (org: string) =>
@@ -163,5 +165,23 @@ export function useRevokeApiKey(org: string) {
   return useMutation({
     mutationFn: (keyId: string) => api<void>(`${orgPath(org)}/api-keys/${keyId}`, { method: "DELETE" }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
+  });
+}
+
+export const commentsQuery = (org: string, taskKey: string) =>
+  queryOptions({
+    queryKey: keys.comments(org, taskKey),
+    queryFn: async () => (await api<ListResponse<CommentDto>>(`${orgPath(org)}/tasks/${taskKey}/comments`)).items,
+    // Stopgap until realtime (ST-13): pick up agents' replies without a reload.
+    refetchInterval: 15_000,
+  });
+
+export function useAddComment(org: string, taskKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) =>
+      api<CommentDto>(`${orgPath(org)}/tasks/${taskKey}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
+    onSuccess: (comment) =>
+      qc.setQueryData<CommentDto[]>(keys.comments(org, taskKey), (old) => (old ? [...old, comment] : [comment])),
   });
 }

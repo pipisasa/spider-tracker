@@ -53,10 +53,25 @@ The user creates an agent and an API key in Settings → Agents, then adds our M
 claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --header "Authorization: Bearer $SPIDER_TOKEN"
 ```
 
-Tools: whoami, list and get projects, list (filter by status, assignee, text), get, create and update tasks, assign to me, start a task, list members. Comments and documents come later. See [interfaces.md](./interfaces.md#mcp-server).
+Tools: whoami, list and get projects, list (filter by status, assignee, text), get, create and update tasks, assign to me, start a task, list members, comments (read, add) and the inbox (read with an optional wait, mark read). Documents come later. See [interfaces.md](./interfaces.md#mcp-server).
 
-### 5. External: channel plugin, where we push
-A Claude Code channel plugin pushes chat messages and new assignments into a user's running Claude Code session, and exposes a reply tool. This feature is a research preview; check current docs before building on it.
+### 5. External: Claude Code channel, where we push
+`spider channel` (in `backend/cli`) is a [Claude Code channel](https://code.claude.com/docs): a local stdio MCP server with the experimental `claude/channel` capability. It waits on the agent's inbox (`GET /v1/orgs/:org/inbox?wait=25`) and pushes each new item into the running session as `<channel source="spider" task="ST-12" kind="mention" from="alice" comment_id="…">`, then marks it read. The session answers with the channel's `reply` tool (a comment on the task, optionally replying to `comment_id`) and reads context with `get_comments`.
+
+Start a session with it from the repo root (channels are a research preview; non-plugin channels need the development flag):
+
+```bash
+bun run claude:channel
+# = claude --mcp-config .claude/channel.mcp.json --dangerously-load-development-channels server:spider-channel
+```
+
+It authenticates like the CLI (`SPIDER_TOKEN`, else the key from `spider login`). It is deliberately **not** in `.mcp.json`: a normal session would start it too and mark inbox items read without showing them.
+
+### Messages between people and agents
+- **Comments** under a task, by people and agents, with `@handle` mentions (`POST /v1/orgs/:org/tasks/:key/comments`).
+- **Inbox** per actor: `mention`, `assigned` (on create or when newly added), `reply` (to your comment), `comment` (on a task you're assigned to). You're never notified about your own actions.
+- **Agent-to-agent:** agents mention each other the same way; each reads its own inbox (channel, MCP `get_inbox`, `spider inbox`).
+- **Loop guards** (`AGENT_COMMENT_LIMIT` in `packages/core/src/comments.ts`): an agent may post at most 5 comments per task per minute, and no agent may comment when the task's last 6 comments are all by agents — a person has to reply first. Both answer `429 rate_limited`. To stop an agent entirely, revoke its keys in Settings → Agents.
 
 ### Distribution
 For now, this repository carries the pieces itself:
@@ -64,7 +79,9 @@ For now, this repository carries the pieces itself:
 - **`.mcp.json`** registers the `spider` MCP server over HTTP with `Authorization: Bearer ${SPIDER_TOKEN}`. Claude Code expands the variable at startup, so no secret is committed: export `SPIDER_TOKEN` before running `claude` (e.g. `set -a; . ~/.config/spider-tracker/agent.env; set +a`) and approve the project server when asked.
 - **`.claude/skills/spider-tracker/SKILL.md`** tells Claude Code how to work with the tracker: find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `bun run spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes.
 
-Later, ship a single **Claude Code plugin** that bundles the MCP server config, this skill, and the optional channel.
+- **`.claude/channel.mcp.json`** + `bun run claude:channel` start a session with the `spider channel` (see above).
+
+Later, ship a single **Claude Code plugin** that bundles the MCP server config, this skill, and the channel (plugins can be allowlisted as channels without the development flag).
 
 ## Message flow
 

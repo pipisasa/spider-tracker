@@ -1,3 +1,4 @@
+import { TaskComments } from "@/components/task-comments";
 import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,7 +58,7 @@ function TaskPage() {
 
   return (
     <div className="flex min-h-0 flex-1">
-      <main className="flex min-w-0 flex-1 flex-col gap-4 px-8 py-6">
+      <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-8 py-6">
         <nav className="flex items-center gap-1 text-sm text-muted-foreground">
           <Link
             to="/$orgSlug/projects/$projectKey"
@@ -71,6 +72,7 @@ function TaskPage() {
         </nav>
         {/* Keyed by task so local edits reset when navigating between tasks. */}
         <TaskText key={task.id} task={task} onSave={save} />
+        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} />
       </main>
 
       <aside className="flex w-72 shrink-0 flex-col gap-4 border-l p-4">

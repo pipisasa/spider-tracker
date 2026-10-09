@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { assertCanWrite, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
+import { notify } from "./inbox";
 import type { Priority, TaskDto } from "./contracts";
 import { DomainError } from "./errors";
 import { createTaskInput, parseTaskKey, updateTaskInput, type UpdateTaskInput } from "./schemas";
@@ -159,6 +160,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       await tx
         .insert(taskAssignees)
         .values(assigneeIds.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
+      await notify(tx, ctx, task.id, assigneeIds.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
     }
 
     await recordActivity(tx, ctx, {
@@ -186,7 +188,8 @@ export async function listTasks(db: Db, orgId: string, projectKey: string): Prom
   return rows.map((r) => toTaskDto(r.task, r.projectKey, assignees.get(r.task.id) ?? []));
 }
 
-async function findTask(db: Db | Tx, orgId: string, taskKey: string) {
+/** The task row and its project key; not_found for unknown or deleted tasks. */
+export async function findTask(db: Db | Tx, orgId: string, taskKey: string) {
   const parsed = parseTaskKey(taskKey);
   if (!parsed) throw new DomainError("not_found", `Task ${taskKey} not found`);
   const [row] = await db
@@ -266,6 +269,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
         await tx
           .insert(taskAssignees)
           .values(added.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
+        await notify(tx, ctx, task.id, added.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
       }
       if (added.length > 0 || removed.length > 0) changes.assigneeIds = [assigneeIds, next];
       assigneeIds = next;

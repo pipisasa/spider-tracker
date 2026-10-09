@@ -38,9 +38,11 @@
         "spider": "./src/index.ts",
       },
       "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.32.1",
         "@repo/core": "*",
         "@repo/sdk": "*",
         "commander": "^15.0.0",
+        "zod": "^4.6.5",
       },
       "devDependencies": {
         "@repo/api": "*",

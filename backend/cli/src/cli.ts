@@ -419,6 +419,91 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
     },
   );
 
+  withJson(
+    program
+      .command("comment")
+      .description("comment on a task; @handle mentions notify people and agents")
+      .argument("<args...>", "[key] text — the key defaults to the one in the git branch"),
+  ).action(async (args: string[], opts: JsonOption) => {
+    const [first, ...rest] = args;
+    const explicitKey = first !== undefined && rest.length > 0 && parseTaskKey(first) ? first : undefined;
+    const body = (explicitKey ? rest : args).join(" ").trim();
+    if (!body) throw usageError("Nothing to say. Usage: spider comment [ST-12] \"text\"");
+    const key = taskKey(explicitKey, cwd);
+    const { sdk, org } = conn();
+    const comment = await (await sdk()).comments.create(await org(), key, { body });
+    output(opts, comment, () => `Commented on ${comment.taskKey}`);
+  });
+
+  withJson(program.command("comments").description("show a task's comments").argument("[key]")).action(
+    async (key: string | undefined, opts: JsonOption) => {
+      const resolved = taskKey(key, cwd);
+      const { sdk, org, members } = conn();
+      const [{ items }, rows] = await Promise.all([(await sdk()).comments.list(await org(), resolved), members()]);
+      const handle = (id: string) => rows.find((m) => m.id === id)?.handle ?? id;
+      output(opts, { items }, () =>
+        items.length === 0
+          ? `No comments on ${resolved}`
+          : items.map((c) => `@${handle(c.authorId)} · ${c.createdAt.slice(0, 16).replace("T", " ")}\n${c.body}`).join("\n\n"),
+      );
+    },
+  );
+
+  withJson(
+    program
+      .command("inbox")
+      .description("your notifications: mentions, assignments, comments and replies")
+      .option("--all", "include items already read")
+      .option("--wait <seconds>", "wait up to this long (max 25) for a new item")
+      .option("--mark-read", "mark the listed items read"),
+  ).action(async (opts: JsonOption & { all?: boolean; wait?: string; markRead?: boolean }) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    const wait = opts.wait === undefined ? undefined : parseLimit(opts.wait);
+    const { items } = await client.inbox.list(slug, { unread: !opts.all, wait });
+    const last = items.at(-1);
+    if (opts.markRead && last) await client.inbox.markRead(slug, { upTo: last.id });
+    output(opts, { items }, () =>
+      items.length === 0
+        ? "Inbox is empty"
+        : items
+            .map((i) => {
+              const head = `#${i.id} ${i.task.key} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
+              return i.comment ? `${head}\n  ${i.comment.body.split("\n").join("\n  ")}` : head;
+            })
+            .join("\n"),
+    );
+  });
+
+  program
+    .command("channel")
+    .description("run as a Claude Code channel (stdio MCP): pushes your inbox into the session")
+    .action(async () => {
+      const { sdk, whoami } = conn();
+      const [client, who] = await Promise.all([sdk(), whoami()]);
+      const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+      const { createChannel } = await import("./channel");
+      const channel = createChannel({
+        client,
+        org: who.organization.slug,
+        handle: who.actor.handle,
+        log: (message) => stderr.write(`spider channel: ${message}\n`),
+      });
+      const stop = new AbortController();
+      const transport = new StdioServerTransport();
+      const closed = new Promise<void>((resolve) => {
+        transport.onclose = () => {
+          stop.abort();
+          resolve();
+        };
+      });
+      await channel.server.connect(transport);
+      stderr.write(`spider channel: delivering @${who.actor.handle}'s inbox in ${who.organization.slug}\n`);
+      void channel.pump(stop.signal);
+      await closed;
+    });
+
   return program;
 }
 

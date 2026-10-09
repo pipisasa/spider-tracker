@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { createDb, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
 import { authenticateApiKey } from "./agents";
@@ -21,9 +22,13 @@ run("device authorization", () => {
   const user = { id: `test-${crypto.randomUUID()}`, name: "Owner", email: "owner@example.com" };
   const slug = `devices-${Date.now()}`;
 
-  // Polls are rate-limited per device code; pretend the previous poll was long ago.
+  // Polls are rate-limited per device code; pretend this code's previous poll was long ago.
+  // (Scoped to the code: other packages' tests share the database and run in parallel.)
   const poll = async (deviceCode: string) => {
-    await db.update(schema.deviceCodes).set({ lastPolledAt: null });
+    await db
+      .update(schema.deviceCodes)
+      .set({ lastPolledAt: null })
+      .where(eq(schema.deviceCodes.deviceCodeHash, createHash("sha256").update(deviceCode).digest("hex")));
     return pollDeviceToken(db, deviceCode);
   };
 

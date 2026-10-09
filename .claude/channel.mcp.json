@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "spider-channel": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["backend/cli/src/index.ts", "channel"]
+    }
+  }
+}
