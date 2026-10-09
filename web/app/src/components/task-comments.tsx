@@ -1,3 +1,4 @@
+import { RELATION_LABELS } from "@/components/relations";
 import { ActorAvatar } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/mention-textarea";
@@ -6,6 +7,7 @@ import type {
   ActivityDto,
   ActorDto,
   CommentDto,
+  RelationKind,
   StatusDto,
 } from "@repo/core/contracts";
 import { useQuery } from "@tanstack/react-query";
@@ -57,6 +59,12 @@ function describeActivity(
       : "nobody";
   if (entry.action === "task.created") return "created the task";
   if (entry.action === "task.deleted") return "deleted the task";
+  if ((entry.action === "relation.added" || entry.action === "relation.removed") && entry.changes) {
+    const { kind, task } = entry.changes;
+    const label = typeof kind === "string" && kind in RELATION_LABELS ? RELATION_LABELS[kind as RelationKind] : "Linked to";
+    const verb = entry.action === "relation.added" ? "added link" : "removed link";
+    return `${verb}: ${label.toLowerCase()} ${String(task)}`;
+  }
   if (entry.action !== "task.updated" || !entry.changes) return null;
   const parts: string[] = [];
   for (const [field, value] of Object.entries(entry.changes)) {

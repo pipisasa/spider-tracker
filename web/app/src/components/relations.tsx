@@ -12,7 +12,7 @@ import { toast } from "sonner";
 
 // Links to other tasks (ST-10), as seen from this task.
 
-const LABELS: Record<RelationKind, string> = {
+export const RELATION_LABELS: Record<RelationKind, string> = {
   blocked_by: "Blocked by",
   blocks: "Blocks",
   duplicates: "Duplicates",
@@ -36,7 +36,7 @@ export function Relations({ orgSlug, taskKey, statuses }: { orgSlug: string; tas
     );
   }
 
-  const kinds = Object.keys(LABELS) as RelationKind[];
+  const kinds = Object.keys(RELATION_LABELS) as RelationKind[];
   const groups = kinds.map((k) => ({ kind: k, items: relations.filter((r) => r.kind === k) })).filter((g) => g.items.length);
 
   return (
@@ -44,7 +44,7 @@ export function Relations({ orgSlug, taskKey, statuses }: { orgSlug: string; tas
       <h2 className="text-sm font-medium text-muted-foreground">Links</h2>
       {groups.map((group) => (
         <div key={group.kind} className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">{LABELS[group.kind]}</span>
+          <span className="text-xs text-muted-foreground">{RELATION_LABELS[group.kind]}</span>
           <ul className="divide-y rounded-lg border">
             {group.items.map((r) => {
               const status = statuses.find((s) => s.id === r.task.statusId);
@@ -84,7 +84,7 @@ export function Relations({ orgSlug, taskKey, statuses }: { orgSlug: string; tas
           <SelectContent>
             {kinds.map((k) => (
               <SelectItem key={k} value={k}>
-                {LABELS[k]}
+                {RELATION_LABELS[k]}
               </SelectItem>
             ))}
           </SelectContent>
