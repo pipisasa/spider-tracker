@@ -15,7 +15,7 @@ import { useOrgEvents } from "@/lib/realtime";
 import { membersQuery, projectsQuery } from "@/lib/work";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
-import { BotIcon, ChevronsUpDownIcon, FolderIcon, LogOutIcon, PlusIcon, UserIcon } from "lucide-react";
+import { BotIcon, ChevronsUpDownIcon, FileTextIcon, FolderIcon, LogOutIcon, PlusIcon, UserIcon } from "lucide-react";
 import { useState } from "react";
 
 export const Route = createFileRoute("/_authed/$orgSlug")({
@@ -88,6 +88,18 @@ function OrgLayout() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <nav className="flex flex-col gap-1">
+          <Link
+            to="/$orgSlug/docs"
+            params={{ orgSlug }}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+            activeProps={{ className: "bg-muted font-medium" }}
+          >
+            <FileTextIcon className="size-4 text-muted-foreground" />
+            Docs
+          </Link>
+        </nav>
 
         <nav className="flex flex-col gap-1">
           <div className="flex items-center justify-between px-2 text-xs font-medium text-muted-foreground">

@@ -100,10 +100,10 @@ Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI
 
 **Goal:** the flexible parts of the model.
 
-- Markdown/HTML documents with version history; agents read and write them
-- Custom field definitions (organization and project scope), used in views, filters and agent context
-- File uploads to R2
-- Apps linked to repos and projects
+- [x] Markdown/HTML documents with version history; agents read and write them (ST-21; source editor with preview, no rich editor or diffs yet)
+- [ ] Custom field definitions (organization and project scope), used in views, filters and agent context
+- [ ] File uploads to R2
+- [ ] Apps linked to repos and projects
 
 **Done when:** a project can define its own fields and a spec document that an agent uses while working.
 

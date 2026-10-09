@@ -17,6 +17,8 @@ import { Route as AuthedAccountRouteImport } from './routes/_authed/account'
 import { Route as AuthedDeviceRouteImport } from './routes/_authed/device'
 import { Route as AuthedOnboardingRouteImport } from './routes/_authed/onboarding'
 import { Route as AuthedOrgSlugIndexRouteImport } from './routes/_authed/$orgSlug/index'
+import { Route as AuthedOrgSlugDocsIndexRouteImport } from './routes/_authed/$orgSlug/docs/index'
+import { Route as AuthedOrgSlugDocsDocumentIdRouteImport } from './routes/_authed/$orgSlug/docs/$documentId'
 import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from './routes/_authed/$orgSlug/projects/$projectKey'
 import { Route as AuthedOrgSlugSettingsAgentsRouteImport } from './routes/_authed/$orgSlug/settings/agents'
 import { Route as AuthedOrgSlugTasksTaskKeyRouteImport } from './routes/_authed/$orgSlug/tasks/$taskKey'
@@ -60,6 +62,17 @@ const AuthedOrgSlugIndexRoute = AuthedOrgSlugIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedOrgSlugRoute,
 } as any)
+const AuthedOrgSlugDocsIndexRoute = AuthedOrgSlugDocsIndexRouteImport.update({
+  id: '/docs/',
+  path: '/docs/',
+  getParentRoute: () => AuthedOrgSlugRoute,
+} as any)
+const AuthedOrgSlugDocsDocumentIdRoute =
+  AuthedOrgSlugDocsDocumentIdRouteImport.update({
+    id: '/docs/$documentId',
+    path: '/docs/$documentId',
+    getParentRoute: () => AuthedOrgSlugRoute,
+  } as any)
 const AuthedOrgSlugProjectsProjectKeyRoute =
   AuthedOrgSlugProjectsProjectKeyRouteImport.update({
     id: '/projects/$projectKey',
@@ -87,9 +100,11 @@ export interface FileRoutesByFullPath {
   '/device': typeof AuthedDeviceRoute
   '/onboarding': typeof AuthedOnboardingRoute
   '/$orgSlug/': typeof AuthedOrgSlugIndexRoute
+  '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
   '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
+  '/$orgSlug/docs/': typeof AuthedOrgSlugDocsIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -98,9 +113,11 @@ export interface FileRoutesByTo {
   '/onboarding': typeof AuthedOnboardingRoute
   '/': typeof AuthedIndexRoute
   '/$orgSlug': typeof AuthedOrgSlugIndexRoute
+  '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
   '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
+  '/$orgSlug/docs': typeof AuthedOrgSlugDocsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -112,9 +129,11 @@ export interface FileRoutesById {
   '/_authed/onboarding': typeof AuthedOnboardingRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$orgSlug/': typeof AuthedOrgSlugIndexRoute
+  '/_authed/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
   '/_authed/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/_authed/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
   '/_authed/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
+  '/_authed/$orgSlug/docs/': typeof AuthedOrgSlugDocsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -126,9 +145,11 @@ export interface FileRouteTypes {
     | '/device'
     | '/onboarding'
     | '/$orgSlug/'
+    | '/$orgSlug/docs/$documentId'
     | '/$orgSlug/projects/$projectKey'
     | '/$orgSlug/settings/agents'
     | '/$orgSlug/tasks/$taskKey'
+    | '/$orgSlug/docs/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -137,9 +158,11 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/'
     | '/$orgSlug'
+    | '/$orgSlug/docs/$documentId'
     | '/$orgSlug/projects/$projectKey'
     | '/$orgSlug/settings/agents'
     | '/$orgSlug/tasks/$taskKey'
+    | '/$orgSlug/docs'
   id:
     | '__root__'
     | '/_authed'
@@ -150,9 +173,11 @@ export interface FileRouteTypes {
     | '/_authed/onboarding'
     | '/_authed/'
     | '/_authed/$orgSlug/'
+    | '/_authed/$orgSlug/docs/$documentId'
     | '/_authed/$orgSlug/projects/$projectKey'
     | '/_authed/$orgSlug/settings/agents'
     | '/_authed/$orgSlug/tasks/$taskKey'
+    | '/_authed/$orgSlug/docs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -218,6 +243,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedOrgSlugIndexRouteImport
       parentRoute: typeof AuthedOrgSlugRoute
     }
+    '/_authed/$orgSlug/docs/': {
+      id: '/_authed/$orgSlug/docs/'
+      path: '/docs'
+      fullPath: '/$orgSlug/docs/'
+      preLoaderRoute: typeof AuthedOrgSlugDocsIndexRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
+    '/_authed/$orgSlug/docs/$documentId': {
+      id: '/_authed/$orgSlug/docs/$documentId'
+      path: '/docs/$documentId'
+      fullPath: '/$orgSlug/docs/$documentId'
+      preLoaderRoute: typeof AuthedOrgSlugDocsDocumentIdRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
     '/_authed/$orgSlug/projects/$projectKey': {
       id: '/_authed/$orgSlug/projects/$projectKey'
       path: '/projects/$projectKey'
@@ -244,16 +283,20 @@ declare module '@tanstack/react-router' {
 
 interface AuthedOrgSlugRouteChildren {
   AuthedOrgSlugIndexRoute: typeof AuthedOrgSlugIndexRoute
+  AuthedOrgSlugDocsDocumentIdRoute: typeof AuthedOrgSlugDocsDocumentIdRoute
   AuthedOrgSlugProjectsProjectKeyRoute: typeof AuthedOrgSlugProjectsProjectKeyRoute
   AuthedOrgSlugSettingsAgentsRoute: typeof AuthedOrgSlugSettingsAgentsRoute
   AuthedOrgSlugTasksTaskKeyRoute: typeof AuthedOrgSlugTasksTaskKeyRoute
+  AuthedOrgSlugDocsIndexRoute: typeof AuthedOrgSlugDocsIndexRoute
 }
 
 const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
   AuthedOrgSlugIndexRoute: AuthedOrgSlugIndexRoute,
+  AuthedOrgSlugDocsDocumentIdRoute: AuthedOrgSlugDocsDocumentIdRoute,
   AuthedOrgSlugProjectsProjectKeyRoute: AuthedOrgSlugProjectsProjectKeyRoute,
   AuthedOrgSlugSettingsAgentsRoute: AuthedOrgSlugSettingsAgentsRoute,
   AuthedOrgSlugTasksTaskKeyRoute: AuthedOrgSlugTasksTaskKeyRoute,
+  AuthedOrgSlugDocsIndexRoute: AuthedOrgSlugDocsIndexRoute,
 }
 
 const AuthedOrgSlugRouteWithChildren = AuthedOrgSlugRoute._addFileChildren(

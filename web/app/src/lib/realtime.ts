@@ -50,6 +50,16 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: ["orgs", orgSlug, "projects"] });
     });
 
+    on("document.changed", (e) => {
+      void qc.invalidateQueries({ queryKey: keys.documentLists(orgSlug) });
+      // Also refreshes its version history.
+      void qc.invalidateQueries({ queryKey: keys.document(orgSlug, e.documentId) });
+    });
+    on("document.deleted", (e) => {
+      void qc.invalidateQueries({ queryKey: keys.documentLists(orgSlug) });
+      qc.removeQueries({ queryKey: keys.document(orgSlug, e.documentId) });
+    });
+
     return () => source.close();
   }, [orgSlug, qc]);
 }

@@ -8,6 +8,5 @@
 - **Realtime sync:** stay with LISTEN/NOTIFY + SSE, or move to a local-first sync engine like Linear's?
 - **Job queue:** pg-boss or Graphile Worker?
 - **Pricing:** per human seat, with agents billed by usage?
-- **HTML documents:** sandboxed or rendered as-is, and what's the security model?
 - **Other Git providers:** GitLab and Bitbucket, and when?
 - **Agent SDK on Bun:** confirm the Claude Agent SDK runs reliably under the Bun runtime, or run the worker on Node.

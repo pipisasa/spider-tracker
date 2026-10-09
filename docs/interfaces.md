@@ -32,6 +32,9 @@ See [auth.md](./auth.md) for all flows.
 - `GET|POST /v1/orgs/:org/tasks/:key/comments` — comments, oldest first; `{ body, parentId? }` to add.
 - `GET /v1/orgs/:org/inbox?after=&unread=true&limit=&wait=` — the caller's notifications, oldest first. With `wait` (seconds, max 25) the request is held until an item newer than `after` arrives (checked every second until realtime, ST-13, replaces it).
 - `POST /v1/orgs/:org/inbox/read` — `{ ids }` or `{ upTo }`.
+- `GET|POST /v1/orgs/:org/documents[?project=ST|?task=ST-12]` — documents without content, most recently updated first (a project's include its tasks'; no filter lists the whole organization); `{ title, format?: md|html, content?, project?, task? }` to create (a task implies its project; neither means organization-wide). Content is capped at 1 MB.
+- `GET|PATCH|DELETE /v1/orgs/:org/documents/:id` — `PATCH { baseVersion, title?, format?, content? }` saves a new version; `409 conflict` if someone saved since `baseVersion`, and an unchanged save returns the document as is.
+- `GET /v1/orgs/:org/documents/:id/versions[/:version]` — every save is a version (newest first, without content), or one version with its content.
 
 ## SDK
 
@@ -72,10 +75,13 @@ Inside this repository, the project `.mcp.json` already registers it: its `heade
 | `list_comments`, `add_comment` | A task's comments; comment with `@handle` mentions, `parent_id` to reply |
 | `get_inbox` | Your notifications (mention, assigned, comment, reply), oldest first; `after` cursor, `unread_only` (default true), `wait_seconds` (≤ 20) |
 | `mark_inbox_read` | By `ids` or `up_to` an id |
+| `list_documents` | Documents (no content) of a `task`, a `project` (with its tasks') or the whole organization; `get_project` and `get_task` also list theirs |
+| `get_document` | Content and `version` (the `baseVersion` for updates); `version` argument reads an older one |
+| `create_document`, `update_document` | Markdown or HTML, organization-wide or in a `project` / `task`; `update_document` needs `baseVersion` and fails if someone saved since |
 
 Status names and handles match case-insensitively; an unknown one returns a tool error listing the valid options. Domain errors (not found, forbidden, validation) come back as tool errors (`isError`) with their message.
 
-Planned: documents, custom fields.
+Planned: custom fields.
 
 ## CLI
 
@@ -117,6 +123,10 @@ spider task create … --parent ST-3              # a sub-task; on update --pare
 spider comment [ST-12] "text with @mentions"
 spider comments [ST-12]
 spider inbox [--all] [--wait 25] [--mark-read]
+spider doc list [--project ST] [--task ST-12]
+spider doc view <id> [--rev 3]                 # --rev: an older version
+spider doc create --title … [--project ST | --task ST-12] [--format md|html] [--file spec.md | --file -]
+spider doc edit <id> [--title …] [--format …] [--file … | --file -]   # saves on top of the current version
 spider channel              # Claude Code channel over stdio (see agents.md)
 ```
 
@@ -124,12 +134,13 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
 - **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
 - **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). It never prompts.
-- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
+- **Documents:** `--file -` reads standard input; `.html` files default to `--format html`. `doc edit` fetches the current version and sends it as `baseVersion`, so a concurrent save fails with exit code `2` instead of being overwritten.
+- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
 
 ### Planned
 - Keys in the OS keychain instead of a file, `spider org switch`, per-repo defaults in `.spider.json`
 - `spider pr`, `spider start` creating and checking out the branch
-- `spider agent list|run|logs`, `spider doc pull|push`, `--field` / `--tag`
+- `spider agent list|run|logs`, `spider doc pull|push` (sync with local files), `--field` / `--tag`
 - Distribution through npm and standalone binaries for Homebrew and curl installs
 - Local SQLite cache for instant reads and offline use; `spider tui` (Ink)
 

@@ -1,3 +1,4 @@
+import { TaskDocuments } from "@/components/documents";
 import { Relations } from "@/components/relations";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
@@ -42,6 +43,7 @@ function TaskPage() {
   const { data: task } = useSuspenseQuery(taskQuery(orgSlug, taskKey));
   const { data: project } = useSuspenseQuery(projectQuery(orgSlug, projectKeyOf(taskKey)));
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
+  const { membership } = Route.useRouteContext();
   const update = useUpdateTask(orgSlug);
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
@@ -92,6 +94,7 @@ function TaskPage() {
           members={members}
         />
         <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
+        <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
         <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
       </main>
 

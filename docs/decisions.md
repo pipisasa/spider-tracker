@@ -144,3 +144,14 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 
 Revisit Tailscale if the API must have no public endpoint at all.
 
+---
+
+## 11. HTML documents render in a fully sandboxed iframe
+
+**Decision:** HTML documents are shown in `<iframe sandbox="" srcdoc=…>`: no `allow-scripts`, no `allow-same-origin`, no forms or popups. Markdown documents are rendered with react-markdown and raw HTML inside Markdown is skipped.
+
+**Why:**
+- Documents are written by people and agents alike; an agent could be prompt-injected into writing hostile HTML. With an empty `sandbox`, the frame gets a unique opaque origin, can't run scripts and can't reach the app, its cookies or the API.
+- No HTML sanitizer to keep up to date, and documents still render exactly as written (styles, tables, layout).
+
+**Trade-off:** no interactive HTML (scripts, forms), and the frame can't size itself to its content, so it gets a fixed, resizable height. Revisit with a separate sandbox origin if interactive reports are ever needed.

@@ -3,6 +3,10 @@ import type {
   ActorDto,
   AgentDto,
   CommentDto,
+  DocumentDto,
+  DocumentSummaryDto,
+  DocumentVersionDto,
+  DocumentVersionSummaryDto,
   RelationDto,
   TagDto,
   CreatedApiKeyDto,
@@ -13,9 +17,11 @@ import type {
 } from "@repo/core/contracts";
 import type {
   CreateAgentInput,
+  CreateDocumentInput,
   CreateProjectInput,
   CreateTagInput,
   CreateTaskInput,
+  UpdateDocumentInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
 import {
@@ -49,7 +55,19 @@ export const keys = {
     ["orgs", org, "tasks", taskKey, "subtasks"] as const,
   relations: (org: string, taskKey: string) =>
     ["orgs", org, "tasks", taskKey, "relations"] as const,
+  documentLists: (org: string) => ["orgs", org, "documents", "list"] as const,
+  documents: (org: string, scope: DocumentScope) =>
+    ["orgs", org, "documents", "list", scope] as const,
+  document: (org: string, id: string) =>
+    ["orgs", org, "documents", id] as const,
+  documentVersions: (org: string, id: string) =>
+    ["orgs", org, "documents", id, "versions"] as const,
+  documentVersion: (org: string, id: string, version: number) =>
+    ["orgs", org, "documents", id, "versions", version] as const,
 };
+
+/** Which documents to list: a task's, a project's (with its tasks'), or all. */
+export type DocumentScope = { project?: string; task?: string };
 
 export const membersQuery = (org: string) =>
   queryOptions({
@@ -343,5 +361,97 @@ export function useRelation(org: string, taskKey: string) {
     },
     onSettled: () =>
       void qc.invalidateQueries({ queryKey: keys.relations(org, taskKey) }),
+  });
+}
+
+export const documentsQuery = (org: string, scope: DocumentScope = {}) =>
+  queryOptions({
+    queryKey: keys.documents(org, scope),
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (scope.project) params.set("project", scope.project);
+      if (scope.task) params.set("task", scope.task);
+      const qs = params.size ? `?${params}` : "";
+      return (
+        await api<ListResponse<DocumentSummaryDto>>(
+          `${orgPath(org)}/documents${qs}`,
+        )
+      ).items;
+    },
+  });
+
+export const documentQuery = (org: string, id: string) =>
+  queryOptions({
+    queryKey: keys.document(org, id),
+    queryFn: () => api<DocumentDto>(`${orgPath(org)}/documents/${id}`),
+  });
+
+export const documentVersionsQuery = (org: string, id: string) =>
+  queryOptions({
+    queryKey: keys.documentVersions(org, id),
+    queryFn: async () =>
+      (
+        await api<ListResponse<DocumentVersionSummaryDto>>(
+          `${orgPath(org)}/documents/${id}/versions`,
+        )
+      ).items,
+  });
+
+export const documentVersionQuery = (
+  org: string,
+  id: string,
+  version: number,
+) =>
+  queryOptions({
+    queryKey: keys.documentVersion(org, id, version),
+    queryFn: () =>
+      api<DocumentVersionDto>(
+        `${orgPath(org)}/documents/${id}/versions/${version}`,
+      ),
+    // A saved version never changes.
+    staleTime: Infinity,
+  });
+
+export function useCreateDocument(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateDocumentInput) =>
+      api<DocumentDto>(`${orgPath(org)}/documents`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (document) => {
+      qc.setQueryData(keys.document(org, document.id), document);
+      void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
+    },
+  });
+}
+
+/** Saves a new version; fails with ApiError 409 when someone saved since `baseVersion`. */
+export function useUpdateDocument(org: string, id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateDocumentInput) =>
+      api<DocumentDto>(`${orgPath(org)}/documents/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (document) => {
+      qc.setQueryData(keys.document(org, id), document);
+      void qc.invalidateQueries({ queryKey: keys.documentVersions(org, id) });
+      void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
+    },
+  });
+}
+
+export function useDeleteDocument(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`${orgPath(org)}/documents/${id}`, { method: "DELETE" }),
+    onSuccess: (_data, id) => {
+      qc.removeQueries({ queryKey: keys.document(org, id) });
+      void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
+    },
   });
 }
