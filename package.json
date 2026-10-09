@@ -1,0 +1,23 @@
+{
+  "name": "spider-tracker",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "workspaces": [
+    "backend/*",
+    "packages/*",
+    "web/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --ui=tui",
+    "lint": "turbo run lint",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.7.4",
+    "turbo": "^2.8.7",
+    "typescript": "5.9.2"
+  }
+}
