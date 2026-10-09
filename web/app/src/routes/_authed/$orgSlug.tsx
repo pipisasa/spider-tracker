@@ -14,7 +14,7 @@ import { meQuery } from "@/lib/queries";
 import { membersQuery, projectsQuery } from "@/lib/work";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, FolderIcon, LogOutIcon, PlusIcon, UserIcon } from "lucide-react";
+import { BotIcon, ChevronsUpDownIcon, FolderIcon, LogOutIcon, PlusIcon, UserIcon } from "lucide-react";
 import { useState } from "react";
 
 export const Route = createFileRoute("/_authed/$orgSlug")({
@@ -117,6 +117,21 @@ function OrgLayout() {
           ))}
           {projects.length === 0 && <p className="px-2 text-sm text-muted-foreground">No projects yet.</p>}
         </nav>
+
+        {canManage && (
+          <nav className="flex flex-col gap-1">
+            <span className="px-2 text-xs font-medium text-muted-foreground">Settings</span>
+            <Link
+              to="/$orgSlug/settings/agents"
+              params={{ orgSlug }}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+              activeProps={{ className: "bg-muted font-medium" }}
+            >
+              <BotIcon className="size-4 text-muted-foreground" />
+              Agents
+            </Link>
+          </nav>
+        )}
 
         <div className="mt-auto truncate px-2 text-xs text-muted-foreground">{me.user.email}</div>
       </aside>

@@ -1,11 +1,13 @@
 import type {
   ActorDto,
+  AgentDto,
+  CreatedApiKeyDto,
   ListResponse,
   ProjectDetailDto,
   ProjectDto,
   TaskDto,
 } from "@repo/core/contracts";
-import type { CreateProjectInput, CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
+import type { CreateAgentInput, CreateProjectInput, CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "./api";
@@ -16,6 +18,7 @@ const orgPath = (org: string) => `/v1/orgs/${encodeURIComponent(org)}`;
 
 export const keys = {
   members: (org: string) => ["orgs", org, "members"] as const,
+  agents: (org: string) => ["orgs", org, "agents"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
   project: (org: string, key: string) => ["orgs", org, "projects", key] as const,
   tasks: (org: string, key: string) => ["orgs", org, "projects", key, "tasks"] as const,
@@ -125,5 +128,40 @@ export function useDeleteTask(org: string) {
       );
       qc.removeQueries({ queryKey: keys.task(org, taskKey) });
     },
+  });
+}
+
+export const agentsQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.agents(org),
+    queryFn: async () => (await api<ListResponse<AgentDto>>(`${orgPath(org)}/agents`)).items,
+  });
+
+export function useCreateAgent(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateAgentInput) =>
+      api<AgentDto>(`${orgPath(org)}/agents`, { method: "POST", body: JSON.stringify(input) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.agents(org) });
+      void qc.invalidateQueries({ queryKey: keys.members(org) });
+    },
+  });
+}
+
+export function useCreateApiKey(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, name }: { agentId: string; name: string }) =>
+      api<CreatedApiKeyDto>(`${orgPath(org)}/agents/${agentId}/keys`, { method: "POST", body: JSON.stringify({ name }) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
+  });
+}
+
+export function useRevokeApiKey(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) => api<void>(`${orgPath(org)}/api-keys/${keyId}`, { method: "DELETE" }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
   });
 }
