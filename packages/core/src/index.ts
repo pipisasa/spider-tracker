@@ -17,3 +17,4 @@ export * from "./signup";
 export * from "./activity-feed";
 export * from "./tags";
 export * from "./relations";
+export * from "./documents";

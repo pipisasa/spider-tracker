@@ -96,8 +96,12 @@ withDb("MCP server", () => {
       [
         "add_comment",
         "assign_to_me",
+        "create_document",
         "create_tag",
         "create_task",
+        "get_document",
+        "list_documents",
+        "update_document",
         "get_inbox",
         "get_task_activity",
         "list_comments",
@@ -183,6 +187,34 @@ withDb("MCP server", () => {
     expect(blocked.relations).toEqual([{ kind: "blocked_by", task: "SPI-1", title: expect.any(String) }]);
     expect((await call(client, "link_tasks", { key: other.key, kind: "blocks", task: "SPI-1" })).isError).toBe(true);
     expect((await call(client, "unlink_tasks", { key: other.key, kind: "blocked_by", task: "SPI-1" })).isError).toBeFalsy();
+  });
+
+  test("documents: create, list, read, update with baseVersion; shown on get_project and get_task", async () => {
+    const created = await call(client, "create_document", { title: "Spec", project: "SPI", content: "# v1" });
+    expect(created.isError).toBeFalsy();
+    const doc = created.json() as { id: string; version: number };
+    expect(doc).toMatchObject({ project: "SPI", task: null, version: 1, updatedBy: "claude-code" });
+
+    const onTask = (await call(client, "create_document", { title: "Notes", task: "SPI-1" })).json() as { id: string };
+    expect((await call(client, "get_task", { key: "SPI-1" })).json()).toMatchObject({ documents: [{ id: onTask.id, title: "Notes" }] });
+    const project = (await call(client, "get_project", { projectKey: "SPI" })).json() as { documents: { title: string }[] };
+    expect(project.documents.map((d) => d.title).sort()).toEqual(["Notes", "Spec"]);
+
+    const updated = await call(client, "update_document", { id: doc.id, baseVersion: 1, content: "# v2" });
+    expect(updated.json()).toMatchObject({ version: 2 });
+    const stale = await call(client, "update_document", { id: doc.id, baseVersion: 1, content: "# lost" });
+    expect(stale.isError).toBe(true);
+    expect(stale.text).toContain("version 2");
+
+    expect((await call(client, "get_document", { id: doc.id })).json()).toMatchObject({ version: 2, content: "# v2" });
+    expect((await call(client, "get_document", { id: doc.id, version: 1 })).json()).toMatchObject({
+      version: 1,
+      currentVersion: 2,
+      content: "# v1",
+    });
+    const listed = JSON.parse((await call(client, "list_documents", { task: "SPI-1" })).text) as { title: string }[];
+    expect(listed.map((d) => d.title)).toEqual(["Notes"]);
+    expect((await call(otherClient, "get_document", { id: doc.id })).isError).toBe(true);
   });
 
   test("statuses can be given by category, like the CLI", async () => {

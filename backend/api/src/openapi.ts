@@ -4,7 +4,9 @@ import {
   relationInput,
   createProjectInput,
   createTaskInput,
+  createDocumentInput,
   markInboxReadInput,
+  updateDocumentInput,
   updateTaskInput,
 } from "@repo/core/schemas";
 import { z } from "zod";
@@ -116,6 +118,33 @@ const schemas: Record<string, JsonSchema> = {
   MarkedCount: object({ updated: { type: "integer" } }),
   CreateCommentInput: fromZod(createCommentInput),
   MarkInboxReadInput: fromZod(markInboxReadInput),
+  DocumentSummary: object({
+    id: string({ format: "uuid" }),
+    title: string(),
+    format: string({ enum: ["md", "html"] }),
+    projectKey: nullable("string", { description: "Null for organization-wide documents" }),
+    taskKey: nullable("string", { description: "Set for task documents" }),
+    version: { type: "integer", description: "Increases with every save; send it back as baseVersion" },
+    authorId: string({ format: "uuid", description: "Who saved the current version" }),
+    createdBy: string({ format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+    updatedAt: string({ format: "date-time" }),
+  }),
+  Document: { allOf: [ref("DocumentSummary"), object({ content: string() })] },
+  DocumentList: listOf("DocumentSummary"),
+  DocumentVersionSummary: object({
+    version: { type: "integer" },
+    title: string(),
+    format: string({ enum: ["md", "html"] }),
+    authorId: nullable("string", { format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+  }),
+  DocumentVersion: {
+    allOf: [ref("DocumentVersionSummary"), object({ documentId: string({ format: "uuid" }), content: string() })],
+  },
+  DocumentVersionList: listOf("DocumentVersionSummary"),
+  CreateDocumentInput: fromZod(createDocumentInput),
+  UpdateDocumentInput: fromZod(updateDocumentInput),
   ActorList: listOf("Actor"),
   ProjectList: listOf("Project"),
   TaskList: listOf("Task"),
@@ -131,6 +160,7 @@ const errors = {
   "401": { description: "Missing or invalid credentials", ...json("Error") },
   "403": { description: "Not allowed", ...json("Error") },
   "404": { description: "Not found (also for organizations you are not a member of)", ...json("Error") },
+  "409": { description: "Conflict: already exists, or a document saved since your baseVersion", ...json("Error") },
   "429": { description: "Rate-limited (agent comment loop guards)", ...json("Error") },
 };
 const pathParam = (name: string, description: string) => ({
@@ -277,6 +307,47 @@ const paths = {
       summary: "Delete a tag (owners and admins); it is removed from every task",
       responses: { "204": { description: "Deleted" }, ...errors },
     },
+  },
+  "/v1/orgs/{orgSlug}/documents": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listDocuments",
+      summary: "Documents without content, most recently updated first",
+      parameters: [
+        { name: "project", in: "query", schema: { type: "string" }, description: "A project's documents, including its tasks'" },
+        { name: "task", in: "query", schema: { type: "string" }, description: "A task's documents" },
+      ],
+      responses: { "200": ok("Documents", "DocumentList"), ...errors },
+    },
+    post: {
+      operationId: "createDocument",
+      summary: "Create a document: organization-wide, or in a project or task (by key)",
+      requestBody: body("CreateDocumentInput"),
+      responses: { "201": ok("Created document", "Document"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: { operationId: "getDocument", summary: "A document with its content", responses: { "200": ok("Document", "Document"), ...errors } },
+    patch: {
+      operationId: "updateDocument",
+      summary: "Save a new version; 409 if the document was saved since baseVersion",
+      requestBody: body("UpdateDocumentInput"),
+      responses: { "200": ok("Updated document", "Document"), ...errors },
+    },
+    delete: { operationId: "deleteDocument", summary: "Delete a document", responses: { "204": { description: "Deleted" }, ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/versions": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: {
+      operationId: "listDocumentVersions",
+      summary: "Saved versions, newest first, without content",
+      responses: { "200": ok("Versions", "DocumentVersionList"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/versions/{version}": {
+    parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("version", "Version number")],
+    get: { operationId: "getDocumentVersion", summary: "One saved version with its content", responses: { "200": ok("Version", "DocumentVersion"), ...errors } },
   },
   "/v1/orgs/{orgSlug}/inbox": {
     parameters: [orgSlug],

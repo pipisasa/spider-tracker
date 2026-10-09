@@ -141,3 +141,40 @@ export const relationInput = z.object({
 });
 
 export type RelationInput = z.infer<typeof relationInput>;
+
+export const documentFormatSchema = z.enum(["md", "html"]);
+
+/** Documents are capped at 1 MB of UTF-8. */
+export const MAX_DOCUMENT_BYTES = 1_000_000;
+
+const documentTitle = z.string().trim().min(1, "Required").max(255, "At most 255 characters");
+const documentContent = z
+  .string()
+  .refine((v) => new TextEncoder().encode(v).length <= MAX_DOCUMENT_BYTES, "At most 1 MB");
+
+/** Scope: `task` (which implies its project), `project`, or neither for an organization-wide document. */
+export const createDocumentInput = z.object({
+  title: documentTitle,
+  format: documentFormatSchema.default("md"),
+  content: documentContent.default(""),
+  project: z.string().trim().min(1).optional(),
+  task: z.string().trim().min(1).optional(),
+});
+
+export type CreateDocumentInput = z.input<typeof createDocumentInput>;
+
+/** `baseVersion` is the version the edit started from; a newer saved version means a conflict. */
+export const updateDocumentInput = z.object({
+  baseVersion: z.number().int().positive(),
+  title: documentTitle.optional(),
+  format: documentFormatSchema.optional(),
+  content: documentContent.optional(),
+});
+
+export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
+
+/** `task` lists a task's documents; `project` a project's, including its tasks'; neither, the whole organization's. */
+export const documentListQuery = z.object({
+  project: z.string().trim().min(1).optional(),
+  task: z.string().trim().min(1).optional(),
+});

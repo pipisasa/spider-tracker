@@ -1,9 +1,20 @@
-import type { ActorDto, ProjectDetailDto, StatusDto, TagDto, TaskDto, WhoAmIResponse } from "@repo/core/contracts";
+import type {
+  ActorDto,
+  DocumentFormat,
+  DocumentSummaryDto,
+  ProjectDetailDto,
+  StatusDto,
+  TagDto,
+  TaskDto,
+  WhoAmIResponse,
+} from "@repo/core/contracts";
 import { parseTaskKey } from "@repo/core/schemas";
-import type { CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
+import type { CreateTaskInput, UpdateDocumentInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError } from "commander";
+import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
+import { resolve as resolvePath } from "node:path";
 import { deleteCredentials, readCredentials, writeCredentials } from "./credentials";
 import { currentBranch, taskKeyFromBranch } from "./git";
 import {
@@ -45,6 +56,8 @@ export interface RunOptions {
   openUrl?: (url: string) => void;
   /** Waits between device-login polls; overridable in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** Reads standard input, for `--file -`. */
+  stdin?: () => Promise<string>;
 }
 
 /** A task as the CLI prints it with --json: the API task plus its status and assignee handles. */
@@ -197,6 +210,20 @@ function taskDetail(task: CliTask): string {
   if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
   if (task.description) lines.push("", task.description);
   return lines.join("\n");
+}
+
+const documentScope = (d: DocumentSummaryDto) => d.taskKey ?? d.projectKey ?? "org";
+
+function documentLines(docs: DocumentSummaryDto[]): string {
+  const scopeWidth = Math.max(0, ...docs.map((d) => documentScope(d).length));
+  return docs.map((d) => `${d.id}  ${documentScope(d).padEnd(scopeWidth)}  v${d.version}  ${d.title}`).join("\n");
+}
+
+function parseFormat(value: string): DocumentFormat {
+  const format = value.trim().toLowerCase();
+  if (format === "md" || format === "markdown") return "md";
+  if (format === "html") return "html";
+  throw usageError(`Invalid format "${value}". Use md or html`);
 }
 
 /** Builds the command tree for one run; actions write to the run's streams. */
@@ -552,6 +579,108 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
               return i.comment ? `${head}\n  ${i.comment.body.split("\n").join("\n  ")}` : head;
             })
             .join("\n"),
+    );
+  });
+
+  /** Content from --file: a path relative to cwd, or "-" for standard input. */
+  const readContent = async (file: string) => {
+    if (file !== "-") {
+      return readFile(resolvePath(cwd, file), "utf8").catch(() => {
+        throw usageError(`Can't read ${file}`);
+      });
+    }
+    if (!options.stdin) throw usageError("No standard input to read");
+    return options.stdin();
+  };
+
+  const doc = program.command("doc").description("work with documents (Markdown or HTML specs, plans, reports)");
+
+  withJson(
+    doc
+      .command("list")
+      .description("list documents: a task's, a project's (with its tasks'), or the whole organization's")
+      .option("--project <key>", "only this project")
+      .option("--task <key>", "only this task"),
+  ).action(async (opts: JsonOption & { project?: string; task?: string }) => {
+    const { sdk, org } = conn();
+    const task = opts.task === undefined ? undefined : taskKey(opts.task, cwd);
+    const { items } = await (await sdk()).documents.list(await org(), { project: opts.project?.toUpperCase(), task });
+    output(opts, { items }, () => (items.length ? documentLines(items) : "No documents"));
+  });
+
+  withJson(
+    doc
+      .command("view")
+      .description("show a document")
+      .argument("<id>")
+      // Not --version: that one prints the CLI's version.
+      .option("--rev <n>", "an older version number"),
+  ).action(async (id: string, opts: JsonOption & { rev?: string }) => {
+    const { sdk, org, members } = conn();
+    const client = await sdk();
+    const slug = await org();
+    const current = await client.documents.get(slug, id);
+    const old = opts.rev === undefined ? undefined : await client.documents.versions.get(slug, id, parseLimit(opts.rev));
+    const shown = old ?? { ...current, createdAt: current.updatedAt };
+    const rows = await members();
+    const handle = rows.find((m) => m.id === shown.authorId)?.handle ?? shown.authorId ?? "?";
+    const item = old ? { ...old, projectKey: current.projectKey, taskKey: current.taskKey, currentVersion: current.version } : current;
+    output(opts, item, () =>
+      [
+        `${shown.title}  (${documentScope(current)}, ${shown.format}, v${shown.version}${old ? ` of ${current.version}` : ""})`,
+        `Saved by @${handle} · ${shown.createdAt.slice(0, 16).replace("T", " ")}`,
+        "",
+        shown.content,
+      ].join("\n"),
+    );
+  });
+
+  withJson(
+    doc
+      .command("create")
+      .description("create a document (organization-wide unless --project or --task)")
+      .requiredOption("--title <text>", "title")
+      .option("--project <key>", "in this project")
+      .option("--task <key>", "on this task (its project is implied)")
+      .option("--format <md|html>", "md (default) or html; .html files default to html")
+      .option("--file <path>", 'content from a file, or "-" for standard input'),
+  ).action(async (opts: JsonOption & { title: string; project?: string; task?: string; format?: string; file?: string }) => {
+    const { sdk, org } = conn();
+    const content = opts.file === undefined ? "" : await readContent(opts.file);
+    const format = opts.format !== undefined ? parseFormat(opts.format) : /\.html?$/i.test(opts.file ?? "") ? "html" : "md";
+    const created = await (await sdk()).documents.create(await org(), {
+      title: opts.title,
+      format,
+      content,
+      project: opts.project,
+      task: opts.task === undefined ? undefined : taskKey(opts.task, cwd),
+    });
+    output(opts, created, () => documentLines([created]));
+  });
+
+  withJson(
+    doc
+      .command("edit")
+      .description("save a new version of a document; fails if someone else saved it meanwhile")
+      .argument("<id>")
+      .option("--title <text>", "new title")
+      .option("--format <md|html>", "new format")
+      .option("--file <path>", 'new content from a file, or "-" for standard input'),
+  ).action(async (id: string, opts: JsonOption & { title?: string; format?: string; file?: string }) => {
+    if (opts.title === undefined && opts.format === undefined && opts.file === undefined) {
+      throw usageError("Nothing to change. Pass --title, --format or --file");
+    }
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    const content = opts.file === undefined ? undefined : await readContent(opts.file);
+    const current = await client.documents.get(slug, id);
+    const input: UpdateDocumentInput = { baseVersion: current.version, content };
+    if (opts.title !== undefined) input.title = opts.title;
+    if (opts.format !== undefined) input.format = parseFormat(opts.format);
+    const saved = await client.documents.update(slug, id, input);
+    output(opts, saved, () =>
+      saved.version === current.version ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
     );
   });
 

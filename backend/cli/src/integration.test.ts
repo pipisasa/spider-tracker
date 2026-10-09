@@ -5,7 +5,7 @@ import { loadEnv } from "@repo/api/src/env";
 import type { Mailer } from "@repo/api/src/mailer";
 import { createDb, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./cli";
@@ -38,6 +38,7 @@ withDb("spider CLI against the API", () => {
   let token = "";
   let agentId = "";
   const repo = mkdtempSync(join(tmpdir(), "spider-cli-"));
+  let stdin = "";
 
   afterAll(async () => {
     rmSync(repo, { recursive: true, force: true });
@@ -55,6 +56,7 @@ withDb("spider CLI against the API", () => {
       stdout: { write: (s: string) => (stdout += s) },
       stderr: { write: (s: string) => (stderr += s) },
       cwd: repo,
+      stdin: async () => stdin,
     });
     return { code, stdout, stderr, json: () => JSON.parse(stdout) as Record<string, unknown> };
   }
@@ -321,6 +323,33 @@ withDb("spider CLI against the API", () => {
     ]);
     expect((await spider("unlink", other, "Blocked-By", "SPI-1", "--json")).json()).toMatchObject({ linked: false });
     expect((await spider("link", "SPI-1", "depends", other)).code).toBe(2);
+  });
+
+  test("docs: create from a file and stdin, list by scope, view, edit with the current version", async () => {
+    writeFileSync(join(repo, "spec.html"), "<h1>Spec</h1>");
+    const spec = (await spider("doc", "create", "--title", "Spec", "--project", "spi", "--file", "spec.html", "--json")).json();
+    expect(spec).toMatchObject({ projectKey: "SPI", taskKey: null, format: "html", content: "<h1>Spec</h1>", version: 1 });
+    const id = spec.id as string;
+
+    stdin = "# Notes";
+    const notes = (await spider("doc", "create", "--title", "Notes", "--task", "spi-1", "--file", "-", "--json")).json();
+    expect(notes).toMatchObject({ taskKey: "SPI-1", format: "md", content: "# Notes" });
+
+    expect((await spider("doc", "list", "--task", "SPI-1")).stdout).toBe(`${notes.id as string}  SPI-1  v1  Notes\n`);
+    const all = (await spider("doc", "list", "--project", "SPI", "--json")).json().items as { title: string }[];
+    expect(all.map((d) => d.title).sort()).toEqual(["Notes", "Spec"]);
+
+    stdin = "<h1>Spec v2</h1>";
+    expect((await spider("doc", "edit", id, "--file", "-")).stdout).toBe("Saved Spec as version 2\n");
+    expect((await spider("doc", "edit", id, "--title", "Spec")).stdout).toBe("No changes to Spec\n");
+    expect((await spider("doc", "view", id)).stdout).toContain("<h1>Spec v2</h1>");
+    expect((await spider("doc", "view", id, "--rev", "1", "--json")).json()).toMatchObject({
+      version: 1,
+      currentVersion: 2,
+      content: "<h1>Spec</h1>",
+    });
+    expect((await spider("doc", "edit", id)).code).toBe(2);
+    expect((await spider("doc", "view", "00000000-0000-7000-8000-000000000000")).code).toBe(3);
   });
 
 });

@@ -14,4 +14,5 @@ process.exitCode = await run(process.argv.slice(2), {
   stderr: process.stderr,
   // Only open a browser for a person at a terminal.
   openUrl: process.stdout.isTTY ? openUrl : undefined,
+  stdin: () => Bun.stdin.text(),
 });

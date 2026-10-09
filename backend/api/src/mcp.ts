@@ -1,12 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { ActorContext, ProjectDetailDto, StatusDto, TaskDto } from "@repo/core";
+import type { ActorContext, DocumentSummaryDto, ProjectDetailDto, StatusDto, TaskDto } from "@repo/core";
 import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
   addComment,
   authenticateApiKey,
+  createDocument,
+  getDocument,
+  getDocumentVersion,
+  listDocuments,
+  updateDocument,
   createTask,
   getProject,
   getTask,
@@ -169,17 +174,20 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   server.registerTool(
     "get_project",
     {
-      description: "Get a project and its workflow statuses, in board order, with their categories.",
+      description:
+        "Get a project, its workflow statuses (in board order, with their categories) and its documents (read them with get_document).",
       inputSchema: { projectKey: z.string().describe('Project key, e.g. "ST"') },
     },
     ({ projectKey }) =>
       run(async () => {
         const project = await getProject(db, ctx.orgId, projectKey);
+        const documents = await listDocuments(db, ctx.orgId, { project: project.key });
         return {
           key: project.key,
           name: project.name,
           description: project.description,
           statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
+          documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey })),
         };
       }),
   );
@@ -228,18 +236,21 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   server.registerTool(
     "get_task",
     {
-      description: "Get a task by key, with its description, status name, assignee handles, parent and sub-tasks.",
+      description:
+        "Get a task by key, with its description, status name, assignee handles, parent, sub-tasks, links and documents.",
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) =>
       run(async () => {
         const task = await getTask(db, ctx.orgId, taskKey);
-        const [subtasks, relations] = await Promise.all([
+        const [subtasks, relations, documents] = await Promise.all([
           listSubtasks(db, ctx.orgId, task.key),
           listRelations(db, ctx.orgId, task.key),
+          listDocuments(db, ctx.orgId, { task: task.key }),
         ]);
         return {
           relations: relations.map((r) => ({ kind: r.kind, task: r.task.key, title: r.task.title })),
+          documents: documents.map((d) => ({ id: d.id, title: d.title })),
           ...(await describeTask(task, await projectOfTask(task.key), true)),
           subtasks: await Promise.all(
             subtasks.map(async (t) => {
@@ -376,6 +387,99 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       inputSchema: { key: z.string(), kind: relationKind, task: z.string() },
     },
     ({ key: taskKey, kind, task }) => run(async () => ((await removeRelation(db, ctx, taskKey, { kind, task })), { removed: true })),
+  );
+
+  /** A document as the model sees it: scope keys and the author's handle. */
+  const describeDocument = async (d: DocumentSummaryDto) => ({
+    id: d.id,
+    title: d.title,
+    format: d.format,
+    project: d.projectKey,
+    task: d.taskKey,
+    version: d.version,
+    updatedBy: await handleOf(d.authorId),
+    updatedAt: d.updatedAt,
+  });
+
+  server.registerTool(
+    "list_documents",
+    {
+      description:
+        "List documents (specs, plans, reports) without their content, most recently updated first. Pass a task, a project (includes its tasks' documents) or neither for the whole organization.",
+      inputSchema: {
+        project: z.string().optional().describe('Project key, e.g. "ST"'),
+        task: z.string().optional().describe('Task key, e.g. "ST-12"'),
+      },
+    },
+    ({ project, task }) =>
+      run(async () => Promise.all((await listDocuments(db, ctx.orgId, { project, task })).map(describeDocument))),
+  );
+
+  server.registerTool(
+    "get_document",
+    {
+      description:
+        "Read a document's content (Markdown or HTML). Its `version` is the baseVersion to pass to update_document. Pass `version` to read an older version.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        version: z.number().int().positive().optional().describe("An older version number"),
+      },
+    },
+    ({ id, version }) =>
+      run(async () => {
+        const document = await getDocument(db, ctx.orgId, id);
+        if (version === undefined || version === document.version) {
+          return { ...(await describeDocument(document)), content: document.content };
+        }
+        const old = await getDocumentVersion(db, ctx.orgId, id, version);
+        return {
+          id: document.id,
+          title: old.title,
+          format: old.format,
+          version: old.version,
+          currentVersion: document.version,
+          savedBy: old.authorId ? await handleOf(old.authorId) : null,
+          savedAt: old.createdAt,
+          content: old.content,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "create_document",
+    {
+      description:
+        "Create a document: organization-wide, in a project, or on a task (the task's project is implied). Markdown by default.",
+      inputSchema: {
+        title: z.string(),
+        content: z.string().optional().describe("Markdown (or HTML with format html); at most 1 MB"),
+        format: z.enum(["md", "html"]).optional(),
+        project: z.string().optional().describe('Project key, e.g. "ST"'),
+        task: z.string().optional().describe('Task key, e.g. "ST-12"'),
+      },
+    },
+    ({ title, content, format, project, task }) =>
+      run(async () => {
+        const document = await createDocument(db, ctx, { title, content, format, project, task });
+        return describeDocument(document);
+      }),
+  );
+
+  server.registerTool(
+    "update_document",
+    {
+      description:
+        "Save a new version of a document. Only the fields you pass change; content replaces the whole text. Fails if someone saved since baseVersion: read it again with get_document and reapply your edit.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        baseVersion: z.number().int().positive().describe("The version you read (from get_document)"),
+        title: z.string().optional(),
+        content: z.string().optional().describe("The full new content"),
+        format: z.enum(["md", "html"]).optional(),
+      },
+    },
+    ({ id, baseVersion, title, content, format }) =>
+      run(async () => describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }))),
   );
 
   server.registerTool(

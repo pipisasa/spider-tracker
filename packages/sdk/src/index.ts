@@ -3,6 +3,10 @@ import type {
   ActorDto,
   ApiErrorBody,
   CommentDto,
+  DocumentDto,
+  DocumentSummaryDto,
+  DocumentVersionDto,
+  DocumentVersionSummaryDto,
   InboxItemDto,
   DeviceCodeResponse,
   DeviceTokenResponse,
@@ -15,7 +19,15 @@ import type {
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import type { CreateCommentInput, CreateTagInput, CreateTaskInput, RelationInput, UpdateTaskInput } from "@repo/core/schemas";
+import type {
+  CreateCommentInput,
+  CreateDocumentInput,
+  CreateTagInput,
+  CreateTaskInput,
+  RelationInput,
+  UpdateDocumentInput,
+  UpdateTaskInput,
+} from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
 // of @repo/core, so it stays free of the database and runs in browsers too.
@@ -146,6 +158,29 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       },
       markRead: (orgSlug: string, input: { ids?: number[]; upTo?: number }) =>
         request<{ updated: number }>("POST", `${org(orgSlug)}/inbox/read`, input),
+    },
+
+    documents: {
+      /** Without content, most recently updated first: a task's, a project's (with its tasks'), or the whole organization's. */
+      list: (orgSlug: string, query: { project?: string; task?: string } = {}) => {
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/documents${qs}`);
+      },
+      get: (orgSlug: string, id: string) => request<DocumentDto>("GET", `${org(orgSlug)}/documents/${seg(id)}`),
+      create: (orgSlug: string, input: CreateDocumentInput) =>
+        request<DocumentDto>("POST", `${org(orgSlug)}/documents`, input),
+      /** Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. */
+      update: (orgSlug: string, id: string, input: UpdateDocumentInput) =>
+        request<DocumentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}`, input),
+      delete: (orgSlug: string, id: string) => request<void>("DELETE", `${org(orgSlug)}/documents/${seg(id)}`),
+      versions: {
+        list: (orgSlug: string, id: string) =>
+          request<ListResponse<DocumentVersionSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions`),
+        get: (orgSlug: string, id: string, version: number) =>
+          request<DocumentVersionDto>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions/${version}`),
+      },
     },
 
     tasks: {

@@ -18,6 +18,13 @@ import {
   createProject,
   createTask,
   deleteTask,
+  createDocument,
+  deleteDocument,
+  getDocument,
+  getDocumentVersion,
+  listDocuments,
+  listDocumentVersions,
+  updateDocument,
   getProject,
   getTask,
   listAgents,
@@ -163,6 +170,32 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.post("/tasks/:taskKey/comments", async (c) =>
     c.json(await addComment(db, c.get("actor"), c.req.param("taskKey"), await body(c)), 201),
+  );
+
+  // GET /documents?project=ST or ?task=ST-12; without either, the whole organization's.
+  app.get("/documents", async (c) => c.json(list(await listDocuments(db, c.get("actor").orgId, c.req.query()))));
+
+  app.post("/documents", async (c) => c.json(await createDocument(db, c.get("actor"), await body(c)), 201));
+
+  app.get("/documents/:documentId", async (c) =>
+    c.json(await getDocument(db, c.get("actor").orgId, c.req.param("documentId"))),
+  );
+
+  app.patch("/documents/:documentId", async (c) =>
+    c.json(await updateDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
+  );
+
+  app.delete("/documents/:documentId", async (c) => {
+    await deleteDocument(db, c.get("actor"), c.req.param("documentId"));
+    return c.body(null, 204);
+  });
+
+  app.get("/documents/:documentId/versions", async (c) =>
+    c.json(list(await listDocumentVersions(db, c.get("actor").orgId, c.req.param("documentId")))),
+  );
+
+  app.get("/documents/:documentId/versions/:version", async (c) =>
+    c.json(await getDocumentVersion(db, c.get("actor").orgId, c.req.param("documentId"), c.req.param("version"))),
   );
 
   // The caller's inbox. With ?wait=N (seconds, max 25) it holds the request until an item

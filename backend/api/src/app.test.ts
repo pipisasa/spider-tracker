@@ -343,6 +343,23 @@ withDb("SDK and client-declared source", () => {
     expect(error).toMatchObject({ status: 404, code: "not_found" });
   });
 
+  test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
+    const client = sdk();
+    const doc = await client.documents.create(slug, { title: "Spec", project: "SPI", content: "v1" });
+    expect(doc).toMatchObject({ projectKey: "SPI", version: 1 });
+    expect((await client.documents.list(slug, { project: "SPI" })).items.map((d) => d.id)).toEqual([doc.id]);
+
+    const saved = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "v2" });
+    expect(saved.version).toBe(2);
+    const stale = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "lost" }).catch((e: unknown) => e);
+    expect(stale).toMatchObject({ status: 409, code: "conflict" });
+
+    expect((await client.documents.versions.list(slug, doc.id)).items.map((v) => v.version)).toEqual([2, 1]);
+    expect((await client.documents.versions.get(slug, doc.id, 1)).content).toBe("v1");
+    await client.documents.delete(slug, doc.id);
+    expect(await client.documents.get(slug, doc.id).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
   test("API-key clients declare their source; unknown values fall back to api", async () => {
     const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", { title: "From the CLI" });
     const raw = await app.request(`/v1/orgs/${slug}/projects/SPI/tasks`, {

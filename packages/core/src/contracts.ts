@@ -190,3 +190,40 @@ export interface RelationDto {
   kind: RelationKind;
   task: { id: string; key: string; title: string; statusId: string };
 }
+
+export type DocumentFormat = "md" | "html";
+
+/** A document without its content, as listed. */
+export interface DocumentSummaryDto {
+  id: string;
+  title: string;
+  format: DocumentFormat;
+  /** Null for organization-wide documents. */
+  projectKey: string | null;
+  /** Set for task documents, e.g. "ST-12". */
+  taskKey: string | null;
+  /** Increases with every save. */
+  version: number;
+  /** Who saved the current version. */
+  authorId: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentDto extends DocumentSummaryDto {
+  content: string;
+}
+
+export interface DocumentVersionSummaryDto {
+  version: number;
+  title: string;
+  format: DocumentFormat;
+  authorId: string | null;
+  createdAt: string;
+}
+
+export interface DocumentVersionDto extends DocumentVersionSummaryDto {
+  documentId: string;
+  content: string;
+}
