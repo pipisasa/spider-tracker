@@ -9,6 +9,7 @@ import { enabledAuthProviders, type Auth } from "./auth";
 import { toMembership } from "./dto";
 import type { Env } from "./env";
 import { mcpRoutes } from "./mcp";
+import { openApiDocument } from "./openapi";
 import { orgRoutes } from "./routes/orgs";
 import type { AppEnv } from "./types";
 
@@ -31,7 +32,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     cors({
       origin: env.WEB_ORIGIN,
       credentials: true,
-      allowHeaders: ["Content-Type", "Authorization"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Spider-Source"],
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     }),
   );
@@ -47,6 +48,9 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     const body: AuthProvidersResponse = { providers: enabledAuthProviders(env) };
     return c.json(body);
   });
+
+  const openApi = openApiDocument(env.API_ORIGIN);
+  app.get("/openapi.json", (c) => c.json(openApi));
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 

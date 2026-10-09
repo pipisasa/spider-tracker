@@ -46,8 +46,8 @@ Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI
 - [x] Settings page to create agents and keys, and revoke keys
 - [x] MCP server at `tracker-api.batele.plus/mcp` (agent API keys; comments come with the comments feature)
 - [x] First version of the `spider` CLI: `whoami`, `projects`, `task list/view/create/update/start/done`, `--json` (`comment` comes with the comments feature)
-- Activity records `source` (ui / api / mcp / cli)
-- OpenAPI spec and `packages/sdk`
+- [x] Activity records `source` (ui / api / mcp / cli): API-key clients declare it with `X-Spider-Source`
+- [x] OpenAPI spec (`/openapi.json`) and `packages/sdk`
 
 **Done when:** Claude Code picks up a task over MCP, comments on progress and moves it to review, and this roadmap lives in Spider Tracker instead of this file.
 

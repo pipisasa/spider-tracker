@@ -37,7 +37,7 @@ Turborepo monorepo with bun workspaces.
 
 ### Apps
 
-- **`@repo/api`** (`backend/api`) — Hono on Bun, port 4000. Better Auth mounted at `/api/auth/*`; signed-in routes under `/v1/*`; `/health` and `/health/ready`. `/mcp` is a stateless Streamable HTTP MCP server (`src/mcp.ts`, `@modelcontextprotocol/sdk`) for agent API keys only; its tools call core with `source = "mcp"`.
+- **`@repo/api`** (`backend/api`) — Hono on Bun, port 4000. Better Auth mounted at `/api/auth/*`; signed-in routes under `/v1/*`; `/health`, `/health/ready` and a public OpenAPI 3.1 spec at `/openapi.json` (`src/openapi.ts`; request bodies generated from the core Zod schemas, so update it when routes change). `/mcp` is a stateless Streamable HTTP MCP server (`src/mcp.ts`, `@modelcontextprotocol/sdk`) for agent API keys only; its tools call core with `source = "mcp"`.
 - **`@repo/cli`** (`backend/cli`) — the `spider` CLI on `@repo/sdk` + Commander, recording `source = cli`. `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd? })` (testable, never prompts; exit codes 0/1/2/3/4); `src/index.ts` is the bin. Auth via `SPIDER_TOKEN`, optional `SPIDER_API_URL`. Run with `bun run spider …`; `build` compiles `dist/spider`. Its integration test drives the API app (`@repo/api` is a dev dependency).
 - **`@repo/web`** (`web/app`) — Vite + React SPA, port 5173. TanStack Router (file-based routes in `src/routes`, `_authed` layout guards signed-in pages) + TanStack Query. shadcn/ui (radix-nova) components in `src/components/ui` (generated; don't lint or hand-edit).
 
@@ -45,6 +45,8 @@ Turborepo monorepo with bun workspaces.
 
 - **`@repo/db`** — Drizzle schema (`src/schema`), `createDb()`, migrations in `migrations/`. Better Auth tables live in `schema/auth.ts`; their property names must match Better Auth's field names. IDs default to Postgres 18 `uuidv7()`.
 - **`@repo/core`** — Domain logic used by api/worker/cli (`createOrganization`, …), shared Zod schemas (`@repo/core/schemas`) and API response types (`@repo/core/contracts`). The web app imports only those subpaths, never the root (it pulls in the database).
+
+- **`@repo/sdk`** — Typed API client: `createClient({ baseUrl, token?, source?, fetch? })` with `whoami`, `members`, `projects`, `tasks`; throws `SpiderApiError` on non-2xx. Imports only the `@repo/core/contracts` and `/schemas` subpaths, so it runs in browsers. API tests drive it against the app with `fetch: (input, init) => app.request(input, init)`.
 
 - **`@repo/eslint-config`** — Shared ESLint flat configs. Exports `./base` (backend/libraries), `./next-js`, and `./react-internal`. Uses `eslint-plugin-only-warn`; apps run lint with `--max-warnings 0`.
 - **`@repo/typescript-config`** — Shared tsconfig bases: `base.json`, `bun.json` (backend apps on Bun; add `@types/bun`), `nextjs.json`, `react-library.json`, `vite.json`.

@@ -10,7 +10,7 @@
 | Runtime & package manager | Bun |
 | Monorepo | Turborepo + Bun workspaces |
 | Frontend | Vite + React single-page app, TanStack Router, TanStack Query, Tailwind, shadcn/ui |
-| API | Hono, with Zod + `@hono/zod-openapi` (one schema gives validation, types and OpenAPI docs) |
+| API | Hono, with Zod schemas from `@repo/core` (validation and types; the OpenAPI spec is generated from them with `z.toJSONSchema`) |
 | Database | Postgres on Railway, with row-level security per organization (driven by per-transaction settings, see [auth.md](./auth.md#database-access-rules)) |
 | ORM / migrations | Drizzle |
 | Job queue | pg-boss or Graphile Worker (Postgres-backed, no Redis) |

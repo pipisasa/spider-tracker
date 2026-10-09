@@ -1,4 +1,4 @@
-import type { ActorRole, AgentDto, ListResponse } from "@repo/core";
+import type { ActivitySource, ActorRole, AgentDto, ListResponse } from "@repo/core";
 import {
   DomainError,
   createAgent,
@@ -20,6 +20,14 @@ import type { Db } from "@repo/db";
 import { Hono } from "hono";
 import { toActorDto } from "../dto";
 import type { AppEnv } from "../types";
+
+/** Sources an API-key client may declare with the X-Spider-Source header. */
+const clientSources: ActivitySource[] = ["api", "cli", "mcp"];
+
+function clientSource(header: string | undefined): ActivitySource {
+  const value = header?.trim().toLowerCase();
+  return clientSources.find((s) => s === value) ?? "api";
+}
 
 /** Organization-scoped routes, mounted at /v1/orgs/:orgSlug. */
 export function orgRoutes(db: Db) {
@@ -43,7 +51,8 @@ export function orgRoutes(db: Db) {
       orgId: membership.organization.id,
       actorId: membership.actor.id,
       role: membership.actor.role,
-      source: key ? "api" : "ui",
+      // Browser sessions are always "ui"; key clients (CLI, MCP) may say what they are.
+      source: key ? clientSource(c.req.header("X-Spider-Source")) : "ui",
     });
     await next();
   });

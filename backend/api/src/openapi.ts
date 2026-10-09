@@ -1,0 +1,211 @@
+import { createProjectInput, createTaskInput, updateTaskInput } from "@repo/core/schemas";
+import { z } from "zod";
+
+// OpenAPI 3.1 description of the public API, served at GET /openapi.json.
+// Request bodies come from the same Zod schemas core validates with; response
+// shapes mirror @repo/core/contracts.
+
+type JsonSchema = Record<string, unknown>;
+
+const ref = (name: string): JsonSchema => ({ $ref: `#/components/schemas/${name}` });
+const nullable = (type: string, extra: JsonSchema = {}): JsonSchema => ({ type: [type, "null"], ...extra });
+const string = (extra: JsonSchema = {}): JsonSchema => ({ type: "string", ...extra });
+const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
+  type: "object",
+  properties,
+  required: Object.keys(properties),
+});
+const listOf = (item: string): JsonSchema => object({ items: { type: "array", items: ref(item) } });
+
+/** Request-side JSON Schema of a Zod schema, without the $schema header. */
+function fromZod(schema: z.ZodType): JsonSchema {
+  const jsonSchema: JsonSchema = z.toJSONSchema(schema, { io: "input" });
+  delete jsonSchema.$schema;
+  return jsonSchema;
+}
+
+const schemas: Record<string, JsonSchema> = {
+  Error: object({ error: object({ code: string(), message: string() }) }),
+  Organization: object({ id: string({ format: "uuid" }), slug: string(), name: string() }),
+  Actor: object({
+    id: string({ format: "uuid" }),
+    type: string({ enum: ["human", "agent"] }),
+    name: string(),
+    handle: string(),
+    avatarUrl: nullable("string"),
+    role: string({ enum: ["owner", "admin", "member", "guest"] }),
+  }),
+  Membership: object({ organization: ref("Organization"), actor: ref("Actor") }),
+  Me: object({
+    user: object({ id: string(), name: string(), email: string(), image: nullable("string") }),
+    memberships: { type: "array", items: ref("Membership") },
+  }),
+  Status: object({
+    id: string({ format: "uuid" }),
+    name: string(),
+    category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+    color: nullable("string"),
+    position: { type: "integer" },
+  }),
+  Project: object({
+    id: string({ format: "uuid" }),
+    key: string(),
+    name: string(),
+    description: nullable("string"),
+    createdAt: string({ format: "date-time" }),
+  }),
+  ProjectDetail: {
+    allOf: [ref("Project"), object({ statuses: { type: "array", items: ref("Status") } })],
+  },
+  Task: object({
+    id: string({ format: "uuid" }),
+    key: string({ examples: ["SPI-12"] }),
+    number: { type: "integer" },
+    projectId: string({ format: "uuid" }),
+    title: string(),
+    description: nullable("string"),
+    statusId: string({ format: "uuid" }),
+    priority: { type: "integer", enum: [0, 1, 2, 3, 4], description: "0 none, 1 urgent, 2 high, 3 medium, 4 low" },
+    parentId: nullable("string", { format: "uuid" }),
+    sortKey: string(),
+    assigneeIds: { type: "array", items: string({ format: "uuid" }) },
+    creatorId: string({ format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+    updatedAt: string({ format: "date-time" }),
+    completedAt: nullable("string", { format: "date-time" }),
+  }),
+  ActorList: listOf("Actor"),
+  ProjectList: listOf("Project"),
+  TaskList: listOf("Task"),
+  CreateProjectInput: fromZod(createProjectInput),
+  CreateTaskInput: fromZod(createTaskInput),
+  UpdateTaskInput: fromZod(updateTaskInput),
+};
+
+const json = (schema: string) => ({ content: { "application/json": { schema: ref(schema) } } });
+const ok = (description: string, schema: string) => ({ description, ...json(schema) });
+const errors = {
+  "400": { description: "Invalid input", ...json("Error") },
+  "401": { description: "Missing or invalid credentials", ...json("Error") },
+  "403": { description: "Not allowed", ...json("Error") },
+  "404": { description: "Not found (also for organizations you are not a member of)", ...json("Error") },
+};
+const pathParam = (name: string, description: string) => ({
+  name,
+  in: "path",
+  required: true,
+  schema: { type: "string" },
+  description,
+});
+const orgSlug = pathParam("orgSlug", "Organization slug");
+const projectKey = pathParam("projectKey", 'Project key, e.g. "SPI"');
+const taskKey = pathParam("taskKey", 'Task key, e.g. "SPI-12"');
+const body = (schema: string) => ({ required: true, ...json(schema) });
+
+const paths = {
+  "/v1/whoami": {
+    get: {
+      operationId: "whoami",
+      summary: "The agent an API key acts as, and its organization",
+      responses: { "200": ok("Current agent", "Membership"), ...errors },
+    },
+  },
+  "/v1/me": {
+    get: {
+      operationId: "me",
+      summary: "The signed-in person and their organizations (browser sessions only)",
+      responses: { "200": ok("Current user", "Me"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/members": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listMembers",
+      summary: "List people and agents in the organization",
+      responses: { "200": ok("Members", "ActorList"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listProjects",
+      summary: "List projects",
+      responses: { "200": ok("Projects", "ProjectList"), ...errors },
+    },
+    post: {
+      operationId: "createProject",
+      summary: "Create a project with the default statuses",
+      requestBody: body("CreateProjectInput"),
+      responses: { "201": ok("Created project", "ProjectDetail"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}": {
+    parameters: [orgSlug, projectKey],
+    get: {
+      operationId: "getProject",
+      summary: "Get a project with its statuses",
+      responses: { "200": ok("Project", "ProjectDetail"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/tasks": {
+    parameters: [orgSlug, projectKey],
+    get: {
+      operationId: "listTasks",
+      summary: "List a project's tasks",
+      responses: { "200": ok("Tasks", "TaskList"), ...errors },
+    },
+    post: {
+      operationId: "createTask",
+      summary: "Create a task",
+      requestBody: body("CreateTaskInput"),
+      responses: { "201": ok("Created task", "Task"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "getTask",
+      summary: "Get a task",
+      responses: { "200": ok("Task", "Task"), ...errors },
+    },
+    patch: {
+      operationId: "updateTask",
+      summary: "Update a task; send only the fields to change",
+      requestBody: body("UpdateTaskInput"),
+      responses: { "200": ok("Updated task", "Task"), ...errors },
+    },
+    delete: {
+      operationId: "deleteTask",
+      summary: "Delete a task",
+      responses: { "204": { description: "Deleted" }, ...errors },
+    },
+  },
+};
+
+export function openApiDocument(serverUrl: string) {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Spider Tracker API",
+      version: "1",
+      description:
+        'Agents authenticate with an API key ("Authorization: Bearer spt_…"); the web app uses its session cookie. ' +
+        'API-key clients may send "X-Spider-Source: cli | mcp | api" to label their activity.',
+    },
+    servers: [{ url: serverUrl }],
+    security: [{ bearerAuth: [] }, { sessionCookie: [] }],
+    paths,
+    components: {
+      securitySchemes: {
+        bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "spt_…" },
+        sessionCookie: {
+          type: "apiKey",
+          in: "cookie",
+          name: "better-auth.session_token",
+          description: "Browser session (prefixed with __Secure- over HTTPS)",
+        },
+      },
+      schemas,
+    },
+  };
+}

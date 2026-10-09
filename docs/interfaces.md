@@ -7,7 +7,8 @@ Anything possible in the UI is also possible through these interfaces. The web a
 | Interface | Purpose |
 |---|---|
 | **Web app** | Main UI |
-| **Public API** | REST with an OpenAPI spec, generated from Zod schemas |
+| **Public API** | REST with an OpenAPI 3.1 spec at `GET /openapi.json`, request bodies generated from the Zod schemas |
+| **SDK** | `packages/sdk`: typed TypeScript client used by the CLI and external agents |
 | **MCP server** | Native tool access for agents, served over HTTP from `backend/api` |
 | **CLI** | `spider` (`backend/cli`), for people, scripts and agents |
 | **Webhooks** | Outbound events: tasks, comments, runs, git links |
@@ -20,6 +21,24 @@ See [auth.md](./auth.md) for all flows.
 - **People:** session cookie in the browser; OAuth device flow for the CLI.
 - **MCP clients:** an agent API key sent as `Authorization: Bearer spt_…` (OAuth 2.1, each connected client becoming its own agent actor, is planned).
 - **Agents, CI and integrations:** API keys, stored only as hashes, scoped and revocable.
+
+## Public API
+
+- Base path `/v1`; organization-scoped routes under `/v1/orgs/{orgSlug}` (members, projects, tasks). The spec at `/openapi.json` is the reference.
+- Errors are `{ "error": { "code", "message" } }` with status 400 / 401 / 403 / 404 / 409.
+- **Activity source:** browser sessions record `source = ui`. API-key clients record `api` by default and may declare `X-Spider-Source: cli | mcp | api`; other values are ignored.
+
+## SDK
+
+```ts
+import { createClient, SpiderApiError } from "@repo/sdk";
+
+const spider = createClient({ baseUrl: "https://tracker-api.batele.plus", token: process.env.SPIDER_TOKEN, source: "cli" });
+const task = await spider.tasks.create("batele", "ST", { title: "Write the CLI" });
+await spider.tasks.update("batele", task.key, { priority: 2 });
+```
+
+Without a token the client sends the browser session cookie (`credentials: "include"`). Non-2xx responses throw `SpiderApiError(status, code, message)`; `204` resolves to `undefined`.
 
 ## MCP server
 

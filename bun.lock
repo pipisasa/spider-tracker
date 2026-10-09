@@ -24,6 +24,7 @@
       },
       "devDependencies": {
         "@repo/eslint-config": "*",
+        "@repo/sdk": "*",
         "@repo/typescript-config": "*",
         "@types/bun": "^1.4.2",
         "eslint": "^9.39.1",
@@ -100,6 +101,20 @@
         "globals": "^16.5.0",
         "typescript": "^5.9.2",
         "typescript-eslint": "^8.50.0",
+      },
+    },
+    "packages/sdk": {
+      "name": "@repo/sdk",
+      "version": "0.1.0",
+      "dependencies": {
+        "@repo/core": "*",
+      },
+      "devDependencies": {
+        "@repo/eslint-config": "*",
+        "@repo/typescript-config": "*",
+        "@types/bun": "^1.4.2",
+        "eslint": "^9.39.1",
+        "typescript": "5.9.2",
       },
     },
     "packages/typescript-config": {
@@ -490,6 +505,8 @@
     "@repo/db": ["@repo/db@workspace:packages/db"],
 
     "@repo/eslint-config": ["@repo/eslint-config@workspace:packages/eslint-config"],
+
+    "@repo/sdk": ["@repo/sdk@workspace:packages/sdk"],
 
     "@repo/typescript-config": ["@repo/typescript-config@workspace:packages/typescript-config"],
 
