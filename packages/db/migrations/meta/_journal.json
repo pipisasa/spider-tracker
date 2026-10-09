@@ -8,6 +8,20 @@
       "when": 1791555953248,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791559464005,
+      "tag": "0001_projects_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791559585183,
+      "tag": "0002_sort_key_collation",
+      "breakpoints": true
     }
   ]
 }
