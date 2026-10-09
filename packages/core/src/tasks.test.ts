@@ -5,6 +5,7 @@ import type { ActorContext } from "./access";
 import { DomainError } from "./errors";
 import { createOrganization } from "./organizations";
 import { createProject, getProject } from "./projects";
+import { listTaskActivity } from "./activity-feed";
 import { createTask, deleteTask, getTask, listTasks, updateTask } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -73,9 +74,9 @@ run("projects and tasks", () => {
     await updateTask(db, ctx, "SPI-2", { assigneeIds: [], title: "Second (renamed)" });
     const task = await getTask(db, ctx.orgId, "SPI-2");
     expect(task.assigneeIds).toEqual([]);
-    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, task.id));
+    const log = await listTaskActivity(db, ctx.orgId, "SPI-2");
     expect(log.map((e) => e.action)).toEqual(["task.created", "task.updated"]);
-    expect(log[1]?.changes).toMatchObject({ title: ["Second", "Second (renamed)"] });
+    expect(log[1]).toMatchObject({ source: "api", actorId: ctx.actorId, changes: { title: ["Second", "Second (renamed)"] } });
   });
 
   test("rejects foreign statuses, unknown assignees and self-parenting", async () => {

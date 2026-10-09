@@ -1,4 +1,5 @@
 import type {
+  ActivityDto,
   ActorDto,
   AgentDto,
   CommentDto,
@@ -25,6 +26,7 @@ export const keys = {
   tasks: (org: string, key: string) => ["orgs", org, "projects", key, "tasks"] as const,
   task: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey] as const,
   comments: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "comments"] as const,
+  activity: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "activity"] as const,
 };
 
 export const membersQuery = (org: string) =>
@@ -183,3 +185,9 @@ export function useAddComment(org: string, taskKey: string) {
       qc.setQueryData<CommentDto[]>(keys.comments(org, taskKey), (old) => (old ? [...old, comment] : [comment])),
   });
 }
+
+export const activityQuery = (org: string, taskKey: string) =>
+  queryOptions({
+    queryKey: keys.activity(org, taskKey),
+    queryFn: async () => (await api<ListResponse<ActivityDto>>(`${orgPath(org)}/tasks/${taskKey}/activity`)).items,
+  });

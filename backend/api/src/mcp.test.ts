@@ -98,6 +98,7 @@ withDb("MCP server", () => {
         "assign_to_me",
         "create_task",
         "get_inbox",
+        "get_task_activity",
         "list_comments",
         "mark_inbox_read",
         "get_project",
@@ -173,6 +174,15 @@ withDb("MCP server", () => {
     expect(reply.isError).toBeFalsy();
     const thread = JSON.parse((await call(client, "list_comments", { key: "SPI-1" })).text) as { author: string }[];
     expect(thread.map((c) => c.author)).toEqual([ownerRow?.handle ?? "", "claude-code"]);
+
+    const history = JSON.parse((await call(client, "get_task_activity", { key: "SPI-1" })).text) as {
+      action: string;
+      via: string;
+      changes: Record<string, unknown>;
+    }[];
+    expect(history[0]).toMatchObject({ action: "task.created", via: "mcp" });
+    expect(history.some((e) => e.action === "task.updated" && Array.isArray(e.changes.status))).toBe(true);
+    expect(history.at(-1)).toMatchObject({ action: "comment.created", via: "mcp" });
 
     expect(JSON.parse((await call(client, "mark_inbox_read", { up_to: mention?.id })).text)).toMatchObject({
       updated: expect.any(Number),

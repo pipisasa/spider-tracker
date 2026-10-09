@@ -2,6 +2,7 @@ import type { ActivitySource, ActorRole, AgentDto, ListResponse } from "@repo/co
 import {
   DomainError,
   addComment,
+  listTaskActivity,
   listComments,
   listInbox,
   markInboxRead,
@@ -116,6 +117,10 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
+  );
+
+  app.get("/tasks/:taskKey/activity", async (c) =>
+    c.json(list(await listTaskActivity(db, c.get("actor").orgId, c.req.param("taskKey")))),
   );
 
   app.get("/tasks/:taskKey/comments", async (c) =>

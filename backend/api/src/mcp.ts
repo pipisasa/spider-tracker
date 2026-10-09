@@ -13,6 +13,7 @@ import {
   listMembers,
   listProjects,
   listComments,
+  listTaskActivity,
   listInbox,
   listTasks,
   markInboxRead,
@@ -317,6 +318,38 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           })),
         ),
       ),
+  );
+
+  server.registerTool(
+    "get_task_activity",
+    {
+      description:
+        "A task's history, oldest first: who created it, changed which fields (status and assignees as names) and commented, and from where (ui, api, mcp, cli).",
+      inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
+    },
+    ({ key: taskKey }) =>
+      run(async () => {
+        const project = await projectOfTask(taskKey);
+        const statusName = (id: unknown) => project.statuses.find((s) => s.id === id)?.name ?? id;
+        const handles = async (ids: unknown) => (Array.isArray(ids) ? Promise.all(ids.map((id) => handleOf(String(id)))) : ids);
+        return Promise.all(
+          (await listTaskActivity(db, ctx.orgId, taskKey)).map(async (e) => {
+            const changes: Record<string, unknown> = { ...e.changes };
+            const pair = (v: unknown) => (Array.isArray(v) ? v : [undefined, v]);
+            if (changes.statusId !== undefined) {
+              const [from, to] = pair(changes.statusId);
+              changes.status = from === undefined ? statusName(to) : [statusName(from), statusName(to)];
+              delete changes.statusId;
+            }
+            if (changes.assigneeIds !== undefined) {
+              const [from, to] = pair(changes.assigneeIds);
+              changes.assignees = from === undefined ? await handles(to) : [await handles(from), await handles(to)];
+              delete changes.assigneeIds;
+            }
+            return { action: e.action, by: await handleOf(e.actorId), via: e.source, at: e.createdAt, changes };
+          }),
+        );
+      }),
   );
 
   server.registerTool(

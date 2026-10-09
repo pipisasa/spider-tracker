@@ -1,10 +1,10 @@
 import { ActorAvatar } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { commentsQuery, useAddComment } from "@/lib/work";
-import type { ActorDto } from "@repo/core/contracts";
+import { activityQuery, commentsQuery, useAddComment } from "@/lib/work";
+import type { ActivityDto, ActorDto, CommentDto, StatusDto } from "@repo/core/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { BotIcon } from "lucide-react";
+import { BotIcon, HistoryIcon } from "lucide-react";
 import { Fragment, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -28,12 +28,58 @@ function Body({ body, handles }: { body: string; handles: Set<string> }) {
   );
 }
 
-export function TaskComments({ orgSlug, taskKey, members }: { orgSlug: string; taskKey: string; members: ActorDto[] }) {
+const PRIORITY_LABELS = ["no priority", "urgent", "high", "medium", "low"];
+
+/** One line describing an activity entry, e.g. "changed status Todo → In Progress". */
+function describeActivity(entry: ActivityDto, statuses: StatusDto[], members: Map<string, ActorDto>): string | null {
+  const statusName = (id: unknown) => statuses.find((s) => s.id === id)?.name ?? "unknown";
+  const names = (ids: unknown) =>
+    Array.isArray(ids) && ids.length > 0 ? ids.map((id) => `@${members.get(String(id))?.handle ?? "unknown"}`).join(", ") : "nobody";
+  if (entry.action === "task.created") return "created the task";
+  if (entry.action === "task.deleted") return "deleted the task";
+  if (entry.action !== "task.updated" || !entry.changes) return null;
+  const parts: string[] = [];
+  for (const [field, value] of Object.entries(entry.changes)) {
+    const [from, to] = Array.isArray(value) ? value : [undefined, value];
+    if (field === "statusId") parts.push(`moved ${statusName(from)} → ${statusName(to)}`);
+    else if (field === "assigneeIds") parts.push(`assigned ${names(to)}`);
+    else if (field === "priority") parts.push(`set priority to ${PRIORITY_LABELS[Number(to)] ?? to}`);
+    else if (field === "title") parts.push("renamed the task");
+    else if (field === "description") parts.push("edited the description");
+    else if (field === "parentId") parts.push(to ? "set a parent task" : "removed the parent task");
+    else parts.push(`changed ${field}`);
+  }
+  return parts.join(", ") || null;
+}
+
+type TimelineItem = { at: string; comment: CommentDto } | { at: string; activity: ActivityDto };
+
+export function TaskComments({
+  orgSlug,
+  taskKey,
+  members,
+  statuses,
+}: {
+  orgSlug: string;
+  taskKey: string;
+  members: ActorDto[];
+  statuses: StatusDto[];
+}) {
   const { data: comments = [] } = useQuery(commentsQuery(orgSlug, taskKey));
+  const { data: activity = [] } = useQuery(activityQuery(orgSlug, taskKey));
   const add = useAddComment(orgSlug, taskKey);
   const [draft, setDraft] = useState("");
   const byId = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const handles = useMemo(() => new Set(members.map((m) => m.handle)), [members]);
+  // Comments carry their own entry; their "comment.created" activity rows would only repeat them.
+  const timeline = useMemo<TimelineItem[]>(
+    () =>
+      [
+        ...comments.map((comment) => ({ at: comment.createdAt, comment })),
+        ...activity.filter((a) => a.action !== "comment.created").map((a) => ({ at: a.createdAt, activity: a })),
+      ].sort((a, b) => a.at.localeCompare(b.at)),
+    [comments, activity],
+  );
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -43,10 +89,26 @@ export function TaskComments({ orgSlug, taskKey, members }: { orgSlug: string; t
 
   return (
     <section className="flex flex-col gap-4 border-t pt-4">
-      <h2 className="text-sm font-medium text-muted-foreground">Comments</h2>
-      {comments.length === 0 && <p className="text-sm text-muted-foreground">No comments yet.</p>}
+      <h2 className="text-sm font-medium text-muted-foreground">Activity</h2>
       <ul className="flex flex-col gap-4">
-        {comments.map((c) => {
+        {timeline.map((item) => {
+          if ("activity" in item) {
+            const text = describeActivity(item.activity, statuses, byId);
+            if (!text) return null;
+            const actor = byId.get(item.activity.actorId);
+            return (
+              <li key={`a${item.activity.id}`} className="flex items-center gap-2 pl-1 text-xs text-muted-foreground">
+                <HistoryIcon className="size-3.5 shrink-0" />
+                <span>
+                  <span className="font-medium text-foreground">{actor?.name ?? "Someone"}</span> {text}
+                  {item.activity.source !== "ui" && ` · via ${item.activity.source}`}
+                  {" · "}
+                  {timeFormat.format(new Date(item.at))}
+                </span>
+              </li>
+            );
+          }
+          const c = item.comment;
           const author = byId.get(c.authorId);
           return (
             <li key={c.id} className="flex gap-3">

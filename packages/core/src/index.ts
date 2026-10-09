@@ -14,3 +14,4 @@ export * from "./comments";
 export * from "./inbox";
 export * from "./events";
 export * from "./signup";
+export * from "./activity-feed";

@@ -1,4 +1,5 @@
 import type {
+  ActivityDto,
   ActorDto,
   ApiErrorBody,
   CommentDto,
@@ -149,6 +150,9 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<TaskDto>("PATCH", `${org(orgSlug)}/tasks/${seg(taskKey)}`, input),
       delete: (orgSlug: string, taskKey: string) =>
         request<void>("DELETE", `${org(orgSlug)}/tasks/${seg(taskKey)}`),
+      /** The task's history (created, updated fields, comments), oldest first. */
+      activity: (orgSlug: string, taskKey: string) =>
+        request<ListResponse<ActivityDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/activity`),
     },
   };
 }

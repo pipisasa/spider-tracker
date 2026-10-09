@@ -160,3 +160,16 @@ export interface InboxItemDto {
   comment: { id: string; body: string } | null;
   from: { id: string; handle: string; name: string; type: "human" | "agent" };
 }
+
+/** One entry of a task's history, from the activity log. */
+export interface ActivityDto {
+  id: number;
+  /** e.g. "task.created", "task.updated", "comment.created" */
+  action: string;
+  /** For task.updated: field → [before, after] (statusId, assigneeIds, title, priority, …). */
+  changes: Record<string, unknown> | null;
+  /** ui | api | mcp | cli | git | agent_run */
+  source: string;
+  actorId: string;
+  createdAt: string;
+}

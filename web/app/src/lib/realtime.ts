@@ -27,12 +27,16 @@ export function useOrgEvents(orgSlug: string) {
     on("task.changed", (e) => {
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       void qc.invalidateQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
+      void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
     });
     on("task.deleted", (e) => {
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       qc.removeQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
     });
-    on("comment.created", (e) => void qc.invalidateQueries({ queryKey: keys.comments(orgSlug, e.taskKey) }));
+    on("comment.created", (e) => {
+      void qc.invalidateQueries({ queryKey: keys.comments(orgSlug, e.taskKey) });
+      void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
+    });
     on("project.changed", () => void qc.invalidateQueries({ queryKey: keys.projects(orgSlug) }));
 
     return () => source.close();

@@ -72,7 +72,7 @@ function TaskPage() {
         </nav>
         {/* Keyed by task so local edits reset when navigating between tasks. */}
         <TaskText key={task.id} task={task} onSave={save} />
-        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} />
+        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
       </main>
 
       <aside className="flex w-72 shrink-0 flex-col gap-4 border-l p-4">
