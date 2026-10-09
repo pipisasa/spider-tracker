@@ -9,7 +9,7 @@ Anything possible in the UI is also possible through these interfaces. The web a
 | **Web app** | Main UI |
 | **Public API** | REST with an OpenAPI spec, generated from Zod schemas |
 | **MCP server** | Native tool access for agents, served over HTTP from `backend/api` |
-| **CLI** | `spider`, for people, scripts and agents |
+| **CLI** | `spider` (`backend/cli`), for people, scripts and agents |
 | **Webhooks** | Outbound events: tasks, comments, runs, git links |
 | **GitHub App** | Inbound repository events; outbound branch and pull request actions |
 
@@ -48,47 +48,40 @@ Planned: comments, documents, custom fields.
 
 ## CLI
 
-### Stack
-- TypeScript, built on `packages/sdk` and `packages/core`
-- Commander (or oclif if a plugin system is needed); @clack/prompts for interactive prompts
-- Distributed through npm and as standalone binaries (`bun build --compile`) for Homebrew and curl installs
-- Tokens kept in the OS keychain, with a config-file fallback
+`backend/cli` (`@repo/cli`): the `spider` command, built on `packages/sdk` with Commander. Every action records `source = cli`.
 
-### Authentication
-- `spider login`: OAuth device flow in the browser
-- `SPIDER_TOKEN` environment variable for agents and CI
-- `spider org switch <org>`, plus per-repo defaults in `.spider.json`
-
-### Commands
 ```bash
-spider task list --mine --status in_progress
-spider task view SPI-123
-spider task create "Fix login redirect" --project SPI --tag bug --assign @claude-agent
-spider task update SPI-123 --status review --field severity=high
-spider comment SPI-123 "Root cause is the cookie domain"
-
-spider start SPI-123      # assign to me, set In Progress, create + check out branch
-spider pr                 # open a pull request linked to the current branch's task
-spider done               # mark the current branch's task done
-
-spider agent list
-spider agent run @reviewer SPI-123
-spider agent logs <run-id> --follow
-
-spider doc pull SPEC-12 > spec.md
-spider doc push SPEC-12 spec.md
+export SPIDER_TOKEN=spt_…                 # agent API key (required; never printed)
+export SPIDER_API_URL=https://…           # optional, default https://tracker-api.batele.plus
+bun run spider task list --mine           # from the repo; or build a binary: bun run --cwd backend/cli build → dist/spider
 ```
 
-### Rules that make it work for agents
-1. `--json` on every command, with stable output shapes.
-2. Never requires interaction: every prompt has a flag. When not attached to a terminal, it fails with a clear error instead of waiting.
-3. Meaningful exit codes: `0` success, `2` validation, `3` not found, `4` permission.
-4. Git awareness: it finds the task from the current branch name.
-5. Compact default output, so it uses little of an agent's context window.
+The organization is the token's (from `whoami`).
 
-### Later
-- Local SQLite cache for instant reads and offline use
-- `spider tui`: a full-screen terminal UI (Ink)
+### Commands (v1)
+```bash
+spider whoami
+spider projects
+spider task list [--project ST] [--status "In Progress"] [--mine] [--limit 50]
+spider task view [ST-12]
+spider task create --project ST --title "Fix login" [--description …] [--status Todo] [--priority 0-4] [--assign @alice --assign me]
+spider task update [ST-12] [--title …] [--description …] [--status …] [--priority …] [--assign …]
+spider task start [ST-12]   # assign me + the project's first in-progress status
+spider task done [ST-12]    # the project's first done status
+```
+
+- **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
+- **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
+- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
+- **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (including a missing `SPIDER_TOKEN`). It never prompts.
+- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
+
+### Planned
+- `spider login` (OAuth device flow), tokens in the OS keychain, `spider org switch`, per-repo defaults in `.spider.json`
+- `spider comment ST-12 "…"`, `spider pr`, `spider start` creating and checking out the branch
+- `spider agent list|run|logs`, `spider doc pull|push`, `--field` / `--tag`
+- Distribution through npm and standalone binaries for Homebrew and curl installs
+- Local SQLite cache for instant reads and offline use; `spider tui` (Ink)
 
 ## Webhooks
 

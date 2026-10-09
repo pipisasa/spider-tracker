@@ -13,7 +13,9 @@
     "VITE_API_URL",
     "NODE_ENV",
     "BATELE_ID_CLIENT_ID",
-    "BATELE_ID_ISSUER"
+    "BATELE_ID_ISSUER",
+    "SPIDER_TOKEN",
+    "SPIDER_API_URL"
   ],
   "tasks": {
     "build": {

@@ -17,6 +17,7 @@
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:migrate": "bun run --cwd packages/db db:migrate",
     "db:studio": "bun run --cwd packages/db db:studio",
+    "spider": "bun backend/cli/src/index.ts",
     "deploy:web": "bun run --cwd web/app deploy",
     "deploy:api": "railway up --service api --detach"
   },

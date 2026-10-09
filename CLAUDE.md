@@ -38,6 +38,7 @@ Turborepo monorepo with bun workspaces.
 ### Apps
 
 - **`@repo/api`** (`backend/api`) — Hono on Bun, port 4000. Better Auth mounted at `/api/auth/*`; signed-in routes under `/v1/*`; `/health` and `/health/ready`. `/mcp` is a stateless Streamable HTTP MCP server (`src/mcp.ts`, `@modelcontextprotocol/sdk`) for agent API keys only; its tools call core with `source = "mcp"`.
+- **`@repo/cli`** (`backend/cli`) — the `spider` CLI on `@repo/sdk` + Commander, recording `source = cli`. `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd? })` (testable, never prompts; exit codes 0/1/2/3/4); `src/index.ts` is the bin. Auth via `SPIDER_TOKEN`, optional `SPIDER_API_URL`. Run with `bun run spider …`; `build` compiles `dist/spider`. Its integration test drives the API app (`@repo/api` is a dev dependency).
 - **`@repo/web`** (`web/app`) — Vite + React SPA, port 5173. TanStack Router (file-based routes in `src/routes`, `_authed` layout guards signed-in pages) + TanStack Query. shadcn/ui (radix-nova) components in `src/components/ui` (generated; don't lint or hand-edit).
 
 ### Packages

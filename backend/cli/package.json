@@ -1,0 +1,33 @@
+{
+  "name": "@repo/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "spider": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/cli.ts"
+  },
+  "scripts": {
+    "build": "bun build --compile src/index.ts --outfile dist/spider",
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@repo/core": "*",
+    "@repo/sdk": "*",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@repo/api": "*",
+    "@repo/db": "*",
+    "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
+    "@types/bun": "^1.4.2",
+    "drizzle-orm": "^0.45.4",
+    "eslint": "^9.39.1",
+    "typescript": "5.9.2"
+  }
+}
