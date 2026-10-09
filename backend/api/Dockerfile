@@ -1,5 +1,15 @@
 # Build context: repository root (Railway: RAILWAY_DOCKERFILE_PATH=backend/api/Dockerfile).
-FROM oven/bun:1.4-slim
+# Debian from Amazon's public mirror plus a pinned Bun release: Railway's anonymous pulls
+# of oven/bun from Docker Hub hit 429 rate limits.
+FROM public.ecr.aws/docker/library/debian:bookworm-slim
+ARG BUN_VERSION=1.4.2
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+ && curl -fsSL -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64-baseline.zip" \
+ && unzip -q /tmp/bun.zip -d /tmp \
+ && mv /tmp/bun-linux-x64-baseline/bun /usr/local/bin/bun \
+ && rm -rf /tmp/bun.zip /tmp/bun-linux-x64-baseline /var/lib/apt/lists/* \
+ && bun --version
 
 WORKDIR /app
 ENV NODE_ENV=production
