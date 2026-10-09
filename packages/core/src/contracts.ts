@@ -30,3 +30,9 @@ export interface MeResponse {
 export interface ApiErrorBody {
   error: { code: string; message: string };
 }
+
+export type AuthProvider = "magic-link" | "github" | "batele-id";
+
+export interface AuthProvidersResponse {
+  providers: AuthProvider[];
+}

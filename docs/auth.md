@@ -73,6 +73,20 @@ select set_config('app.org_id', '<org>', true), set_config('app.actor_id', '<act
 
 and the row-level security policies compare `org_id` to `current_setting('app.org_id')`.
 
-## Later: id.batele.plus
+## Batele ID (connected)
 
-`id.batele.plus` is added as an extra sign-in provider through Better Auth's generic OAuth plugin, using its OIDC discovery URL. A batele identity links to the same Better Auth user (account linking by verified email), so existing actors are unaffected. Spider Tracker stays its own OAuth/OIDC provider for MCP, the CLI and third-party apps.
+Batele ID is available as a sign-in option ("Continue with Batele ID").
+
+| Thing | Value |
+|---|---|
+| Plugin | Better Auth generic OAuth, provider ID `batele-id` (registered as a regular social provider) |
+| Issuer / discovery | `https://api-v2.batele.plus/auth/.well-known/openid-configuration` (endpoints live on the API host, not `id.batele.plus`) |
+| Client | `BATELE_ID_CLIENT_ID` (public PKCE client, no secret: `tokenEndpointAuth: none`) |
+| Redirect URIs to register | `https://tracker-api.batele.plus/api/auth/callback/batele-id`, `http://localhost:4000/api/auth/callback/batele-id` |
+| Profile | `/oidc/userinfo` (`sub`, `name`, `email?`, `picture?`), see `backend/api/src/batele-id.ts` |
+
+- **Users without email:** Batele users can sign in by phone, but Better Auth needs an email. They get a placeholder `<sub>@users.batele-id.invalid`, which can never receive mail or match a real address.
+- **Account linking:** automatic merging at sign-in is disabled (`disableImplicitLinking`), because Batele emails aren't verified. Users link Batele ID or GitHub explicitly from the home page while signed in (`linkSocial`); Batele ID and GitHub are listed as trusted providers so that explicit linking is allowed, and the linked account's email must match the user's.
+- **Login page:** the web app asks `GET /auth/providers` which methods are configured and shows only those buttons.
+
+Spider Tracker still acts as its own OAuth/OIDC provider for MCP, the CLI and third-party apps.

@@ -36,6 +36,18 @@ describe("public routes", () => {
     expect(await res.json()).toEqual({ status: "ok" });
   });
 
+  test("GET /auth/providers lists only configured sign-in methods", async () => {
+    const res = await app.request("/auth/providers");
+    expect(await res.json()).toEqual({ providers: ["magic-link"] });
+  });
+
+  test("Batele ID is listed when its client ID is set", async () => {
+    const withBatele = loadEnv({ ...env, PORT: String(env.PORT), BATELE_ID_CLIENT_ID: "oc_test" });
+    const appWithBatele = createApp({ db, auth: createAuth(db, withBatele, mailer), env: withBatele });
+    const res = await appWithBatele.request("/auth/providers");
+    expect(await res.json()).toEqual({ providers: ["magic-link", "batele-id"] });
+  });
+
   test("/v1 requires a session", async () => {
     const res = await app.request("/v1/me");
     expect(res.status).toBe(401);

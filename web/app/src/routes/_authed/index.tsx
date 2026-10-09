@@ -1,3 +1,4 @@
+import { LinkedAccounts } from "@/components/linked-accounts";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { meQuery } from "@/lib/queries";
@@ -5,6 +6,8 @@ import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authed/")({
+  validateSearch: (search: Record<string, unknown>): { error?: string } =>
+    typeof search.error === "string" ? { error: search.error } : {},
   beforeLoad: ({ context }) => {
     if (context.me.memberships.length === 0) throw redirect({ to: "/onboarding" });
   },
@@ -15,6 +18,7 @@ function HomePage() {
   const { data: me } = useSuspenseQuery(meQuery);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { error: linkError } = Route.useSearch();
 
   async function signOut() {
     await authClient.signOut();
@@ -46,6 +50,7 @@ function HomePage() {
           ))}
         </ul>
       </section>
+      <LinkedAccounts linkError={linkError} />
     </main>
   );
 }

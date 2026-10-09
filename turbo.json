@@ -11,7 +11,9 @@
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
     "VITE_API_URL",
-    "NODE_ENV"
+    "NODE_ENV",
+    "BATELE_ID_CLIENT_ID",
+    "BATELE_ID_ISSUER"
   ],
   "tasks": {
     "build": {

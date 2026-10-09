@@ -14,10 +14,11 @@ Ordered so the product is used to build itself as early as possible: by the end 
 - [x] Design docs
 - [x] `packages/db` (Drizzle schema + migrations), `packages/core`
 - [x] `backend/api` (Hono) with a health check, `web/app` (Vite + TanStack Router + Query) shell
-- [x] Auth: Better Auth (magic link, GitHub), organizations with owner actor, onboarding (pulled forward from Phase 1)
-- [ ] Railway: api + Postgres; Railway's public URL turned off
-- [ ] Cloudflare: Pages for `tracker.batele.plus`, DNS for `tracker-api.batele.plus`, Access for both
-- [ ] CI: lint, type-check and tests on every push; deploy on merge to `main`
+- [x] Auth: Better Auth (magic link, GitHub, Batele ID), organizations with owner actor, onboarding (pulled forward from Phase 1)
+- [x] Railway: api + Postgres 18 at `tracker-api.batele.plus`; no Railway public URL
+- [x] Cloudflare Pages at `tracker.batele.plus`, DNS for both domains
+- [ ] Cloudflare Access for both domains
+- [x] Manual deploy script for the web app (`bun run deploy:web`); no CI/CD for now
 
 **Done when:** a page on `tracker.batele.plus` loads data from `tracker-api.batele.plus`, behind Access.
 
@@ -99,7 +100,6 @@ Ordered so the product is used to build itself as early as possible: by the end 
 **Goal:** ready for people other than the owner.
 
 - OAuth 2.1 / OIDC provider + device flow (CLI login, MCP clients without API keys, third-party apps)
-- Sign in with `id.batele.plus`
 - Cycles, milestones, timeline view
 - Notifications, inbox, outbound webhooks
 - Claude Code plugin (MCP + skill + channel)

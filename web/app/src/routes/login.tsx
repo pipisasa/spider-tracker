@@ -3,24 +3,32 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
-import { meQuery } from "@/lib/queries";
+import { authErrorMessage } from "@/lib/auth-errors";
+import { authProvidersQuery, meQuery } from "@/lib/queries";
+import type { AuthProvider } from "@repo/core/contracts";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
 export const Route = createFileRoute("/login")({
+  validateSearch: (search: Record<string, unknown>): { error?: string } =>
+    typeof search.error === "string" ? { error: search.error } : {},
   beforeLoad: async ({ context }) => {
     const me = await context.queryClient.ensureQueryData(meQuery);
     if (me) throw redirect({ to: "/" });
   },
+  loader: ({ context }) => context.queryClient.prefetchQuery(authProvidersQuery),
   component: LoginPage,
 });
 
 const callbackURL = `${window.location.origin}/`;
+const errorCallbackURL = `${window.location.origin}/login`;
 
 function LoginPage() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
-  const [error, setError] = useState<string | null>(null);
+  const { error: errorCode } = Route.useSearch();
+  const [error, setError] = useState<string | null>(errorCode ? authErrorMessage(errorCode) : null);
 
   async function sendLink(event: FormEvent) {
     event.preventDefault();
@@ -35,10 +43,13 @@ function LoginPage() {
     setStatus("sent");
   }
 
-  async function signInWithGithub() {
+  const { data } = useQuery(authProvidersQuery);
+  const providers = data?.providers ?? [];
+
+  async function signInWith(provider: Extract<AuthProvider, "github" | "batele-id">) {
     setError(null);
-    const { error } = await authClient.signIn.social({ provider: "github", callbackURL });
-    if (error) setError(error.message ?? "GitHub sign-in is not available");
+    const { error } = await authClient.signIn.social({ provider, callbackURL, errorCallbackURL });
+    if (error) setError(error.message ?? "This sign-in method is not available");
   }
 
   return (
@@ -71,9 +82,16 @@ function LoginPage() {
               </Button>
             </form>
           )}
-          <Button variant="outline" onClick={signInWithGithub}>
-            Continue with GitHub
-          </Button>
+          {providers.includes("batele-id") && (
+            <Button variant="outline" onClick={() => signInWith("batele-id")}>
+              Continue with Batele ID
+            </Button>
+          )}
+          {providers.includes("github") && (
+            <Button variant="outline" onClick={() => signInWith("github")}>
+              Continue with GitHub
+            </Button>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </CardContent>
       </Card>

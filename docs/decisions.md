@@ -90,7 +90,7 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 
 **Trade-off:** no Supabase `auth.uid()` in database access rules. The API sets `app.org_id` and `app.actor_id` for each transaction, and the access rules read those instead.
 
-**Later:** `id.batele.plus` is added as an extra sign-in provider (generic OAuth), without replacing our own provider.
+**Batele ID:** added as an extra sign-in provider (generic OAuth, `batele-id`), without replacing our own provider. See [auth.md](./auth.md#batele-id-connected).
 
 ---
 

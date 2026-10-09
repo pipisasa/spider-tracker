@@ -1,11 +1,11 @@
-import type { ApiErrorBody, MeResponse, MembershipDto } from "@repo/core";
+import type { ApiErrorBody, AuthProvidersResponse, MeResponse, MembershipDto } from "@repo/core";
 import { DomainError, createOrganization, listMemberships } from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import type { Auth } from "./auth";
+import { enabledAuthProviders, type Auth } from "./auth";
 import type { Env } from "./env";
 
 type SessionData = NonNullable<Awaited<ReturnType<Auth["api"]["getSession"]>>>;
@@ -46,6 +46,11 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   app.get("/health/ready", async (c) => {
     await db.execute(sql`select 1`);
     return c.json({ status: "ok" });
+  });
+
+  app.get("/auth/providers", (c) => {
+    const body: AuthProvidersResponse = { providers: enabledAuthProviders(env) };
+    return c.json(body);
   });
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));

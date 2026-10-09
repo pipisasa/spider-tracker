@@ -9,6 +9,8 @@ const envSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32, "Use at least 32 random characters"),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  BATELE_ID_CLIENT_ID: z.string().optional(),
+  BATELE_ID_ISSUER: z.url().default("https://api-v2.batele.plus/auth"),
 });
 
 export type Env = z.infer<typeof envSchema>;
