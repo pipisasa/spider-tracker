@@ -172,8 +172,6 @@ export const commentsQuery = (org: string, taskKey: string) =>
   queryOptions({
     queryKey: keys.comments(org, taskKey),
     queryFn: async () => (await api<ListResponse<CommentDto>>(`${orgPath(org)}/tasks/${taskKey}/comments`)).items,
-    // Stopgap until realtime (ST-13): pick up agents' replies without a reload.
-    refetchInterval: 15_000,
   });
 
 export function useAddComment(org: string, taskKey: string) {

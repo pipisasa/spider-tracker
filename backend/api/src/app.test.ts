@@ -487,3 +487,62 @@ withDb("comments and inbox API", () => {
     expect((await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "too much" })).status).toBe(429);
   });
 });
+
+withDb("realtime events (SSE)", () => {
+  const stamp = Date.now();
+  const email = `sse-${stamp}@example.com`;
+  const slug = `sse-${stamp}`;
+  const otherSlug = `sse-other-${stamp}`;
+
+  afterAll(async () => {
+    for (const s of [slug, otherSlug]) await db.delete(schema.organizations).where(eq(schema.organizations.slug, s));
+    await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  test("the stream carries this organization's changes, and nobody else's", async () => {
+    const cookie = await signIn(email);
+    const post = (path: string, body: unknown) =>
+      app.request(path, {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    for (const s of [slug, otherSlug]) {
+      await post("/v1/organizations", { name: s, slug: s });
+      await post(`/v1/orgs/${s}/projects`, { name: "Spider", key: "SPI" });
+    }
+
+    const controller = new AbortController();
+    const res = await app.request(`/v1/orgs/${slug}/events`, { headers: { Cookie: cookie }, signal: controller.signal });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const readUntil = async (needle: string) => {
+      while (!buffer.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value);
+      }
+      return buffer.includes(needle);
+    };
+
+    expect(await readUntil("event: ready")).toBe(true);
+    await post(`/v1/orgs/${otherSlug}/projects/SPI/tasks`, { title: "elsewhere" });
+    await post(`/v1/orgs/${slug}/projects/SPI/tasks`, { title: "Live" });
+    await post(`/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "hi" });
+    expect(await readUntil("event: comment.created")).toBe(true);
+
+    const events = buffer
+      .split("\n")
+      .filter((line) => line.startsWith("data: ") && line.includes("orgId"))
+      .map((line) => JSON.parse(line.slice(6)) as { type: string; taskKey?: string });
+    expect(events.map((e) => [e.type, e.taskKey])).toEqual([
+      ["task.changed", "SPI-1"],
+      ["comment.created", "SPI-1"],
+    ]);
+
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  });
+});

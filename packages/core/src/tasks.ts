@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { assertCanWrite, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
+import { publish } from "./events";
 import { notify } from "./inbox";
 import type { Priority, TaskDto } from "./contracts";
 import { DomainError } from "./errors";
@@ -170,6 +171,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       changes: { title: task.title, statusId: status.id, assigneeIds },
     });
 
+    await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
     return toTaskDto(task, project.key, assigneeIds);
   });
 }
@@ -289,6 +291,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     if (Object.keys(changes).length > 0) {
       await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
     }
+    await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
     return toTaskDto(updated, projectKey, assigneeIds);
   });
 }
@@ -296,8 +299,9 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
 export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Promise<void> {
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
-    const { task } = await findTask(tx, ctx.orgId, taskKey);
+    const { task, projectKey } = await findTask(tx, ctx.orgId, taskKey);
     await tx.update(tasks).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, task.id));
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.deleted" });
+    await publish(tx, { type: "task.deleted", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
   });
 }

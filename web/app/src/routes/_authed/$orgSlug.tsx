@@ -11,6 +11,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { authClient } from "@/lib/auth-client";
 import { meQuery } from "@/lib/queries";
+import { useOrgEvents } from "@/lib/realtime";
 import { membersQuery, projectsQuery } from "@/lib/work";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
@@ -37,6 +38,7 @@ function OrgLayout() {
   const { membership, me } = Route.useRouteContext();
   const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  useOrgEvents(orgSlug);
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
   const queryClient = useQueryClient();
   const navigate = useNavigate();

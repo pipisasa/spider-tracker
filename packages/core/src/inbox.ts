@@ -3,6 +3,7 @@ import { schema } from "@repo/db";
 import { aliasedTable, and, asc, eq, gt, inArray, isNull, lte } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import type { InboxItemDto, InboxKind } from "./contracts";
+import { publish } from "./events";
 import { inboxQuery, markInboxReadInput } from "./schemas";
 import { parseInput } from "./validate";
 
@@ -28,6 +29,7 @@ export async function notify(
       actorId: ctx.actorId,
     })),
   );
+  await publish(tx, { type: "inbox.created", orgId: ctx.orgId, recipientIds: rows.map((r) => r.recipientId) });
 }
 
 const sender = aliasedTable(actors, "sender");

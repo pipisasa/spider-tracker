@@ -21,6 +21,7 @@ import {
 import type { Db, schema } from "@repo/db";
 import { Hono } from "hono";
 import { z } from "zod";
+import type { Realtime } from "./realtime";
 import type { AppEnv } from "./types";
 
 type ActorRow = typeof schema.actors.$inferSelect;
@@ -55,7 +56,7 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 }
 
 /** Tracker tools for one request, acting as the key's agent inside its organization. */
-function createMcpServer(db: Db, key: Key) {
+function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   const ctx: ActorContext = {
     orgId: key.organization.id,
     actorId: key.actor.id,
@@ -354,7 +355,10 @@ function createMcpServer(db: Db, key: Key) {
         const deadline = Date.now() + (wait_seconds ?? 0) * 1000;
         let items = await listInbox(db, ctx, query);
         while (items.length === 0 && Date.now() < deadline) {
-          await Bun.sleep(1000);
+          await realtime.waitFor(
+            (e) => e.type === "inbox.created" && e.orgId === ctx.orgId && e.recipientIds.includes(ctx.actorId),
+            Math.min(5000, deadline - Date.now()),
+          );
           items = await listInbox(db, ctx, query);
         }
         return items.map((i) => ({
@@ -398,7 +402,7 @@ function createMcpServer(db: Db, key: Key) {
  * transport, so there are no session ids and any instance can serve any request.
  * Only agent API keys are accepted; browser sessions are not.
  */
-export function mcpRoutes(db: Db) {
+export function mcpRoutes(db: Db, realtime: Realtime) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -416,7 +420,7 @@ export function mcpRoutes(db: Db) {
   app.post("/", async (c) => {
     const key = c.get("apiKey");
     if (!key) throw new Error("API key middleware didn't run");
-    const server = createMcpServer(db, key);
+    const server = createMcpServer(db, key, realtime);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     await server.connect(transport);
     try {

@@ -3,6 +3,7 @@ import { schema } from "@repo/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { assertRole, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
+import { publish } from "./events";
 import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto } from "./contracts";
 import { DomainError } from "./errors";
 import { createProjectInput } from "./schemas";
@@ -60,6 +61,7 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
       changes: { key, name },
     });
 
+    await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
     return { ...toProjectDto(project), statuses: created.sort((a, b) => a.position - b.position).map(toStatusDto) };
   });
 }

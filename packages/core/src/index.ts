@@ -12,3 +12,4 @@ export * from "./statuses";
 export * from "./devices";
 export * from "./comments";
 export * from "./inbox";
+export * from "./events";

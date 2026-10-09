@@ -5,6 +5,7 @@ import { assertCanWrite, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
 import type { CommentDto, InboxKind } from "./contracts";
 import { DomainError } from "./errors";
+import { publish } from "./events";
 import { notify } from "./inbox";
 import { createCommentInput } from "./schemas";
 import { findTask } from "./tasks";
@@ -130,6 +131,7 @@ export async function addComment(db: Db, ctx: ActorContext, taskKey: string, inp
       changes: { commentId: comment.id, mentions: handles },
     });
 
+    await publish(tx, { type: "comment.created", orgId: ctx.orgId, taskKey: `${projectKey}-${task.number}` });
     return toCommentDto(comment, `${projectKey}-${task.number}`);
   });
 }

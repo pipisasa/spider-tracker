@@ -63,12 +63,12 @@ packages/
 
 ## Realtime
 
-1. Writes (API or worker) call `pg_notify('org_<id>', <event>)` inside the same transaction, so notifications go out only if the write commits.
-2. Each `backend/api` instance keeps one dedicated `LISTEN` connection and passes events to its connected clients.
-3. The browser opens one SSE stream (`GET /v1/stream`) per organization. TanStack Query updates or refetches the affected queries when events arrive.
-4. Browser-to-server actions stay plain REST calls. WebSocket is added only if two-way low-latency traffic becomes necessary.
+1. Core writes call `publish()` (`packages/core/src/events.ts`), which runs `pg_notify('spider_events', <event>)` inside the write's transaction, so only committed changes are announced. Events: `task.changed`, `task.deleted`, `comment.created`, `project.changed`, `inbox.created` (with recipient actor ids).
+2. Each `backend/api` instance keeps one `LISTEN spider_events` connection (`src/realtime.ts`, opened on first use; postgres.js reconnects it) and fans events out in-process.
+3. `GET /v1/orgs/:org/events` streams the organization's events over SSE (`ready` on connect, `ping` every 20 s). The web app subscribes in the organization layout (`useOrgEvents`) and invalidates the matching TanStack Query keys; after a reconnect it refreshes the organization's data once.
+4. Waiting inbox requests (`/inbox?wait=`, MCP `get_inbox`, the Claude Code channel) wake on `inbox.created` for their actor instead of polling, with a 5 s re-check as a safety net.
 
-Notification payloads are kept small (entity type, ID, version) because of the ~8KB limit; clients fetch the full data. Agent token streams can use the same path; if volume grows, see [decisions.md](./decisions.md#5-no-message-broker-yet).
+Payloads carry only ids and keys (Postgres limits them to 8 kB); clients fetch the data through the normal routes. Browser-to-server actions stay plain REST calls.
 
 ## File storage
 

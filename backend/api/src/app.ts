@@ -11,6 +11,7 @@ import type { Env } from "./env";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
 import { deviceApprovalRoutes, deviceRoutes } from "./routes/device";
+import { createRealtime } from "./realtime";
 import { orgRoutes } from "./routes/orgs";
 import type { AppEnv } from "./types";
 
@@ -28,6 +29,7 @@ function errorBody(code: string, message: string): ApiErrorBody {
 
 export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   const app = new Hono<AppEnv>();
+  const realtime = createRealtime(db);
 
   app.use(
     "*",
@@ -59,7 +61,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
-  app.route("/mcp", mcpRoutes(db));
+  app.route("/mcp", mcpRoutes(db, realtime));
 
   // Everything under /v1 requires a browser session or an agent API key (Bearer spt_…).
   app.use("/v1/*", async (c, next) => {
@@ -120,7 +122,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     return c.body(null, 204);
   });
 
-  app.route("/v1/orgs/:orgSlug", orgRoutes(db));
+  app.route("/v1/orgs/:orgSlug", orgRoutes(db, realtime));
 
   app.notFound((c) => c.json(errorBody("not_found", "Route not found"), 404));
 

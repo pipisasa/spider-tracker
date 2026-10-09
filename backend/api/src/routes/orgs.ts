@@ -22,7 +22,9 @@ import {
 } from "@repo/core";
 import type { Db } from "@repo/db";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { toActorDto } from "../dto";
+import type { Realtime } from "../realtime";
 import type { AppEnv } from "../types";
 
 /** Sources an API-key client may declare with the X-Spider-Source header. */
@@ -34,11 +36,12 @@ function clientSource(header: string | undefined): ActivitySource {
 }
 
 const MAX_INBOX_WAIT_SECONDS = 25;
-// Until realtime (ST-13) lands, waiting requests re-check the database at this interval.
-const INBOX_POLL_MS = 1000;
+// A waiting inbox request wakes on "inbox.created" events; this re-check is only a safety net.
+const INBOX_RECHECK_MS = 5000;
+const SSE_HEARTBEAT_MS = 20_000;
 
 /** Organization-scoped routes, mounted at /v1/orgs/:orgSlug. */
-export function orgRoutes(db: Db) {
+export function orgRoutes(db: Db, realtime: Realtime) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -130,12 +133,36 @@ export function orgRoutes(db: Db) {
     const wait = Math.min(Math.max(Number(query.wait) || 0, 0), MAX_INBOX_WAIT_SECONDS);
     const deadline = Date.now() + wait * 1000;
     const signal = c.req.raw.signal;
-    let items = await listInbox(db, c.get("actor"), query);
+    const actor = c.get("actor");
+    let items = await listInbox(db, actor, query);
     while (items.length === 0 && Date.now() < deadline && !signal.aborted) {
-      await Bun.sleep(INBOX_POLL_MS);
-      items = await listInbox(db, c.get("actor"), query);
+      await realtime.waitFor(
+        (e) => e.type === "inbox.created" && e.orgId === actor.orgId && e.recipientIds.includes(actor.actorId),
+        Math.min(INBOX_RECHECK_MS, deadline - Date.now()),
+        signal,
+      );
+      items = await listInbox(db, actor, query);
     }
     return c.json(list(items));
+  });
+
+  // Server-sent change events for the organization: the web app refreshes what changed.
+  // Event payloads carry keys and ids only; clients refetch through the normal routes.
+  app.get("/events", (c) => {
+    const { orgId } = c.get("actor");
+    return streamSSE(c, async (stream) => {
+      const unsubscribe = await realtime.subscribe((event) => {
+        if (event.orgId !== orgId) return;
+        void stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
+      });
+      stream.onAbort(unsubscribe);
+      await stream.writeSSE({ event: "ready", data: "{}" });
+      while (!stream.aborted) {
+        await stream.sleep(SSE_HEARTBEAT_MS);
+        if (!stream.aborted) await stream.writeSSE({ event: "ping", data: "{}" });
+      }
+      unsubscribe();
+    });
   });
 
   app.post("/inbox/read", async (c) => c.json({ updated: await markInboxRead(db, c.get("actor"), await body(c)) }));
