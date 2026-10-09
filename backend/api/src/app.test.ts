@@ -359,3 +359,68 @@ withDb("SDK and client-declared source", () => {
     expect(sourceOf(spoofed.id)).toBe("api");
   });
 });
+
+withDb("device login (spider login)", () => {
+  const stamp = Date.now();
+  const email = `device-${stamp}@example.com`;
+  const slug = `device-${stamp}`;
+
+  afterAll(async () => {
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  test("code → browser approval → token → whoami → logout", async () => {
+    const cookie = await signIn(email);
+    await app.request("/v1/organizations", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Device Org", slug }),
+    });
+
+    const start = await app.request("/device/code", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "client_name=MacBook",
+    });
+    const code = (await start.json()) as { device_code: string; user_code: string; verification_uri_complete: string };
+    expect(code.verification_uri_complete).toBe(`${env.WEB_ORIGIN}/device?code=${code.user_code}`);
+
+    const token = () =>
+      app.request("/device/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: code.device_code }),
+      });
+    const pending = await token();
+    expect(pending.status).toBe(400);
+    expect(await pending.json()).toEqual({ error: "authorization_pending" });
+
+    const info = await app.request(`/v1/device/${code.user_code}`, { headers: { Cookie: cookie } });
+    expect(await info.json()).toMatchObject({ clientName: "MacBook", status: "pending" });
+    const approve = await app.request(`/v1/device/${code.user_code}/approve`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ orgSlug: slug }),
+    });
+    expect(approve.status).toBe(204);
+
+    await db.update(schema.deviceCodes).set({ lastPolledAt: null });
+    const granted = await token();
+    expect(granted.status).toBe(200);
+    const body = (await granted.json()) as { access_token: string; actor: { name: string }; organization: { slug: string } };
+    expect(body).toMatchObject({ token_type: "Bearer", actor: { name: "spider CLI · MacBook" }, organization: { slug } });
+
+    const bearer = { Authorization: `Bearer ${body.access_token}` };
+    expect((await app.request("/v1/whoami", { headers: bearer })).status).toBe(200);
+    expect((await app.request("/v1/api-keys/current", { method: "DELETE", headers: { Cookie: cookie } })).status).toBe(403);
+    expect((await app.request("/v1/api-keys/current", { method: "DELETE", headers: bearer })).status).toBe(204);
+    expect((await app.request("/v1/whoami", { headers: bearer })).status).toBe(401);
+  });
+
+  test("an agent key can't approve devices", async () => {
+    const start = (await (await app.request("/device/code", { method: "POST" })).json()) as { user_code: string };
+    const res = await app.request(`/v1/device/${start.user_code}`, { headers: { Authorization: "Bearer spt_nope" } });
+    expect(res.status).toBe(401);
+  });
+});

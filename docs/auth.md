@@ -13,7 +13,7 @@ Spider Tracker is its own **OAuth 2.1 / OpenID Connect (OIDC) provider**: MCP cl
 | Who | Flow | Result |
 |---|---|---|
 | **People in the web app** | GitHub / Google sign-in (authorization code + PKCE), plus email magic link | Secure session cookie |
-| **CLI** (`spider login`) | Device flow: the CLI shows a code, the user approves it in the browser | Access + refresh token, kept in the OS keychain |
+| **CLI** (`spider login`) | Device flow (RFC 8628): the CLI shows a code, the person approves it at `/device` | An API key for a per-device agent member owned by the person, in `~/.config/spider-tracker/credentials.json` (0600). Implemented in-house (`device_codes` table), see [interfaces.md](./interfaces.md#login-device-flow-rfc-8628) |
 | **MCP clients** (Claude Code, Claude.ai, Cursor…) | OAuth 2.1 + PKCE with automatic client registration, as the MCP spec requires | Token limited to the MCP endpoint |
 | **Hosted agents** (our worker) | No OAuth: the worker issues a short-lived token per run, scoped to the run's task and permissions | Token that expires when the run ends |
 | **External agents, CI** | API keys | Long-lived, revocable key |

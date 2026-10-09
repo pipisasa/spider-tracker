@@ -128,7 +128,7 @@ describe("exit codes", () => {
   test("4 without a token or when the API refuses it", async () => {
     const missing = await cli(["whoami"], { env: {} });
     expect(missing.code).toBe(4);
-    expect(missing.stderr).toContain("SPIDER_TOKEN is not set");
+    expect(missing.stderr).toContain("Not signed in");
 
     const refused = fakeApi({
       "GET /v1/whoami": () =>

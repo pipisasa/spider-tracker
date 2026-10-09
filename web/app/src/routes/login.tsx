@@ -11,23 +11,29 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: (search: Record<string, unknown>): { error?: string } =>
-    typeof search.error === "string" ? { error: search.error } : {},
-  beforeLoad: async ({ context }) => {
+  validateSearch: (search: Record<string, unknown>): { error?: string; redirect?: string } => ({
+    ...(typeof search.error === "string" ? { error: search.error } : {}),
+    // Only same-app paths, so the login page can't be used to send people elsewhere.
+    ...(typeof search.redirect === "string" && search.redirect.startsWith("/") && !search.redirect.startsWith("//")
+      ? { redirect: search.redirect }
+      : {}),
+  }),
+  beforeLoad: async ({ context, search }) => {
     const me = await context.queryClient.ensureQueryData(meQuery);
-    if (me) throw redirect({ to: "/" });
+    if (me) throw redirect({ href: search.redirect ?? "/" });
   },
   loader: ({ context }) => context.queryClient.prefetchQuery(authProvidersQuery),
   component: LoginPage,
 });
 
-const callbackURL = `${window.location.origin}/`;
-const errorCallbackURL = `${window.location.origin}/login`;
 
 function LoginPage() {
+  const search = Route.useSearch();
+  const callbackURL = `${window.location.origin}${search.redirect ?? "/"}`;
+  const errorCallbackURL = `${window.location.origin}/login${search.redirect ? `?redirect=${encodeURIComponent(search.redirect)}` : ""}`;
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
-  const { error: errorCode } = Route.useSearch();
+  const { error: errorCode } = search;
   const [error, setError] = useState<string | null>(errorCode ? authErrorMessage(errorCode) : null);
 
   async function sendLink(event: FormEvent) {

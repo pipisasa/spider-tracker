@@ -29,6 +29,13 @@
       "when": 1791563564082,
       "tag": "0003_agents_api_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791566562817,
+      "tag": "0004_device_codes",
+      "breakpoints": true
     }
   ]
 }

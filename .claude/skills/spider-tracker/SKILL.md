@@ -13,11 +13,11 @@ Spider Tracker is this repository's issue tracker, and its roadmap lives there (
 2. **CLI (fallback)** — otherwise use the `spider` CLI from the repo root, always with `--json`:
 
    ```bash
-   set -a; . ~/.config/spider-tracker/agent.env; set +a   # loads SPIDER_TOKEN
+   set -a; . ~/.config/spider-tracker/agent.env; set +a   # loads SPIDER_TOKEN, if that file exists
    bun run spider whoami --json
    ```
 
-   Load the token in the same shell command as the call (shell state does not persist between calls). Never print, echo or log `SPIDER_TOKEN`.
+   Load the token in the same shell command as the call (shell state does not persist between calls). Without `SPIDER_TOKEN`, the CLI uses the key saved by `spider login` (a person runs it once; it needs a browser, so don't start it yourself). Never print, echo or log `SPIDER_TOKEN`.
 
 Check who you are first (`whoami`) if you are unsure which agent or organization the key belongs to.
 
@@ -56,7 +56,7 @@ Titles and descriptions are visible to everyone in the organization and kept in 
 | `1` | Unexpected (network, server error) | Retry once, then report it |
 | `2` | Usage or validation (bad option, unknown status or handle) | Read the message — it lists the valid options — and fix the call |
 | `3` | Not found (task, project) | Check the key with `task list` / `projects` |
-| `4` | Auth or permission (missing/invalid `SPIDER_TOKEN`, role too low) | Load the token from `~/.config/spider-tracker/agent.env`; if it still fails, tell the user |
+| `4` | Auth or permission (not signed in, invalid key, role too low) | Load the token from `~/.config/spider-tracker/agent.env`; if there is none, ask the user to run `spider login` |
 
 With `--json`, errors go to stderr as `{"error":{"code","message"}}`. MCP tools return errors as tool results (`isError`) with the same messages. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
 

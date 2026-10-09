@@ -18,7 +18,7 @@ Anything possible in the UI is also possible through these interfaces. The web a
 
 See [auth.md](./auth.md) for all flows.
 
-- **People:** session cookie in the browser; OAuth device flow for the CLI.
+- **People:** session cookie in the browser; `spider login` (device flow) gives the CLI an agent key for that device.
 - **MCP clients:** an agent API key sent as `Authorization: Bearer spt_…` (OAuth 2.1, each connected client becoming its own agent actor, is planned).
 - **Agents, CI and integrations:** API keys, stored only as hashes, scoped and revocable.
 
@@ -72,15 +72,26 @@ Planned: comments, documents, custom fields.
 `backend/cli` (`@repo/cli`): the `spider` command, built on `packages/sdk` with Commander. Every action records `source = cli`.
 
 ```bash
-export SPIDER_TOKEN=spt_…                 # agent API key (required; never printed)
+spider login                              # sign in through the browser (device flow); saves a key for this device
+export SPIDER_TOKEN=spt_…                 # or: an agent API key, which overrides the saved one (CI, agents)
 export SPIDER_API_URL=https://…           # optional, default https://tracker-api.batele.plus
-bun run spider task list --mine           # from the repo; or build a binary: bun run --cwd backend/cli build → dist/spider
+bun run spider task list --mine           # from the repo; `bun link` in backend/cli installs `spider`; or build dist/spider
 ```
 
-The organization is the token's (from `whoami`).
+The organization is the key's (from `whoami`).
+
+### Login (device flow, RFC 8628)
+1. `spider login [--name MacBook] [--no-browser]` calls `POST /device/code` and prints `https://tracker.batele.plus/device` with a short code (instructions on stderr), opening the browser at a terminal.
+2. The person signs in, checks the code, picks the organization and approves (`/device` page → `POST /v1/device/:code/approve`, or `/deny`).
+3. The CLI polls `POST /device/token` (`authorization_pending`, `slow_down`, `access_denied`, `expired_token`) and receives an API key for a device agent, **"spider CLI · MacBook"** (`@cli-macbook`), owned by the approver and reused on later logins from the same device name. It acts with at most the approver's role.
+4. The key is saved to `~/.config/spider-tracker/credentials.json` (mode 0600; `SPIDER_CONFIG_DIR` overrides the folder).
+
+`spider logout` revokes that key on the server (`DELETE /v1/api-keys/current`) and deletes the file. Device codes expire after 10 minutes and are single-use; only a hash of the device code is stored, and the key is minted at the moment the approved device collects it.
 
 ### Commands (v1)
 ```bash
+spider login [--name …] [--no-browser]
+spider logout
 spider whoami
 spider projects
 spider task list [--project ST] [--status "In Progress"] [--mine] [--limit 50]
@@ -94,11 +105,11 @@ spider task done [ST-12]    # the project's first done status
 - **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
 - **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
-- **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (including a missing `SPIDER_TOKEN`). It never prompts.
-- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
+- **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). It never prompts.
+- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
 
 ### Planned
-- `spider login` (OAuth device flow), tokens in the OS keychain, `spider org switch`, per-repo defaults in `.spider.json`
+- Keys in the OS keychain instead of a file, `spider org switch`, per-repo defaults in `.spider.json`
 - `spider comment ST-12 "…"`, `spider pr`, `spider start` creating and checking out the branch
 - `spider agent list|run|logs`, `spider doc pull|push`, `--field` / `--tag`
 - Distribution through npm and standalone binaries for Homebrew and curl installs

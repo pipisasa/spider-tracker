@@ -1,5 +1,5 @@
 import type { ApiErrorBody, AuthProvidersResponse, MeResponse, WhoAmIResponse } from "@repo/core";
-import { DomainError, authenticateApiKey, createOrganization, listMemberships } from "@repo/core";
+import { DomainError, authenticateApiKey, createOrganization, listMemberships, revokeCurrentApiKey } from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -10,6 +10,7 @@ import { toMembership } from "./dto";
 import type { Env } from "./env";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
+import { deviceApprovalRoutes, deviceRoutes } from "./routes/device";
 import { orgRoutes } from "./routes/orgs";
 import type { AppEnv } from "./types";
 
@@ -51,6 +52,8 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
 
   const openApi = openApiDocument(env.API_ORIGIN);
   app.get("/openapi.json", (c) => c.json(openApi));
+
+  app.route("/device", deviceRoutes(db, env));
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
@@ -100,6 +103,20 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     const input: unknown = await c.req.json().catch(() => null);
     const created = await createOrganization(db, user, input);
     return c.json(toMembership(created), 201);
+  });
+
+  app.route("/v1/device", deviceApprovalRoutes(db));
+
+  // `spider logout`: revoke the key this request was made with.
+  app.delete("/v1/api-keys/current", async (c) => {
+    const key = c.get("apiKey");
+    if (!key) return c.json(errorBody("forbidden", "Only API-key requests can revoke their own key"), 403);
+    await revokeCurrentApiKey(
+      db,
+      { orgId: key.organization.id, actorId: key.actor.id, role: key.actor.role, source: "cli" },
+      key.keyId,
+    );
+    return c.body(null, 204);
   });
 
   app.route("/v1/orgs/:orgSlug", orgRoutes(db));

@@ -1,6 +1,8 @@
 import type {
   ActorDto,
   ApiErrorBody,
+  DeviceCodeResponse,
+  DeviceTokenResponse,
   ListResponse,
   MeResponse,
   ProjectDetailDto,
@@ -42,6 +44,11 @@ export class SpiderApiError extends Error {
 
 export type SpiderClient = ReturnType<typeof createClient>;
 
+/** Result of polling POST /device/token: a token, or an RFC 8628 error code to act on. */
+export type DevicePollResult =
+  | { ok: true; token: DeviceTokenResponse }
+  | { ok: false; error: "authorization_pending" | "slow_down" | "expired_token" | "access_denied" | "invalid_grant" | string };
+
 export function createClient({ baseUrl, token, source, fetch: transport }: ClientOptions) {
   const origin = baseUrl.replace(/\/+$/, "");
   const send: FetchLike = transport ?? ((input, init) => fetch(input, init));
@@ -67,6 +74,19 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     return (await res.json()) as T;
   }
 
+  /** POST /device/token answers 400 with { error } until approved, so it isn't treated as a failure. */
+  async function pollDevice(deviceCode: string): Promise<DevicePollResult> {
+    const res = await send(`${origin}/device/token`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: deviceCode }),
+    });
+    const body = (await res.json().catch(() => null)) as (DeviceTokenResponse & { error?: string }) | null;
+    if (res.ok && body?.access_token) return { ok: true, token: body };
+    if (res.status === 400 && typeof body?.error === "string") return { ok: false, error: body.error };
+    throw new SpiderApiError(res.status, "unknown", res.statusText || "Device login failed");
+  }
+
   const org = (slug: string) => `/v1/orgs/${encodeURIComponent(slug)}`;
   const seg = encodeURIComponent;
 
@@ -75,6 +95,18 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     whoami: () => request<WhoAmIResponse>("GET", "/v1/whoami"),
     /** The signed-in person and their organizations (browser sessions only). */
     me: () => request<MeResponse>("GET", "/v1/me"),
+
+    /** `spider login`: RFC 8628 device authorization. */
+    device: {
+      start: (clientName?: string) =>
+        request<DeviceCodeResponse>("POST", "/device/code", clientName ? { client_name: clientName } : {}),
+      poll: pollDevice,
+    },
+
+    keys: {
+      /** Revokes the API key this client authenticates with. */
+      revokeCurrent: () => request<void>("DELETE", "/v1/api-keys/current"),
+    },
 
     members: {
       list: (orgSlug: string) => request<ListResponse<ActorDto>>("GET", `${org(orgSlug)}/members`),

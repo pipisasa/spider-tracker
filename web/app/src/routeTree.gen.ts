@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedOrgSlugRouteImport } from './routes/_authed/$orgSlug'
 import { Route as AuthedAccountRouteImport } from './routes/_authed/account'
+import { Route as AuthedDeviceRouteImport } from './routes/_authed/device'
 import { Route as AuthedOnboardingRouteImport } from './routes/_authed/onboarding'
 import { Route as AuthedOrgSlugIndexRouteImport } from './routes/_authed/$orgSlug/index'
 import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from './routes/_authed/$orgSlug/projects/$projectKey'
@@ -42,6 +43,11 @@ const AuthedOrgSlugRoute = AuthedOrgSlugRouteImport.update({
 const AuthedAccountRoute = AuthedAccountRouteImport.update({
   id: '/account',
   path: '/account',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedDeviceRoute = AuthedDeviceRouteImport.update({
+  id: '/device',
+  path: '/device',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedOnboardingRoute = AuthedOnboardingRouteImport.update({
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/$orgSlug': typeof AuthedOrgSlugRouteWithChildren
   '/account': typeof AuthedAccountRoute
+  '/device': typeof AuthedDeviceRoute
   '/onboarding': typeof AuthedOnboardingRoute
   '/$orgSlug/': typeof AuthedOrgSlugIndexRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
@@ -87,6 +94,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/account': typeof AuthedAccountRoute
+  '/device': typeof AuthedDeviceRoute
   '/onboarding': typeof AuthedOnboardingRoute
   '/': typeof AuthedIndexRoute
   '/$orgSlug': typeof AuthedOrgSlugIndexRoute
@@ -100,6 +108,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authed/$orgSlug': typeof AuthedOrgSlugRouteWithChildren
   '/_authed/account': typeof AuthedAccountRoute
+  '/_authed/device': typeof AuthedDeviceRoute
   '/_authed/onboarding': typeof AuthedOnboardingRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$orgSlug/': typeof AuthedOrgSlugIndexRoute
@@ -114,6 +123,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/$orgSlug'
     | '/account'
+    | '/device'
     | '/onboarding'
     | '/$orgSlug/'
     | '/$orgSlug/projects/$projectKey'
@@ -123,6 +133,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/account'
+    | '/device'
     | '/onboarding'
     | '/'
     | '/$orgSlug'
@@ -135,6 +146,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_authed/$orgSlug'
     | '/_authed/account'
+    | '/_authed/device'
     | '/_authed/onboarding'
     | '/_authed/'
     | '/_authed/$orgSlug/'
@@ -183,6 +195,13 @@ declare module '@tanstack/react-router' {
       path: '/account'
       fullPath: '/account'
       preLoaderRoute: typeof AuthedAccountRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/device': {
+      id: '/_authed/device'
+      path: '/device'
+      fullPath: '/device'
+      preLoaderRoute: typeof AuthedDeviceRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/onboarding': {
@@ -244,6 +263,7 @@ const AuthedOrgSlugRouteWithChildren = AuthedOrgSlugRoute._addFileChildren(
 interface AuthedRouteChildren {
   AuthedOrgSlugRoute: typeof AuthedOrgSlugRouteWithChildren
   AuthedAccountRoute: typeof AuthedAccountRoute
+  AuthedDeviceRoute: typeof AuthedDeviceRoute
   AuthedOnboardingRoute: typeof AuthedOnboardingRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
 }
@@ -251,6 +271,7 @@ interface AuthedRouteChildren {
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedOrgSlugRoute: AuthedOrgSlugRouteWithChildren,
   AuthedAccountRoute: AuthedAccountRoute,
+  AuthedDeviceRoute: AuthedDeviceRoute,
   AuthedOnboardingRoute: AuthedOnboardingRoute,
   AuthedIndexRoute: AuthedIndexRoute,
 }

@@ -111,3 +111,29 @@ export interface WhoAmIResponse {
   actor: ActorDto;
   organization: OrganizationDto;
 }
+
+/** POST /device/code (RFC 8628 §3.2). */
+export interface DeviceCodeResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in: number;
+  interval: number;
+}
+
+/** A pending `spider login`, as shown on the approval page. */
+export interface DeviceRequestDto {
+  userCode: string;
+  clientName: string;
+  status: "pending" | "approved" | "denied" | "consumed";
+  expiresAt: string;
+}
+
+/** POST /device/token once approved: an agent API key for the device. */
+export interface DeviceTokenResponse {
+  access_token: string;
+  token_type: "Bearer";
+  actor: ActorDto;
+  organization: OrganizationDto;
+}

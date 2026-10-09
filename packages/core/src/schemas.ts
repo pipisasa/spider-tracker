@@ -92,3 +92,7 @@ export type CreateAgentInput = z.infer<typeof createAgentInput>;
 export const createApiKeyInput = z.object({
   name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
 });
+
+export const deviceCodeInput = z.object({
+  client_name: z.string().trim().min(1).max(60).default("CLI"),
+});

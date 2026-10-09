@@ -13,6 +13,7 @@ export type AppEnv = {
     apiKey?: {
       actor: typeof schema.actors.$inferSelect;
       organization: typeof schema.organizations.$inferSelect;
+      keyId: string;
     };
     /** Set by the org middleware on /v1/orgs/:orgSlug/* routes. */
     actor: ActorContext;

@@ -3,6 +3,8 @@ import { parseTaskKey } from "@repo/core/schemas";
 import type { CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError } from "commander";
+import { hostname } from "node:os";
+import { deleteCredentials, readCredentials, writeCredentials } from "./credentials";
 import { currentBranch, taskKeyFromBranch } from "./git";
 import {
   CliError,
@@ -29,7 +31,7 @@ export interface Writer {
 }
 
 export interface RunOptions {
-  /** SPIDER_TOKEN (required) and SPIDER_API_URL. */
+  /** SPIDER_TOKEN, SPIDER_API_URL, SPIDER_CONFIG_DIR, HOME. */
   env: Record<string, string | undefined>;
   /** Override the transport, e.g. to call the Hono app in tests. */
   fetch?: FetchLike;
@@ -37,6 +39,10 @@ export interface RunOptions {
   stderr: Writer;
   /** Where to look for the git branch when a task key is omitted. */
   cwd?: string;
+  /** Opens the login page in a browser (`spider login`); omitted in tests. */
+  openUrl?: (url: string) => void;
+  /** Waits between device-login polls; overridable in tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** A task as the CLI prints it with --json: the API task plus its status and assignee handles. */
@@ -67,28 +73,42 @@ const collect = (value: string, previous: string[] | undefined) => [
 ];
 
 /** API access for one invocation, with per-run caches of the org, members and projects. */
-function connect(options: RunOptions) {
+/** "MacBook-Pro.local" → "MacBook-Pro". */
+function defaultDeviceName() {
+  return hostname().replace(/\.local$/, "").slice(0, 60) || "CLI";
+}
+
+const apiUrlOf = (env: RunOptions["env"]) => env.SPIDER_API_URL?.trim() || DEFAULT_API_URL;
+
+/** SPIDER_TOKEN wins; otherwise the key saved by `spider login`. */
+async function credentialsFor(options: RunOptions) {
   const token = options.env.SPIDER_TOKEN?.trim();
-  if (!token) throw new CliError(EXIT.auth, "SPIDER_TOKEN is not set. Create an agent API key in the web app", "unauthorized");
-  const client = createClient({
-    baseUrl: options.env.SPIDER_API_URL?.trim() || DEFAULT_API_URL,
-    token,
-    source: "cli",
-    fetch: options.fetch,
-  });
+  if (token) return { token, baseUrl: apiUrlOf(options.env) };
+  const saved = await readCredentials(options.env);
+  if (saved) return { token: saved.token, baseUrl: options.env.SPIDER_API_URL?.trim() || saved.apiUrl };
+  throw new CliError(EXIT.auth, "Not signed in. Run `spider login`, or set SPIDER_TOKEN to an agent API key", "unauthorized");
+}
+
+function connect(options: RunOptions) {
+  const ready = credentialsFor(options).then(({ token, baseUrl }) =>
+    createClient({ baseUrl, token, source: "cli", fetch: options.fetch }),
+  );
+  // Commands await `sdk()`; this only stops an early failure from being reported as unhandled.
+  ready.catch(() => {});
+  const sdk = () => ready;
 
   let who: Promise<WhoAmIResponse> | undefined;
   let members: Promise<ActorDto[]> | undefined;
   const projects = new Map<string, Promise<ProjectDetailDto>>();
 
-  const whoami = () => (who ??= client.whoami());
+  const whoami = () => (who ??= ready.then((c) => c.whoami()));
   const org = async () => (await whoami()).organization.slug;
-  const loadMembers = () => (members ??= org().then((slug) => client.members.list(slug).then((r) => r.items)));
+  const loadMembers = () => (members ??= org().then(async (slug) => (await sdk()).members.list(slug).then((r) => r.items)));
   const project = (key: string) => {
     const upper = key.toUpperCase();
     let cached = projects.get(upper);
     if (!cached) {
-      cached = org().then((slug) => client.projects.get(slug, upper));
+      cached = org().then(async (slug) => (await sdk()).projects.get(slug, upper));
       projects.set(upper, cached);
     }
     return cached;
@@ -105,7 +125,7 @@ function connect(options: RunOptions) {
     };
   };
 
-  return { client, whoami, org, members: loadMembers, project, describe };
+  return { sdk, whoami, org, members: loadMembers, project, describe };
 }
 
 type Api = ReturnType<typeof connect>;
@@ -213,8 +233,8 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
 
   /** Updates a task and prints the result. */
   const update = async (key: string, input: UpdateTaskInput, opts: JsonOption) => {
-    const { client, org, describe } = conn();
-    const task = await describe(await client.tasks.update(await org(), key, input));
+    const { sdk, org, describe } = conn();
+    const task = await describe(await (await sdk()).tasks.update(await org(), key, input));
     output(opts, task, () => taskLines([task]));
   };
 
@@ -225,9 +245,73 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
     },
   );
 
+  withJson(
+    program
+      .command("login")
+      .description("sign in through the browser; saves an agent key for this device")
+      .option("--name <device>", "what to call this device", defaultDeviceName())
+      .option("--no-browser", "print the link instead of opening a browser"),
+  ).action(async (opts: JsonOption & { name: string; browser: boolean }) => {
+    const apiUrl = apiUrlOf(options.env);
+    const client = createClient({ baseUrl: apiUrl, fetch: options.fetch });
+    const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+    const code = await client.device.start(opts.name);
+    // Instructions go to stderr so stdout stays clean for --json.
+    stderr.write(`Open ${code.verification_uri} and confirm the code ${code.user_code}\n`);
+    if (opts.browser && options.openUrl) options.openUrl(code.verification_uri_complete);
+    stderr.write("Waiting for approval…\n");
+
+    let interval = code.interval * 1000;
+    const deadline = Date.now() + code.expires_in * 1000;
+    while (Date.now() < deadline) {
+      await sleep(interval);
+      const result = await client.device.poll(code.device_code);
+      if (result.ok) {
+        const { token } = result;
+        const path = await writeCredentials(options.env, {
+          apiUrl,
+          token: token.access_token,
+          actor: { handle: token.actor.handle, name: token.actor.name },
+          organization: { slug: token.organization.slug, name: token.organization.name },
+          createdAt: new Date().toISOString(),
+        });
+        const summary = { actor: token.actor, organization: token.organization, credentials: path };
+        output(opts, summary, () => `Signed in as @${token.actor.handle} in ${token.organization.slug}. Key saved to ${path}`);
+        if (options.env.SPIDER_TOKEN) stderr.write("Note: SPIDER_TOKEN is set and takes precedence over the saved key.\n");
+        return;
+      }
+      if (result.error === "authorization_pending") continue;
+      if (result.error === "slow_down") {
+        interval += 5000;
+        continue;
+      }
+      if (result.error === "access_denied") throw new CliError(EXIT.auth, "Login was denied in the browser", "access_denied");
+      if (result.error === "expired_token") break;
+      throw new CliError(EXIT.unexpected, `Device login failed (${result.error})`, result.error);
+    }
+    throw new CliError(EXIT.auth, "The login code expired. Run spider login again", "expired_token");
+  });
+
+  withJson(program.command("logout").description("revoke and forget the key saved by spider login")).action(
+    async (opts: JsonOption) => {
+      const saved = await readCredentials(options.env);
+      if (saved) {
+        const client = createClient({ baseUrl: saved.apiUrl, token: saved.token, source: "cli", fetch: options.fetch });
+        // Already revoked or deleted on the server: forgetting it locally is still right.
+        await client.keys.revokeCurrent().catch((err: unknown) => {
+          if (!(err instanceof SpiderApiError) || (err.status !== 401 && err.status !== 404)) throw err;
+        });
+        await deleteCredentials(options.env);
+      }
+      output(opts, { loggedOut: !!saved }, () => (saved ? `Signed out @${saved.actor.handle}` : "Not signed in"));
+      if (options.env.SPIDER_TOKEN) stderr.write("SPIDER_TOKEN is still set in your environment.\n");
+    },
+  );
+
   withJson(program.command("projects").description("list projects")).action(async (opts: JsonOption) => {
-    const { client, org } = conn();
-    const { items } = await client.projects.list(await org());
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).projects.list(await org());
     output(opts, { items }, () => items.map((p) => `${p.key}  ${p.name}`).join("\n"));
   });
 
@@ -243,9 +327,9 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       .option("--limit <n>", "at most n tasks", "50"),
   ).action(async (opts: JsonOption & { project?: string; status?: string; mine?: boolean; limit: string }) => {
     const limit = parseLimit(opts.limit);
-    const { client, org, whoami, project, describe } = conn();
+    const { sdk, org, whoami, project, describe } = conn();
     const slug = await org();
-    const keys = opts.project ? [opts.project.toUpperCase()] : (await client.projects.list(slug)).items.map((p) => p.key);
+    const keys = opts.project ? [opts.project.toUpperCase()] : (await (await sdk()).projects.list(slug)).items.map((p) => p.key);
     const me = opts.mine ? (await whoami()).actor.id : undefined;
 
     const found: TaskDto[] = [];
@@ -261,7 +345,7 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
         if (statusIds.size === 0) continue;
         statusKnown = true;
       }
-      const { items } = await client.tasks.list(slug, key);
+      const { items } = await (await sdk()).tasks.list(slug, key);
       found.push(
         ...items.filter((t) => (!statusIds || statusIds.has(t.statusId)) && (!me || t.assigneeIds.includes(me))),
       );
@@ -277,8 +361,8 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
 
   withJson(task.command("view").description("show a task (default: the current branch's)").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
-      const { client, org, describe } = conn();
-      const found = await describe(await client.tasks.get(await org(), taskKey(key, cwd)));
+      const { sdk, org, describe } = conn();
+      const found = await describe(await (await sdk()).tasks.get(await org(), taskKey(key, cwd)));
       output(opts, found, () => taskDetail(found));
     },
   );
@@ -291,9 +375,9 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       .requiredOption("--title <text>", "title"),
   ).action(async (opts: TaskFields & { project: string; title: string }) => {
     const projectKey = opts.project.toUpperCase();
-    const { client, org, describe } = conn();
+    const { sdk, org, describe } = conn();
     const input: CreateTaskInput = { ...(await taskInput(projectKey, opts)), title: opts.title };
-    const created = await describe(await client.tasks.create(await org(), projectKey, input));
+    const created = await describe(await (await sdk()).tasks.create(await org(), projectKey, input));
     output(opts, created, () => taskLines([created]));
   });
 
@@ -317,9 +401,9 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       .argument("[key]"),
   ).action(async (key: string | undefined, opts: JsonOption) => {
     const resolved = taskKey(key, cwd);
-    const { client, org, whoami, project } = conn();
+    const { sdk, org, whoami, project } = conn();
     const [current, detail, who] = await Promise.all([
-      client.tasks.get(await org(), resolved),
+      (await sdk()).tasks.get(await org(), resolved),
       project(projectKeyOf(resolved)),
       whoami(),
     ]);

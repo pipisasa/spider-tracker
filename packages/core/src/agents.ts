@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Db } from "@repo/db";
+import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { assertRole, type ActorContext } from "./access";
@@ -85,6 +85,29 @@ async function findAgent(db: Db, orgId: string, agentActorId: string) {
   return row;
 }
 
+/** Inserts a key row for an agent and records it; returns the secret, which is never stored. */
+export async function issueApiKey(tx: Tx, ctx: ActorContext, agentActorId: string, name: string): Promise<CreatedApiKeyDto> {
+  const secret = `${KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
+  const [row] = await tx
+    .insert(apiTokens)
+    .values({
+      actorId: agentActorId,
+      name,
+      tokenHash: hashApiKey(secret),
+      prefix: secret.slice(0, KEY_PREFIX.length + 6),
+      createdBy: ctx.actorId,
+    })
+    .returning();
+  if (!row) throw new Error("Failed to create API key");
+  await recordActivity(tx, ctx, {
+    entityType: "actor",
+    entityId: agentActorId,
+    action: "api_key.created",
+    changes: { keyId: row.id, name },
+  });
+  return { key: toApiKeyDto(row), secret };
+}
+
 /** Issues a new API key for an agent. The secret is returned only here. */
 export async function createApiKey(
   db: Db,
@@ -95,28 +118,7 @@ export async function createApiKey(
   assertRole(ctx, ["owner", "admin"], "create API keys");
   const { name } = parseInput(createApiKeyInput, input);
   await findAgent(db, ctx.orgId, agentActorId);
-
-  const secret = `${KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(apiTokens)
-      .values({
-        actorId: agentActorId,
-        name,
-        tokenHash: hashApiKey(secret),
-        prefix: secret.slice(0, KEY_PREFIX.length + 6),
-        createdBy: ctx.actorId,
-      })
-      .returning();
-    if (!row) throw new Error("Failed to create API key");
-    await recordActivity(tx, ctx, {
-      entityType: "actor",
-      entityId: agentActorId,
-      action: "api_key.created",
-      changes: { keyId: row.id, name },
-    });
-    return { key: toApiKeyDto(row), secret };
-  });
+  return db.transaction((tx) => issueApiKey(tx, ctx, agentActorId, name));
 }
 
 export async function revokeApiKey(db: Db, ctx: ActorContext, keyId: string) {
@@ -152,5 +154,18 @@ export async function authenticateApiKey(db: Db, secret: string) {
   if (!row.token.lastUsedAt || now.getTime() - row.token.lastUsedAt.getTime() > 60_000) {
     await db.update(apiTokens).set({ lastUsedAt: now }).where(eq(apiTokens.id, row.token.id));
   }
-  return { actor: row.actor, organization: row.organization };
+  return { actor: row.actor, organization: row.organization, keyId: row.token.id };
+}
+
+/** Revokes the key a request authenticated with (`spider logout`). */
+export async function revokeCurrentApiKey(db: Db, ctx: ActorContext, keyId: string) {
+  await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(apiTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(apiTokens.id, keyId), eq(apiTokens.actorId, ctx.actorId), isNull(apiTokens.revokedAt)))
+      .returning({ id: apiTokens.id });
+    if (!row) throw new DomainError("not_found", "API key not found");
+    await recordActivity(tx, ctx, { entityType: "actor", entityId: ctx.actorId, action: "api_key.revoked", changes: { keyId } });
+  });
 }
