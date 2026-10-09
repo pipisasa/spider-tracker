@@ -349,8 +349,9 @@ export async function run(argv: string[], options: RunOptions): Promise<ExitCode
     return EXIT.ok;
   } catch (err) {
     if (err instanceof CommanderError) {
-      // Commander has already printed the message (or the help/version text).
-      return err.code === "commander.helpDisplayed" || err.code === "commander.version" ? EXIT.ok : EXIT.usage;
+      // Commander has already printed the message (or the help/version text). Its exitCode is 0 for
+      // --help, --version and `help`, and non-zero for real usage errors (including a bare command group).
+      return err.exitCode === 0 ? EXIT.ok : EXIT.usage;
     }
     if (err instanceof CliError) return fail(err);
     if (err instanceof SpiderApiError) return fail(fromApiError(err));

@@ -146,4 +146,13 @@ describe("exit codes", () => {
     expect(help.stdout).toContain("start [options] [key]");
     expect((await cli(["--version"], { env: {} })).stdout).toBe("0.1.0\n");
   });
+
+  test("the help subcommand exits 0, but a bare command group is a usage error", async () => {
+    expect((await cli(["help"], { env: {} })).code).toBe(0);
+    const taskHelp = await cli(["help", "task"], { env: {} });
+    expect(taskHelp.code).toBe(0);
+    expect(taskHelp.stdout).toContain("start [options] [key]");
+    expect((await cli(["task", "help"], { env: {} })).code).toBe(0);
+    expect((await cli(["task"], { env: {} })).code).toBe(2);
+  });
 });
