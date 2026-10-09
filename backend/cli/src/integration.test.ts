@@ -18,7 +18,7 @@ const withDb = databaseUrl ? describe : describe.skip;
 withDb("spider CLI against the API", () => {
   const env = loadEnv({
     NODE_ENV: "test",
-    DATABASE_URL: databaseUrl ?? "",
+    DATABASE_URL: databaseUrl ?? "postgres://localhost:5432/unused",
     API_ORIGIN: "http://localhost:4000",
     WEB_ORIGIN: "http://localhost:5173",
     BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret-123",
