@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "deploy": "bun run build && bunx wrangler@4 pages deploy dist --project-name spider-tracker --branch main",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit"

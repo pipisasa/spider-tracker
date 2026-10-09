@@ -16,7 +16,9 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:migrate": "bun run --cwd packages/db db:migrate",
-    "db:studio": "bun run --cwd packages/db db:studio"
+    "db:studio": "bun run --cwd packages/db db:studio",
+    "deploy:web": "bun run --cwd web/app deploy",
+    "deploy:api": "railway up --service api --detach"
   },
   "devDependencies": {
     "prettier": "^3.7.4",
