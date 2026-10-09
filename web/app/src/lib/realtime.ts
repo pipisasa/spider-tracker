@@ -32,6 +32,7 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       void qc.invalidateQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
+      void qc.invalidateQueries({ queryKey: keys.relations(orgSlug, e.taskKey) });
     });
     on("task.deleted", (e) => {
       refreshSubtasks();

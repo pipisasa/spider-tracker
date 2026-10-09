@@ -312,4 +312,15 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "update", key, "--parent", "", "--json")).json()).toMatchObject({ parentKey: null });
   });
 
+  test("links: link, shown by view from both sides, unlink; bad kinds are usage errors", async () => {
+    const other = (await spider("task", "create", "--project", "SPI", "--title", "Waits on SPI-1", "--json")).json().key as string;
+    expect((await spider("link", "SPI-1", "blocks", other)).stdout).toBe(`Linked: SPI-1 blocks ${other}\n`);
+    expect((await spider("task", "view", other)).stdout).toContain("blocked by SPI-1");
+    expect((await spider("task", "view", other, "--json")).json().relations).toEqual([
+      { kind: "blocked_by", task: "SPI-1", title: expect.any(String) },
+    ]);
+    expect((await spider("unlink", other, "Blocked-By", "SPI-1", "--json")).json()).toMatchObject({ linked: false });
+    expect((await spider("link", "SPI-1", "depends", other)).code).toBe(2);
+  });
+
 });

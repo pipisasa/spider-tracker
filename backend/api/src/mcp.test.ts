@@ -106,9 +106,11 @@ withDb("MCP server", () => {
         "get_task",
         "list_members",
         "list_tags",
+        "link_tasks",
         "list_projects",
         "list_tasks",
         "start_task",
+        "unlink_tasks",
         "update_task",
         "whoami",
       ].sort(),
@@ -172,6 +174,15 @@ withDb("MCP server", () => {
     expect(parent.subtasks.map((t) => t.key)).toContain(child.key);
     const cleared = await call(client, "update_task", { key: child.key, parent: null });
     expect(cleared.json()).toMatchObject({ parent: null });
+  });
+
+  test("relations: link, see them on get_task from both sides, unlink", async () => {
+    const other = (await call(client, "create_task", { projectKey: "SPI", title: "Blocked" })).json() as { key: string };
+    expect((await call(client, "link_tasks", { key: "SPI-1", kind: "blocks", task: other.key })).isError).toBeFalsy();
+    const blocked = (await call(client, "get_task", { key: other.key })).json() as { relations: { kind: string; task: string; title: string }[] };
+    expect(blocked.relations).toEqual([{ kind: "blocked_by", task: "SPI-1", title: expect.any(String) }]);
+    expect((await call(client, "link_tasks", { key: other.key, kind: "blocks", task: "SPI-1" })).isError).toBe(true);
+    expect((await call(client, "unlink_tasks", { key: other.key, kind: "blocked_by", task: "SPI-1" })).isError).toBeFalsy();
   });
 
   test("statuses can be given by category, like the CLI", async () => {

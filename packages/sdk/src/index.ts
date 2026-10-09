@@ -10,11 +10,12 @@ import type {
   MeResponse,
   ProjectDetailDto,
   ProjectDto,
+  RelationDto,
   TagDto,
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import type { CreateCommentInput, CreateTagInput, CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
+import type { CreateCommentInput, CreateTagInput, CreateTaskInput, RelationInput, UpdateTaskInput } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
 // of @repo/core, so it stays free of the database and runs in browsers too.
@@ -157,6 +158,17 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<TaskDto>("PATCH", `${org(orgSlug)}/tasks/${seg(taskKey)}`, input),
       delete: (orgSlug: string, taskKey: string) =>
         request<void>("DELETE", `${org(orgSlug)}/tasks/${seg(taskKey)}`),
+      relations: {
+        list: (orgSlug: string, taskKey: string) =>
+          request<ListResponse<RelationDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/relations`),
+        add: (orgSlug: string, taskKey: string, input: RelationInput) =>
+          request<RelationDto>("POST", `${org(orgSlug)}/tasks/${seg(taskKey)}/relations`, input),
+        remove: (orgSlug: string, taskKey: string, input: RelationInput) =>
+          request<void>(
+            "DELETE",
+            `${org(orgSlug)}/tasks/${seg(taskKey)}/relations?${new URLSearchParams({ kind: input.kind, task: input.task })}`,
+          ),
+      },
       /** Direct sub-tasks, oldest first. */
       subtasks: (orgSlug: string, taskKey: string) =>
         request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/subtasks`),

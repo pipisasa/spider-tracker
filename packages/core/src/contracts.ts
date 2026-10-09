@@ -182,3 +182,11 @@ export interface ActivityDto {
   actorId: string;
   createdAt: string;
 }
+
+/** How a related task relates to this one, from this task's point of view. */
+export type RelationKind = "blocks" | "blocked_by" | "relates" | "duplicates" | "duplicated_by";
+
+export interface RelationDto {
+  kind: RelationKind;
+  task: { id: string; key: string; title: string; statusId: string };
+}

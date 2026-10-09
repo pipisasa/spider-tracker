@@ -131,3 +131,13 @@ export const createTagInput = z.object({
 });
 
 export type CreateTagInput = z.infer<typeof createTagInput>;
+
+export const relationKindSchema = z.enum(["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"]);
+
+export const relationInput = z.object({
+  kind: relationKindSchema,
+  /** The other task's key, e.g. "ST-12". */
+  task: z.string().trim().min(1),
+});
+
+export type RelationInput = z.infer<typeof relationInput>;

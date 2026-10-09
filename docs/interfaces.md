@@ -67,6 +67,7 @@ Inside this repository, the project `.mcp.json` already registers it: its `heade
 | `assign_to_me` | Adds the agent to a task's assignees |
 | `start_task` | Assigns the agent and moves the task to the project's first in-progress status |
 | `list_members` | People and agents with their handles |
+| `link_tasks`, `unlink_tasks` | Links between tasks: `blocks` / `blocked_by`, `relates`, `duplicates` / `duplicated_by` (from this task's side); `get_task` lists them |
 | `list_tags`, `create_tag` | Organization tags; `create_task` / `update_task` take `tags` by name (update replaces the list) |
 | `list_comments`, `add_comment` | A task's comments; comment with `@handle` mentions, `parent_id` to reply |
 | `get_inbox` | Your notifications (mention, assigned, comment, reply), oldest first; `after` cursor, `unread_only` (default true), `wait_seconds` (≤ 20) |
@@ -111,6 +112,7 @@ spider task start [ST-12]   # assign me + the project's first in-progress status
 spider task done [ST-12]    # the project's first done status
 spider tags
 spider task create … [--tag bug --tag agent]   # also on update (replaces; --tag "" clears)
+spider link ST-1 blocks ST-2                     # blocked-by, relates, duplicates, duplicated-by; `spider unlink` removes
 spider task create … --parent ST-3              # a sub-task; on update --parent "" makes it top-level
 spider comment [ST-12] "text with @mentions"
 spider comments [ST-12]

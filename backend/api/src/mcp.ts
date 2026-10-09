@@ -14,7 +14,10 @@ import {
   listProjects,
   createTag,
   listComments,
+  addRelation,
+  listRelations,
   listSubtasks,
+  removeRelation,
   listTags,
   listTaskActivity,
   listInbox,
@@ -231,8 +234,12 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     ({ key: taskKey }) =>
       run(async () => {
         const task = await getTask(db, ctx.orgId, taskKey);
-        const subtasks = await listSubtasks(db, ctx.orgId, task.key);
+        const [subtasks, relations] = await Promise.all([
+          listSubtasks(db, ctx.orgId, task.key),
+          listRelations(db, ctx.orgId, task.key),
+        ]);
         return {
+          relations: relations.map((r) => ({ kind: r.kind, task: r.task.key, title: r.task.title })),
           ...(await describeTask(task, await projectOfTask(task.key), true)),
           subtasks: await Promise.all(
             subtasks.map(async (t) => {
@@ -339,6 +346,36 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) => run(() => takeTask(taskKey, true)),
+  );
+
+  const relationKind = z
+    .enum(["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"])
+    .describe('How the other task relates to this one, from this task\'s side: "blocks" means this task blocks the other');
+
+  server.registerTool(
+    "link_tasks",
+    {
+      description: "Link two tasks: blocks / blocked_by, relates, duplicates / duplicated_by.",
+      inputSchema: {
+        key: z.string().describe('This task, e.g. "ST-12"'),
+        kind: relationKind,
+        task: z.string().describe('The other task, e.g. "ST-15"'),
+      },
+    },
+    ({ key: taskKey, kind, task }) =>
+      run(async () => {
+        const link = await addRelation(db, ctx, taskKey, { kind, task });
+        return { [taskKey.toUpperCase()]: `${link.kind} ${link.task.key}` };
+      }),
+  );
+
+  server.registerTool(
+    "unlink_tasks",
+    {
+      description: "Remove a link between two tasks (same arguments as link_tasks).",
+      inputSchema: { key: z.string(), kind: relationKind, task: z.string() },
+    },
+    ({ key: taskKey, kind, task }) => run(async () => ((await removeRelation(db, ctx, taskKey, { kind, task })), { removed: true })),
   );
 
   server.registerTool(

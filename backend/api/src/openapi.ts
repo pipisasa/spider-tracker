@@ -1,6 +1,7 @@
 import {
   createCommentInput,
   createTagInput,
+  relationInput,
   createProjectInput,
   createTaskInput,
   markInboxReadInput,
@@ -104,6 +105,12 @@ const schemas: Record<string, JsonSchema> = {
   Tag: object({ id: string({ format: "uuid" }), name: string(), color: nullable("string") }),
   TagList: listOf("Tag"),
   CreateTagInput: fromZod(createTagInput),
+  Relation: object({
+    kind: string({ enum: ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"] }),
+    task: object({ id: string({ format: "uuid" }), key: string(), title: string(), statusId: string({ format: "uuid" }) }),
+  }),
+  RelationList: listOf("Relation"),
+  RelationInput: fromZod(relationInput),
   CommentList: listOf("Comment"),
   InboxList: listOf("InboxItem"),
   MarkedCount: object({ updated: { type: "integer" } }),
@@ -219,6 +226,25 @@ const paths = {
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/subtasks": {
     parameters: [orgSlug, taskKey],
     get: { operationId: "listSubtasks", summary: "Direct sub-tasks of a task", responses: { "200": ok("Sub-tasks", "TaskList"), ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/relations": {
+    parameters: [orgSlug, taskKey],
+    get: { operationId: "listRelations", summary: "Links to other tasks, from this task's point of view", responses: { "200": ok("Relations", "RelationList"), ...errors } },
+    post: {
+      operationId: "addRelation",
+      summary: "Link this task to another (blocks, blocked_by, relates, duplicates, duplicated_by)",
+      requestBody: body("RelationInput"),
+      responses: { "201": ok("Created link", "Relation"), ...errors },
+    },
+    delete: {
+      operationId: "removeRelation",
+      summary: "Remove a link",
+      parameters: [
+        { name: "kind", in: "query", required: true, schema: { type: "string" } },
+        { name: "task", in: "query", required: true, schema: { type: "string" }, description: "The other task's key" },
+      ],
+      responses: { "204": { description: "Removed" }, ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/comments": {
     parameters: [orgSlug, taskKey],

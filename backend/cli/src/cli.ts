@@ -15,6 +15,7 @@ import {
   matchStatuses,
   parseLimit,
   parsePriority,
+  parseRelationKind,
   resolveAssignees,
   resolveTags,
   resolveStatus,
@@ -341,6 +342,28 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       stdout.write(`${JSON.stringify({ Authorization: `Bearer ${token}` })}\n`);
     });
 
+  const relationCommand = (name: "link" | "unlink", description: string) =>
+    withJson(
+      program
+        .command(name)
+        .description(description)
+        .argument("<key>", "this task, e.g. ST-12")
+        .argument("<kind>", "blocks | blocked-by | relates | duplicates | duplicated-by")
+        .argument("<task>", "the other task, e.g. ST-15"),
+    ).action(async (key: string, rawKind: string, other: string, opts: JsonOption) => {
+      const kind = parseRelationKind(rawKind);
+      const self = taskKey(key, cwd);
+      const target = taskKey(other, cwd);
+      const { sdk, org } = conn();
+      const client = await sdk();
+      if (name === "link") await client.tasks.relations.add(await org(), self, { kind, task: target });
+      else await client.tasks.relations.remove(await org(), self, { kind, task: target });
+      const summary = { task: self, kind, other: target, linked: name === "link" };
+      output(opts, summary, () => `${name === "link" ? "Linked" : "Unlinked"}: ${self} ${kind.replace("_", " ")} ${target}`);
+    });
+  relationCommand("link", "link two tasks, e.g. spider link ST-1 blocks ST-2");
+  relationCommand("unlink", "remove a link between two tasks");
+
   withJson(program.command("tags").description("list the organization's tags")).action(async (opts: JsonOption) => {
     const items = await conn().tags();
     output(opts, { items }, () => (items.length ? items.map((t) => t.name).join("\n") : "No tags"));
@@ -401,16 +424,24 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       const { sdk, org, describe } = conn();
       const client = await sdk();
       const resolved = taskKey(key, cwd);
-      const [found, subtasks] = await Promise.all([
+      const [found, subtasks, relations] = await Promise.all([
         client.tasks.get(await org(), resolved).then(describe),
-        // Servers from before sub-tasks (ST-9) have no such route.
+        // Servers from before sub-tasks (ST-9) and relations (ST-10) have no such routes.
         client.tasks
           .subtasks(await org(), resolved)
           .then(async (r) => Promise.all(r.items.map(describe)))
           .catch(() => [] as CliTask[]),
+        client.tasks.relations
+          .list(await org(), resolved)
+          .then((r) => r.items.map((rel) => ({ kind: rel.kind, task: rel.task.key, title: rel.task.title })))
+          .catch(() => [] as { kind: string; task: string; title: string }[]),
       ]);
-      output(opts, { ...found, subtasks }, () =>
-        subtasks.length ? `${taskDetail(found)}\n\nSub-tasks:\n${taskLines(subtasks)}` : taskDetail(found),
+      output(opts, { ...found, subtasks, relations }, () =>
+        [
+          taskDetail(found),
+          ...(relations.length ? ["", "Links:", ...relations.map((r) => `  ${r.kind.replace("_", " ")} ${r.task}  ${r.title}`)] : []),
+          ...(subtasks.length ? ["", "Sub-tasks:", taskLines(subtasks)] : []),
+        ].join("\n"),
       );
     },
   );

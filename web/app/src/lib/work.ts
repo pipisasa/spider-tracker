@@ -3,6 +3,7 @@ import type {
   ActorDto,
   AgentDto,
   CommentDto,
+  RelationDto,
   TagDto,
   CreatedApiKeyDto,
   ListResponse,
@@ -36,6 +37,7 @@ export const keys = {
   comments: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "comments"] as const,
   activity: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "activity"] as const,
   subtasks: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "subtasks"] as const,
+  relations: (org: string, taskKey: string) => ["orgs", org, "tasks", taskKey, "relations"] as const,
 };
 
 export const membersQuery = (org: string) =>
@@ -225,3 +227,23 @@ export const subtasksQuery = (org: string, taskKey: string) =>
     queryKey: keys.subtasks(org, taskKey),
     queryFn: async () => (await api<ListResponse<TaskDto>>(`${orgPath(org)}/tasks/${taskKey}/subtasks`)).items,
   });
+
+export const relationsQuery = (org: string, taskKey: string) =>
+  queryOptions({
+    queryKey: keys.relations(org, taskKey),
+    queryFn: async () => (await api<ListResponse<RelationDto>>(`${orgPath(org)}/tasks/${taskKey}/relations`)).items,
+  });
+
+export function useRelation(org: string, taskKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ add, kind, task }: { add: boolean; kind: RelationDto["kind"]; task: string }) => {
+      if (add) {
+        await api<RelationDto>(`${orgPath(org)}/tasks/${taskKey}/relations`, { method: "POST", body: JSON.stringify({ kind, task }) });
+      } else {
+        await api<void>(`${orgPath(org)}/tasks/${taskKey}/relations?${new URLSearchParams({ kind, task })}`, { method: "DELETE" });
+      }
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.relations(org, taskKey) }),
+  });
+}

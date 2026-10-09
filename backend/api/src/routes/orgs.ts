@@ -5,7 +5,10 @@ import {
   createTag,
   deleteTag,
   listTags,
+  addRelation,
+  listRelations,
   listSubtasks,
+  removeRelation,
   listTaskActivity,
   listComments,
   listInbox,
@@ -135,6 +138,20 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   app.get("/tasks/:taskKey/subtasks", async (c) =>
     c.json(list(await listSubtasks(db, c.get("actor").orgId, c.req.param("taskKey")))),
   );
+
+  app.get("/tasks/:taskKey/relations", async (c) =>
+    c.json(list(await listRelations(db, c.get("actor").orgId, c.req.param("taskKey")))),
+  );
+
+  app.post("/tasks/:taskKey/relations", async (c) =>
+    c.json(await addRelation(db, c.get("actor"), c.req.param("taskKey"), await body(c)), 201),
+  );
+
+  // DELETE /tasks/ST-1/relations?kind=blocks&task=ST-2
+  app.delete("/tasks/:taskKey/relations", async (c) => {
+    await removeRelation(db, c.get("actor"), c.req.param("taskKey"), c.req.query());
+    return c.body(null, 204);
+  });
 
   app.get("/tasks/:taskKey/activity", async (c) =>
     c.json(list(await listTaskActivity(db, c.get("actor").orgId, c.req.param("taskKey")))),

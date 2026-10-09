@@ -91,3 +91,14 @@ export function resolveTags(tags: TagDto[], names: string[]): string[] {
     return tag.id;
   });
 }
+
+const RELATION_KINDS = ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"] as const;
+export type RelationKindInput = (typeof RELATION_KINDS)[number];
+
+/** "blocked-by", "Blocked By" and "blocked_by" all mean blocked_by. */
+export function parseRelationKind(value: string): RelationKindInput {
+  const kind = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const found = RELATION_KINDS.find((k) => k === kind || (k === "relates" && kind === "relates_to"));
+  if (!found) throw usageError(`Unknown link kind "${value}". Use one of: blocks, blocked-by, relates, duplicates, duplicated-by`);
+  return found;
+}

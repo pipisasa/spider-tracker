@@ -162,3 +162,25 @@ export const taskTags = pgTable(
   },
   (t) => [primaryKey({ columns: [t.taskId, t.tagId] }), index("task_tags_tag_idx").on(t.tagId)],
 );
+
+// Links between tasks (ST-10). Stored in one direction: "A blocks B", "A duplicates B",
+// "A relates to B"; the reverse ("blocked by", "duplicated by") is derived when listing.
+export const taskRelations = pgTable(
+  "task_relations",
+  {
+    fromTaskId: uuid("from_task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    toTaskId: uuid("to_task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    type: text("type", { enum: ["blocks", "relates", "duplicates"] }).notNull(),
+    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.fromTaskId, t.toTaskId, t.type] }),
+    index("task_relations_to_idx").on(t.toTaskId),
+    check("task_relations_not_self", sql`${t.fromTaskId} <> ${t.toTaskId}`),
+  ],
+);
