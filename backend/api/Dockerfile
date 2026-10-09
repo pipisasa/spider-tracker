@@ -10,6 +10,7 @@ COPY packages/eslint-config/package.json packages/eslint-config/
 COPY packages/typescript-config/package.json packages/typescript-config/
 COPY packages/db/package.json packages/db/
 COPY packages/core/package.json packages/core/
+COPY packages/sdk/package.json packages/sdk/
 COPY backend/api/package.json backend/api/
 RUN bun install --frozen-lockfile --production --filter=@repo/api
 
