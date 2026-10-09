@@ -1,0 +1,19 @@
+function toKebab(source: string, maxLength: number): string {
+  return source
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .slice(0, maxLength)
+    .replace(/^-+|-+$/g, "");
+}
+
+/** Derives an actor handle like `jane-doe` from a name or email. */
+export function handleFrom(source: string): string {
+  return toKebab(source.split("@")[0] ?? "", 32) || "member";
+}
+
+/** Turns an organization name into a slug suggestion; empty when nothing usable is left. */
+export function slugFrom(name: string): string {
+  return toKebab(name, 40);
+}
