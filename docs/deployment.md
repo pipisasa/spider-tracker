@@ -2,6 +2,10 @@
 
 [← Project overview](./PROJECT.md) · Hosting overview: [architecture.md](./architecture.md#hosting)
 
+## Order
+
+Deploy the **API first** and wait until Railway reports `SUCCESS` (`railway service status -s api`), then deploy the web app. A web build that expects new API fields can otherwise reach users before the API does.
+
 ## Web app: Cloudflare Pages
 
 Deploys are **manual** (no CI/CD): build locally, upload with `wrangler pages deploy`.

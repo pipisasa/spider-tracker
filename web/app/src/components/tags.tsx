@@ -13,8 +13,9 @@ import { toast } from "sonner";
 const FALLBACK_COLOR = "#a1a1aa";
 const PALETTE = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#6366f1", "#a855f7", "#ec4899"];
 
-export function TagChips({ tagIds, tags, className }: { tagIds: string[]; tags: TagDto[]; className?: string }) {
-  const chosen = tagIds.map((id) => tags.find((t) => t.id === id)).filter((t): t is TagDto => !!t);
+export function TagChips({ tagIds, tags, className }: { tagIds?: string[]; tags: TagDto[]; className?: string }) {
+  // Optional so a web build that's newer than the API (during a deploy) still renders.
+  const chosen = (tagIds ?? []).map((id) => tags.find((t) => t.id === id)).filter((t): t is TagDto => !!t);
   if (chosen.length === 0) return null;
   return (
     <span className={`flex flex-wrap gap-1 ${className ?? ""}`}>

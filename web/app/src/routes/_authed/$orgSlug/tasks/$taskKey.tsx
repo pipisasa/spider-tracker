@@ -91,7 +91,7 @@ function TaskPage() {
           />
         </Field>
         <Field label="Tags">
-          <TagPicker orgSlug={orgSlug} value={task.tagIds} onChange={(tagIds) => save({ tagIds })} />
+          <TagPicker orgSlug={orgSlug} value={task.tagIds ?? []} onChange={(tagIds) => save({ tagIds })} />
         </Field>
         <Field label="Created">
           <span className="flex items-center gap-2 text-sm">
