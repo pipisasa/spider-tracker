@@ -31,6 +31,8 @@ Connect Claude Code:
 claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --header "Authorization: Bearer $SPIDER_TOKEN"
 ```
 
+Inside this repository, the project `.mcp.json` already registers it (with `${SPIDER_TOKEN}` expanded from the environment), and the `spider-tracker` skill in `.claude/skills` describes the workflow; see [agents.md](./agents.md#distribution).
+
 | Tool | What it does |
 |---|---|
 | `whoami` | The agent and organization the key acts as |

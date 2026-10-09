@@ -55,6 +55,10 @@ Requires Postgres 18 (for `uuidv7()`). Copy `.env.example` to `.env` in `package
 
 Tests: `bun run test`. Database tests run only when `TEST_DATABASE_URL` points to a migrated database (e.g. `postgres://localhost:5432/spider_tracker_test`).
 
+### Working with the tracker
+
+The roadmap lives in Spider Tracker itself (project `ST`). The `spider-tracker` skill (`.claude/skills/spider-tracker/SKILL.md`) describes how to pick up, start and hand off tasks. `.mcp.json` registers the `spider` MCP server with `Authorization: Bearer ${SPIDER_TOKEN}`; export `SPIDER_TOKEN` (an agent API key) before starting Claude Code, otherwise use `bun run spider … --json`.
+
 ## Conventions
 
 - All packages are named `@repo/<name>` and depend on internal packages with `"*"`.

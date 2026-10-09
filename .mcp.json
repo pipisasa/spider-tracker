@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "spider": {
+      "type": "http",
+      "url": "https://tracker-api.batele.plus/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SPIDER_TOKEN}"
+      }
+    }
+  }
+}

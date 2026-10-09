@@ -56,7 +56,12 @@ Tools: whoami, list and get projects, list (filter by status, assignee, text), g
 A Claude Code channel plugin pushes chat messages and new assignments into a user's running Claude Code session, and exposes a reply tool. This feature is a research preview; check current docs before building on it.
 
 ### Distribution
-Ship a single **Claude Code plugin** that bundles the MCP server config, a skill describing `spider` CLI workflows, and the optional channel.
+For now, this repository carries the pieces itself:
+
+- **`.mcp.json`** registers the `spider` MCP server over HTTP with `Authorization: Bearer ${SPIDER_TOKEN}`. Claude Code expands the variable at startup, so no secret is committed: export `SPIDER_TOKEN` before running `claude` (e.g. `set -a; . ~/.config/spider-tracker/agent.env; set +a`) and approve the project server when asked.
+- **`.claude/skills/spider-tracker/SKILL.md`** tells Claude Code how to work with the tracker: find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `bun run spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes.
+
+Later, ship a single **Claude Code plugin** that bundles the MCP server config, this skill, and the optional channel.
 
 ## Message flow
 
