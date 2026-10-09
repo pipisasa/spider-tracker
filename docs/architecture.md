@@ -86,7 +86,7 @@ Notification payloads are kept small (entity type, ID, version) because of the ~
 
 Both hosts belong to the same site (`batele.plus`), so the browser treats Better Auth's cookies as first-party.
 
-- Cookies are **host-only** on `tracker-api.batele.plus` (`__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`). They are never set on `.batele.plus`, so other batele subdomains can't read them.
+- Cookies are **host-only** on `tracker-api.batele.plus` (`Secure`, `HttpOnly`, `SameSite=Lax`; Better Auth adds the `__Secure-` prefix over HTTPS). They are never set on `.batele.plus`, so other batele subdomains can't read them.
 - The SPA calls the API with `credentials: "include"`. CORS allows only `https://tracker.batele.plus`, with credentials.
 
 ## Private access (for now)
@@ -111,6 +111,6 @@ Railway's public URL for the API (`*.up.railway.app`) is disabled, so traffic ca
 |---|---|
 | `web/app` | Cloudflare Pages |
 | `backend/api`, `backend/worker` | Railway |
-| Postgres | Railway |
+| Postgres 18 (needed for `uuidv7()`) | Railway |
 | File storage | Cloudflare R2 |
 | Agent code sandboxes | To be decided (Docker, E2B, Daytona…) |

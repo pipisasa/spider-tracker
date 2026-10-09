@@ -18,6 +18,9 @@ bun run check-types    # Type-check all apps and packages
 bun run test           # Run tests
 bun run format         # Format with Prettier (ts, tsx, md)
 
+bun run db:generate    # Generate a migration from schema changes (packages/db)
+bun run db:migrate     # Apply migrations to DATABASE_URL
+
 # Filter to a specific app/package
 bunx turbo run dev --filter=@repo/<name>
 ```
@@ -32,12 +35,24 @@ Turborepo monorepo with bun workspaces.
 | `backend/*` | Backend apps (APIs, workers, CLI, services) |
 | `packages/*` | Shared packages |
 
-No apps exist yet.
+### Apps
+
+- **`@repo/api`** (`backend/api`) — Hono on Bun, port 4000. Better Auth mounted at `/api/auth/*`; signed-in routes under `/v1/*`; `/health` and `/health/ready`.
+- **`@repo/web`** (`web/app`) — Vite + React SPA, port 5173. TanStack Router (file-based routes in `src/routes`, `_authed` layout guards signed-in pages) + TanStack Query. shadcn/ui (radix-nova) components in `src/components/ui` (generated; don't lint or hand-edit).
 
 ### Packages
 
+- **`@repo/db`** — Drizzle schema (`src/schema`), `createDb()`, migrations in `migrations/`. Better Auth tables live in `schema/auth.ts`; their property names must match Better Auth's field names. IDs default to Postgres 18 `uuidv7()`.
+- **`@repo/core`** — Domain logic used by api/worker/cli (`createOrganization`, …), shared Zod schemas (`@repo/core/schemas`) and API response types (`@repo/core/contracts`). The web app imports only those subpaths, never the root (it pulls in the database).
+
 - **`@repo/eslint-config`** — Shared ESLint flat configs. Exports `./base` (backend/libraries), `./next-js`, and `./react-internal`. Uses `eslint-plugin-only-warn`; apps run lint with `--max-warnings 0`.
 - **`@repo/typescript-config`** — Shared tsconfig bases: `base.json`, `bun.json` (backend apps on Bun; add `@types/bun`), `nextjs.json`, `react-library.json`, `vite.json`.
+
+### Local setup
+
+Requires Postgres 18 (for `uuidv7()`). Copy `.env.example` to `.env` in `packages/db`, `backend/api` and `web/app`; set `BETTER_AUTH_SECRET` (`openssl rand -base64 32`). Magic links are printed to the API console in development.
+
+Tests: `bun run test`. Database tests run only when `TEST_DATABASE_URL` points to a migrated database (e.g. `postgres://localhost:5432/spider_tracker_test`).
 
 ## Conventions
 
@@ -46,3 +61,5 @@ No apps exist yet.
 - TypeScript 5.9, ESLint 9 flat config.
 - **No `any`**: use `unknown` + narrowing, generics, or precise types.
 - Every app/package exposes `lint` and `check-types` scripts; long-running apps expose `dev`.
+- Business rules go in `@repo/core`, not in route handlers; handlers validate, call core, and map `DomainError` codes to HTTP statuses.
+- Read environment variables only through `backend/api/src/env.ts` (Zod-validated). New env vars must be added to `globalEnv` in `turbo.json`.
