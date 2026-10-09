@@ -2,6 +2,9 @@ import type { ActivitySource, ActorRole, AgentDto, ListResponse } from "@repo/co
 import {
   DomainError,
   addComment,
+  createTag,
+  deleteTag,
+  listTags,
   listTaskActivity,
   listComments,
   listInbox,
@@ -94,6 +97,15 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.delete("/api-keys/:keyId", async (c) => {
     await revokeApiKey(db, c.get("actor"), c.req.param("keyId"));
+    return c.body(null, 204);
+  });
+
+  app.get("/tags", async (c) => c.json(list(await listTags(db, c.get("actor").orgId))));
+
+  app.post("/tags", async (c) => c.json(await createTag(db, c.get("actor"), await body(c)), 201));
+
+  app.delete("/tags/:tagId", async (c) => {
+    await deleteTag(db, c.get("actor"), c.req.param("tagId"));
     return c.body(null, 204);
   });
 

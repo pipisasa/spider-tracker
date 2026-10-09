@@ -1,5 +1,6 @@
 import {
   createCommentInput,
+  createTagInput,
   createProjectInput,
   createTaskInput,
   markInboxReadInput,
@@ -75,6 +76,7 @@ const schemas: Record<string, JsonSchema> = {
     parentId: nullable("string", { format: "uuid" }),
     sortKey: string(),
     assigneeIds: { type: "array", items: string({ format: "uuid" }) },
+    tagIds: { type: "array", items: string({ format: "uuid" }) },
     creatorId: string({ format: "uuid" }),
     createdAt: string({ format: "date-time" }),
     updatedAt: string({ format: "date-time" }),
@@ -98,6 +100,9 @@ const schemas: Record<string, JsonSchema> = {
     comment: { oneOf: [object({ id: string({ format: "uuid" }), body: string() }), { type: "null" }] },
     from: object({ id: string({ format: "uuid" }), handle: string(), name: string(), type: string({ enum: ["human", "agent"] }) }),
   }),
+  Tag: object({ id: string({ format: "uuid" }), name: string(), color: nullable("string") }),
+  TagList: listOf("Tag"),
+  CreateTagInput: fromZod(createTagInput),
   CommentList: listOf("Comment"),
   InboxList: listOf("InboxItem"),
   MarkedCount: object({ updated: { type: "integer" } }),
@@ -222,6 +227,24 @@ const paths = {
       summary: "Comment on a task; @mentions, replies and assignees are notified",
       requestBody: body("CreateCommentInput"),
       responses: { "201": ok("Created comment", "Comment"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tags": {
+    parameters: [orgSlug],
+    get: { operationId: "listTags", summary: "The organization's tags", responses: { "200": ok("Tags", "TagList"), ...errors } },
+    post: {
+      operationId: "createTag",
+      summary: "Create a tag",
+      requestBody: body("CreateTagInput"),
+      responses: { "201": ok("Created tag", "Tag"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tags/{tagId}": {
+    parameters: [orgSlug, pathParam("tagId", "Tag id")],
+    delete: {
+      operationId: "deleteTag",
+      summary: "Delete a tag (owners and admins); it is removed from every task",
+      responses: { "204": { description: "Deleted" }, ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/inbox": {

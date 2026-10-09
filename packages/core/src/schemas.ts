@@ -42,6 +42,7 @@ export const createTaskInput = z.object({
   statusId: z.uuid().optional(),
   priority: prioritySchema.optional(),
   assigneeIds: z.array(z.uuid()).max(20).optional(),
+  tagIds: z.array(z.uuid()).max(20).optional(),
   parentId: z.uuid().nullable().optional(),
 });
 
@@ -61,6 +62,7 @@ export const updateTaskInput = z
     statusId: z.uuid(),
     priority: prioritySchema,
     assigneeIds: z.array(z.uuid()).max(20),
+    tagIds: z.array(z.uuid()).max(20),
     parentId: z.uuid().nullable(),
     position: taskPositionInput,
   })
@@ -119,3 +121,13 @@ export const markInboxReadInput = z
     upTo: z.number().int().positive().optional(),
   })
   .refine((v) => v.ids !== undefined || v.upTo !== undefined, "Pass ids or upTo");
+
+export const createTagInput = z.object({
+  name: z.string().trim().min(1, "Required").max(40, "At most 40 characters"),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "A hex colour like #22c55e")
+    .optional(),
+});
+
+export type CreateTagInput = z.infer<typeof createTagInput>;

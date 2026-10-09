@@ -10,10 +10,11 @@ import type {
   MeResponse,
   ProjectDetailDto,
   ProjectDto,
+  TagDto,
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import type { CreateCommentInput, CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
+import type { CreateCommentInput, CreateTagInput, CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
 // of @repo/core, so it stays free of the database and runs in browsers too.
@@ -119,6 +120,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       list: (orgSlug: string) => request<ListResponse<ProjectDto>>("GET", `${org(orgSlug)}/projects`),
       get: (orgSlug: string, projectKey: string) =>
         request<ProjectDetailDto>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}`),
+    },
+
+    tags: {
+      list: (orgSlug: string) => request<ListResponse<TagDto>>("GET", `${org(orgSlug)}/tags`),
+      create: (orgSlug: string, input: CreateTagInput) => request<TagDto>("POST", `${org(orgSlug)}/tags`, input),
+      delete: (orgSlug: string, tagId: string) => request<void>("DELETE", `${org(orgSlug)}/tags/${seg(tagId)}`),
     },
 
     comments: {

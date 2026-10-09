@@ -96,6 +96,7 @@ withDb("MCP server", () => {
       [
         "add_comment",
         "assign_to_me",
+        "create_tag",
         "create_task",
         "get_inbox",
         "get_task_activity",
@@ -104,6 +105,7 @@ withDb("MCP server", () => {
         "get_project",
         "get_task",
         "list_members",
+        "list_tags",
         "list_projects",
         "list_tasks",
         "start_task",
@@ -148,6 +150,16 @@ withDb("MCP server", () => {
       .where(and(eq(schema.activity.orgId, org?.id ?? ""), eq(schema.activity.entityType, "task")));
     expect(rows.map((r) => r.action).sort()).toEqual(["task.created", "task.updated"]);
     expect(rows.every((r) => r.source === "mcp")).toBe(true);
+  });
+
+  test("tags by name on create and update; unknown names list the existing ones", async () => {
+    expect((await call(client, "create_tag", { name: "infra" })).isError).toBeFalsy();
+    const created = await call(client, "create_task", { projectKey: "SPI", title: "Tagged", tags: ["Infra"] });
+    expect(created.json()).toMatchObject({ tags: ["infra"] });
+    const bad = await call(client, "update_task", { key: created.json().key, tags: ["nope"] });
+    expect(bad).toMatchObject({ isError: true });
+    expect(bad.text).toContain("infra");
+    expect(JSON.parse((await call(client, "list_tags")).text)).toEqual([{ name: "infra", color: null }]);
   });
 
   test("statuses can be given by category, like the CLI", async () => {

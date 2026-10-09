@@ -1,4 +1,4 @@
-import type { ActorDto, ProjectDetailDto, StatusDto, TaskDto, WhoAmIResponse } from "@repo/core/contracts";
+import type { ActorDto, ProjectDetailDto, StatusDto, TagDto, TaskDto, WhoAmIResponse } from "@repo/core/contracts";
 import { parseTaskKey } from "@repo/core/schemas";
 import type { CreateTaskInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
@@ -16,6 +16,7 @@ import {
   parseLimit,
   parsePriority,
   resolveAssignees,
+  resolveTags,
   resolveStatus,
   usageError,
   type ExitCode,
@@ -49,6 +50,7 @@ export interface RunOptions {
 export interface CliTask extends TaskDto {
   status: Pick<StatusDto, "id" | "name" | "category"> | null;
   assignees: string[];
+  tags: string[];
 }
 
 interface JsonOption {
@@ -61,6 +63,7 @@ interface TaskFields extends JsonOption {
   status?: string;
   priority?: string;
   assign?: string[];
+  tag?: string[];
 }
 
 /** Repeatable, comma-separable --assign. */
@@ -99,10 +102,12 @@ function connect(options: RunOptions) {
 
   let who: Promise<WhoAmIResponse> | undefined;
   let members: Promise<ActorDto[]> | undefined;
+  let tagList: Promise<TagDto[]> | undefined;
   const projects = new Map<string, Promise<ProjectDetailDto>>();
 
   const whoami = () => (who ??= ready.then((c) => c.whoami()));
   const org = async () => (await whoami()).organization.slug;
+  const loadTags = () => (tagList ??= org().then(async (slug) => (await sdk()).tags.list(slug).then((r) => r.items)));
   const loadMembers = () => (members ??= org().then(async (slug) => (await sdk()).members.list(slug).then((r) => r.items)));
   const project = (key: string) => {
     const upper = key.toUpperCase();
@@ -116,16 +121,21 @@ function connect(options: RunOptions) {
 
   /** Adds the status and assignee handles, for printing. */
   const describe = async (task: TaskDto): Promise<CliTask> => {
-    const [detail, rows] = await Promise.all([project(projectKeyOf(task.key)), loadMembers()]);
+    const [detail, rows, tagRows] = await Promise.all([
+      project(projectKeyOf(task.key)),
+      loadMembers(),
+      task.tagIds.length ? loadTags() : [],
+    ]);
     const status = detail.statuses.find((s) => s.id === task.statusId);
     return {
       ...task,
       status: status ? { id: status.id, name: status.name, category: status.category } : null,
       assignees: task.assigneeIds.map((id) => rows.find((m) => m.id === id)?.handle ?? id),
+      tags: task.tagIds.map((id) => tagRows.find((t) => t.id === id)?.name ?? id),
     };
   };
 
-  return { sdk, whoami, org, members: loadMembers, project, describe };
+  return { sdk, whoami, org, members: loadMembers, tags: loadTags, project, describe };
 }
 
 type Api = ReturnType<typeof connect>;
@@ -165,6 +175,7 @@ function taskLines(tasks: CliTask[]): string {
         (t.status?.name ?? "?").padEnd(statusWidth),
         t.priority ? `P${t.priority}` : "  ",
         t.title,
+        t.tags.map((name) => `#${name}`).join(" "),
         assigneeList(t),
       ]
         .filter((part, i) => i < 4 || part)
@@ -176,7 +187,7 @@ function taskLines(tasks: CliTask[]): string {
 function taskDetail(task: CliTask): string {
   const lines = [
     `${task.key}  ${task.title}`,
-    `Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}`,
+    `Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
     `Created ${task.createdAt} · Updated ${task.updatedAt}${task.completedAt ? ` · Completed ${task.completedAt}` : ""}`,
   ];
   if (task.description) lines.push("", task.description);
@@ -219,6 +230,7 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       const { actor } = await conn().whoami();
       input.assigneeIds = resolveAssignees(await conn().members(), actor.id, opts.assign);
     }
+    if (opts.tag !== undefined) input.tagIds = resolveTags(await conn().tags(), opts.tag);
     return input;
   };
 
@@ -228,7 +240,8 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
         .option("--description <text>", "description (Markdown)")
         .option("--status <name>", "status name or category, e.g. \"In Progress\" or in_progress")
         .option("--priority <0-4>", "0 none, 1 urgent, 2 high, 3 medium, 4 low")
-        .option("--assign <handle>", "assignee handle or \"me\"; repeatable or comma-separated", collect),
+        .option("--assign <handle>", "assignee handle or \"me\"; repeatable or comma-separated", collect)
+        .option("--tag <name>", "tag name; repeatable or comma-separated (replaces the tags on update)", collect),
     );
 
   /** Updates a task and prints the result. */
@@ -318,6 +331,11 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       const { token } = await credentialsFor(options);
       stdout.write(`${JSON.stringify({ Authorization: `Bearer ${token}` })}\n`);
     });
+
+  withJson(program.command("tags").description("list the organization's tags")).action(async (opts: JsonOption) => {
+    const items = await conn().tags();
+    output(opts, { items }, () => (items.length ? items.map((t) => t.name).join("\n") : "No tags"));
+  });
 
   withJson(program.command("projects").description("list projects")).action(async (opts: JsonOption) => {
     const { sdk, org } = conn();

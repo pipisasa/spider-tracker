@@ -11,14 +11,19 @@ import { DomainError } from "./errors";
 import { createTaskInput, parseTaskKey, updateTaskInput, type UpdateTaskInput } from "./schemas";
 import { parseInput } from "./validate";
 
-const { actors, projects, statuses, taskAssignees, tasks } = schema;
+const { actors, projects, statuses, tags, taskAssignees, taskTags, tasks } = schema;
 
 type TaskRow = typeof tasks.$inferSelect;
 type StatusRow = typeof statuses.$inferSelect;
 
 const CLOSED: StatusRow["category"][] = ["done", "canceled"];
 
-function toTaskDto(row: TaskRow, projectKey: string, assigneeIds: string[]): TaskDto {
+interface TaskLinks {
+  assigneeIds: string[];
+  tagIds: string[];
+}
+
+function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds }: TaskLinks): TaskDto {
   return {
     id: row.id,
     key: `${projectKey}-${row.number}`,
@@ -31,6 +36,7 @@ function toTaskDto(row: TaskRow, projectKey: string, assigneeIds: string[]): Tas
     parentId: row.parentId,
     sortKey: row.sortKey,
     assigneeIds,
+    tagIds,
     creatorId: row.creatorId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -38,16 +44,37 @@ function toTaskDto(row: TaskRow, projectKey: string, assigneeIds: string[]): Tas
   };
 }
 
-async function assigneesByTask(db: Db | Tx, taskIds: string[]) {
-  const map = new Map<string, string[]>();
+/** Assignees and tags of each task. */
+async function linksByTask(db: Db | Tx, taskIds: string[]) {
+  const map = new Map<string, TaskLinks>(taskIds.map((id) => [id, { assigneeIds: [], tagIds: [] }]));
   if (taskIds.length === 0) return map;
-  const rows = await db
-    .select({ taskId: taskAssignees.taskId, actorId: taskAssignees.actorId })
-    .from(taskAssignees)
-    .where(inArray(taskAssignees.taskId, taskIds))
-    .orderBy(asc(taskAssignees.assignedAt));
-  for (const row of rows) map.set(row.taskId, [...(map.get(row.taskId) ?? []), row.actorId]);
+  const [assigneeRows, tagRows] = await Promise.all([
+    db
+      .select({ taskId: taskAssignees.taskId, actorId: taskAssignees.actorId })
+      .from(taskAssignees)
+      .where(inArray(taskAssignees.taskId, taskIds))
+      .orderBy(asc(taskAssignees.assignedAt)),
+    db
+      .select({ taskId: taskTags.taskId, tagId: taskTags.tagId })
+      .from(taskTags)
+      .innerJoin(tags, eq(taskTags.tagId, tags.id))
+      .where(inArray(taskTags.taskId, taskIds))
+      .orderBy(asc(tags.name)),
+  ]);
+  for (const row of assigneeRows) map.get(row.taskId)?.assigneeIds.push(row.actorId);
+  for (const row of tagRows) map.get(row.taskId)?.tagIds.push(row.tagId);
   return map;
+}
+
+const noLinks: TaskLinks = { assigneeIds: [], tagIds: [] };
+
+async function assertTagsInOrg(tx: Tx, orgId: string, tagIds: string[]) {
+  if (tagIds.length === 0) return;
+  const rows = await tx
+    .select({ id: tags.id })
+    .from(tags)
+    .where(and(eq(tags.orgId, orgId), inArray(tags.id, tagIds)));
+  if (rows.length !== tagIds.length) throw new DomainError("validation", "Tags must belong to this organization");
 }
 
 async function findStatus(tx: Tx, projectId: string, statusId: string) {
@@ -136,7 +163,9 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     if (!status) throw new DomainError("validation", "Project has no statuses");
 
     const assigneeIds = [...new Set(data.assigneeIds ?? [])];
+    const tagIds = [...new Set(data.tagIds ?? [])];
     await assertActorsInOrg(tx, ctx.orgId, assigneeIds);
+    await assertTagsInOrg(tx, ctx.orgId, tagIds);
     if (data.parentId) await assertParent(tx, ctx.orgId, data.parentId);
 
     const [task] = await tx
@@ -163,16 +192,17 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
         .values(assigneeIds.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
       await notify(tx, ctx, task.id, assigneeIds.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
     }
+    if (tagIds.length > 0) await tx.insert(taskTags).values(tagIds.map((tagId) => ({ taskId: task.id, tagId })));
 
     await recordActivity(tx, ctx, {
       entityType: "task",
       entityId: task.id,
       action: "task.created",
-      changes: { title: task.title, statusId: status.id, assigneeIds },
+      changes: { title: task.title, statusId: status.id, assigneeIds, ...(tagIds.length ? { tagIds } : {}) },
     });
 
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
-    return toTaskDto(task, project.key, assigneeIds);
+    return toTaskDto(task, project.key, { assigneeIds, tagIds });
   });
 }
 
@@ -183,11 +213,11 @@ export async function listTasks(db: Db, orgId: string, projectKey: string): Prom
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .where(and(eq(projects.orgId, orgId), eq(projects.key, projectKey.toUpperCase()), isNull(tasks.deletedAt)))
     .orderBy(asc(tasks.sortKey), asc(tasks.id));
-  const assignees = await assigneesByTask(
+  const links = await linksByTask(
     db,
     rows.map((r) => r.task.id),
   );
-  return rows.map((r) => toTaskDto(r.task, r.projectKey, assignees.get(r.task.id) ?? []));
+  return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
 }
 
 /** The task row and its project key; not_found for unknown or deleted tasks. */
@@ -213,8 +243,8 @@ export async function findTask(db: Db | Tx, orgId: string, taskKey: string) {
 
 export async function getTask(db: Db, orgId: string, taskKey: string): Promise<TaskDto> {
   const { task, projectKey } = await findTask(db, orgId, taskKey);
-  const assignees = await assigneesByTask(db, [task.id]);
-  return toTaskDto(task, projectKey, assignees.get(task.id) ?? []);
+  const links = await linksByTask(db, [task.id]);
+  return toTaskDto(task, projectKey, links.get(task.id) ?? noLinks);
 }
 
 export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<TaskDto> {
@@ -256,7 +286,8 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       }
     }
 
-    let assigneeIds = (await assigneesByTask(tx, [task.id])).get(task.id) ?? [];
+    const current = (await linksByTask(tx, [task.id])).get(task.id) ?? noLinks;
+    let assigneeIds = current.assigneeIds;
     if (data.assigneeIds !== undefined) {
       const next = [...new Set(data.assigneeIds)];
       await assertActorsInOrg(tx, ctx.orgId, next);
@@ -277,8 +308,22 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       assigneeIds = next;
     }
 
-    const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined;
-    if (!touched) return toTaskDto(task, projectKey, assigneeIds);
+    let tagIds = current.tagIds;
+    if (data.tagIds !== undefined) {
+      const next = [...new Set(data.tagIds)];
+      await assertTagsInOrg(tx, ctx.orgId, next);
+      const added = next.filter((id) => !tagIds.includes(id));
+      const removed = tagIds.filter((id) => !next.includes(id));
+      if (removed.length > 0) {
+        await tx.delete(taskTags).where(and(eq(taskTags.taskId, task.id), inArray(taskTags.tagId, removed)));
+      }
+      if (added.length > 0) await tx.insert(taskTags).values(added.map((tagId) => ({ taskId: task.id, tagId })));
+      if (added.length > 0 || removed.length > 0) changes.tagIds = [tagIds, next];
+      tagIds = next;
+    }
+
+    const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined || changes.tagIds !== undefined;
+    if (!touched) return toTaskDto(task, projectKey, { assigneeIds, tagIds });
 
     const [updated] = await tx
       .update(tasks)
@@ -292,7 +337,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
     }
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
-    return toTaskDto(updated, projectKey, assigneeIds);
+    return toTaskDto(updated, projectKey, { assigneeIds, tagIds });
   });
 }
 

@@ -282,4 +282,23 @@ withDb("spider CLI against the API", () => {
     await pumping;
     await session.close();
   });
+  test("tags: list, set on create and update, unknown names fail with the list", async () => {
+    // Agents (members) can create tags through the API; the CLI only reads and assigns them.
+    const res = await app.request(`/v1/orgs/${slug}/tags`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "cli" }),
+    });
+    expect(res.status).toBe(201);
+    expect((await spider("tags")).stdout).toBe("cli\n");
+
+    const created = await spider("task", "create", "--project", "SPI", "--title", "Tagged", "--tag", "#CLI", "--json");
+    expect(created.json()).toMatchObject({ tags: ["cli"] });
+    const key = created.json().key as string;
+    expect((await spider("task", "view", key)).stdout).toContain("Tags: cli");
+    expect((await spider("task", "update", key, "--tag", "nope")).stderr).toContain("Existing tags: cli");
+    // An empty --tag clears the tags, like --description "".
+    expect((await spider("task", "update", key, "--tag", "", "--json")).json()).toMatchObject({ tags: [] });
+  });
+
 });

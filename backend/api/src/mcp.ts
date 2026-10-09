@@ -12,7 +12,9 @@ import {
   getTask,
   listMembers,
   listProjects,
+  createTag,
   listComments,
+  listTags,
   listTaskActivity,
   listInbox,
   listTasks,
@@ -36,6 +38,7 @@ const priority = z
   .min(0)
   .max(4)
   .describe("0 none, 1 urgent, 2 high, 3 medium, 4 low");
+const tagsInput = z.array(z.string()).max(20).describe("Tag names (see list_tags)");
 const assigneesInput = z
   .array(z.string())
   .max(20)
@@ -98,6 +101,24 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     return status;
   };
 
+  const resolveTags = async (names: string[]) => {
+    const rows = await listTags(db, ctx.orgId);
+    return names.map((raw) => {
+      const tag = rows.find((t) => t.name.toLowerCase() === raw.trim().toLowerCase());
+      if (!tag) {
+        throw new DomainError(
+          "validation",
+          `Unknown tag "${raw}". Existing tags: ${rows.map((t) => t.name).join(", ") || "none"} (create_tag adds one)`,
+        );
+      }
+      return tag.id;
+    });
+  };
+  const tagNames = async (ids: string[]) => {
+    const rows = await listTags(db, ctx.orgId);
+    return ids.map((id) => rows.find((t) => t.id === id)?.name ?? id);
+  };
+
   const projectOfTask = (taskKey: string) => getProject(db, ctx.orgId, taskKey.split("-")[0] ?? "");
 
   /** A task as the model sees it: names and handles instead of ids. */
@@ -107,6 +128,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     status: project.statuses.find((s) => s.id === task.statusId)?.name ?? task.statusId,
     priority: PRIORITY_NAMES[task.priority],
     assignees: await Promise.all(task.assigneeIds.map(handleOf)),
+    tags: await tagNames(task.tagIds),
     ...(detail
       ? {
           description: task.description,
@@ -222,9 +244,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         status: z.string().optional().describe("Status name; see get_project"),
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
+        tags: tagsInput.optional(),
       },
     },
-    ({ projectKey, title, description, status, priority, assignees }) =>
+    ({ projectKey, title, description, status, priority, assignees, tags }) =>
       run(async () => {
         const project = await getProject(db, ctx.orgId, projectKey);
         const task = await createTask(db, ctx, project.key, {
@@ -233,6 +256,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           priority,
           statusId: status ? resolveStatus(project, status).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
+          tagIds: tags ? await resolveTags(tags) : undefined,
         });
         return describeTask(task, project, true);
       }),
@@ -241,7 +265,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   server.registerTool(
     "update_task",
     {
-      description: "Update a task. Only the fields you pass change; assignees replaces the whole list.",
+      description: "Update a task. Only the fields you pass change; assignees and tags replace the whole list.",
       inputSchema: {
         key: z.string().describe('Task key, e.g. "ST-12"'),
         title: z.string().optional(),
@@ -249,9 +273,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         status: z.string().optional().describe("Status name; see get_project"),
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
+        tags: tagsInput.optional(),
       },
     },
-    ({ key: taskKey, title, description, status, priority, assignees }) =>
+    ({ key: taskKey, title, description, status, priority, assignees, tags }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
         const task = await updateTask(db, ctx, taskKey, {
@@ -260,6 +285,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           priority,
           statusId: status ? resolveStatus(project, status).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
+          tagIds: tags ? await resolveTags(tags) : undefined,
         });
         return describeTask(task, project, true);
       }),
@@ -416,6 +442,24 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       },
     },
     ({ ids, up_to }) => run(async () => ({ updated: await markInboxRead(db, ctx, { ids, upTo: up_to }) })),
+  );
+
+  server.registerTool(
+    "list_tags",
+    { description: "List the organization's tags.", inputSchema: {} },
+    () => run(async () => (await listTags(db, ctx.orgId)).map((t) => ({ name: t.name, color: t.color }))),
+  );
+
+  server.registerTool(
+    "create_tag",
+    {
+      description: "Create an organization-wide tag.",
+      inputSchema: {
+        name: z.string().min(1).max(40),
+        color: z.string().optional().describe("Hex colour like #22c55e"),
+      },
+    },
+    ({ name, color }) => run(async () => createTag(db, ctx, { name, color })),
   );
 
   server.registerTool(

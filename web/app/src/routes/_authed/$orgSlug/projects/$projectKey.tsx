@@ -2,7 +2,7 @@ import { Board } from "@/components/board";
 import { NewTaskDialog } from "@/components/new-task-dialog";
 import { TaskList } from "@/components/task-list";
 import { Button } from "@/components/ui/button";
-import { membersQuery, projectQuery, tasksQuery } from "@/lib/work";
+import { membersQuery, projectQuery, tagsQuery, tasksQuery } from "@/lib/work";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { KanbanIcon, ListIcon, PlusIcon } from "lucide-react";
@@ -28,6 +28,7 @@ function ProjectPage() {
   const { data: project } = useSuspenseQuery(projectQuery(orgSlug, projectKey));
   const { data: tasks } = useSuspenseQuery(tasksQuery(orgSlug, projectKey));
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
+  const { data: tags = [] } = useQuery(tagsQuery(orgSlug));
   const [newTaskStatus, setNewTaskStatus] = useState<string | undefined>();
   const [newTaskOpen, setNewTaskOpen] = useState(false);
 
@@ -61,9 +62,16 @@ function ProjectPage() {
         </div>
       </header>
       {view === "board" ? (
-        <Board orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={members} onAdd={openNewTask} />
+        <Board
+          orgSlug={orgSlug}
+          statuses={project.statuses}
+          tasks={tasks}
+          members={members}
+          tags={tags}
+          onAdd={openNewTask}
+        />
       ) : (
-        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={members} />
+        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={members} tags={tags} />
       )}
       <NewTaskDialog
         orgSlug={orgSlug}

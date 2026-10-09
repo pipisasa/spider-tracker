@@ -1,3 +1,4 @@
+import { TagChips } from "@/components/tags";
 import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/lib/work";
@@ -14,7 +15,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ActorDto, StatusDto, TaskDto } from "@repo/core/contracts";
+import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
 import { Link } from "@tanstack/react-router";
 import { generateKeyBetween } from "fractional-indexing";
 import { PlusIcon } from "lucide-react";
@@ -26,11 +27,13 @@ function TaskCard({
   task,
   orgSlug,
   members,
+  tags,
   dragging,
 }: {
   task: TaskDto;
   orgSlug: string;
   members: Map<string, ActorDto>;
+  tags: TagDto[];
   dragging?: boolean;
 }) {
   const assignees = task.assigneeIds.map((id) => members.get(id)).filter((m): m is ActorDto => !!m);
@@ -55,11 +58,22 @@ function TaskCard({
       >
         {task.title}
       </Link>
+      <TagChips tagIds={task.tagIds} tags={tags} />
     </div>
   );
 }
 
-function SortableTask({ task, orgSlug, members }: { task: TaskDto; orgSlug: string; members: Map<string, ActorDto> }) {
+function SortableTask({
+  task,
+  orgSlug,
+  members,
+  tags,
+}: {
+  task: TaskDto;
+  orgSlug: string;
+  members: Map<string, ActorDto>;
+  tags: TagDto[];
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { statusId: task.statusId },
@@ -72,7 +86,7 @@ function SortableTask({ task, orgSlug, members }: { task: TaskDto; orgSlug: stri
       {...attributes}
       {...listeners}
     >
-      <TaskCard task={task} orgSlug={orgSlug} members={members} />
+      <TaskCard task={task} orgSlug={orgSlug} members={members} tags={tags} />
     </div>
   );
 }
@@ -82,12 +96,14 @@ function Column({
   tasks,
   orgSlug,
   members,
+  tags,
   onAdd,
 }: {
   status: StatusDto;
   tasks: TaskDto[];
   orgSlug: string;
   members: Map<string, ActorDto>;
+  tags: TagDto[];
   onAdd: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: columnId(status.id), data: { statusId: status.id } });
@@ -107,7 +123,7 @@ function Column({
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
-            <SortableTask key={task.id} task={task} orgSlug={orgSlug} members={members} />
+            <SortableTask key={task.id} task={task} orgSlug={orgSlug} members={members} tags={tags} />
           ))}
         </SortableContext>
       </div>
@@ -120,12 +136,14 @@ export function Board({
   statuses,
   tasks,
   members,
+  tags,
   onAdd,
 }: {
   orgSlug: string;
   statuses: StatusDto[];
   tasks: TaskDto[];
   members: ActorDto[];
+  tags: TagDto[];
   onAdd: (statusId: string) => void;
 }) {
   const update = useUpdateTask(orgSlug);
@@ -199,12 +217,13 @@ export function Board({
             tasks={byStatus.get(status.id) ?? []}
             orgSlug={orgSlug}
             members={memberMap}
+            tags={tags}
             onAdd={() => onAdd(status.id)}
           />
         ))}
       </div>
       <DragOverlay>
-        {active && <TaskCard task={active} orgSlug={orgSlug} members={memberMap} dragging />}
+        {active && <TaskCard task={active} orgSlug={orgSlug} members={memberMap} tags={tags} dragging />}
       </DragOverlay>
     </DndContext>
   );

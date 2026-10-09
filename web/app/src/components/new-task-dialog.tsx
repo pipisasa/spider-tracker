@@ -1,3 +1,4 @@
+import { TagPicker } from "@/components/tags";
 import { AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -29,6 +30,7 @@ export function NewTaskDialog({
   const [statusId, setStatusId] = useState(defaultStatusId ?? fallbackStatus?.id ?? "");
   const [priority, setPriority] = useState<Priority>(0);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const create = useCreateTask(orgSlug, project.key);
 
   // Re-seed the status when the dialog opens from a different column.
@@ -43,13 +45,14 @@ export function NewTaskDialog({
     setDescription("");
     setPriority(0);
     setAssigneeIds([]);
+    setTagIds([]);
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
     create.mutate(
-      { title, description: description || undefined, statusId, priority, assigneeIds },
+      { title, description: description || undefined, statusId, priority, assigneeIds, tagIds },
       {
         onSuccess: (task) => {
           toast.success(`Created ${task.key}`);
@@ -87,6 +90,7 @@ export function NewTaskDialog({
             <PrioritySelect value={priority} onChange={setPriority} />
             <AssigneePicker members={members} value={assigneeIds} onChange={setAssigneeIds} />
           </div>
+          <TagPicker orgSlug={orgSlug} value={tagIds} onChange={setTagIds} />
           <DialogFooter>
             <Button type="submit" disabled={create.isPending || !title.trim()}>
               {create.isPending ? "Creating…" : "Create task"}

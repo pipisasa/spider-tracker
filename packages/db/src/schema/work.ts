@@ -134,3 +134,31 @@ export const activity = pgTable(
   },
   (t) => [index("activity_entity_idx").on(t.entityType, t.entityId, t.createdAt)],
 );
+
+// Organization-wide labels for tasks (ST-8).
+export const tags = pgTable(
+  "tags",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("tags_org_name_key").on(t.orgId, t.name)],
+);
+
+export const taskTags = pgTable(
+  "task_tags",
+  {
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.taskId, t.tagId] }), index("task_tags_tag_idx").on(t.tagId)],
+);

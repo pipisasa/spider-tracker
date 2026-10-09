@@ -1,5 +1,6 @@
+import { TagChips } from "@/components/tags";
 import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
-import type { ActorDto, StatusDto, TaskDto } from "@repo/core/contracts";
+import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 
@@ -10,11 +11,13 @@ export function TaskList({
   statuses,
   tasks,
   members,
+  tags,
 }: {
   orgSlug: string;
   statuses: StatusDto[];
   tasks: TaskDto[];
   members: ActorDto[];
+  tags: TagDto[];
 }) {
   const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const groups = useMemo(() => {
@@ -49,6 +52,7 @@ export function TaskList({
                   <span className="w-16 shrink-0 text-muted-foreground">{task.key}</span>
                   <StatusIcon status={status} />
                   <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                  <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
                   <span className="flex -space-x-1.5">
                     {task.assigneeIds
                       .map((id) => memberMap.get(id))

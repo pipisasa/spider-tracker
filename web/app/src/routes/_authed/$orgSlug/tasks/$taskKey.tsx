@@ -1,3 +1,4 @@
+import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
 import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,9 @@ function TaskPage() {
             value={task.assigneeIds}
             onChange={(assigneeIds) => save({ assigneeIds })}
           />
+        </Field>
+        <Field label="Tags">
+          <TagPicker orgSlug={orgSlug} value={task.tagIds} onChange={(tagIds) => save({ tagIds })} />
         </Field>
         <Field label="Created">
           <span className="flex items-center gap-2 text-sm">

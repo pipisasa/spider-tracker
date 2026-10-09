@@ -74,10 +74,17 @@ export interface TaskDto {
   parentId: string | null;
   sortKey: string;
   assigneeIds: string[];
+  tagIds: string[];
   creatorId: string;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+}
+
+export interface TagDto {
+  id: string;
+  name: string;
+  color: string | null;
 }
 
 export interface ListResponse<T> {

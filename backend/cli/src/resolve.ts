@@ -1,5 +1,5 @@
 import { matchStatuses } from "@repo/core/statuses";
-import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto } from "@repo/core/contracts";
+import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 
 export const EXIT = { ok: 0, unexpected: 1, usage: 2, notFound: 3, auth: 4 } as const;
@@ -79,4 +79,15 @@ export function resolveAssignees(members: ActorDto[], meId: string, handles: str
     return member.id;
   });
   return [...new Set(ids)];
+}
+
+/** Tag names (case-insensitive, with or without "#") to ids; unknown names list the existing tags. */
+export function resolveTags(tags: TagDto[], names: string[]): string[] {
+  return [...new Set(names.map((n) => n.trim().replace(/^#/, "")).filter(Boolean))].map((name) => {
+    const tag = tags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (!tag) {
+      throw usageError(`Unknown tag "${name}". Existing tags: ${tags.map((t) => t.name).join(", ") || "none"}`);
+    }
+    return tag.id;
+  });
 }
