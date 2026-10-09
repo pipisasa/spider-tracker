@@ -32,7 +32,10 @@ Most trackers add automation to a tool built for people. Spider Tracker treats a
 ## Key decisions
 
 - **Database:** Postgres, a relational database. It has strong multi-tenant isolation and realtime support, and custom field values are stored as JSON.
+- **Frontend:** a Vite + React single-page app with TanStack Router and TanStack Query.
 - **Backend:** TypeScript on Bun, with a separate API service and background workers.
+- **Auth:** Better Auth. Spider Tracker is its own OAuth/OIDC provider for the CLI, MCP clients and third-party apps; `id.batele.plus` login comes later.
+- **Hosting:** frontend on Cloudflare Pages, backend and database on Railway, files on Cloudflare R2. For now it runs privately at `tracker.batele.plus` / `tracker-api.batele.plus` behind Cloudflare Access.
 - **Repository:** a Turborepo monorepo with `web/` for frontends, `backend/` for services and `packages/` for shared code.
 - **Messaging:** Postgres handles the job queue and live updates; a dedicated message broker comes only when load requires it.
 
@@ -47,5 +50,6 @@ Most trackers add automation to a tool built for people. Spider Tracker treats a
 | [agents.md](./agents.md) | Agent model, connectivity, runs, guardrails |
 | [git-integration.md](./git-integration.md) | Git and GitHub integration |
 | [interfaces.md](./interfaces.md) | API, MCP server, CLI, webhooks |
+| [auth.md](./auth.md) | Authentication, OAuth/OIDC provider, tokens, scopes |
 | [roadmap.md](./roadmap.md) | Delivery phases |
 | [open-questions.md](./open-questions.md) | Unresolved questions |

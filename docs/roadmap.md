@@ -5,14 +5,15 @@
 ## Phase 0: Foundations
 - Monorepo setup (done: Turborepo + Bun)
 - `packages/db` (Drizzle schema + migrations), `packages/core`
-- Auth, organizations, members, roles
+- Auth (Better Auth: social sign-in, magic link, sessions), organizations, members, roles
 - Core schema: projects, statuses, tasks, tags
 
 ## Phase 1: Core tracker
 - Task create/edit/delete, list and board views, filters
 - Comments and activity log
 - Keyboard shortcuts and command palette
-- Public API, API tokens, `packages/sdk`
+- Public API, API keys, `packages/sdk`
+- OAuth/OIDC provider + device flow (for the CLI and MCP)
 
 ## Phase 2: Agents
 - External agents as actors
@@ -38,3 +39,4 @@
 - CLI
 - Claude Code plugin (MCP + skill + channel)
 - Optional GitHub Issues sync
+- Sign in with `id.batele.plus`

@@ -4,6 +4,8 @@
 
 ## Overview
 
+Identity tables (users, sessions, OAuth clients and tokens) belong to Better Auth; see [auth.md](./auth.md#what-owns-what). The tables below are ours.
+
 ```
 organizations ─┬─ actors (human | agent) ── agents (1:1 config), api_tokens
                ├─ tags, custom_field_defs, repos, apps, documents
@@ -22,7 +24,7 @@ activity (append-only log for everything)
 | **Organization** | The tenant boundary; owns everything else |
 | **Actor** | A member: a person or an agent |
 | **Agent** | Extra configuration for agent actors (model, prompt, tools, limits) |
-| **API token** | Hashed credentials for agents, the CLI and integrations |
+| **API token** | Hashed API keys for external agents and CI |
 | **Project** | A unit of work with a key (`SPI`), workflow and settings |
 | **Status** | A per-project workflow state, mapped to a fixed category |
 | **Cycle** | A sprint or milestone |
@@ -33,6 +35,7 @@ activity (append-only log for everything)
 | **App** | A deployable product, linked to repos and projects |
 | **Git link** | A branch, commit or pull request linked to a task |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions |
+| **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
 | **Comment** | A threaded Markdown comment on a task |
 | **Activity** | Append-only audit log of every change |
 | **Agent run** | One execution of an agent on a task |
@@ -76,7 +79,7 @@ create table actors (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations on delete cascade,
   type actor_type not null,
-  user_id uuid references auth.users,         -- set for humans only
+  user_id text references "user",             -- Better Auth user; set for humans only
   name text not null, handle text not null, avatar_url text,
   role member_role not null default 'member',
   deactivated_at timestamptz,
@@ -92,6 +95,7 @@ create table agents (
   tools jsonb not null default '[]',
   limits jsonb not null default '{}',         -- {max_cost_usd, max_tokens, require_approval:[...]}
   allowed_project_ids uuid[],                 -- null = all projects
+  oauth_client_id text,                       -- set for MCP clients connected via OAuth
   status text not null default 'idle'
 );
 
@@ -240,6 +244,18 @@ create table document_versions (
   document_id uuid references documents on delete cascade, version int,
   content text not null, author_id uuid references actors, created_at timestamptz not null default now(),
   primary key (document_id, version)
+);
+
+-- ── files (objects stored in Cloudflare R2) ──────────
+create table files (
+  id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
+  storage_key text unique not null,            -- org/<org_id>/<file_id>/<name>
+  name text not null, content_type text not null, size_bytes bigint not null,
+  task_id uuid references tasks on delete set null,
+  document_id uuid references documents on delete set null,
+  uploaded_by uuid not null references actors,
+  created_at timestamptz not null default now(), deleted_at timestamptz
 );
 
 -- ── collaboration ────────────────────────────────────

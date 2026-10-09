@@ -59,7 +59,7 @@ User types in task chat
   → API: save the message, enqueue a job
   → worker picks it up → Agent SDK run (resumes the session)
   → each event → agent_run_events
-  → realtime → UI streams it live
+  → pg_notify → API → SSE → UI streams it live
   → approval request → chat button → API → worker resolves canUseTool
 ```
 

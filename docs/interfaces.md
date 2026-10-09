@@ -15,8 +15,11 @@ Anything possible in the UI is also possible through these interfaces. The web a
 
 ## Authentication
 
-- **People:** a Supabase Auth session in the browser; OAuth device flow for the CLI.
-- **Agents, CI and integrations:** API tokens, stored only as hashes, scoped and revocable.
+See [auth.md](./auth.md) for all flows.
+
+- **People:** session cookie in the browser; OAuth device flow for the CLI.
+- **MCP clients:** OAuth 2.1, each connected client becoming its own agent actor.
+- **Agents, CI and integrations:** API keys, stored only as hashes, scoped and revocable.
 
 ## MCP server
 

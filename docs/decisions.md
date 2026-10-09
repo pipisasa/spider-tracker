@@ -28,7 +28,7 @@ Short records of technology choices. Add new ones at the bottom.
 - Agents, webhooks, workers and people all write at the same time. Postgres handles that well; SQLite allows only one writer at a time.
 - The API and the worker run on different machines and need one shared database over the network.
 - Row-level security gives organization isolation inside the database.
-- Built-in change notifications (LISTEN/NOTIFY) and Supabase Realtime power live updates.
+- Built-in change notifications (LISTEN/NOTIFY) power live updates.
 - `JSONB` + GIN indexes, full-text search, pgvector and pg_cron.
 
 **SQLite fits:** a local cache in the CLI or a desktop app, a single-user self-hosted mode, and scratch state during an agent run.
@@ -50,7 +50,7 @@ Short records of technology choices. Add new ones at the bottom.
 
 ---
 
-## 4. Separate API and worker, not Next.js API routes alone
+## 4. Separate API and worker, not framework API routes
 
 **Decision:** `backend/api` (Hono) and `backend/worker` run as their own services.
 
@@ -60,7 +60,7 @@ Short records of technology choices. Add new ones at the bottom.
 
 ## 5. No message broker yet
 
-**Decision:** Postgres provides the job queue (pg-boss or Graphile Worker) and live updates (LISTEN/NOTIFY or Supabase Realtime).
+**Decision:** Postgres provides the job queue (pg-boss or Graphile Worker) and live updates (LISTEN/NOTIFY, streamed to browsers over SSE).
 
 **Revisit when:**
 - many workers need to fan out high-frequency token streams,
@@ -76,3 +76,71 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 **Decision:** Bun for installs, scripts and backend runtime, inside a Turborepo monorepo.
 
 **Why:** fast installs and startup, native TypeScript, and the same setup as other personal projects. Backend apps extend `@repo/typescript-config/bun.json`.
+
+---
+
+## 7. Better Auth for authentication
+
+**Decision:** Better Auth, running inside `backend/api`, instead of Supabase Auth. Spider Tracker acts as its own OAuth 2.1 / OIDC provider. Details: [auth.md](./auth.md).
+
+**Why:**
+- MCP clients and the CLI must sign in to *us*, so we need an OAuth server, a device flow and API keys. Better Auth has plugins for all of them.
+- It's TypeScript, runs in Hono on Bun, and stores its tables in our Postgres through Drizzle.
+- Identity stays in our own database, with no separate auth schema.
+
+**Trade-off:** no Supabase `auth.uid()` in database access rules. The API sets `app.org_id` and `app.actor_id` for each transaction, and the access rules read those instead.
+
+**Later:** `id.batele.plus` is added as an extra sign-in provider (generic OAuth), without replacing our own provider.
+
+---
+
+## 8. Vite SPA with TanStack Router and Query, not Next.js
+
+**Decision:** `web/app` is a Vite + React single-page app using TanStack Router (type-safe routing) and TanStack Query (server state and caching), served as static files.
+
+**Why:**
+- The app sits behind login, so server rendering and SEO bring nothing. A marketing site can be separate later.
+- All data comes from our public API (API parity); the frontend needs no server code of its own.
+- Static files host cheaply anywhere (Cloudflare Pages) with no server runtime.
+- TanStack Query's cache fits optimistic updates and applying realtime events.
+- Fast Vite dev server and builds; no framework lock-in.
+
+**Trade-off:** no server rendering; the first load shows a loading shell. That's acceptable for a logged-in tool.
+
+---
+
+## 9. No Supabase: Railway Postgres, Cloudflare Pages and R2
+
+**Decision:** Postgres and the backend run on Railway; the frontend on Cloudflare Pages; file storage on Cloudflare R2.
+
+**Why:**
+- After choosing Better Auth, Supabase would only provide Postgres, Realtime and storage. Each has a simple replacement, and fewer vendors means less to manage.
+- Postgres sits next to the API and worker on Railway's private network: low latency, no public database endpoint.
+- R2 is S3-compatible with no download (egress) fees, and is already used for `cdn.batele.plus`.
+- Cloudflare Pages serves the static SPA from the edge.
+
+**Replacements:**
+- Realtime → LISTEN/NOTIFY + SSE from `backend/api` (see [architecture.md](./architecture.md#realtime)).
+- Storage → R2 with presigned URLs.
+- Database backups → Railway backups, plus scheduled `pg_dump` to R2.
+
+**Trade-off:** we build and run the realtime layer ourselves.
+
+---
+
+## 10. Private access through Cloudflare Access
+
+**Decision:** while the project is private, `tracker.batele.plus` and `tracker-api.batele.plus` sit behind Cloudflare Access. Setup: [architecture.md](./architecture.md#private-access-for-now).
+
+**Why:**
+- The domain and frontend are already on Cloudflare, so there's nothing extra to run.
+- It works the same for browsers, the CLI and agents (service tokens), and allows path exceptions for GitHub webhooks.
+- It's a gate in front of the app, independent of Better Auth, and can be removed when the project goes public.
+
+**Alternative considered: Tailscale.** Gives no public surface at all, but:
+- Railway containers would need `tailscaled` running inside them (userspace mode), plus TLS certificates via DNS challenge.
+- GitHub webhooks couldn't reach a tailnet-only API without Tailscale Funnel or a separate public receiver.
+- Every agent and CI machine would have to join the tailnet.
+
+Revisit Tailscale if the API must have no public endpoint at all.
+
