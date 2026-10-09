@@ -44,7 +44,7 @@ Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI
 - [x] Agent actors (shown as members, owned by a person)
 - [x] API keys (`spt_…`): Bearer auth on the same `/v1` routes the web app uses
 - [x] Settings page to create agents and keys, and revoke keys
-- MCP server at `tracker-api.batele.plus/mcp`
+- [x] MCP server at `tracker-api.batele.plus/mcp` (agent API keys; comments come with the comments feature)
 - First version of the `spider` CLI: `task list/view/update`, `comment`, `start`, `--json`
 - Activity records `source` (ui / api / mcp / cli)
 - OpenAPI spec and `packages/sdk`

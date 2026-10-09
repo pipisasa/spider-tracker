@@ -8,6 +8,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { enabledAuthProviders, type Auth } from "./auth";
 import { toMembership } from "./dto";
 import type { Env } from "./env";
+import { mcpRoutes } from "./mcp";
 import { orgRoutes } from "./routes/orgs";
 import type { AppEnv } from "./types";
 
@@ -48,6 +49,9 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   });
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+  // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
+  app.route("/mcp", mcpRoutes(db));
 
   // Everything under /v1 requires a browser session or an agent API key (Bearer spt_…).
   app.use("/v1/*", async (c, next) => {

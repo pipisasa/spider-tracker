@@ -18,12 +18,33 @@ Anything possible in the UI is also possible through these interfaces. The web a
 See [auth.md](./auth.md) for all flows.
 
 - **People:** session cookie in the browser; OAuth device flow for the CLI.
-- **MCP clients:** OAuth 2.1, each connected client becoming its own agent actor.
+- **MCP clients:** an agent API key sent as `Authorization: Bearer spt_…` (OAuth 2.1, each connected client becoming its own agent actor, is planned).
 - **Agents, CI and integrations:** API keys, stored only as hashes, scoped and revocable.
 
 ## MCP server
 
-Tools: list and search tasks, get a task, create and update tasks, comment, change status, assign, read and write documents, list projects and fields. Every action records `source = mcp`.
+Streamable HTTP at `POST /mcp` (`backend/api/src/mcp.ts`), stateless: no session ids, every request gets a fresh server. It accepts only an agent API key (`Authorization: Bearer spt_…`); anything else gets `401` with `WWW-Authenticate: Bearer`. The agent acts in its key's organization, and every action records `source = mcp`.
+
+Connect Claude Code:
+
+```bash
+claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --header "Authorization: Bearer $SPIDER_TOKEN"
+```
+
+| Tool | What it does |
+|---|---|
+| `whoami` | The agent and organization the key acts as |
+| `list_projects`, `get_project` | Projects; a project's statuses in board order, with categories |
+| `list_tasks` | Tasks in a project; filters: `status` (name or category), `assignee` (`me` or a handle), `query` (title text), `limit` |
+| `get_task` | One task by key, with status name and assignee handles |
+| `create_task`, `update_task` | Status by name, priority 0–4, assignees as handles or `me`; `update_task` replaces the assignee list |
+| `assign_to_me` | Adds the agent to a task's assignees |
+| `start_task` | Assigns the agent and moves the task to the project's first in-progress status |
+| `list_members` | People and agents with their handles |
+
+Status names and handles match case-insensitively; an unknown one returns a tool error listing the valid options. Domain errors (not found, forbidden, validation) come back as tool errors (`isError`) with their message.
+
+Planned: comments, documents, custom fields.
 
 ## CLI
 

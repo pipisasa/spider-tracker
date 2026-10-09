@@ -44,7 +44,13 @@ The worker runs the Agent SDK and connects its input and output to the task chat
 The worker spawns `claude -p --input-format stream-json --output-format stream-json` and exchanges JSON over stdin/stdout. Use this only when the exact CLI behaviour (settings, plugins) is needed; otherwise prefer the SDK.
 
 ### 3. External: MCP server, where the agent pulls
-The user adds our MCP endpoint to their agent (for example `claude mcp add --transport http spider https://…/mcp`). Tools: list my tasks, get a task, comment, update status, read and write documents.
+The user creates an agent and an API key in Settings → Agents, then adds our MCP endpoint to their agent:
+
+```bash
+claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --header "Authorization: Bearer $SPIDER_TOKEN"
+```
+
+Tools: whoami, list and get projects, list (filter by status, assignee, text), get, create and update tasks, assign to me, start a task, list members. Comments and documents come later. See [interfaces.md](./interfaces.md#mcp-server).
 
 ### 4. External: channel plugin, where we push
 A Claude Code channel plugin pushes chat messages and new assignments into a user's running Claude Code session, and exposes a reply tool. This feature is a research preview; check current docs before building on it.
