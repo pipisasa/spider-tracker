@@ -44,7 +44,7 @@ Deploys are **manual**: `railway up` uploads the local working tree and builds i
 
 | Thing | Value |
 |---|---|
-| Workspace / project | Pipisasa's Projects / `spider-tracker` (environment `production`) |
+| Workspace / project | Batele / `spider-tracker` (environment `production`) |
 | Services | `api`, `Postgres` |
 | Postgres | Railway Postgres template (`postgres-ssl:18`), private network only (no public TCP proxy) |
 | API build | `backend/api/Dockerfile`, selected by the `RAILWAY_DOCKERFILE_PATH` variable; build context is the repo root |
