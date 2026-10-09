@@ -1,0 +1,171 @@
+/* Notion-like styling for the rich document editor (rich-editor.tsx). */
+
+.rich-editor {
+  line-height: 1.7;
+}
+
+.rich-editor > * + * {
+  margin-top: 0.5em;
+}
+
+.rich-editor > :is(h1, h2, h3) {
+  margin-top: 1.4em;
+  margin-bottom: 0.2em;
+}
+
+.rich-editor > :first-child {
+  margin-top: 0;
+}
+
+/* Placeholder on the empty line holding the caret, and on an empty document. */
+.rich-editor :is(p, h1, h2, h3).is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.rich-editor ::selection {
+  background: color-mix(in oklab, var(--ring) 35%, transparent);
+}
+
+.rich-editor .ProseMirror-selectednode {
+  border-radius: 0.25rem;
+  outline: 2px solid color-mix(in oklab, var(--ring) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.rich-editor a {
+  cursor: text;
+}
+
+/* Slash query while the menu is open. */
+.rich-editor .suggestion {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0 0.15em;
+}
+
+/* Inline code and code blocks. */
+.rich-editor :not(pre) > code {
+  border-radius: 0.3rem;
+  background: var(--muted);
+  padding: 0.15em 0.35em;
+  font-weight: 400;
+}
+
+.rich-editor :not(pre) > code::before,
+.rich-editor :not(pre) > code::after {
+  content: none;
+}
+
+.rich-editor pre {
+  border-radius: 0.5rem;
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 0.9em 1.1em;
+}
+
+.rich-editor pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Quotes. */
+.rich-editor blockquote {
+  border-left: 3px solid var(--foreground);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.rich-editor blockquote p::before,
+.rich-editor blockquote p::after {
+  content: none;
+}
+
+/* Dividers. */
+.rich-editor hr {
+  margin: 1.25em 0;
+  border-color: var(--border);
+  cursor: pointer;
+}
+
+/* To-do lists. */
+.rich-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25em;
+}
+
+.rich-editor ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.15em 0;
+  padding-left: 0;
+}
+
+.rich-editor ul[data-type="taskList"] li > label {
+  flex-shrink: 0;
+  margin-top: 0.3em;
+  user-select: none;
+}
+
+.rich-editor ul[data-type="taskList"] li > label input {
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.rich-editor ul[data-type="taskList"] li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.rich-editor ul[data-type="taskList"] li > div > p {
+  margin: 0;
+}
+
+.rich-editor ul[data-type="taskList"] li[data-checked="true"] > div > p {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+/* Tables. */
+.rich-editor .tableWrapper {
+  overflow-x: auto;
+}
+
+.rich-editor table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.rich-editor :is(td, th) {
+  position: relative;
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+}
+
+.rich-editor th {
+  background: var(--muted);
+  font-weight: 600;
+  text-align: left;
+}
+
+.rich-editor :is(td, th) > p {
+  margin: 0;
+}
+
+.rich-editor .selectedCell::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--ring) 20%, transparent);
+  content: "";
+}

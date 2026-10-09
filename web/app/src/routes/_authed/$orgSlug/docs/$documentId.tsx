@@ -33,16 +33,21 @@ import {
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
+  CodeIcon,
   EyeIcon,
   HistoryIcon,
   PencilIcon,
   RotateCcwIcon,
+  SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { toast } from "sonner";
 
 type Search = { edit?: boolean; version?: number };
+
+// Tiptap is only loaded once someone edits a Markdown document.
+const RichEditor = lazy(() => import("@/components/editor/rich-editor"));
 
 export const Route = createFileRoute("/_authed/$orgSlug/docs/$documentId")({
   validateSearch: (search: Record<string, unknown>): Search => {
@@ -344,7 +349,10 @@ function OldVersion({
   );
 }
 
-/** Source editor with a preview toggle. Saves name the version the edit started from. */
+/**
+ * Markdown documents get a rich editor with a Markdown source toggle; HTML documents
+ * a source editor with a preview toggle. Saves name the version the edit started from.
+ */
 function DocumentEditor({
   orgSlug,
   doc,
@@ -361,6 +369,7 @@ function DocumentEditor({
   const [format, setFormat] = useState<DocumentFormat>(doc.format);
   const [content, setContent] = useState(doc.content);
   const [preview, setPreview] = useState(false);
+  const [mode, setMode] = useState<"rich" | "markdown">("rich");
   const update = useUpdateDocument(orgSlug, doc.id);
   const dirty =
     title !== doc.title || format !== doc.format || content !== doc.content;
@@ -408,7 +417,15 @@ function DocumentEditor({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3">
+    <div
+      className="flex flex-1 flex-col gap-3"
+      onKeyDown={(e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+          e.preventDefault();
+          save();
+        }
+      }}
+    >
       <div className="flex items-center gap-2">
         <Input
           aria-label="Title"
@@ -441,27 +458,60 @@ function DocumentEditor({
         </div>
       )}
       <div className="flex items-center gap-1">
-        <Button
-          variant={preview ? "ghost" : "secondary"}
-          size="sm"
-          onClick={() => setPreview(false)}
-        >
-          <PencilIcon />
-          Write
-        </Button>
-        <Button
-          variant={preview ? "secondary" : "ghost"}
-          size="sm"
-          onClick={() => setPreview(true)}
-        >
-          <EyeIcon />
-          Preview
-        </Button>
+        {format === "md" ? (
+          <>
+            <Button
+              variant={mode === "rich" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setMode("rich")}
+            >
+              <SparklesIcon />
+              Rich
+            </Button>
+            <Button
+              variant={mode === "markdown" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setMode("markdown")}
+            >
+              <CodeIcon />
+              Markdown
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant={preview ? "ghost" : "secondary"}
+              size="sm"
+              onClick={() => setPreview(false)}
+            >
+              <PencilIcon />
+              Write
+            </Button>
+            <Button
+              variant={preview ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setPreview(true)}
+            >
+              <EyeIcon />
+              Preview
+            </Button>
+          </>
+        )}
         <span className="ml-auto text-xs text-muted-foreground">
           Editing version {baseVersion}
         </span>
       </div>
-      {preview ? (
+      {format === "md" && mode === "rich" ? (
+        <Suspense
+          fallback={
+            <p className="min-h-[60vh] text-sm text-muted-foreground">
+              Loading editor…
+            </p>
+          }
+        >
+          <RichEditor value={content} onChange={setContent} />
+        </Suspense>
+      ) : format === "html" && preview ? (
         <DocumentContent format={format} content={content} />
       ) : (
         <Textarea
@@ -474,12 +524,6 @@ function DocumentEditor({
           className="min-h-[60vh] flex-1 resize-y font-mono text-sm"
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-              e.preventDefault();
-              save();
-            }
-          }}
         />
       )}
       <div className="flex items-center gap-2">

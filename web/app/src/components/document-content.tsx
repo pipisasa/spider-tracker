@@ -30,7 +30,7 @@ export function DocumentContent({
     );
   }
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert">
+    <div className="prose prose-sm max-w-none dark:prose-invert sm:prose-base">
       <Markdown remarkPlugins={[remarkGfm]} skipHtml>
         {content}
       </Markdown>
