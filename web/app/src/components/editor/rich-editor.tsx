@@ -1,5 +1,6 @@
 import { Placeholder } from "@tiptap/extensions";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { cn } from "@/lib/utils";
 import { useRef } from "react";
 import { EditorBubbleMenu } from "./bubble-menu";
 import { DragHandle } from "./drag-handle";
@@ -14,9 +15,19 @@ import { SlashCommand } from "./slash-command";
 export default function RichEditor({
   value,
   onChange,
+  onBlur,
+  placeholder = "Type '/' for commands",
+  autofocus = "end",
+  label = "Content",
+  className = "min-h-[60vh] pb-24",
 }: {
   value: string;
   onChange: (markdown: string) => void;
+  onBlur?: () => void;
+  placeholder?: string;
+  autofocus?: "end" | false;
+  label?: string;
+  className?: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const editor = useEditor({
@@ -26,28 +37,29 @@ export default function RichEditor({
         placeholder: ({ node }) =>
           node.type.name === "heading"
             ? `Heading ${String(node.attrs.level)}`
-            : "Type '/' for commands",
+            : placeholder,
         includeChildren: false,
       }),
       SlashCommand,
     ],
     content: value,
     contentType: "markdown",
-    autofocus: "end",
+    autofocus,
     editorProps: {
       attributes: {
-        "aria-label": "Content",
+        "aria-label": label,
         class:
           "rich-editor prose prose-sm max-w-none dark:prose-invert sm:prose-base focus:outline-none",
       },
     },
     onUpdate: ({ editor: e }) => onChange(e.getMarkdown()),
+    onBlur: () => onBlur?.(),
   });
 
   return (
     <div
       ref={container}
-      className="relative min-h-[60vh] flex-1 cursor-text pb-24 pl-7"
+      className={cn("relative flex-1 cursor-text pl-7", className)}
       onClick={(e) => {
         if (e.target === e.currentTarget) editor.commands.focus("end");
       }}

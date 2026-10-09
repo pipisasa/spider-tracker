@@ -6,14 +6,13 @@ import { TaskComments } from "@/components/task-comments";
 import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import type { UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, Trash2Icon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 const projectKeyOf = (taskKey: string) => taskKey.slice(0, taskKey.lastIndexOf("-")).toUpperCase();
@@ -140,6 +139,8 @@ function TaskPage() {
   );
 }
 
+const RichEditor = lazy(() => import("@/components/editor/rich-editor"));
+
 function TaskText({ task, onSave }: { task: TaskDto; onSave: (input: UpdateTaskInput) => void }) {
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
@@ -171,14 +172,18 @@ function TaskText({ task, onSave }: { task: TaskDto; onSave: (input: UpdateTaskI
           }
         }}
       />
-      <Textarea
-        aria-label="Description"
-        placeholder="Add a description… (Markdown)"
-        className="min-h-48 resize-y border-none px-0 shadow-none focus-visible:ring-0"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        onBlur={saveDescription}
-      />
+      {/* -ml-7 lines the text up with the title; the gutter holds the drag handle. */}
+      <Suspense fallback={<div className="min-h-32" />}>
+        <RichEditor
+          value={description}
+          onChange={setDescription}
+          onBlur={saveDescription}
+          label="Description"
+          placeholder="Add a description… type '/' for commands"
+          autofocus={false}
+          className="-ml-7 min-h-32"
+        />
+      </Suspense>
     </>
   );
 }
