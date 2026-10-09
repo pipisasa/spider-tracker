@@ -2,58 +2,72 @@
 
 [← Project overview](./PROJECT.md)
 
-Ordered so the product is used to build itself as early as possible: by the end of Phase 2, Spider Tracker tracks its own development and Claude Code works on its tasks through MCP.
+> Work items now live in Spider Tracker itself: project **ST** at https://tracker.batele.plus/batele/projects/ST. This file keeps only the phase overview.
+
+Agent tools come before most tracker features, so agents help build the product from early on: once Phase 2 is done, Claude Code works on Spider Tracker's own tasks through the API and MCP, and the remaining features are tracked and built that way.
 
 ---
 
-## Phase 0: Foundations and deployment (in progress)
+## Phase 0: Foundations and deployment ✅
 
 **Goal:** an empty app, deployed privately, end to end.
 
 - [x] Monorepo: Turborepo + Bun, shared lint and TypeScript configs
 - [x] Design docs
 - [x] `packages/db` (Drizzle schema + migrations), `packages/core`
-- [x] `backend/api` (Hono) with a health check, `web/app` (Vite + TanStack Router + Query) shell
-- [x] Auth: Better Auth (magic link, GitHub, Batele ID), organizations with owner actor, onboarding (pulled forward from Phase 1)
+- [x] `backend/api` (Hono) with health checks, `web/app` (Vite + TanStack Router + Query)
+- [x] Auth: Better Auth (magic link, GitHub, Batele ID), organizations with owner actor, onboarding
 - [x] Railway: api + Postgres 18 at `tracker-api.batele.plus`; no Railway public URL
 - [x] Cloudflare Pages at `tracker.batele.plus`, DNS for both domains
-- [ ] Cloudflare Access for both domains
-- [x] Manual deploy script for the web app (`bun run deploy:web`); no CI/CD for now
+- [x] Manual deploys (`bun run deploy:web`, `bun run deploy:api`); no CI/CD for now
 
-**Done when:** a page on `tracker.batele.plus` loads data from `tracker-api.batele.plus`, behind Access.
-
----
-
-## Phase 1: Core tracker
-
-**Goal:** usable as a personal task tracker.
-
-- Invitations, members list, roles management
-- Projects, statuses, tasks (`SPI-123`), priority, assignees, sub-tasks, relations, tags
-- List and board views, filters, saved views
-- Comments and activity log
-- Realtime: LISTEN/NOTIFY → SSE → TanStack Query
-- Keyboard shortcuts and command palette
-
-**Done when:** this project's own roadmap is tracked in Spider Tracker instead of this file.
+Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI). A sign-up allowlist (Phase 3) covers privacy instead.
 
 ---
 
-## Phase 2: Agent access (dogfooding)
+## Phase 1: Core tracker basics ✅
+
+**Goal:** projects and tasks usable in the browser.
+
+- [x] Projects with keys and default statuses
+- [x] Tasks (`SPI-123`): title, description, status, priority, assignees
+- [x] Board (drag and drop) and list views; task page with inline editing
+- [x] Activity log written for every change
+- [x] Roles: guests read-only, owners/admins manage projects
+
+---
+
+## Phase 2: Agent access (next)
 
 **Goal:** external agents work on tasks.
 
-- Public REST API with OpenAPI spec, `packages/sdk`
-- Agent actors and API keys (`spt_…`)
-- MCP server at `tracker-api.batele.plus/mcp` (reached with an API key + Access service token)
+- [x] Agent actors (shown as members, owned by a person)
+- [x] API keys (`spt_…`): Bearer auth on the same `/v1` routes the web app uses
+- [x] Settings page to create agents and keys, and revoke keys
+- MCP server at `tracker-api.batele.plus/mcp`
 - First version of the `spider` CLI: `task list/view/update`, `comment`, `start`, `--json`
 - Activity records `source` (ui / api / mcp / cli)
+- OpenAPI spec and `packages/sdk`
 
-**Done when:** Claude Code picks up a task over MCP, comments on progress and moves it to review.
+**Done when:** Claude Code picks up a task over MCP, comments on progress and moves it to review, and this roadmap lives in Spider Tracker instead of this file.
 
 ---
 
-## Phase 3: Git and GitHub
+## Phase 3: Tracker features
+
+**Goal:** a complete task tracker, built with agents.
+
+- Tags, sub-tasks, task relations (blocks / relates / duplicates)
+- Comments and the activity feed on the task page
+- Realtime: LISTEN/NOTIFY → SSE → TanStack Query
+- Members, invitations, roles management
+- Filters and saved views
+- Keyboard shortcuts and command palette
+- Sign-up allowlist and email delivery for magic links
+
+---
+
+## Phase 4: Git and GitHub
 
 **Goal:** code and tasks stay in sync without manual updates.
 
@@ -67,7 +81,7 @@ Ordered so the product is used to build itself as early as possible: by the end 
 
 ---
 
-## Phase 4: Hosted agents
+## Phase 5: Hosted agents
 
 **Goal:** agents run inside Spider Tracker, triggered by assignment.
 
@@ -82,7 +96,7 @@ Ordered so the product is used to build itself as early as possible: by the end 
 
 ---
 
-## Phase 5: Documents, custom fields and apps
+## Phase 6: Documents, custom fields and apps
 
 **Goal:** the flexible parts of the model.
 
@@ -95,7 +109,7 @@ Ordered so the product is used to build itself as early as possible: by the end 
 
 ---
 
-## Phase 6: Polish and opening up
+## Phase 7: Polish and opening up
 
 **Goal:** ready for people other than the owner.
 
@@ -104,4 +118,3 @@ Ordered so the product is used to build itself as early as possible: by the end 
 - Notifications, inbox, outbound webhooks
 - Claude Code plugin (MCP + skill + channel)
 - Optional GitHub Issues sync
-- Remove Cloudflare Access to go public
