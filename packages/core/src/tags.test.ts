@@ -45,11 +45,12 @@ run("tags", () => {
 
   test("tasks carry tags; changes are tracked; other orgs' tags are refused; deleting a tag untags", async () => {
     const [agent, bug] = await listTags(db, ctx.orgId);
-    const task = await createTask(db, ctx, "SPI", { title: "Tagged", tagIds: [bug?.id ?? ""] });
-    expect(task.tagIds).toEqual([bug?.id]);
+    if (!agent || !bug) throw new Error("expected the tags from the previous test");
+    const task = await createTask(db, ctx, "SPI", { title: "Tagged", tagIds: [bug.id] });
+    expect(task.tagIds).toEqual([bug.id]);
 
-    const updated = await updateTask(db, ctx, task.key, { tagIds: [agent?.id ?? "", bug?.id ?? ""] });
-    expect(updated.tagIds.sort()).toEqual([agent?.id, bug?.id].sort());
+    const updated = await updateTask(db, ctx, task.key, { tagIds: [agent.id, bug.id] });
+    expect(updated.tagIds.sort()).toEqual([agent.id, bug.id].sort());
     expect((await listTasks(db, ctx.orgId, "SPI"))[0]?.tagIds.length).toBe(2);
     const log = await listTaskActivity(db, ctx.orgId, task.key);
     expect(log.at(-1)?.changes).toHaveProperty("tagIds");
@@ -57,7 +58,7 @@ run("tags", () => {
     const foreign = await createTag(db, otherCtx, { name: "foreign" });
     await expect(updateTask(db, ctx, task.key, { tagIds: [foreign.id] })).rejects.toMatchObject({ code: "validation" });
 
-    await deleteTag(db, ctx, bug?.id ?? "");
-    expect((await getTask(db, ctx.orgId, task.key)).tagIds).toEqual([agent?.id]);
+    await deleteTag(db, ctx, bug.id);
+    expect((await getTask(db, ctx.orgId, task.key)).tagIds).toEqual([agent.id]);
   });
 });

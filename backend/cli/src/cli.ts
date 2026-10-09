@@ -120,7 +120,9 @@ function connect(options: RunOptions) {
   };
 
   /** Adds the status and assignee handles, for printing. */
-  const describe = async (task: TaskDto): Promise<CliTask> => {
+  const describe = async (raw: TaskDto): Promise<CliTask> => {
+    // Servers from before tags (ST-8) don't send tagIds.
+    const task = { ...raw, tagIds: raw.tagIds ?? [] };
     const [detail, rows, tagRows] = await Promise.all([
       project(projectKeyOf(task.key)),
       loadMembers(),
