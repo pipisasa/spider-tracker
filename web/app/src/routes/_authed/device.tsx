@@ -87,7 +87,7 @@ function Decide({ code }: { code: string }) {
     return (
       <CardHeader className="items-center text-center">
         {done === "approved" ? (
-          <CheckCircle2Icon className="size-10 text-green-600" />
+          <CheckCircle2Icon className="size-10 text-green-600 dark:text-green-500" />
         ) : (
           <XCircleIcon className="size-10 text-muted-foreground" />
         )}
