@@ -16,6 +16,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@inquirer/prompts": "^8.7.3",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@repo/core": "*",
     "@repo/sdk": "*",

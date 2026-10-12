@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline/promises";
+import { styleText } from "node:util";
+import { Separator, select as inquirerSelect } from "@inquirer/prompts";
 import { run, type Choice } from "./cli";
 
 /** Best effort: open a URL in the default browser. */
@@ -9,30 +10,35 @@ function openUrl(url: string) {
   spawn(command, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }
 
-/** A numbered list on stderr, grouped; reads the number from the terminal. */
+/** Arrow-key menu on stderr: ↑/↓ move, Enter picks, Esc or Ctrl-C cancels. Groups become dividers. */
 async function select(question: string, choices: Choice[]): Promise<string | null> {
-  const lines = [question];
+  const items: (Separator | { value: string; name: string; description?: string })[] = [];
   let group: string | undefined;
-  choices.forEach((choice, i) => {
+  for (const choice of choices) {
     if (choice.group && choice.group !== group) {
       group = choice.group;
-      lines.push(`  ${group}`);
+      items.push(new Separator(styleText("dim", `── ${group}`)));
     }
-    lines.push(`    ${String(i + 1).padStart(2)}) ${choice.label}${choice.hint ? `  (${choice.hint})` : ""}`);
-  });
-  process.stderr.write(`${lines.join("\n")}\n`);
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
+    items.push({
+      value: choice.value,
+      name: choice.hint ? `${choice.label}  ${styleText("dim", choice.hint)}` : choice.label,
+    });
+  }
+  const controller = new AbortController();
+  const onKey = (_: unknown, key?: { name?: string }) => {
+    if (key?.name === "escape") controller.abort();
+  };
+  process.stdin.on("keypress", onKey);
   try {
-    for (;;) {
-      const answer = (await rl.question(`Pick 1-${choices.length} [1]: `)).trim();
-      if (answer === "q") return null;
-      const picked = choices[answer === "" ? 0 : Number(answer) - 1];
-      if (picked && /^\d*$/.test(answer)) return picked.value;
-    }
+    return await inquirerSelect(
+      { message: question, choices: items, pageSize: 12, loop: false },
+      { output: process.stderr, signal: controller.signal, clearPromptOnDone: false },
+    );
   } catch {
+    // ExitPromptError (Ctrl-C) or AbortPromptError (Esc).
     return null;
   } finally {
-    rl.close();
+    process.stdin.off("keypress", onKey);
   }
 }
 
