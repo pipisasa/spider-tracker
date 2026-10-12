@@ -33,12 +33,15 @@ See [auth.md](./auth.md) for all flows.
 - `GET|POST /v1/orgs/:org/projects[?archived=true]` — active projects, oldest first (archived ones too with `archived=true`); `{ key, name, description? }` to create one with the default statuses (owners and admins).
 - `GET|PATCH /v1/orgs/:org/projects/:key` — a project with its statuses and `archivedAt` (archived ones too); `PATCH { name?, description? }` (owners and admins; the key can't change, `description: null` clears it).
 - `POST|DELETE /v1/orgs/:org/projects/:key/archive` — archive (left out of lists, new tasks get `400 "Project ST is archived"`; its tasks stay readable and editable) or restore (owners and admins). Both return the project; repeating one changes nothing.
+
+### Tasks
+- `GET /v1/orgs/:org/projects/:key/tasks[?status=&assignee=&tag=&priority=&q=]` — the project's tasks in board order. Repeat a parameter for several values (`?tag=bug&tag=ui&priority=1&priority=2`). `status`: id, name or category; `assignee`: actor id or handle (deactivated ones too, so orphaned assignments can be found), `me` or `none`; `tag`: name, case-insensitive; `priority`: `0`–`4`; `q`: text in the title, case-insensitive. Statuses, assignees and priorities match **any** of their values, a task must carry **all** the tags, and parameters combine with AND. Unknown statuses, members and tags are `400` with the valid options. The filters live in `listTasks` (`taskListFilters` in `@repo/core/schemas`), shared by the API, MCP and CLI; SDK: `tasks.list(org, key, { status, assignee, tags, priority, q })`.
 - Agents are created as members, so their keys (CLI, MCP) get `403` on these writes unless the agent's role is raised to admin.
 
 ### Saved views
 - `GET|POST /v1/orgs/:org/projects/:key/views` — the project's shared views plus the caller's own, by name; `{ name, filters?, shared?, view?: board|list }` to save one (not for guests). `filters` is `{ status?: ids, assignee?: ids | "me" | "none", priority?: 0-4, tag?: ids, q?: text }`: values within a key are OR-ed, keys AND-ed.
 - `PATCH|DELETE /v1/orgs/:org/projects/:key/views/:id` — the view's owner, or organization owners and admins, change or delete it (`403` for others; someone else's personal view is `404`). Views of projects outside an agent's scope are `404`.
-- The web app applies filters client-side from the project's URL (`?status=&assignee=&priority=&tag=&q=`); `GET .../tasks` still returns every task.
+- The web app applies filters client-side from the project's URL (`?status=&assignee=&priority=&tag=&q=`, by id, tags OR-ed) over the full task list; API, MCP and CLI clients filter on the server (see Tasks).
 
 ### Comments and inbox
 - `GET|POST /v1/orgs/:org/tasks/:key/comments` — comments, oldest first; `{ body, parentId? }` to add.
@@ -96,7 +99,7 @@ Or install the `spider-tracker` Claude Code plugin (`spider setup claude`): it r
 | `list_projects`, `get_project` | Active projects; a project's description, `archived` flag and statuses in board order, with categories |
 | `create_project`, `update_project` | Owners and admins: key (fixed once created), name, description (null on update clears it) |
 | `archive_project` | Owners and admins: archive a project (out of `list_projects`, no new tasks); `undo: true` restores it |
-| `list_tasks` | Tasks in a project; filters: `status` (name or category), `assignee` (`me` or a handle), `query` (title text), `limit` |
+| `list_tasks` | Tasks in a project; filters: `status` (name or category), `assignee` (`me`, `none` or a handle, deactivated ones too), `tags` (names; all of them), `priority` (list of 0–4; any of them), `query` (title text), `limit` |
 | `get_task` | One task by key, with status name, assignee handles, tags, parent and sub-tasks |
 | `create_task`, `update_task` | Status by name, priority 0–4, assignees as handles or `me`, `parent` as a task key (null on update makes it top-level); `update_task` replaces the assignee list |
 | `assign_to_me` | Adds the agent to a task's assignees |
@@ -218,7 +221,7 @@ spider project create --key OPS --name "Operations" [--description …]   # owne
 spider project view <KEY>                      # statuses with task counts, description, archived state
 spider project update <KEY> [--name …] [--description …]   # the key can't change; --description "" clears it
 spider project archive <KEY> [--undo]          # archived: out of `spider projects`, no new tasks
-spider task list [--project ST] [--status "In Progress"] [--mine] [--limit 50]
+spider task list [--project ST] [--status "In Progress"] [--mine] [--assignee @alice] [--tag bug --tag ui] [--priority 1,2] [--limit 50]
 spider task view [ST-12]
 spider task create --project ST --title "Fix login" [--description …] [--status Todo] [--priority 0-4] [--assign @alice --assign me]
 spider task update [ST-12] [--title …] [--description …] [--status …] [--priority …] [--assign …]
@@ -240,6 +243,7 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 ```
 
 - **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
+- **`task list` filters** run on the server: `--assignee` (handles, deactivated ones too, `me` or `none`; `--mine` is `--assignee me`) and `--priority` (numbers or names) match any of their values, `--tag` requires all the tags; all are repeatable or comma-separated.
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
 - **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `project create|update|archive` → the project with its `statuses`, `project view` → the same with `taskCount` on each status; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
 - **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). `run` never prompts; only the bin passes the `spider claude` picker, and only when stdin and stdout are terminals.
@@ -249,7 +253,8 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 ### Planned
 - Keys in the OS keychain instead of a file, per-repo defaults in `.spider.json`
 - `spider pr`, `spider start` creating and checking out the branch
-- `spider agent list|run|logs`, `spider doc pull|push` (sync with local files), `--field` / `--tag`
+- `spider agent list|run|logs`, `spider doc pull|push` (sync with local files), `--field` filters
+- Filtering by tag group (e.g. "any tag in group Area") once tag groups exist
 - Distribution through npm and standalone binaries for Homebrew and curl installs
 - Local SQLite cache for instant reads and offline use; `spider tui` (Ink)
 

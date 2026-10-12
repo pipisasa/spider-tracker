@@ -161,6 +161,16 @@ interface TaskFields extends JsonOption {
   parent?: string;
 }
 
+interface TaskListOptions extends JsonOption {
+  project?: string;
+  status?: string;
+  mine?: boolean;
+  assignee?: string[];
+  tag?: string[];
+  priority?: string[];
+  limit: string;
+}
+
 /** Repeatable, comma-separable --assign. */
 const collect = (value: string, previous: string[] | undefined) => [
   ...(previous ?? []),
@@ -1154,32 +1164,42 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .description("list tasks")
       .option("--project <key>", "only this project (default: all)")
       .option("--status <name>", "status name or category")
-      .option("--mine", "only tasks assigned to me")
+      .option("--mine", "only tasks assigned to me (same as --assignee me)")
+      .option("--assignee <handle>", 'assigned to any of these: handles (deactivated too), "me" or "none"; repeatable or comma-separated', collect)
+      .option("--tag <name>", "carrying all of these tags; repeatable or comma-separated", collect)
+      .option("--priority <0-4>", "any of these priorities (0-4 or a name); repeatable or comma-separated", collect)
       .option("--limit <n>", "at most n tasks", "50"),
-  ).action(async (opts: JsonOption & { project?: string; status?: string; mine?: boolean; limit: string }) => {
+  ).action(async (opts: TaskListOptions) => {
     const limit = parseLimit(opts.limit);
-    const { sdk, org, whoami, project, describe } = conn();
+    const { sdk, org, whoami, actors, project, describe } = conn();
     const slug = await org();
     const keys = opts.project ? [opts.project.toUpperCase()] : (await (await sdk()).projects.list(slug)).items.map((p) => p.key);
-    const me = opts.mine ? (await whoami()).actor.id : undefined;
+    const priority = opts.priority?.map(parsePriority);
+    const handles = [...(opts.assignee ?? []), ...(opts.mine ? ["me"] : [])];
+    let assignee: string[] | undefined;
+    if (handles.length) {
+      // Deactivated actors too, so tasks still assigned to them can be found (ST-65).
+      const none = handles.some((h) => h.trim().toLowerCase() === "none");
+      const others = handles.filter((h) => h.trim().toLowerCase() !== "none");
+      const ids = others.length ? resolveAssignees(await actors(), (await whoami()).actor.id, others) : [];
+      assignee = [...ids, ...(none ? ["none"] : [])];
+    }
 
     const found: TaskDto[] = [];
     const statusNames = new Set<string>();
     let statusKnown = false;
     for (const key of keys) {
       const detail = await project(key);
-      let statusIds: Set<string> | undefined;
+      let status: string[] | undefined;
       if (opts.status !== undefined) {
         // A status unknown in one project may exist in another; it is an error only if no project has it.
-        statusIds = new Set(matchStatuses(detail, opts.status).map((s) => s.id));
+        status = matchStatuses(detail, opts.status).map((s) => s.id);
         detail.statuses.forEach((s) => statusNames.add(s.name));
-        if (statusIds.size === 0) continue;
+        if (status.length === 0) continue;
         statusKnown = true;
       }
-      const { items } = await (await sdk()).tasks.list(slug, key);
-      found.push(
-        ...items.filter((t) => (!statusIds || statusIds.has(t.statusId)) && (!me || t.assigneeIds.includes(me))),
-      );
+      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, priority });
+      found.push(...items);
       if (found.length >= limit) break;
     }
     if (opts.status !== undefined && !statusKnown) {

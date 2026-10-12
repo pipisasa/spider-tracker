@@ -264,6 +264,20 @@ withDb("projects and tasks API", () => {
     expect((activity[0]?.id ?? 0) < (activity[1]?.id ?? 0)).toBe(true);
     expect((await call(outsider, "GET", "/tasks/SPI-1/activity")).status).toBe(404);
 
+    const tag = (await (await call(owner, "POST", "/tags", { name: "Urgent-fix", color: "#ef4444" })).json()) as { id: string };
+    await call(owner, "PATCH", "/tasks/SPI-1", { tagIds: [tag.id], priority: 1 });
+    const count = async (query: string) => {
+      const res = await call(owner, "GET", `/projects/SPI/tasks?${query}`);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { items: unknown[] }).items.length;
+    };
+    expect(await count("tag=urgent-FIX&priority=1&priority=2")).toBe(1);
+    expect(await count("priority=2&priority=3")).toBe(0);
+    expect(await count("status=done&assignee=me&q=ship")).toBe(1);
+    expect(await count("assignee=none")).toBe(0);
+    expect((await call(owner, "GET", "/projects/SPI/tasks?tag=nope")).status).toBe(400);
+    expect((await call(owner, "GET", "/projects/SPI/tasks?priority=9")).status).toBe(400);
+
     expect((await call(owner, "DELETE", "/tasks/SPI-1")).status).toBe(204);
     expect((await call(owner, "GET", "/tasks/SPI-1")).status).toBe(404);
   });
@@ -419,6 +433,8 @@ withDb("SDK and client-declared source", () => {
     expect(updated.completedAt).not.toBeNull();
     expect((await client.tasks.get(slug, created.key)).title).toBe("Via SDK, done");
     expect((await client.tasks.list(slug, "SPI")).items).toHaveLength(1);
+    expect((await client.tasks.list(slug, "SPI", { status: ["done"], assignee: ["me"], priority: [0, 1] })).items).toHaveLength(1);
+    expect((await client.tasks.list(slug, "SPI", { priority: [4], q: "SDK" })).items).toHaveLength(0);
 
     expect(await client.tasks.delete(slug, created.key)).toBeUndefined();
     const error = await client.tasks.get(slug, created.key).catch((e: unknown) => e);

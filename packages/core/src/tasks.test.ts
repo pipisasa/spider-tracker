@@ -6,6 +6,7 @@ import { DomainError } from "./errors";
 import { createOrganization } from "./organizations";
 import { archiveProject, createProject, getProject, listProjects, updateProject } from "./projects";
 import { listTaskActivity } from "./activity-feed";
+import { createTag } from "./tags";
 import { createTask, deleteTask, getTask, listTasks, updateTask } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -151,5 +152,40 @@ run("projects and tasks", () => {
     await deleteTask(db, ctx, "SPI-3");
     await expect(getTask(db, ctx.orgId, "SPI-3")).rejects.toMatchObject({ code: "not_found" });
     expect((await listTasks(db, ctx.orgId, "SPI")).map((t) => t.key)).not.toContain("SPI-3");
+  });
+
+  test("filters by tags (all of them, any case), priority, status, assignee and title text", async () => {
+    const project = await createProject(db, ctx, { name: "Filters", key: "FLT" });
+    const done = project.statuses.find((s) => s.category === "done")?.id;
+    const bug = await createTag(db, ctx, { name: "Bug", color: "#ef4444" });
+    const ui = await createTag(db, ctx, { name: "ui", color: "#22c55e" });
+    const [gone] = await db
+      .insert(schema.actors)
+      .values({ orgId: ctx.orgId, type: "agent", name: "Left", handle: `left-${Date.now()}`, role: "member" })
+      .returning();
+    if (!gone) throw new Error("insert failed");
+    await createTask(db, ctx, "FLT", { title: "Both tags", tagIds: [bug.id, ui.id], priority: 1 });
+    await createTask(db, ctx, "FLT", { title: "Only bug", tagIds: [bug.id], priority: 1, assigneeIds: [gone.id] });
+    await createTask(db, ctx, "FLT", { title: "Only ui", tagIds: [ui.id], priority: 2, assigneeIds: [ctx.actorId] });
+    await createTask(db, ctx, "FLT", { title: "Bug fixed", tagIds: [bug.id, ui.id], priority: 1, statusId: done });
+    await db.update(schema.actors).set({ deactivatedAt: new Date() }).where(eq(schema.actors.id, gone.id));
+
+    const titles = async (filters: unknown) => (await listTasks(db, ctx, "FLT", filters)).map((t) => t.title).sort();
+    expect(await titles({ tags: ["bug"] })).toEqual(["Both tags", "Bug fixed", "Only bug"]);
+    expect(await titles({ tags: ["BUG", "#Ui"] })).toEqual(["Both tags", "Bug fixed"]);
+    expect(await titles({ priority: [2] })).toEqual(["Only ui"]);
+    expect(await titles({ priority: ["1", "2"] })).toHaveLength(4);
+    expect(await titles({ tags: ["bug", "ui"], status: ["todo"], priority: [1] })).toEqual(["Both tags"]);
+    expect(await titles({ status: ["Done"] })).toEqual(["Bug fixed"]);
+    expect(await titles({ assignee: [`@${gone.handle}`] })).toEqual(["Only bug"]);
+    expect(await titles({ assignee: ["me", gone.id] })).toEqual(["Only bug", "Only ui"]);
+    expect(await titles({ assignee: ["none"] })).toEqual(["Both tags", "Bug fixed"]);
+    expect(await titles({ q: "ONLY" })).toEqual(["Only bug", "Only ui"]);
+    expect(await titles({ q: "%" })).toEqual([]);
+
+    await expect(listTasks(db, ctx, "FLT", { tags: ["nope"] })).rejects.toMatchObject({ code: "validation" });
+    await expect(listTasks(db, ctx, "FLT", { status: ["Nope"] })).rejects.toMatchObject({ code: "validation" });
+    await expect(listTasks(db, ctx, "FLT", { assignee: ["nobody"] })).rejects.toMatchObject({ code: "validation" });
+    await expect(listTasks(db, ctx, "FLT", { priority: [7] })).rejects.toMatchObject({ code: "validation" });
   });
 });

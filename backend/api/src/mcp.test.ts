@@ -184,6 +184,15 @@ withDb("MCP server", () => {
     expect(bad).toMatchObject({ isError: true });
     expect(bad.text).toContain("infra");
     expect(JSON.parse((await call(client, "list_tags")).text)).toEqual([{ name: "infra", color: null }]);
+
+    const listed = await call(client, "list_tasks", { projectKey: "SPI", tags: ["INFRA"], priority: [0, 1] });
+    expect(listed.json()).toMatchObject({ total: 1, tasks: [{ title: "Tagged", tags: ["infra"] }] });
+    expect((await call(client, "list_tasks", { projectKey: "SPI", tags: ["infra"], priority: [2] })).json()).toMatchObject({
+      total: 0,
+    });
+    const unknownTag = await call(client, "list_tasks", { projectKey: "SPI", tags: ["nope"] });
+    expect(unknownTag).toMatchObject({ isError: true });
+    expect(unknownTag.text).toContain("infra");
   });
 
   test("sub-tasks: create with a parent key, see them on the parent, clear the parent", async () => {
@@ -333,6 +342,10 @@ withDb("MCP server", () => {
     expect(reassigned.isError).toBe(true);
     expect(reassigned.text).toBe('Unknown member "gone". Valid handles: me, claude-code, owner-0');
     expect((await call(client, "list_members")).text).not.toContain("gone");
+
+    // Orphaned assignments can still be found by the deactivated handle (ST-65).
+    const orphaned = await call(client, "list_tasks", { projectKey: "SPI", assignee: "@gone" });
+    expect(orphaned.json()).toMatchObject({ total: 1, tasks: [{ key: task.key, assignees: ["gone (deactivated)"] }] });
   });
 
     test("a key from another organization can't see this one's tasks", async () => {

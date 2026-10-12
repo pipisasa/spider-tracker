@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { aliasedTable, and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { aliasedTable, and, asc, desc, eq, exists, inArray, isNull, not, or, sql, type SQL } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
@@ -8,7 +8,16 @@ import { publish } from "./events";
 import { notify } from "./inbox";
 import type { Priority, SubtaskDto, TaskDto } from "./contracts";
 import { DomainError } from "./errors";
-import { createTaskInput, parseTaskKey, updateTaskInput, type UpdateTaskInput } from "./schemas";
+import { listMembers } from "./organizations";
+import { getProject } from "./projects";
+import {
+  createTaskInput,
+  parseTaskKey,
+  taskListFilters,
+  updateTaskInput,
+  type UpdateTaskInput,
+} from "./schemas";
+import { matchStatuses } from "./statuses";
 import { parseInput } from "./validate";
 
 const { actors, projects, statuses, tags, taskAssignees, taskTags, tasks } = schema;
@@ -274,7 +283,98 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
   });
 }
 
-export async function listTasks(db: Db, viewer: Viewer, projectKey: string): Promise<TaskDto[]> {
+/** SQL conditions for the list filters; unknown statuses, members and tags are validation errors. */
+async function filterConditions(db: Db, viewer: Viewer, projectKey: string, filters: unknown): Promise<SQL[]> {
+  const data = parseInput(taskListFilters, filters);
+  const where: SQL[] = [];
+
+  if (data.status?.length) {
+    const project = await getProject(db, viewer, projectKey);
+    const ids = new Set<string>();
+    for (const value of data.status) {
+      const byId = project.statuses.filter((s) => s.id === value);
+      const matched = byId.length ? byId : matchStatuses(project, value);
+      if (matched.length === 0) {
+        throw new DomainError(
+          "validation",
+          `Unknown status "${value}" in ${project.key}. Valid statuses: ${project.statuses.map((s) => s.name).join(", ")}`,
+        );
+      }
+      for (const s of matched) ids.add(s.id);
+    }
+    where.push(inArray(tasks.statusId, [...ids]));
+  }
+
+  if (data.assignee?.length) {
+    // Deactivated actors too, so tasks still assigned to them can be found (ST-65).
+    const rows = await listMembers(db, orgIdOf(viewer), { includeDeactivated: true });
+    const ids = new Set<string>();
+    let none = false;
+    for (const raw of data.assignee) {
+      const handle = raw.replace(/^@/, "").toLowerCase();
+      if (handle === "none") {
+        none = true;
+      } else if (handle === "me") {
+        if (typeof viewer === "string") throw new DomainError("validation", `"me" needs a signed-in member`);
+        ids.add(viewer.actorId);
+      } else {
+        const actor = rows.find((a) => a.id === raw || a.handle.toLowerCase() === handle);
+        if (!actor) {
+          throw new DomainError(
+            "validation",
+            `Unknown member "${raw}". Valid handles: me, none, ${rows.map((a) => a.handle).join(", ")}`,
+          );
+        }
+        ids.add(actor.id);
+      }
+    }
+    const assigned = (actorIds?: string[]) =>
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(taskAssignees)
+          .where(and(eq(taskAssignees.taskId, tasks.id), actorIds ? inArray(taskAssignees.actorId, actorIds) : undefined)),
+      );
+    const options = [ids.size ? assigned([...ids]) : undefined, none ? not(assigned()) : undefined];
+    const condition = or(...options);
+    if (condition) where.push(condition);
+  }
+
+  const names = [...new Set((data.tags ?? []).map((n) => n.replace(/^#/, "").trim().toLowerCase()))].filter(Boolean);
+  if (names.length) {
+    const rows = await db.select({ id: tags.id, name: tags.name }).from(tags).where(eq(tags.orgId, orgIdOf(viewer)));
+    const ids = names.map((name) => {
+      const tag = rows.find((t) => t.name.toLowerCase() === name);
+      if (!tag) {
+        throw new DomainError("validation", `Unknown tag "${name}". Existing tags: ${rows.map((t) => t.name).join(", ") || "none"}`);
+      }
+      return tag.id;
+    });
+    // Every listed tag: the task's rows among them must number as many as the tags.
+    where.push(
+      inArray(
+        tasks.id,
+        db
+          .select({ id: taskTags.taskId })
+          .from(taskTags)
+          .where(inArray(taskTags.tagId, ids))
+          .groupBy(taskTags.taskId)
+          .having(sql`count(*) = ${ids.length}`),
+      ),
+    );
+  }
+
+  if (data.priority?.length) where.push(inArray(tasks.priority, [...new Set(data.priority)]));
+  if (data.q) where.push(sql`strpos(lower(${tasks.title}), ${data.q.toLowerCase()}) > 0`);
+  return where;
+}
+
+/**
+ * A project's tasks in board order, optionally filtered (see `taskListFilters`): any of the
+ * statuses, assignees and priorities, all of the tags, and title text.
+ */
+export async function listTasks(db: Db, viewer: Viewer, projectKey: string, filters: unknown = {}): Promise<TaskDto[]> {
+  const conditions = await filterConditions(db, viewer, projectKey, filters);
   const scope = await projectScope(db, viewer);
   const rows = await db
     .select({ task: tasks, projectKey: projects.key })
@@ -286,6 +386,7 @@ export async function listTasks(db: Db, viewer: Viewer, projectKey: string): Pro
         eq(projects.key, projectKey.toUpperCase()),
         isNull(tasks.deletedAt),
         scope ? inArray(projects.id, [...scope]) : undefined,
+        ...conditions,
       ),
     )
     .orderBy(asc(tasks.sortKey), asc(tasks.id));

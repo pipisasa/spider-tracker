@@ -82,6 +82,30 @@ export const updateTaskInput = z
 
 export type UpdateTaskInput = z.infer<typeof updateTaskInput>;
 
+const filterValue = z.string().trim().min(1).max(100);
+
+/**
+ * Server-side filters of a project's task list (API query, MCP, CLI). Values within `status`,
+ * `assignee` and `priority` are OR-ed; a task must carry every one of `tags`; keys are AND-ed.
+ */
+export const taskListFilters = z.object({
+  /** Status ids, names or categories ("In Progress", "in_progress"), case-insensitive. */
+  status: z.array(filterValue).max(50).optional(),
+  /** Actor ids, handles (with or without "@", deactivated ones too), "me" or "none". */
+  assignee: z.array(filterValue).max(50).optional(),
+  /** Tag names, case-insensitive (with or without "#"). */
+  tags: z.array(filterValue).max(20).optional(),
+  /** 0–4; numeric strings too, as they arrive in a query string. */
+  priority: z
+    .array(z.union([prioritySchema, z.enum(["0", "1", "2", "3", "4"]).transform(Number).pipe(prioritySchema)]))
+    .max(5)
+    .optional(),
+  /** Case-insensitive text in the title. */
+  q: z.string().trim().max(200).optional(),
+});
+
+export type TaskListFilters = z.input<typeof taskListFilters>;
+
 /** Parses "SPI-12" into its project key and number. */
 export function parseTaskKey(value: string): { projectKey: string; number: number } | null {
   const match = /^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})$/.exec(value);
