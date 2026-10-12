@@ -66,6 +66,8 @@ import {
 import { branchNameFor, taskKeysIn } from "@repo/core/git";
 import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
 import { isCompiled } from "./self-update";
+import { checkSession, planLines, teamAgents, windowArgv } from "./claude-team";
+import { TMUX_MISSING, openWindows, runTmux, shellQuote, tmuxPlan, tmuxVersion, windowCommand, windowNames, type TmuxRunner } from "./tmux";
 import { describePlan, runUninstall, uninstallPlan } from "./uninstall";
 import { checkForUpdates } from "./update-check";
 import {
@@ -128,6 +130,8 @@ export interface RunOptions {
   spawn?: (argv: string[], options: { env: Record<string, string | undefined> }) => Promise<number>;
   /** Runs `git <args>` in a directory (branch lookups, `spider start`); defaults to the real git. */
   git?: GitRunner;
+  /** Runs `tmux <args>` (`spider claude --tmux`); defaults to the real tmux. */
+  tmux?: TmuxRunner;
   /** The command that runs this CLI, for the MCP config `spider claude` writes; defaults to the running one. */
   self?: string[];
   /** Runs `claude <args>` capturing its output (plugin setup); undefined result when Claude Code is missing. */
@@ -150,6 +154,16 @@ export interface Choice {
   /** Choices are shown under their group, e.g. "prod › batele". */
   group?: string;
   hint?: string;
+}
+
+/** `spider claude` options. */
+interface ClaudeOptions {
+  channel: boolean;
+  permissionMode?: PermissionMode;
+  tmux?: string;
+  all?: boolean;
+  project?: string;
+  dryRun?: boolean;
 }
 
 /** Program-wide options. */
@@ -310,9 +324,6 @@ const scopeOf = (entry: AgentEntry) => {
   if (!projects) return "all projects";
   return projects.length ? projects.map((p) => p.key).join(", ") : "no projects";
 };
-
-/** Quotes a word for a shell command line (Claude Code runs headersHelper through a shell). */
-const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
 
 /** The MCP config `spider claude` passes to Claude Code: no secrets, the key comes from mcp-headers. */
 export function claudeMcpConfig(entry: AgentEntry, self: string[], channel: boolean) {
@@ -891,28 +902,90 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     );
   });
 
+  /**
+   * `spider claude … --tmux <session>`: a window per agent, named by handle, each running
+   * `spider claude <agent>` with the same options; agents whose window exists are skipped.
+   */
+  const claudeInTmux = (store: Store, session: string, names: string[], claudeArgs: string[], opts: ClaudeOptions) => {
+    checkSession(session);
+    const server = globals().server;
+    const agents = teamAgents(store, {
+      names,
+      all: !!opts.all,
+      project: opts.project,
+      server: server === undefined ? undefined : resolveServer(store, server).key,
+    });
+    if (!agents.length) throw usageError(`Which agents? Name them or use --all: spider claude <agent>… --tmux ${session}`);
+    const tmux = options.tmux ?? runTmux;
+    const installed = tmuxVersion(tmux) !== null;
+    if (!installed && !opts.dryRun) throw new CliError(EXIT.unexpected, TMUX_MISSING, "tmux_missing");
+    const self = options.self ?? selfInvocation();
+    const plan = tmuxPlan(
+      session,
+      installed ? windowNames(session, tmux) : null,
+      agents.map((a) => ({
+        window: a.agent,
+        agent: a.ref,
+        argv: windowArgv(self, a, { channel: opts.channel, permissionMode: opts.permissionMode, claudeArgs }),
+      })),
+    );
+    if (opts.dryRun) {
+      if (!installed) stderr.write(`Note: ${TMUX_MISSING}\n`);
+      print(planLines(plan, true, windowCommand).join("\n"));
+      return;
+    }
+    // Windows of a running tmux server don't inherit this process's environment: pass the credentials folder on.
+    const configDir = options.env.SPIDER_CONFIG_DIR?.trim();
+    try {
+      openWindows(plan, cwd, configDir ? { SPIDER_CONFIG_DIR: configDir } : {}, tmux);
+    } catch (err) {
+      throw new CliError(EXIT.unexpected, err instanceof Error ? err.message : String(err), "tmux_failed");
+    }
+    print(planLines(plan, false, windowCommand).join("\n"));
+    if (opts.channel && plan.windows.some((w) => w.start)) {
+      stderr.write(
+        `Each new window waits at Claude Code's development-channels dialog: attach and press Enter in each, or see docs/agents.md for tmux send-keys\n`,
+      );
+    }
+  };
+
   program
     .command("claude")
     .description("start Claude Code as a saved agent, with the spider MCP server and its inbox channel")
     .argument("[agent]", "handle, org/handle or server/org/handle (default: pick one, or the default agent)")
-    .argument("[claudeArgs...]", "arguments for claude, after --")
+    .argument("[claudeArgs...]", "arguments for claude, after -- (with --tmux, more agents before --)")
     .option("--no-channel", "don't push the agent's inbox into the session")
     .addOption(
       new Option("--permission-mode <mode>", "the permission mode to start in (default: the agent's, see spider agents permission-mode, else auto)").choices(
         PERMISSION_MODES,
       ),
     )
-    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean; permissionMode?: PermissionMode }) => {
+    .option("--tmux <session>", "start each agent in its own window (named by handle) of this tmux session; running ones are skipped")
+    .option("--all", "with --tmux: every saved agent (narrow with --project and --server)")
+    .option("--project <key>", "with --all: only saved agents scoped to this project")
+    .option("--dry-run", "with --tmux: print the launch plan, start nothing")
+    .action(async (named: string | undefined, rest: string[], opts: ClaudeOptions) => {
       // Everything after "--" goes to claude; an agent is only an operand before it.
       const dash = argv.indexOf("--");
       const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
       const given = (dash >= 0 && named !== undefined && 1 + rest.length <= extra.length ? undefined : named) ?? globals().as;
+      // The operands before "--": with --tmux, all of them are agents.
+      const operands = [...(named === undefined ? [] : [named]), ...rest].slice(0, dash >= 0 ? Math.max(0, 1 + rest.length - extra.length) : undefined);
 
       const store = await readStore(options.env);
       const all = listAgents(store);
       if (!all.length) {
         throw new CliError(EXIT.auth, "No saved agents. Run `spider accept-invite <code>` or `spider login` first", "unauthorized");
       }
+      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
+        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
+      }
+      if (opts.tmux !== undefined) {
+        const names = operands.length ? operands : globals().as ? [globals().as ?? ""] : [];
+        return claudeInTmux(store, opts.tmux, names, extra, opts);
+      }
+      const loose = opts.all ? "--all" : opts.project !== undefined ? "--project" : opts.dryRun ? "--dry-run" : undefined;
+      if (loose) throw usageError(`${loose} goes with --tmux <session>`);
       let entry: AgentEntry | undefined;
       if (given) entry = findAgent(store, given);
       else if (options.select && all.length > 1) {
@@ -938,9 +1011,6 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const config = join(dir, "mcp.json");
       await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
       const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env, entry);
-      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
-        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
-      }
       const permission = permissionModeFor(opts.permissionMode, extra, entry.saved.permissionMode);
       const command = claudeCommand({ claudeArgs: extra, agent: agentName, mcpConfig: config, channel: opts.channel, permission });
       // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
