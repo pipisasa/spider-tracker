@@ -383,6 +383,37 @@ export interface DocumentVersionDto extends DocumentVersionSummaryDto {
   content: string;
 }
 
+/** One line of a line diff: unchanged context, added (only in the new text) or removed (only in the old). */
+export interface DiffLineDto {
+  kind: "context" | "added" | "removed";
+  text: string;
+  /** 1-based line number in the old text; null for added lines. */
+  oldLine: number | null;
+  /** 1-based line number in the new text; null for removed lines. */
+  newLine: number | null;
+}
+
+/** A run of changes with up to 3 lines of context around them, as in a unified diff's `@@` block. */
+export interface DiffHunkDto {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLineDto[];
+}
+
+/** What changed between two saved versions of a document (ST-117), line by line. */
+export interface DocumentDiffDto {
+  documentId: string;
+  from: DocumentVersionSummaryDto;
+  to: DocumentVersionSummaryDto;
+  /** Lines added and removed. */
+  added: number;
+  removed: number;
+  /** Empty when the contents match (the title or format may still differ). */
+  hunks: DiffHunkDto[];
+}
+
 export type InvitationStatus = "active" | "expired" | "revoked" | "used_up";
 
 export interface InvitationDto {

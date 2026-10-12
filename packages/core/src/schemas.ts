@@ -352,6 +352,13 @@ export const documentListQuery = z.object({
   task: z.string().trim().min(1).optional(),
 });
 
+/** Which saved versions to compare (ST-117); without `to`, the current one. Query strings are coerced. */
+export const documentDiffQuery = z.object({
+  from: z.coerce.number().int().positive(),
+  to: z.coerce.number().int().positive().optional(),
+});
+export type DocumentDiffQuery = { from: number; to?: number };
+
 export const invitationRoleSchema = z.enum(["admin", "member", "guest"]);
 
 export const createInvitationInput = z.object({

@@ -12,6 +12,7 @@ import {
 } from "./access";
 import { recordActivity } from "./activity";
 import type {
+  DocumentDiffDto,
   DocumentDto,
   DocumentGraphDto,
   DocumentGraphTaskDto,
@@ -20,6 +21,7 @@ import type {
   DocumentVersionDto,
   DocumentVersionSummaryDto,
 } from "./contracts";
+import { diffHunks, diffLines } from "./diff";
 import { applyDocumentEdits } from "./document-edits";
 import { DomainError } from "./errors";
 import { publish } from "./events";
@@ -28,6 +30,7 @@ import { documentIdLink, normalizeTitle, outgoingLinksIn, resolveDocumentLink, r
 import { announceRulesChange, rulesProjectOf } from "./project-rules";
 import {
   createDocumentInput,
+  documentDiffQuery,
   documentListQuery,
   editDocumentInput,
   MAX_DOCUMENT_BYTES,
@@ -549,6 +552,13 @@ export async function getDocumentVersion(
   version: number | string,
 ): Promise<DocumentVersionDto> {
   const { document } = await findDocument(db, viewer, id);
+  const row = await findVersion(db, document.id, version);
+  return { ...toVersionSummary(row), documentId: row.documentId, content: row.content };
+}
+
+type VersionRow = typeof documentVersions.$inferSelect;
+
+async function findVersion(db: Db, documentId: string, version: number | string): Promise<VersionRow> {
   const number = Number(version);
   if (!Number.isInteger(number) || number < 1)
     throw new DomainError("not_found", `Version ${version} not found`);
@@ -557,20 +567,44 @@ export async function getDocumentVersion(
     .from(documentVersions)
     .where(
       and(
-        eq(documentVersions.documentId, document.id),
+        eq(documentVersions.documentId, documentId),
         eq(documentVersions.version, number),
       ),
     )
     .limit(1);
   if (!row) throw new DomainError("not_found", `Version ${version} not found`);
+  return row;
+}
+
+const toVersionSummary = (row: VersionRow): DocumentVersionSummaryDto => ({
+  version: row.version,
+  title: row.title,
+  format: row.format,
+  authorId: row.authorId,
+  createdAt: row.createdAt.toISOString(),
+});
+
+/**
+ * What changed between two saved versions, line by line (ST-117): `{ from, to? }`, where a
+ * missing `to` means the current version. Readable by whoever can read the document.
+ */
+export async function diffDocumentVersions(
+  db: Db,
+  viewer: Viewer,
+  id: string,
+  query: unknown,
+): Promise<DocumentDiffDto> {
+  const { document } = await findDocument(db, viewer, id);
+  const { from, to = document.version } = parseInput(documentDiffQuery, query);
+  const [a, b] = await Promise.all([findVersion(db, document.id, from), findVersion(db, document.id, to)]);
+  const lines = diffLines(a.content, b.content);
   return {
-    documentId: row.documentId,
-    version: row.version,
-    title: row.title,
-    format: row.format,
-    content: row.content,
-    authorId: row.authorId,
-    createdAt: row.createdAt.toISOString(),
+    documentId: document.id,
+    from: toVersionSummary(a),
+    to: toVersionSummary(b),
+    added: lines.filter((l) => l.kind === "added").length,
+    removed: lines.filter((l) => l.kind === "removed").length,
+    hunks: diffHunks(lines),
   };
 }
 

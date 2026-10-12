@@ -117,6 +117,7 @@ withDb("MCP server", () => {
         "archive_project",
         "assign_to_me",
         "create_document",
+        "diff_document",
         "create_project",
         "create_tag",
         "create_task",
@@ -329,6 +330,27 @@ withDb("MCP server", () => {
     expect(stale.text).toContain("version 3");
   });
 
+  test("diff_document: a unified diff between versions, or against the current one (ST-117)", async () => {
+    const doc = (await call(client, "create_document", { title: "Diffed", content: "# D\n\nold\n" })).json() as { id: string };
+    await call(client, "edit_document", { id: doc.id, edits: [{ old: "old", new: "new" }] });
+
+    const diff = await call(client, "diff_document", { id: doc.id, from: 1 });
+    expect(diff.isError).toBeFalsy();
+    expect(diff.json()).toMatchObject({
+      id: doc.id,
+      from: { version: 1, savedBy: "claude-code" },
+      to: { version: 2, title: "Diffed" },
+      added: 1,
+      removed: 1,
+      diff: "--- v1\n+++ v2\n@@ -1,3 +1,3 @@\n # D\n \n-old\n+new",
+    });
+    expect((await call(client, "diff_document", { id: doc.id, from: 2, to: 2 })).json()).toMatchObject({ diff: "" });
+    const missing = await call(client, "diff_document", { id: doc.id, from: 1, to: 5 });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain("Version 5 not found");
+    expect((await call(otherClient, "diff_document", { id: doc.id, from: 1 })).isError).toBe(true);
+  });
+
   test("statuses can be given by category, like the CLI", async () => {
     const moved = await call(client, "update_task", { key: "SPI-1", status: "in_review" });
     expect(moved.isError).toBeFalsy();
@@ -497,7 +519,11 @@ withDb("MCP server", () => {
       rules,
     });
     expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual([
-      expect.objectContaining({ kind: "rules", project: "SPI", rulesDocument: { id: doc.id, title: "Agent rules" } }),
+      expect.objectContaining({
+        kind: "rules",
+        project: "SPI",
+        rulesDocument: { id: doc.id, title: "Agent rules", url: expect.stringContaining(`/docs/${doc.id}`) },
+      }),
     ]);
 
     // The owner's agent can change them through update_project; a non-document id is a tool error.

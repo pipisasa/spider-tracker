@@ -22,6 +22,7 @@ export * from "./relations";
 export * from "./documents";
 export * from "./project-rules";
 export * from "./document-edits";
+export * from "./diff";
 export * from "./links";
 export * from "./urls";
 export * from "./invitations";
