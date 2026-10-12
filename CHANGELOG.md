@@ -27,6 +27,7 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 
 ### CLI
 
+- New `spider task duplicate [key] --of KEY [--comment "…"]` closes a task as a duplicate in one step (link, canceled status, comment); MCP has the matching `mark_duplicate` tool. `link_tasks` now refuses a `duplicates` link that would close a cycle (ST-114).
 - `task view --json` adds `documents`; `project view --json` adds the project's `documents`, and its `rules` gain `projectKey`, `projectName`, `format`, `updatedAt` and `url` (the full `ProjectRulesDto`); `doc diff --json` adds `diff` (the unified text); `comment --json` and `comments --json` add `author` (the handle). Nothing was removed or renamed (ST-107).
 - `task update` and other commands that fail with "not found" or "forbidden" while acting as a saved agent limited to some projects say which agent acted, how it was chosen (`--as`, `SPIDER_AGENT` or the default agent) and which projects it sees: a task in another project reads as missing to it (ST-107).
 - An error response without a JSON body (a proxy page, or HTTP/2 without status text) no longer prints an empty `spider: ` line; it says which request failed with which HTTP status (ST-107).

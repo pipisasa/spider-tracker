@@ -41,6 +41,7 @@ import {
   createTag,
   listComments,
   addRelation,
+  markDuplicate,
   listRelations,
   listSubtasks,
   removeRelation,
@@ -575,6 +576,24 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       inputSchema: { key: z.string(), kind: relationKind, task: z.string() },
     },
     ({ key: taskKey, kind, task }) => run(async () => ((await removeRelation(db, ctx, taskKey, { kind, task })), { removed: true })),
+  );
+
+  server.registerTool(
+    "mark_duplicate",
+    {
+      description:
+        "Mark a task as a duplicate of another in one step: link it (duplicates), move it to its project's first canceled status and comment \"Duplicate of KEY\". Calling it again changes nothing; a task can't duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).",
+      inputSchema: {
+        key: z.string().describe('The duplicate, e.g. "ST-12"'),
+        of: z.string().describe('The original task, e.g. "ST-9"'),
+        comment: z.string().optional().describe("Markdown added below the automatic comment"),
+      },
+    },
+    ({ key: taskKey, of, comment }) =>
+      run(async () => {
+        const task = await markDuplicate(db, ctx, taskKey, { of, comment });
+        return describeTask(task, await projectOfTask(task.key));
+      }),
   );
 
   server.registerTool(
