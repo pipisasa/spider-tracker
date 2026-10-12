@@ -7,8 +7,8 @@
 Identity tables (users, sessions, OAuth clients and tokens) belong to Better Auth; see [auth.md](./auth.md#what-owns-what). The tables below are ours.
 
 ```
-organizations ─┬─ actors (human | agent) ── agents (1:1 config), api_tokens
-               ├─ tags, custom_field_defs, repos, apps, documents
+organizations ─┬─ actors (human | agent | integration) ── agents (1:1 config), api_tokens
+               ├─ tags, custom_field_defs, github_installations, repos, apps, documents
                └─ projects ─┬─ statuses, cycles, custom_field_defs (project-scoped)
                             └─ tasks ─┬─ task_assignees → actors
                                       ├─ task_tags, task_relations, sub-tasks (parent_id)
@@ -22,7 +22,7 @@ activity (append-only log for everything)
 | Entity | Purpose |
 |---|---|
 | **Organization** | The tenant boundary; owns everything else |
-| **Actor** | A member: a person or an agent |
+| **Actor** | A member: a person or an agent; or an integration bot (the GitHub one, ST-82) that git-driven changes are attributed to |
 | **Agent** | Extra configuration for agent actors (model, prompt, tools, limits) |
 | **API token** | Hashed API keys for external agents and CI |
 | **Project** | A unit of work with a key (`SPI`), workflow and settings |
@@ -31,7 +31,8 @@ activity (append-only log for everything)
 | **Task** | A unit of work of a kind (`task`, `release` or `milestone`, ST-90); supports sub-tasks, relations, assignees, tags and custom fields |
 | **Tag** | An organization-wide label |
 | **Custom field definition** | A user-defined field at organization or project scope |
-| **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; the GitHub App (ST-82) later sets its installation |
+| **GitHub installation** | The GitHub App installed on a GitHub account and connected to one organization (ST-82); keyed by GitHub's installation id |
+| **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
 | **Git link** | A branch, commit or pull request linked to a task |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
@@ -88,8 +89,11 @@ create table actors (
   role member_role not null default 'member',
   deactivated_at timestamptz,
   unique (org_id, handle),
-  check ((type = 'human') = (user_id is not null))
+  check (type <> 'human' or user_id is not null)
 );
+-- actor_type: human | agent | integration. An integration (ST-82) is a per-org bot (the GitHub one,
+-- handle "github", reserved for it): no user, no agents row, no API keys; left out of GET /members
+-- (pickers) unless ?all=true, never assigned or mentioned.
 
 create table invitations (                     -- join codes; anyone signed in with one joins with its role
   id uuid primary key default uuidv7(),
@@ -259,17 +263,33 @@ create table custom_field_defs (
 );
 
 -- ── repos, apps, git ─────────────────────────────────
--- Built in ST-92: repos added by remote URL; ST-82 fills github_installation_id on existing rows.
+-- ST-82: a GitHub App installation connected to one organization (another org connecting it is refused).
+create table github_installations (
+  id bigint primary key,                               -- GitHub's installation id
+  org_id uuid not null references organizations on delete cascade,
+  account_login text not null,                         -- the GitHub user or organization it is installed on
+  account_type text not null check (account_type in ('User', 'Organization')),
+  repository_selection text not null check (repository_selection in ('all', 'selected')),
+  suspended_at timestamptz,
+  connected_by uuid references actors on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index github_installations_org_idx on github_installations (org_id);
+
+-- Built in ST-92: repos added by remote URL. ST-82: connecting an installation sets
+-- github_installation_id on the existing rows (matched by owner/name, any case) and adds the others.
 create table repos (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations on delete cascade,
   owner text not null, name text not null,             -- the GitHub remote owner/name, casing as given
   default_branch text not null default 'main',
-  github_installation_id bigint,                       -- GitHub App installation (ST-82); null when added by URL
+  github_installation_id bigint references github_installations on delete set null,  -- null when added by URL only, or no longer granted
   created_by uuid references actors on delete set null,
   created_at timestamptz not null default now()
 );
 create unique index repos_org_remote_key on repos (org_id, lower(owner), lower(name));
+create index repos_github_installation_idx on repos (github_installation_id);
 create table project_repos (
   project_id uuid not null references projects on delete cascade,
   repo_id uuid not null references repos on delete cascade,

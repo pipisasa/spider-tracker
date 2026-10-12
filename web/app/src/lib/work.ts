@@ -16,6 +16,9 @@ import type {
   PresenceDto,
   RelationDto,
   AppDto,
+  GithubInstallationDto,
+  GithubInstallUrlDto,
+  GithubStatusDto,
   RepoDto,
   TagDto,
   CreatedApiKeyDto,
@@ -73,6 +76,7 @@ export const keys = {
   invitations: (org: string) => ["orgs", org, "invitations"] as const,
   tags: (org: string) => ["orgs", org, "tags"] as const,
   repos: (org: string) => ["orgs", org, "repos"] as const,
+  github: (org: string) => ["orgs", org, "github"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
   archivedProjects: (org: string) =>
     ["orgs", org, "archived-projects"] as const,
@@ -1001,4 +1005,54 @@ export const useDeleteApp = (org: string) =>
     ({ repo, app }: { repo: RepoDto; app: string }) =>
       api<void>(`${repoPath(org, repo)}/apps/${encodeURIComponent(app)}`, { method: "DELETE" }),
     "App removed",
+  );
+
+// The GitHub App (ST-82): Settings → GitHub. Connecting leaves the app for GitHub, which returns
+// through the API's /github/setup to the settings page.
+
+export const githubQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.github(org),
+    queryFn: () => api<GithubStatusDto>(`${orgPath(org)}/github`),
+  });
+
+/** Starts the install flow: the page to send the browser to. */
+export function useStartGithubInstall(org: string) {
+  return useMutation({
+    mutationFn: () => api<GithubInstallUrlDto>(`${orgPath(org)}/github/install`, { method: "POST" }),
+    onError: (error) => toast.error(error.message),
+  });
+}
+
+/** Installation changes also change repos (attached, added, released). */
+function useGithubMutation<TInput, TResult>(
+  org: string,
+  mutationFn: (input: TInput) => Promise<TResult>,
+  success: string,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      toast.success(success);
+      void qc.invalidateQueries({ queryKey: keys.github(org) });
+      void qc.invalidateQueries({ queryKey: keys.repos(org) });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+}
+
+export const useSyncGithubInstallation = (org: string) =>
+  useGithubMutation(
+    org,
+    (id: number) =>
+      api<GithubInstallationDto>(`${orgPath(org)}/github/installations/${id}/sync`, { method: "POST" }),
+    "Synced with GitHub",
+  );
+
+export const useDisconnectGithubInstallation = (org: string) =>
+  useGithubMutation(
+    org,
+    (id: number) => api<void>(`${orgPath(org)}/github/installations/${id}`, { method: "DELETE" }),
+    "GitHub disconnected",
   );

@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq, gt, inArray, isNull, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, ne, type SQL } from "drizzle-orm";
 import { assertCanWrite, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { CommentDto, TaskInboxKind } from "./contracts";
@@ -25,13 +25,20 @@ export function parseMentions(body: string): string[] {
   return [...handles];
 }
 
-/** Active members of the organization named by `handles`. */
+/** Active members of the organization named by `handles` (integration bots never get mentions). */
 export async function mentionedActors(tx: Tx, ctx: ActorContext, handles: string[]): Promise<{ id: string }[]> {
   if (handles.length === 0) return [];
   return tx
     .select({ id: actors.id })
     .from(actors)
-    .where(and(eq(actors.orgId, ctx.orgId), inArray(actors.handle, handles), isNull(actors.deactivatedAt)));
+    .where(
+      and(
+        eq(actors.orgId, ctx.orgId),
+        inArray(actors.handle, handles),
+        isNull(actors.deactivatedAt),
+        ne(actors.type, "integration"),
+      ),
+    );
 }
 
 /** The agent loop guard: an agent posts at most AGENT_COMMENT_LIMIT comments per minute on one task or document. */

@@ -32,6 +32,7 @@ import {
   FileTextIcon,
   FolderCogIcon,
   GitBranchIcon,
+  GitPullRequestIcon,
   FolderIcon,
   HomeIcon,
   KeyboardIcon,
@@ -371,6 +372,13 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                     >
                       <GitBranchIcon />
                       Settings: Repos
+                    </CommandItem>
+                    <CommandItem
+                      value="go settings github"
+                      onSelect={run(() => void navigate({ to: "/$orgSlug/settings/github", params: { orgSlug } }))}
+                    >
+                      <GitPullRequestIcon />
+                      Settings: GitHub
                     </CommandItem>
                     {canCreateTasks && (
                       <CommandItem

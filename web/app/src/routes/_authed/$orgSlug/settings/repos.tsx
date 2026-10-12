@@ -160,6 +160,11 @@ function RepoCard({ orgSlug, repo, canManage }: { orgSlug: string; repo: RepoDto
         <Badge variant="outline" title="Default branch">
           {repo.defaultBranch}
         </Badge>
+        {repo.githubInstallationId !== null && (
+          <Badge variant="secondary" title="Connected through the GitHub App (Settings → GitHub)">
+            GitHub App
+          </Badge>
+        )}
         {canManage && (
           <div className="ml-auto flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setEditing(true)}>

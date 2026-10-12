@@ -10,9 +10,12 @@ export interface OrganizationDto {
   name: string;
 }
 
+/** "integration": a per-organization bot, e.g. the GitHub one (ST-82); listed only with `?all=true`. */
+export type ActorType = "human" | "agent" | "integration";
+
 export interface ActorDto {
   id: string;
-  type: "human" | "agent";
+  type: ActorType;
   name: string;
   handle: string;
   avatarUrl: string | null;
@@ -208,6 +211,40 @@ export interface RepoDto {
   createdAt: string;
 }
 
+/** A GitHub App installation connected to the organization (ST-82). */
+export interface GithubInstallationDto {
+  /** GitHub's installation id. */
+  id: number;
+  /** The GitHub user or organization the App is installed on. */
+  account: string;
+  accountType: "User" | "Organization";
+  /** Whether it grants every repository of the account or only selected ones. */
+  repositorySelection: "all" | "selected";
+  suspended: boolean;
+  /** "owner/name" of the organization's repos it grants, sorted. */
+  repos: string[];
+  /** Where the installation is configured on GitHub (repository access, uninstall). */
+  settingsUrl: string;
+  /** Actor id of who connected it; null once they're gone. */
+  connectedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `GET /github`: whether the server has a GitHub App, and the organization's installations. */
+export interface GithubStatusDto {
+  /** False when the server has no `GITHUB_APP_*` settings: connecting and syncing are unavailable. */
+  configured: boolean;
+  /** The App's slug (github.com/apps/<slug>); null when not configured. */
+  appSlug: string | null;
+  installations: GithubInstallationDto[];
+}
+
+/** `POST /github/install`: the GitHub page that installs the App; it returns to `/github/setup`. */
+export interface GithubInstallUrlDto {
+  url: string;
+}
+
 /** A saved filter set of a project's board or list (ST-15). */
 export interface SavedViewDto {
   id: string;
@@ -382,7 +419,7 @@ export interface InboxItemDto {
   /** Set for `rules` items (the project's rules document) and `document_*` items (the commented document; projectKey is null for an organization-wide one). */
   document: { id: string; title: string; projectKey: string | null } | null;
   comment: { id: string; body: string } | null;
-  from: { id: string; handle: string; name: string; type: "human" | "agent" };
+  from: { id: string; handle: string; name: string; type: ActorType };
 }
 
 /** One entry of a task's history, from the activity log. */

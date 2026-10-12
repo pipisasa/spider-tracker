@@ -32,7 +32,7 @@ See [agents.md](./agents.md).
 
 See [git-integration.md](./git-integration.md).
 
-- GitHub App per organization
+- GitHub App per organization (ST-82): owners and admins connect it in Settings → GitHub; the repos it grants are linked to the organization's repos or added, and git-driven changes are attributed to a GitHub bot
 - Branches, commits and pull requests link to tasks automatically
 - Status changes driven by pull request events
 - Agents can open pull requests

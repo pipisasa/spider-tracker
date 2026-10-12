@@ -67,7 +67,7 @@ async function toRepoDtos(db: Db | Tx, rows: RepoRow[], scope: ProjectScope): Pr
 }
 
 /** A scoped viewer sees a repo only when it is attached to one of its projects. */
-function visibleIn(db: Db | Tx, scope: ProjectScope): SQL | undefined {
+export function repoVisibleIn(db: Db | Tx, scope: ProjectScope): SQL | undefined {
   if (!scope) return undefined;
   if (scope.size === 0) return sql`false`;
   return exists(
@@ -96,7 +96,7 @@ async function findRepo(db: Db | Tx, viewer: Viewer, ref: string, forUpdate = fa
   const query = db
     .select()
     .from(repos)
-    .where(and(eq(repos.orgId, orgIdOf(viewer)), condition, visibleIn(db, scope)))
+    .where(and(eq(repos.orgId, orgIdOf(viewer)), condition, repoVisibleIn(db, scope)))
     .limit(1);
   const [row] = forUpdate ? await query.for("update") : await query;
   if (!row) throw notFound();
@@ -137,7 +137,7 @@ export async function listRepos(db: Db, viewer: Viewer, { project }: { project?:
     .where(
       and(
         eq(repos.orgId, orgIdOf(viewer)),
-        visibleIn(db, scope),
+        repoVisibleIn(db, scope),
         projectId === undefined
           ? undefined
           : exists(
@@ -174,29 +174,62 @@ export async function createRepo(db: Db, ctx: ActorContext, input: unknown): Pro
     .transaction(async (tx) => {
       const attached: { id: string; key: string }[] = [];
       for (const key of keys) attached.push(await findProject(tx, ctx, key));
-      const [row] = await tx
-        .insert(repos)
-        .values({
-          orgId: ctx.orgId,
-          owner: data.url.owner,
-          name: data.url.name,
-          defaultBranch: data.defaultBranch ?? "main",
-          createdBy: ctx.actorId,
-        })
-        .onConflictDoNothing()
-        .returning();
-      if (!row) throw new DomainError("conflict", `Repo ${fullName} already exists`);
-      if (attached.length) await tx.insert(projectRepos).values(attached.map((p) => ({ projectId: p.id, repoId: row.id })));
-      await recordActivity(tx, ctx, {
-        entityType: "repo",
-        entityId: row.id,
-        action: "repo.created",
-        changes: { repo: fullName, defaultBranch: row.defaultBranch, projects: attached.map((p) => p.key) },
+      const row = await insertRepo(tx, ctx, {
+        owner: data.url.owner,
+        name: data.url.name,
+        defaultBranch: data.defaultBranch ?? "main",
+        projects: attached,
       });
+      if (!row) throw new DomainError("conflict", `Repo ${fullName} already exists`);
       await publish(tx, { type: "repos.changed", orgId: ctx.orgId });
       return repoDto(tx, ctx, row);
     })
     .catch(conflictOnRemote(fullName));
+}
+
+/**
+ * Inserts a repo, attaches it to `projects` and records `repo.created`, inside the caller's
+ * transaction; null when the organization already has that remote. No permission check: callers
+ * do it (createRepo; the GitHub App for repos an installation grants, ST-82).
+ */
+export async function insertRepo(
+  tx: Tx,
+  ctx: ActorContext,
+  data: {
+    owner: string;
+    name: string;
+    defaultBranch: string;
+    projects?: { id: string; key: string }[];
+    githubInstallationId?: number | null;
+  },
+): Promise<RepoRow | null> {
+  const [row] = await tx
+    .insert(repos)
+    .values({
+      orgId: ctx.orgId,
+      owner: data.owner,
+      name: data.name,
+      defaultBranch: data.defaultBranch,
+      githubInstallationId: data.githubInstallationId ?? null,
+      createdBy: ctx.actorId,
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (!row) return null;
+  const attached = data.projects ?? [];
+  if (attached.length) await tx.insert(projectRepos).values(attached.map((p) => ({ projectId: p.id, repoId: row.id })));
+  await recordActivity(tx, ctx, {
+    entityType: "repo",
+    entityId: row.id,
+    action: "repo.created",
+    changes: {
+      repo: repoFullName(row),
+      defaultBranch: row.defaultBranch,
+      projects: attached.map((p) => p.key),
+      ...(row.githubInstallationId === null ? {} : { githubInstallationId: row.githubInstallationId }),
+    },
+  });
+  return row;
 }
 
 /** Changes a repo's remote (after a rename on GitHub) or default branch. */
