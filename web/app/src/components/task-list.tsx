@@ -2,6 +2,7 @@ import { TagChips } from "@/components/tags";
 import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { assigneesOf } from "@/lib/assignees";
 import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
+import { ListChecksIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 
@@ -53,6 +54,12 @@ export function TaskList({
                   <span className="w-16 shrink-0 text-muted-foreground">{task.key}</span>
                   <StatusIcon status={status} />
                   <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                  {task.subtasks && (
+                    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                      <ListChecksIcon className="size-3.5" aria-hidden />
+                      {task.subtasks.done}/{task.subtasks.total}
+                    </span>
+                  )}
                   <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
                   <span className="flex -space-x-1.5">
                     {assigneesOf(task.assigneeIds, memberMap)

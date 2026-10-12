@@ -85,6 +85,13 @@ export interface TaskDto {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  /** Direct sub-tasks the viewer can see (closed = done or canceled); null when there are none. */
+  subtasks: { done: number; total: number } | null;
+}
+
+/** A sub-task with its own status, which may belong to another project than the parent's. */
+export interface SubtaskDto extends TaskDto {
+  status: Pick<StatusDto, "id" | "name" | "category" | "color">;
 }
 
 export interface TagDto {

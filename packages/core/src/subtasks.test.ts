@@ -3,9 +3,10 @@ import { createDb, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createOrganization } from "./organizations";
-import { createProject } from "./projects";
+import { createAgentInvite, acceptAgentInvite } from "./agent-invites";
+import { createProject, getProject } from "./projects";
 import { listTaskActivity } from "./activity-feed";
-import { createTask, deleteTask, getTask, listSubtasks, updateTask } from "./tasks";
+import { createTask, deleteTask, getTask, listSubtasks, listTasks, updateTask } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -67,5 +68,68 @@ run("sub-tasks", () => {
 
     const grandchild = await createTask(db, ctx, "SPI", { title: "Still works", parentId: child.id });
     expect(grandchild.parentKey).toBe(child.key);
+  });
+
+  const doneStatus = async (projectKey: string) => {
+    const project = await getProject(db, ctx.orgId, projectKey);
+    return project.statuses.find((st) => st.category === "done")!;
+  };
+
+  test("sub-tasks carry their own status; a done child in another project counts as done", async () => {
+    const parent = await createTask(db, ctx, "SPI", { title: "Cross parent" });
+    const local = await createTask(db, ctx, "SPI", { title: "Local", parentId: parent.id });
+    const remote = await createTask(db, ctx, "WEB", { title: "Remote", parentId: parent.id });
+    expect((await getTask(db, ctx.orgId, parent.key)).subtasks).toEqual({ done: 0, total: 2 });
+
+    const webDone = await doneStatus("WEB");
+    await updateTask(db, ctx, remote.key, { statusId: webDone.id });
+
+    const subs = await listSubtasks(db, ctx.orgId, parent.key);
+    expect(subs.map((t) => [t.key, t.status.category])).toEqual([
+      [local.key, "todo"],
+      [remote.key, "done"],
+    ]);
+    expect(subs[1]!.status).toMatchObject({ id: webDone.id, name: webDone.name });
+    expect(subs[0]!.subtasks).toBeNull();
+
+    // Progress on get, list and update responses.
+    expect((await getTask(db, ctx.orgId, parent.key)).subtasks).toEqual({ done: 1, total: 2 });
+    const listed = await listTasks(db, ctx.orgId, "SPI");
+    expect(listed.find((t) => t.id === parent.id)?.subtasks).toEqual({ done: 1, total: 2 });
+    expect(listed.find((t) => t.id === local.id)?.subtasks).toBeNull();
+    expect((await updateTask(db, ctx, parent.key, { title: "Cross parent!" })).subtasks).toEqual({ done: 1, total: 2 });
+
+    // Deleted children drop out of the count.
+    await deleteTask(db, ctx, local.key);
+    expect((await getTask(db, ctx.orgId, parent.key)).subtasks).toEqual({ done: 1, total: 1 });
+  });
+
+  test("a scoped agent's progress and sub-task list leave out children in other projects", async () => {
+    const parent = await createTask(db, ctx, "SPI", { title: "Scoped parent" });
+    await createTask(db, ctx, "SPI", { title: "Visible", parentId: parent.id });
+    const hidden = await createTask(db, ctx, "WEB", { title: "Hidden", parentId: parent.id });
+    await updateTask(db, ctx, hidden.key, { statusId: (await doneStatus("WEB")).id });
+
+    const { invite } = await createAgentInvite(db, ctx, { projectKeys: ["SPI"] });
+    const { actor } = await acceptAgentInvite(db, { code: invite.code });
+    const agent = (): ActorContext => ({ orgId: ctx.orgId, actorId: actor.id, role: "member", source: "api" });
+
+    expect((await getTask(db, agent(), parent.key)).subtasks).toEqual({ done: 0, total: 1 });
+    expect((await listTasks(db, agent(), "SPI")).find((t) => t.id === parent.id)?.subtasks).toEqual({ done: 0, total: 1 });
+    expect((await listSubtasks(db, agent(), parent.key)).map((t) => t.title)).toEqual(["Visible"]);
+    // The owner still counts both.
+    expect((await getTask(db, ctx.orgId, parent.key)).subtasks).toEqual({ done: 1, total: 2 });
+  });
+
+  test("concurrent re-parenting can't create a cycle", async () => {
+    const a = await createTask(db, ctx, "SPI", { title: "Race A" });
+    const b = await createTask(db, ctx, "SPI", { title: "Race B" });
+    const results = await Promise.allSettled([
+      updateTask(db, ctx, a.key, { parentId: b.id }),
+      updateTask(db, ctx, b.key, { parentId: a.id }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const [fa, fb] = await Promise.all([getTask(db, ctx.orgId, a.key), getTask(db, ctx.orgId, b.key)]);
+    expect([fa.parentId, fb.parentId].filter(Boolean)).toHaveLength(1);
   });
 });

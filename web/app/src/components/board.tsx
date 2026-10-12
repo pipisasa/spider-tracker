@@ -24,25 +24,20 @@ import { useMemo, useState } from "react";
 
 const columnId = (statusId: string) => `column:${statusId}`;
 
-/** Sub-task progress per parent id, from the tasks on the board. */
-export type Progress = Map<string, { done: number; total: number }>;
-
 function TaskCard({
   task,
   orgSlug,
   members,
   tags,
-  progress,
   dragging,
 }: {
   task: TaskDto;
   orgSlug: string;
   members: Map<string, ActorDto>;
   tags: TagDto[];
-  progress?: Progress;
   dragging?: boolean;
 }) {
-  const sub = progress?.get(task.id);
+  const sub = task.subtasks;
   const assignees = assigneesOf(task.assigneeIds, members);
   return (
     <div
@@ -81,13 +76,11 @@ function SortableTask({
   orgSlug,
   members,
   tags,
-  progress,
 }: {
   task: TaskDto;
   orgSlug: string;
   members: Map<string, ActorDto>;
   tags: TagDto[];
-  progress: Progress;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -101,7 +94,7 @@ function SortableTask({
       {...attributes}
       {...listeners}
     >
-      <TaskCard task={task} orgSlug={orgSlug} members={members} tags={tags} progress={progress} />
+      <TaskCard task={task} orgSlug={orgSlug} members={members} tags={tags} />
     </div>
   );
 }
@@ -112,7 +105,6 @@ function Column({
   orgSlug,
   members,
   tags,
-  progress,
   onAdd,
 }: {
   status: StatusDto;
@@ -120,7 +112,6 @@ function Column({
   orgSlug: string;
   members: Map<string, ActorDto>;
   tags: TagDto[];
-  progress: Progress;
   onAdd?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: columnId(status.id), data: { statusId: status.id } });
@@ -142,7 +133,7 @@ function Column({
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
-            <SortableTask key={task.id} task={task} orgSlug={orgSlug} members={members} tags={tags} progress={progress} />
+            <SortableTask key={task.id} task={task} orgSlug={orgSlug} members={members} tags={tags} />
           ))}
         </SortableContext>
       </div>
@@ -169,19 +160,6 @@ export function Board({
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
-  const progress = useMemo<Progress>(() => {
-    const closed = new Set(statuses.filter((s) => s.category === "done" || s.category === "canceled").map((s) => s.id));
-    const map: Progress = new Map();
-    for (const task of tasks) {
-      if (!task.parentId) continue;
-      const entry = map.get(task.parentId) ?? { done: 0, total: 0 };
-      entry.total += 1;
-      if (closed.has(task.statusId)) entry.done += 1;
-      map.set(task.parentId, entry);
-    }
-    return map;
-  }, [statuses, tasks]);
-
   const byStatus = useMemo(() => {
     const map = new Map<string, TaskDto[]>(statuses.map((s) => [s.id, []]));
     const sorted = [...tasks].sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
@@ -249,13 +227,13 @@ export function Board({
             orgSlug={orgSlug}
             members={memberMap}
             tags={tags}
-            progress={progress}
+           
             onAdd={onAdd && (() => onAdd(status.id))}
           />
         ))}
       </div>
       <DragOverlay>
-        {active && <TaskCard task={active} orgSlug={orgSlug} members={memberMap} tags={tags} progress={progress} dragging />}
+        {active && <TaskCard task={active} orgSlug={orgSlug} members={memberMap} tags={tags} dragging />}
       </DragOverlay>
     </DndContext>
   );
