@@ -1,4 +1,4 @@
-import { AvatarStack } from "@/components/avatar-stack";
+import { WorkingAvatars } from "@/components/working-avatars";
 import { StatusIcon } from "@/components/task-fields";
 import { Input } from "@/components/ui/input";
 import { assigneesOf } from "@/lib/assignees";
@@ -71,7 +71,7 @@ export function Subtasks({
                   <StatusIcon status={child.status} />
                   <span className="w-16 shrink-0 text-muted-foreground">{child.key}</span>
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                  <AvatarStack actors={assigneesOf(child.assigneeIds, memberMap)} />
+                  <WorkingAvatars orgSlug={orgSlug} taskKey={child.key} actors={assigneesOf(child.assigneeIds, memberMap)} interactive={false} />
                 </Link>
               </li>
             );

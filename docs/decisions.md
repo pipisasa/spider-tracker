@@ -155,3 +155,5 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - No HTML sanitizer to keep up to date, and documents still render exactly as written (styles, tables, layout).
 
 **Trade-off:** no interactive HTML (scripts, forms), and the frame can't size itself to its content, so it gets a fixed, resizable height. Revisit with a separate sandbox origin if interactive reports are ever needed.
+
+**Avatar credits:** generated avatars use the DiceBear styles Notionists (CC0) and Bottts (by Pablo Stanley, free for personal and commercial use), rendered locally with @dicebear 9.4.3.
