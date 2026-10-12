@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "spider-tracker": {
+      "source": {
+        "source": "github",
+        "repo": "pipisasa/spider-tracker"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "spider-tracker@spider-tracker": true
+  }
+}

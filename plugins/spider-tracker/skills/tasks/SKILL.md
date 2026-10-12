@@ -1,35 +1,36 @@
 ---
-name: spider-tracker
+name: tasks
 description: Work with Spider Tracker tasks — find, pick up, start, update and hand off tasks through the "spider" MCP server or the spider CLI. Use whenever the user mentions tasks, a task key like ST-12, the tracker, Spider Tracker, the roadmap, "what should I work on", or asks to start, update, review or finish a task.
 ---
 
 # Spider Tracker
 
-Spider Tracker is this repository's issue tracker, and its roadmap lives there (project `ST`, org `batele`). You act as an agent actor with your own API key; everything you do is recorded with its source (`mcp` or `cli`).
+Spider Tracker is an issue tracker for people and AI agents. You act as an agent actor with your own API key; everything you do is recorded with its source (`mcp` or `cli`). The project's own instructions (CLAUDE.md) say which organization and project keys it uses.
 
 ## Pick a transport
 
-1. **MCP (preferred)** — if the `spider` MCP server is connected (tools such as `whoami`, `list_tasks`, `start_task`), use it. It is registered in the repo's `.mcp.json`; its headers come from `spider mcp-headers` (`SPIDER_TOKEN`, else the key saved by `spider login`).
-2. **CLI (fallback)** — otherwise use the `spider` CLI from the repo root, always with `--json`:
+1. **MCP (preferred)** — if a `spider` MCP server is connected (tools such as `whoami`, `list_tasks`, `start_task`), use it. This plugin registers one; sessions started with `spider claude <handle>` add their own for that agent. Its headers come from `spider mcp-headers` (`SPIDER_TOKEN`, else the agent saved by `spider accept-invite` or `spider login`).
+2. **CLI (fallback)** — otherwise use the installed `spider` CLI, always with `--json`:
 
    ```bash
-   set -a; . ~/.config/spider-tracker/agent.env; set +a   # loads SPIDER_TOKEN, if that file exists
-   bun run spider whoami --json
+   spider whoami --json
    ```
 
-   Load the token in the same shell command as the call (shell state does not persist between calls). Without `SPIDER_TOKEN`, the CLI uses the key saved by `spider login` (a person runs it once; it needs a browser, so don't start it yourself). Never print, echo or log `SPIDER_TOKEN`.
+   Inside the Spider Tracker repository itself, `bun run spider …` runs the development version instead. If `spider` is not installed, tell the user to install it: `curl -fsSL https://tracker.batele.plus/install.sh | sh`.
+
+   Without `SPIDER_TOKEN`, the CLI uses a saved agent (`spider agents` lists them). A person sets one up once with `spider accept-invite <code>` or `spider login` (it needs a browser, so don't start it yourself). If you must load a token from a file, do it in the same shell command as the call (shell state does not persist between calls). Never print, echo or log `SPIDER_TOKEN`.
 
 Check who you are first (`whoami`) if you are unsure which agent or organization the key belongs to.
 
-The CLI can hold several saved agents (`spider agents` lists them); `--as <handle>` runs one command as a specific one, and sessions started with `spider claude <handle>` act as that agent throughout (`SPIDER_AGENT`). To set up a new agent from an invitation code, use `/spider-tracker:create-agent <what it should do> <code>` (the repo's Claude Code plugin) or `spider accept-invite <code> --json`.
+The CLI can hold several saved agents (`spider agents` lists them); `--as <handle>` runs one command as a specific one, and sessions started with `spider claude <handle>` act as that agent throughout (`SPIDER_AGENT`). To set up a new agent from an invitation code, use `/spider-tracker:create-agent <what it should do> <code>` (this plugin) or `spider accept-invite <code> --name … --prompt … --json`.
 
 ## Workflow
 
 ### Find or pick up a task
 - A key given by the user (`ST-12`): read it first — MCP `get_task`, CLI `spider task view ST-12 --json`.
 - Your own work: MCP `list_tasks` with `assignee: "me"`; CLI `spider task list --mine --json`.
-- Next work from the roadmap: list `Todo` tasks (MCP `list_tasks` with `status: "todo"`; CLI `spider task list --project ST --status todo --json`) and take the highest priority unassigned one (1 urgent … 4 low, 0 none). Ask the user if the choice is unclear.
-- Statuses match by name (`"In Progress"`) or by category (`in_progress`); `get_project` / the API lists a project's statuses. The `ST` workflow is Backlog → Todo → In Progress → In Review → Done (or Canceled).
+- Next work: list `Todo` tasks of the project (MCP `list_tasks` with `status: "todo"`; CLI `spider task list --project ST --status todo --json`, with your project's key) and take the highest priority unassigned one (1 urgent … 4 low, 0 none). Ask the user if the choice is unclear.
+- Statuses match by name (`"In Progress"`) or by category (`in_progress`); `get_project` / `spider projects` lists a project's statuses. The usual workflow is Backlog → Todo → In Progress → In Review → Done (or Canceled).
 
 ### Start it
 Before changing code, start the task: it assigns you and moves it to In Progress.
@@ -64,10 +65,10 @@ Titles and descriptions are visible to everyone in the organization and kept in 
 | `1` | Unexpected (network, server error) | Retry once, then report it |
 | `2` | Usage or validation (bad option, unknown status or handle) | Read the message — it lists the valid options — and fix the call |
 | `3` | Not found (task, project) | Check the key with `task list` / `projects` |
-| `4` | Auth or permission (not signed in, invalid key, role too low) | Load the token from `~/.config/spider-tracker/agent.env`; if there is none, ask the user to run `spider login` |
+| `4` | Auth or permission (not signed in, invalid key, role too low) | Check `spider agents`; if there is no saved agent, ask the user to run `spider accept-invite <code>` or `spider login` |
 
 With `--json`, errors go to stderr as `{"error":{"code","message"}}`. MCP tools return errors as tool results (`isError`) with the same messages. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
 
 ## Reference
-- MCP tools and CLI commands: `docs/interfaces.md` (MCP server, CLI sections).
-- Agent model and connecting: `docs/agents.md`.
+- `spider --help` and `spider <command> --help` list every CLI command and option.
+- In the Spider Tracker repository: `docs/interfaces.md` (MCP server, CLI) and `docs/agents.md` (agents and connecting).

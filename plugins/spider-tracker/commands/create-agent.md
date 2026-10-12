@@ -3,66 +3,53 @@ description: Create a Spider Tracker agent from an invitation code and a Claude 
 argument-hint: "<what the agent should do> [invite code or link]"
 ---
 
-Set up a Spider Tracker agent for the user, and a Claude Code agent that works as it.
+Set up a Spider Tracker agent for the user, and a Claude Code agent that works as it. The `spider` CLI does the work: it saves the agent's key on this machine and writes its Claude Code agent into its private `spider-agents` plugin. Don't write agent files yourself.
 
 The user's request: $ARGUMENTS
 
-## 1. Read the request
+## 1. Check the CLI
+
+Run `spider --version`. If `spider` is not installed, tell the user to install it and stop:
+
+```bash
+curl -fsSL https://tracker.batele.plus/install.sh | sh
+```
+
+(Inside the Spider Tracker repository, `bun run spider …` works too.)
+
+## 2. Read the request
 
 - The **invitation** is an 8-character code like `ABCD-EFGH` (pattern `[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}`, any case) or a link containing `/agent-invite/`. It comes from Spider Tracker's Settings → Agents → Invite an agent.
-- Everything else is the **prompt**: what the agent should do.
-- If the invitation is missing, ask the user for it (AskUserQuestion, or a plain question) and stop until they answer. If the prompt is missing, ask what the agent should do.
+- Everything else says what the agent should do.
+- If the invitation is missing, ask the user for it (AskUserQuestion, or a plain question) and stop until they answer. If it's unclear what the agent should do, ask.
 
-## 2. Name it
+## 3. Name it and write its role
 
-From the prompt, propose:
+From the request, propose:
 
 - a short **name** (e.g. `Reviewer`),
 - a **handle**: lowercase letters, digits and single dashes (e.g. `code-reviewer`),
-- a one-line **description** of what it does.
+- a one-line **description** of when to use it,
+- a **role prompt**: its system prompt — what it does, how it works, what good output looks like. The CLI adds how to work in Spider Tracker (MCP tools, inbox, projects, no secrets), so leave that out.
 
-## 3. Accept the invitation
+## 4. Accept the invitation
 
 Run (quote every value):
 
 ```bash
-spider accept-invite '<code or link>' --name '<name>' --handle '<handle>' --description '<description>' --json
+spider accept-invite '<code or link>' --name '<name>' --handle '<handle>' --description '<description>' --prompt '<role prompt>' --json
 ```
 
-If `spider` is not on PATH, run the same with `bun run spider …` from the Spider Tracker repository root.
-
-- Exit 0: stdout is `{"agent":"server/org/handle","actor":…,"organization":…,"projects":[{key,name}],"owner":…,"claudeAgent":{"path":…,"name":…}}`. The key is saved on this machine by the CLI; it is never printed. Note `agent` (the full reference), the organization, the projects and `claudeAgent`.
+- Exit 0: stdout is `{"agent":"server/org/handle","actor":…,"organization":…,"projects":[{key,name}],"owner":…,"claudeAgent":{"plugin","name","path","qualifiedName"}}`. The key is saved by the CLI and never printed. A note on stderr about Claude Code or the plugin is worth passing on to the user.
 - Exit 2 with a `conflict` error: the handle is taken. Pick another (e.g. add a suffix) and run it again; the code is still valid.
 - Exit 2 with "Invalid or expired invitation code": tell the user and ask for a new code.
 - Any other failure: report the message and stop.
 
-## 4. Write the Claude Code agent
-
-Write the file at `claudeAgent.path` from step 3: `~/.claude/agents/spider/<server>/<org>/<handle>.md`, which groups Spider agents by server and organization. Create the folders if needed; if the file exists, ask before replacing it. Use `claudeAgent.name` as the `name`: Claude Code finds agents by name across all folders, so the CLI picks one no other agent file uses (the handle, or the handle prefixed with the server).
-
-```markdown
----
-name: <claudeAgent.name>
-description: <when to use this agent, from the prompt>
-spider-agent: <the "agent" value from step 3, server/org/handle>
----
-
-<The role: a system prompt for this agent, written from the user's prompt — what it does, how it works, what good output looks like.>
-
-## Spider Tracker
-
-You are @<handle> in Spider Tracker (organization <org>), working in: <project keys and names>.
-
-- In sessions started with `spider claude <handle>`, act through the `spider` MCP tools (whoami, list_tasks, start_task, add_comment, …); your inbox (mentions, assignments, replies) arrives as `<channel source="spider" …>` messages — answer with the channel's `reply` tool.
-- For one-off CLI calls, use `spider … --as <handle> --json`.
-- Stay within your projects. Never put secrets (API keys, tokens, passwords) in tasks or comments.
-```
-
-Never write the API key (`spt_…`) anywhere: not in the agent file, not in the chat.
+Never write the API key (`spt_…`) anywhere: not in a file, not in the chat.
 
 ## 5. Finish
 
-Tell the user the agent is ready, which organization and projects it works in, and how to start it:
+Tell the user the agent is ready, which organization and projects it works in, and how to start Claude Code as it:
 
 ```bash
 spider claude <handle>

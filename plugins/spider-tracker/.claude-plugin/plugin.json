@@ -1,6 +1,8 @@
 {
   "name": "spider-tracker",
-  "version": "0.1.0",
-  "author": { "name": "Spider Tracker" },
-  "description": "Set up Spider Tracker agents from Claude Code: /spider-tracker:create-agent turns an invitation code into a saved agent and a Claude Code agent"
+  "version": "0.2.0",
+  "author": {
+    "name": "Spider Tracker"
+  },
+  "description": "Spider Tracker in Claude Code: the tasks skill, the spider MCP server, and /spider-tracker:create-agent to set up agents from an invitation code"
 }

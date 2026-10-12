@@ -75,7 +75,7 @@ Connect Claude Code:
 claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --header "Authorization: Bearer $SPIDER_TOKEN"
 ```
 
-Inside this repository, the project `.mcp.json` already registers it: its `headersHelper` runs `spider mcp-headers`, which prints the `Authorization` header from `SPIDER_TOKEN` or the key saved by `spider login`, and the `spider-tracker` skill in `.claude/skills` describes the workflow; see [agents.md](./agents.md#distribution).
+Or install the `spider-tracker` Claude Code plugin (`spider setup claude`): it registers the server with `headersHelper: spider mcp-headers`, which prints the `Authorization` header from `SPIDER_TOKEN` or a saved agent, and its `tasks` skill describes the workflow; see [agents.md](./agents.md#the-spider-tracker-plugin).
 
 | Tool | What it does |
 |---|---|
@@ -144,17 +144,22 @@ The organization is the key's (from `whoami`).
 - The single-key file from before (`{ apiUrl, token, actor, organization }`) is read as a `login` agent and rewritten in this shape on the next save.
 
 ### Accepting an agent invite
-`spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--server …] [--default]` calls `POST /v1/agent-invites/accept` (no key needed), saves the agent under its server and organization, and makes it the default if there was none (or with `--default`). A link's host (the web app, e.g. `https://tracker.batele.plus/agent-invite/ABCD-EFGH`) picks the matching server. It prints who the agent is, its projects and what to run next; `--json` prints `{ agent: "server/org/handle", actor, organization, projects, owner }`. The key itself is never printed. A taken handle exits `2` (`conflict`) and leaves the code usable.
+`spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--prompt …] [--no-claude] [--server …] [--default]` calls `POST /v1/agent-invites/accept` (no key needed), saves the agent under its server and organization, and makes it the default if there was none (or with `--default`). A link's host (the web app, e.g. `https://tracker.batele.plus/agent-invite/ABCD-EFGH`) picks the matching server. Unless `--no-claude`, it writes the agent's Claude Code agent into the private `spider-agents` plugin, with `--prompt` as its role (default: from name and description), and makes sure Claude Code has that plugin installed ([agents.md](./agents.md#claude-code-agents-the-private-spider-agents-plugin)); without `claude` on PATH it writes the file and prints how to install Claude Code. It prints who the agent is, its projects and what to run next; `--json` prints `{ agent: "server/org/handle", actor, organization, projects, owner, claudeAgent }` with `claudeAgent: { plugin: "spider-agents", name, path, qualifiedName }` (`null` with `--no-claude`), notes on stderr. The key itself is never printed. A taken handle exits `2` (`conflict`) and leaves the code usable.
+
+### Setting up Claude Code
+`spider setup claude [--json]` runs `claude plugin marketplace add pipisasa/spider-tracker`, `claude plugin install spider-tracker@spider-tracker --scope user`, then the same for the private agents plugin (`<config dir>/claude-plugin`, `spider-agents@spider-local`). All are idempotent. `SPIDER_PLUGIN_MARKETPLACE` overrides the shared marketplace source (a path — resolved against the working directory —, git URL or GitHub `owner/repo`). Without `claude` on PATH it prints how to install Claude Code and exits `0` (`--json`: `claude: false`), so install scripts can call it; a failing `claude` command exits `1`. `--json` prints `{ scope: "user", claude, marketplace, plugin, agentsPlugin }`.
+
+`spider setup claude --project` doesn't call `claude`: it adds `extraKnownMarketplaces["spider-tracker"]` (`github`, `git` or `directory` source) and `enabledPlugins["spider-tracker@spider-tracker"]: true` to `./.claude/settings.json`, keeping everything else, so a team gets the plugin offered when they trust the project.
 
 ### Starting Claude Code as an agent
 `spider claude [agent] [--no-channel] [-- claude args…]` picks the agent (the argument, `--as`, a picker grouped server → organization when run at a terminal with several agents saved, else `SPIDER_AGENT` or the default) and runs:
 
 ```bash
-claude [claude args…] [--agent <name>] --mcp-config <tmp>/mcp.json \
+claude [claude args…] [--agent <qualified name>] --mcp-config <tmp>/mcp.json \
   --dangerously-load-development-channels server:spider-channel
 ```
 
-with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temporary MCP config (0600, deleted when Claude exits) holds no secret: the `spider` HTTP server at `<server>/mcp` with `headersHelper` `<this CLI> mcp-headers --as <agent>`, and the `spider-channel` stdio server (`<this CLI> channel --as <agent>`), where `<this CLI>` is `bun <checkout>/backend/cli/src/index.ts` from source or the compiled `spider` binary. `--agent` is added when an agent file anywhere under `~/.claude/agents/` (subfolders included) says `spider-agent: <agent>` in its frontmatter, or a top-level `<handle>.md` has no `spider-agent`. `spider accept-invite --json` also returns `claudeAgent: { path, name }`: where that agent's file goes (`~/.claude/agents/spider/<server>/<org>/<handle>.md`) and a `name` no other agent file uses. `spider agents remove <agent> --claude` deletes the linked agent files and empty `spider/` folders; without it, they are listed and kept. The exit code is Claude's.
+with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temporary MCP config (0600, deleted when Claude exits) holds no secret: the `spider` HTTP server at `<server>/mcp` with `headersHelper` `<this CLI> mcp-headers --as <agent>`, and the `spider-channel` stdio server (`<this CLI> channel --as <agent>`), where `<this CLI>` is `bun <checkout>/backend/cli/src/index.ts` from source or the compiled `spider` binary. `--agent` is added when an agent file in the private plugin (`spider-agents:<server>:<org>:<name>`) or, from older versions, anywhere under `~/.claude/agents/` says `spider-agent: <agent>` in its frontmatter, or a top-level `~/.claude/agents/<handle>.md` has no `spider-agent`. The plugin's own `spider` MCP server is namespaced `plugin:spider-tracker:spider`, so it doesn't clash with the one in the temporary config. `spider agents remove <agent> --claude` deletes the linked agent files (plugin and `~/.claude/agents`) and the folders they leave empty; without it, they are listed and kept. The exit code is Claude's.
 
 ### Login (device flow, RFC 8628)
 1. `spider login [--name MacBook] [--no-browser]` calls `POST /device/code` and prints `https://tracker.batele.plus/device` with a short code (instructions on stderr), opening the browser at a terminal.
@@ -167,11 +172,12 @@ with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temp
 ### Commands (v1)
 ```bash
 spider login [--name …] [--no-browser] [--server prod|local|URL]
-spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--server …] [--default]
+spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--prompt …] [--no-claude] [--server …] [--default]
+spider setup claude [--project]     # install the spider-tracker plugin (user scope) or enable it in ./.claude/settings.json
 spider logout
 spider agents [list]                # saved agents by server and organization; * marks the default
 spider agents default <agent>
-spider agents remove <agent> [--revoke]   # local only unless --revoke (revokes the key on the server)
+spider agents remove <agent> [--revoke] [--claude]   # local only unless --revoke; --claude deletes its Claude Code agent
 spider claude [agent] [--no-channel] [-- claude args…]
 spider mcp-headers                  # {"Authorization": "Bearer …"} for Claude Code's headersHelper
 spider whoami                       # also names the saved agent in use

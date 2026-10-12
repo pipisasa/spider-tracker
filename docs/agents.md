@@ -38,17 +38,36 @@ spider task list --mine --as reviewer             # any command as a saved agent
 spider claude reviewer                            # Claude Code as that agent (picker without a name)
 ```
 
-`spider claude` starts `claude` with a temporary, secret-free MCP config: the `spider` MCP server (key from `spider mcp-headers --as <agent>`) and the `spider-channel` inbox channel, plus `--agent <name>` when a Claude Code agent anywhere under `~/.claude/agents/` declares `spider-agent: <agent>`. It sets `SPIDER_AGENT` for the session, so `spider …` commands run inside it act as the same agent.
+`spider claude` starts `claude` with a temporary, secret-free MCP config: the `spider` MCP server (key from `spider mcp-headers --as <agent>`) and the `spider-channel` inbox channel, plus `--agent spider-agents:<server>:<org>:<name>` for the agent's Claude Code agent (below). It sets `SPIDER_AGENT` for the session, so `spider …` commands run inside it act as the same agent.
 
-### From Claude Code: `/spider-tracker:create-agent`
-The repo is also a Claude Code plugin marketplace (`.claude-plugin/marketplace.json` → `plugins/spider-tracker`). Install it once:
+### Claude Code agents: the private `spider-agents` plugin
+`spider accept-invite` also writes the agent's **Claude Code agent** (unless `--no-claude`): its role (`--prompt`, else a default from the name and description) plus how to work in Spider Tracker (MCP tools in `spider claude` sessions, the inbox channel, `spider … --as <handle>`, stay within its projects, no secrets in tasks). The file lives in a plugin the CLI owns, never in the user's own agents:
 
 ```
-/plugin marketplace add ./          # from the repo root (or the repo's git URL)
-/plugin install spider-tracker@spider-tracker
+~/.config/spider-tracker/claude-plugin/          # $SPIDER_CONFIG_DIR/claude-plugin
+  .claude-plugin/marketplace.json                # marketplace "spider-local"
+  spider-agents/.claude-plugin/plugin.json       # plugin "spider-agents"
+  spider-agents/agents/<server>/<org>/<handle>.md
 ```
 
-`/spider-tracker:create-agent <what the agent should do> [invite code or link]` asks for the code if missing, proposes a name, handle and description, runs `spider accept-invite … --json` (retrying with another handle on a conflict), and writes `~/.claude/agents/spider/<server>/<org>/<handle>.md` (grouped by server and organization; Claude Code finds agents by `name` in any subfolder, so the CLI picks a name no other agent uses) with the role prompt and `spider-agent: <server/org/handle>`. `spider agents remove <agent> --claude` deletes it again. The key stays in the CLI's credentials file. Start the agent with `spider claude <handle>`.
+Each file's frontmatter has `name` (the handle, or `<server>-<handle>` / `<server>-<org>-<handle>` if another agent file uses it), `description` and `spider-agent: <server/org/handle>`. Claude Code names nested plugin agents by folder, so it is `spider-agents:<server>:<org>:<name>`. After writing, the CLI runs `claude plugin marketplace add <dir>` and `claude plugin install spider-agents@spider-local --scope user` (both idempotent); a directory marketplace is read in place, so later files need no update, just a new session. Without `claude` on PATH the file is still written and the CLI says how to install Claude Code. `spider agents remove <agent> --claude` deletes the agent's files. Agent files from earlier versions (`~/.claude/agents/**` with `spider-agent:`) are still found by `spider claude` and removed by `--claude`. The key stays in the CLI's credentials file.
+
+### Onboarding an agent from an invite link
+The invite page tells the person to hand the link to Claude Code. Claude Code then:
+
+1. installs the CLI if needed: `curl -fsSL https://tracker.batele.plus/install.sh | sh`;
+2. `spider setup claude` — installs the shared `spider-tracker` plugin (from the `pipisasa/spider-tracker` marketplace on GitHub; `SPIDER_PLUGIN_MARKETPLACE` overrides it, e.g. with a checkout path) and the private `spider-agents` plugin, both at user scope;
+3. `spider accept-invite <link> --name … --description … --prompt … --json` — or `/spider-tracker:create-agent <what it should do> <link>` from the plugin, which asks for what's missing, derives name, handle, description and role, runs that command (retrying the handle on a conflict) and writes no files itself;
+4. tells the person to run `spider claude <handle>`.
+
+### The `spider-tracker` plugin
+This repo is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json` → `plugins/spider-tracker`). The plugin carries:
+
+- the **`tasks` skill** (`/spider-tracker:tasks`, `skills/tasks/SKILL.md`): find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes;
+- the **`spider` MCP server** (`.mcp.json`, HTTP `https://tracker-api.batele.plus/mcp`, `headersHelper: spider mcp-headers`), so no secret is stored: the CLI prints the header for `SPIDER_TOKEN`, `SPIDER_AGENT` or the default saved agent. Claude Code namespaces it as `plugin:spider-tracker:spider`, so it never clashes with the `spider` server `spider claude` passes with `--mcp-config` (that one targets the agent's own server); in such a session both act as the same agent;
+- **`/spider-tracker:create-agent`** (above).
+
+Install it with `spider setup claude`, or for a team with `spider setup claude --project`, which adds the marketplace and enables the plugin in `./.claude/settings.json` (`extraKnownMarketplaces`, `enabledPlugins`), keeping the other settings.
 
 ## Project scope
 
@@ -114,7 +133,7 @@ bun run claude:channel
 # = claude --mcp-config .claude/channel.mcp.json --dangerously-load-development-channels server:spider-channel
 ```
 
-`spider claude <agent>` starts the same session for a saved agent, without the repo's config files (see [Saved agents](#saved-agents-on-a-machine)). The channel authenticates like the CLI (`--as`, `SPIDER_TOKEN`, `SPIDER_AGENT`, else the default saved agent). It is deliberately **not** in `.mcp.json`: a normal session would start it too and mark inbox items read without showing them.
+`spider claude <agent>` starts the same session for a saved agent, without the repo's config files (see [Saved agents](#saved-agents-on-a-machine)). The channel authenticates like the CLI (`--as`, `SPIDER_TOKEN`, `SPIDER_AGENT`, else the default saved agent). It is deliberately **not** in the plugin's MCP servers: a normal session would start it too and mark inbox items read without showing them.
 
 ### Messages between people and agents
 - **Comments** under a task, by people and agents, with `@handle` mentions (`POST /v1/orgs/:org/tasks/:key/comments`).
@@ -123,15 +142,10 @@ bun run claude:channel
 - **Loop guards** (`AGENT_COMMENT_LIMIT` in `packages/core/src/comments.ts`): an agent may post at most 5 comments per task per minute, and no agent may comment when the task's last 6 comments are all by agents — a person has to reply first. Both answer `429 rate_limited`. To stop an agent entirely, revoke its keys in Settings → Agents.
 
 ### Distribution
-For now, this repository carries the pieces itself:
-
-- **`.mcp.json`** registers the `spider` MCP server over HTTP. Its `headersHelper` (`bun backend/cli/src/index.ts mcp-headers`) prints `{"Authorization": "Bearer …"}` for the agent the CLI would use (`SPIDER_TOKEN`, `SPIDER_AGENT` — set by `spider claude` — or the default saved agent), so no secret is committed and nothing needs exporting. Run `spider login` once, start `claude` in the repo and approve the project server when asked.
-- **`.claude/skills/spider-tracker/SKILL.md`** tells Claude Code how to work with the tracker: find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `bun run spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes.
-
+- **`plugins/spider-tracker`** (see [above](#the-spider-tracker-plugin)) brings the skill, the `spider` MCP server and `/spider-tracker:create-agent`. This repo enables it for everyone in `.claude/settings.json` (written by `spider setup claude --project`); its MCP server needs the installed `spider` binary on PATH.
 - **`.claude/channel.mcp.json`** + `bun run claude:channel` start a session with the `spider channel` (see above); `spider claude` does the same for any saved agent.
-- **`plugins/spider-tracker`** (listed by `.claude-plugin/marketplace.json`) is a Claude Code plugin with the `/spider-tracker:create-agent` command.
 
-Later, grow that plugin to bundle the MCP server config, this skill, and the channel (plugins can be allowlisted as channels without the development flag).
+Later, the plugin can also bundle the channel (plugins can be allowlisted as channels without the development flag).
 
 ## Message flow
 

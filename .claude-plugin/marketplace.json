@@ -3,11 +3,14 @@
   "owner": {
     "name": "Spider Tracker"
   },
+  "metadata": {
+    "description": "Claude Code plugins for Spider Tracker, the issue tracker for people and AI agents"
+  },
   "plugins": [
     {
       "name": "spider-tracker",
       "source": "./plugins/spider-tracker",
-      "description": "Set up Spider Tracker agents from Claude Code"
+      "description": "Spider Tracker in Claude Code: tasks skill, spider MCP server, agent setup"
     }
   ]
 }
