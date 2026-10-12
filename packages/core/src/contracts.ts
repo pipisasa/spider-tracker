@@ -276,10 +276,45 @@ export interface CommentDto {
   editedAt: string | null;
 }
 
-/** `rules`: the rules of one of your projects were set or changed (ST-111); it has a document, not a task. */
-export type InboxKind = "mention" | "assigned" | "comment" | "reply" | "rules";
+/** A comment on a document (ST-118): on the whole document, or on a fragment of it (`quote`). */
+export interface DocumentCommentDto {
+  id: string;
+  documentId: string;
+  /** The comment this one replies to; replies sit in their top-level comment's thread. */
+  parentId: string | null;
+  authorId: string;
+  body: string;
+  /** The text the comment is about (top-level comments only); null when it is about the whole document. */
+  quote: string | null;
+  /** The quote no longer occurs in the document's current content (the fragment changed). */
+  outdated: boolean;
+  /** The document's version when the comment was posted. */
+  documentVersion: number;
+  /** Set when the thread (a top-level comment) was marked resolved. */
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  editedAt: string | null;
+}
+
+/**
+ * `rules`: the rules of one of your projects were set or changed (ST-111). `document_mention`,
+ * `document_reply`, `document_comment`: a comment on a document mentions you, replies to you, or
+ * is on a document you wrote or a thread you're in (ST-118). These have a document, not a task.
+ */
+export type InboxKind =
+  | "mention"
+  | "assigned"
+  | "comment"
+  | "reply"
+  | "rules"
+  | "document_mention"
+  | "document_comment"
+  | "document_reply";
 /** The kinds about a task. */
-export type TaskInboxKind = Exclude<InboxKind, "rules">;
+export type TaskInboxKind = "mention" | "assigned" | "comment" | "reply";
+/** The kinds about a comment on a document. */
+export type DocumentInboxKind = "document_mention" | "document_comment" | "document_reply";
 
 export interface InboxItemDto {
   /** Increasing; pass the last one seen as `after` to get only newer items. */
@@ -287,10 +322,10 @@ export interface InboxItemDto {
   kind: InboxKind;
   createdAt: string;
   readAt: string | null;
-  /** Null for `rules` items. */
+  /** Null for `rules` and `document_*` items. */
   task: { key: string; title: string } | null;
-  /** Set for `rules` items: the project's rules document. */
-  document: { id: string; title: string; projectKey: string } | null;
+  /** Set for `rules` items (the project's rules document) and `document_*` items (the commented document; projectKey is null for an organization-wide one). */
+  document: { id: string; title: string; projectKey: string | null } | null;
   comment: { id: string; body: string } | null;
   from: { id: string; handle: string; name: string; type: "human" | "agent" };
 }

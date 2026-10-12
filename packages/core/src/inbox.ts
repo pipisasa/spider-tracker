@@ -2,19 +2,21 @@ import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { aliasedTable, and, asc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { projectScope, type ActorContext } from "./access";
-import type { InboxItemDto, TaskInboxKind } from "./contracts";
+import type { DocumentInboxKind, InboxItemDto, InboxKind, TaskInboxKind } from "./contracts";
 import { publish } from "./events";
 import { inboxQuery, markInboxReadInput } from "./schemas";
 import { parseInput } from "./validate";
 
 const { actors, comments, documents, inboxItems, projects, tasks } = schema;
 
-/** Adds inbox items for a task event; never notifies the actor about their own action. */
-export async function notify(
+type InboxEntry<K> = { recipientId: string; kind: K; commentId?: string };
+
+/** Inserts one item per recipient (the first entry per recipient wins); never for the actor. */
+async function insertItems(
   tx: Tx,
   ctx: ActorContext,
-  taskId: string,
-  entries: { recipientId: string; kind: TaskInboxKind; commentId?: string }[],
+  subject: { taskId: string } | { documentId: string },
+  entries: InboxEntry<InboxKind>[],
 ) {
   const seen = new Set<string>([ctx.actorId]);
   const rows = entries.filter((e) => (seen.has(e.recipientId) ? false : seen.add(e.recipientId)));
@@ -24,12 +26,27 @@ export async function notify(
       orgId: ctx.orgId,
       recipientId: e.recipientId,
       kind: e.kind,
-      taskId,
+      ...subject,
       commentId: e.commentId ?? null,
       actorId: ctx.actorId,
     })),
   );
   await publish(tx, { type: "inbox.created", orgId: ctx.orgId, recipientIds: rows.map((r) => r.recipientId) });
+}
+
+/** Adds inbox items for a task event; never notifies the actor about their own action. */
+export async function notify(tx: Tx, ctx: ActorContext, taskId: string, entries: InboxEntry<TaskInboxKind>[]) {
+  await insertItems(tx, ctx, { taskId }, entries);
+}
+
+/** Adds inbox items about a comment on a document (ST-118); never for the commenter. */
+export async function notifyDocument(
+  tx: Tx,
+  ctx: ActorContext,
+  documentId: string,
+  entries: InboxEntry<DocumentInboxKind>[],
+) {
+  await insertItems(tx, ctx, { documentId }, entries);
 }
 
 /** Adds a `rules` item (ST-111) about a project's rules document for each recipient. */
@@ -65,10 +82,11 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
       from: { id: sender.id, handle: sender.handle, name: sender.name, type: sender.type },
     })
     .from(inboxItems)
-    // An item is about a task, or (kind `rules`) about a project's document.
+    // An item is about a task, or (kinds `rules` and `document_*`) about a document, which may be
+    // organization-wide (no project).
     .leftJoin(tasks, eq(inboxItems.taskId, tasks.id))
     .leftJoin(documents, eq(inboxItems.documentId, documents.id))
-    .innerJoin(projects, eq(projects.id, sql`coalesce(${tasks.projectId}, ${documents.projectId})`))
+    .leftJoin(projects, eq(projects.id, sql`coalesce(${tasks.projectId}, ${documents.projectId})`))
     .innerJoin(sender, eq(inboxItems.actorId, sender.id))
     .leftJoin(comments, eq(inboxItems.commentId, comments.id))
     .where(
@@ -78,9 +96,12 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
         inArray(inboxItems.kind, kinds),
         or(
           and(isNotNull(inboxItems.taskId), isNull(tasks.deletedAt)),
-          and(isNull(inboxItems.taskId), isNull(documents.deletedAt)),
+          and(isNull(inboxItems.taskId), isNotNull(documents.id), isNull(documents.deletedAt)),
         ),
-        scope ? inArray(projects.id, [...scope]) : undefined,
+        // Organization-wide documents are visible to every member, scoped agents included.
+        scope
+          ? or(inArray(projects.id, [...scope]), and(isNull(inboxItems.taskId), isNull(documents.projectId)))
+          : undefined,
         after !== undefined ? gt(inboxItems.id, after) : undefined,
         unread ? isNull(inboxItems.readAt) : undefined,
       ),
@@ -96,7 +117,7 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
     task: r.taskNumber !== null && r.taskTitle !== null ? { key: `${r.projectKey}-${r.taskNumber}`, title: r.taskTitle } : null,
     document:
       r.item.documentId && r.documentTitle !== null
-        ? { id: r.item.documentId, title: r.documentTitle, projectKey: r.projectKey }
+        ? { id: r.item.documentId, title: r.documentTitle, projectKey: r.projectKey ?? null }
         : null,
     comment: r.comment && !r.comment.deletedAt ? { id: r.comment.id, body: r.comment.body } : null,
     from: r.from,

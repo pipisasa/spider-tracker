@@ -5,6 +5,7 @@ import type { ActorContext } from "@repo/core";
 import {
   MIN_CLI_VERSION,
   addComment,
+  addDocumentComment,
   createAgent,
   createApiKey,
   createDocument,
@@ -12,6 +13,7 @@ import {
   createProject,
   createTask,
   deleteAgent,
+  listInbox,
   updateProject,
 } from "@repo/core";
 import { createDb, schema } from "@repo/db";
@@ -114,6 +116,7 @@ withDb("MCP server", () => {
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
         "add_comment",
+        "add_document_comment",
         "archive_project",
         "assign_to_me",
         "create_document",
@@ -132,6 +135,8 @@ withDb("MCP server", () => {
         "get_inbox",
         "get_task_activity",
         "list_comments",
+        "list_document_comments",
+        "resolve_document_comment",
         "mark_inbox_read",
         "get_project",
         "get_task",
@@ -471,6 +476,36 @@ withDb("MCP server", () => {
       updated: expect.any(Number),
     });
     expect(JSON.parse((await call(client, "get_inbox", {})).text)).toEqual([]);
+  });
+
+  test("document comments (ST-118): the agent reviews a fragment, the author is notified, replies reach the agent", async () => {
+    const owner = ownerCtxs[0];
+    if (!owner) throw new Error("no owner");
+    const doc = await createDocument(db, owner, { title: "Review me", project: "SPI", content: "# Plan\n\nMigrate the **database** first." });
+
+    const review = await call(client, "add_document_comment", { id: doc.id, body: "Risky order", quote: "Migrate the database first" });
+    expect(review.isError).toBeFalsy();
+    const comment = review.json() as { id: string };
+    expect(comment).toMatchObject({ documentId: doc.id, quote: "Migrate the database first", outdated: false, author: "claude-code", resolver: null });
+    expect((await listInbox(db, owner, { kinds: "document_comment" })).map((i) => i.comment?.id)).toEqual([comment.id]);
+    const bad = await call(client, "add_document_comment", { id: doc.id, body: "?", quote: "not there" });
+    expect(bad).toMatchObject({ isError: true, text: "The quoted text isn't in the document's current version" });
+
+    await addDocumentComment(db, owner, doc.id, { body: "@claude-code what order then?", parentId: comment.id });
+    const inbox = JSON.parse((await call(client, "get_inbox", { wait_seconds: 2 })).text) as Record<string, unknown>[];
+    expect(inbox.find((i) => i.kind === "document_mention")).toMatchObject({
+      project: "SPI",
+      document: { id: doc.id, title: "Review me", url: expect.stringContaining(doc.id) },
+      comment: { body: "@claude-code what order then?" },
+    });
+
+    const resolved = await call(client, "resolve_document_comment", { id: doc.id, comment_id: comment.id });
+    expect(resolved.json()).toMatchObject({ resolvedAt: expect.any(String), resolver: "claude-code" });
+    const thread = (await call(client, "list_document_comments", { id: doc.id })).json() as { items: { author: string }[] };
+    expect(thread.items.map((c) => c.author)).toEqual(["claude-code", expect.any(String)]);
+    // Another organization's agent can't see it.
+    expect((await call(otherClient, "list_document_comments", { id: doc.id })).isError).toBe(true);
+    await call(client, "mark_inbox_read", { up_to: 1_000_000_000 });
   });
 
   test("unknown statuses and handles are tool errors that list the valid options", async () => {

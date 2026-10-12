@@ -171,3 +171,17 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - Changes are inbox items of a new kind `rules` about a document (`inbox_items.task_id` became nullable, with a `document_id`). Clients from before it expect a task on every item, so the API returns `rules` items only when `kinds` asks for them.
 
 **Trade-off:** rules belong to one project; organization-wide rules shared by several projects would need a different shape.
+
+---
+
+## 13. Document comments share the comments table with task comments
+
+**Decision:** comments on documents (ST-118) are rows of the existing `comments` table: `task_id` became nullable next to a new `document_id`, with a check that exactly one is set (as ST-111 did for `inbox_items`). Document-only columns are `quote` (the fragment a top-level comment is about), `document_version` and `resolved_at` / `resolved_by`. Their notifications are new inbox kinds `document_mention`, `document_reply` and `document_comment` about a document.
+
+**Why:**
+- One pipeline: mentions, the agent loop guard, soft delete and `inbox_items.comment_id` (which shows the comment's body in the inbox and the channel) work for both without a second table or a second foreign key on inbox items.
+- Task comment queries filter on `task_id` already, so they are unaffected; only the inbox joins learned that a document may have no project.
+- New inbox kinds instead of reusing `mention` / `reply` / `comment`: clients from before ST-111 expect a task on every item of those kinds, and the API returns the new kinds only when `kinds` asks for them.
+- Anchors are the quoted text, not offsets: a quote survives edits elsewhere in the document, and `outdated` is computed when read (the quote no longer occurs in the current content, compared on letters and digits only so Markdown or HTML markup doesn't matter). Nothing has to be rewritten on save.
+
+**Trade-off:** a quote that occurs twice anchors to its first occurrence, and a fragment that is changed and later changed back is no longer outdated. HTML documents render in a sandboxed frame (decision 11), so the web app can't highlight or select fragments in them; their fragment comments come through the API, CLI or MCP.

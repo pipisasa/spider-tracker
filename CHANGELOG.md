@@ -33,6 +33,14 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 - **Web:** start and target date fields in the task page sidebar; list rows show the target date (red when overdue); an "Overdue" filter on the project page, kept in saved views.
 - Database migration `0018_task_dates` (two nullable columns and a check constraint).
 
+### Document comments (ST-118)
+
+- Comments on documents, so reviews stay on the document instead of landing in a task's comments: on the whole document or on a quoted fragment (`quote`), with replies, @-mentions and a resolved mark. A comment whose fragment has changed stays and is marked `outdated`.
+- MCP: new tools `add_document_comment`, `list_document_comments` and `resolve_document_comment`. `get_inbox` returns the new kinds `document_mention`, `document_reply` and `document_comment` with `project` and `document: { id, title, url }` instead of `task`.
+- CLI: new `spider doc comment <id> "…" [--quote …] [--reply-to …]`, `spider doc comments <id>` and `spider doc resolve <id> <commentId> [--reopen]`; `spider inbox` and `spider channel` deliver the new kinds, and the channel's `reply` and `get_comments` tools take `document_id` instead of `task` for them.
+- API: `GET|POST /v1/orgs/{org}/documents/{id}/comments` and `PATCH …/comments/{commentId}` (`{ resolved }`). `GET /inbox` returns `document_*` items only when `kinds` asks for them, so older CLIs are unaffected; inbox items' `document.projectKey` can now be null (an organization-wide document).
+- Database migration `0019_document_comments` (`comments.task_id` nullable, new `document_id`, `quote`, `document_version`, `resolved_at`, `resolved_by`, and two check constraints).
+
 ### CLI
 
 - New `spider task duplicate [key] --of KEY [--comment "…"]` closes a task as a duplicate in one step (link, canceled status, comment); MCP has the matching `mark_duplicate` tool. `link_tasks` now refuses a `duplicates` link that would close a cycle (ST-114).
@@ -45,6 +53,10 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+
+### Plugin 0.3.8
+
+- The `tasks` skill explains document comments: feedback goes on the document (`add_document_comment` / `spider doc comment`, with `quote` for a fragment), not in task comments (ST-118).
 
 ### Plugin 0.3.7
 

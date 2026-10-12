@@ -148,8 +148,11 @@ function scopeOf(row: {
   };
 }
 
-/** `lock` holds the document row until the transaction ends, so concurrent saves queue up. */
-async function findDocument(
+/**
+ * A document the viewer can see, with its scope keys; "not found" otherwise. `lock` holds the
+ * document row until the transaction ends, so concurrent saves queue up.
+ */
+export async function findDocument(
   db: Db | Tx,
   viewer: Viewer,
   id: string,

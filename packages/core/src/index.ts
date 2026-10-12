@@ -21,6 +21,8 @@ export * from "./tags";
 export * from "./relations";
 export * from "./duplicates";
 export * from "./documents";
+export * from "./document-comments";
+export * from "./anchors";
 export * from "./project-rules";
 export * from "./document-edits";
 export * from "./diff";

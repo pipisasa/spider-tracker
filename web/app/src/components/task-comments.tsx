@@ -14,7 +14,7 @@ import type {
 } from "@repo/core/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { BotIcon, HistoryIcon, ReplyIcon } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 
 const timeFormat = new Intl.DateTimeFormat(undefined, {
@@ -96,7 +96,7 @@ type TimelineItem =
   { at: string; comment: CommentDto } | { at: string; activity: ActivityDto };
 
 /** A comment box with @-mention suggestions; ⌘↵ sends. */
-function CommentForm({
+export function CommentForm({
   members,
   pending,
   label,
@@ -152,16 +152,19 @@ function CommentForm({
   );
 }
 
-function CommentItem({
+/** One comment; `actions` sit next to Reply (document comments add Resolve). */
+export function CommentItem({
   comment,
   author,
   handles,
   onReply,
+  actions,
 }: {
-  comment: CommentDto;
+  comment: Pick<CommentDto, "body" | "createdAt">;
   author: ActorDto | undefined;
   handles: Set<string>;
-  onReply: () => void;
+  onReply?: () => void;
+  actions?: ReactNode;
 }) {
   return (
     <div className="group flex gap-3">
@@ -179,14 +182,19 @@ function CommentItem({
             <BotIcon className="size-3" aria-label="agent" />
           )}
           <span>{timeFormat.format(new Date(comment.createdAt))}</span>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="ml-auto text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-            onClick={onReply}
-          >
-            <ReplyIcon /> Reply
-          </Button>
+          <span className="ml-auto flex items-center gap-1">
+            {actions}
+            {onReply && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                onClick={onReply}
+              >
+                <ReplyIcon /> Reply
+              </Button>
+            )}
+          </span>
         </div>
         <CommentBody body={comment.body} handles={handles} />
       </div>

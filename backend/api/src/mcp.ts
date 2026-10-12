@@ -15,6 +15,10 @@ import {
   DomainError,
   MAX_BULK_TASKS,
   addComment,
+  addDocumentComment,
+  listDocumentComments,
+  resolveDocumentComment,
+  documentCommentView,
   archiveProject,
   authenticateApiKey,
   createDocument,
@@ -809,6 +813,58 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   );
 
   server.registerTool(
+    "list_document_comments",
+    {
+      description:
+        "Read the comments on a document, oldest first, with author handles. A comment with a quote is about that fragment of the text; outdated means the fragment has changed since. resolvedAt marks a resolved thread; replies have parentId.",
+      inputSchema: { id: z.string().describe("Document id") },
+    },
+    ({ id }) =>
+      run(async () => {
+        const comments = await listDocumentComments(db, ctx, id);
+        const actors = await actorRefs();
+        // { items } of DocumentCommentView, as `spider doc comments --json`.
+        return { items: comments.map((c) => documentCommentView(c, actors)) };
+      }),
+  );
+
+  server.registerTool(
+    "add_document_comment",
+    {
+      description:
+        "Comment on a document (Markdown): reviews and feedback on a document belong here, not in task comments. Pass quote (exact text from the current version) to comment on a fragment; set parent_id to reply in a thread. @handle mentions notify people and agents; the document's author and the thread are notified too. Agents may post at most 5 comments per document per minute.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        body: z.string().min(1).describe("Comment text (Markdown). Never include secrets"),
+        quote: z.string().optional().describe("The fragment of the document the comment is about (top-level comments only)"),
+        parent_id: z.string().optional().describe("Id of the comment you are replying to"),
+      },
+    },
+    ({ id, body, quote, parent_id }) =>
+      run(async () => {
+        const comment = await addDocumentComment(db, ctx, id, { body, quote: quote ?? null, parentId: parent_id ?? null });
+        return documentCommentView(comment, await actorRefs());
+      }),
+  );
+
+  server.registerTool(
+    "resolve_document_comment",
+    {
+      description: "Mark a document comment thread (its first comment) resolved, or reopen it with resolved: false.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        comment_id: z.string().describe("Id of the thread's first comment"),
+        resolved: z.boolean().optional().describe("Default true; false reopens the thread"),
+      },
+    },
+    ({ id, comment_id, resolved }) =>
+      run(async () => {
+        const comment = await resolveDocumentComment(db, ctx, id, comment_id, { resolved: resolved ?? true });
+        return documentCommentView(comment, await actorRefs());
+      }),
+  );
+
+  server.registerTool(
     "get_task_activity",
     {
       description:
@@ -862,7 +918,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_inbox",
     {
       description:
-        "Your notifications: mentions, assignments, comments and replies on your tasks, and changed rules of your projects (kind \"rules\": read them with get_project), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
+        "Your notifications: mentions, assignments, comments and replies on your tasks, changed rules of your projects (kind \"rules\": read them with get_project), and comments on documents (kinds document_mention, document_reply, document_comment: read the thread with list_document_comments, answer with add_document_comment), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
       inputSchema: {
         unread_only: z.boolean().optional().describe("Only items not marked read (default true)"),
         after: z.number().int().nonnegative().optional().describe("Only items with a larger id"),
@@ -887,7 +943,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           kind: i.kind,
           ...(i.task ? { task: i.task.key, title: i.task.title } : {}),
           ...(i.document
-            ? { project: i.document.projectKey, rulesDocument: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) } }
+            ? {
+                project: i.document.projectKey,
+                [i.kind === "rules" ? "rulesDocument" : "document"]: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) },
+              }
             : {}),
           from: i.from.handle,
           comment: i.comment ? { id: i.comment.id, body: i.comment.body } : null,

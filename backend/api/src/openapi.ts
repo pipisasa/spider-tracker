@@ -5,6 +5,8 @@ import {
   createAgentInput,
   createApiKeyInput,
   createCommentInput,
+  createDocumentCommentInput,
+  resolveDocumentCommentInput,
   createTagInput,
   createSavedViewInput,
   updateSavedViewInput,
@@ -158,18 +160,36 @@ const schemas: Record<string, JsonSchema> = {
     createdAt: string({ format: "date-time" }),
     editedAt: nullable("string", { format: "date-time" }),
   }),
+  DocumentComment: object({
+    id: string({ format: "uuid" }),
+    documentId: string({ format: "uuid" }),
+    parentId: nullable("string", { format: "uuid", description: "The comment replied to" }),
+    authorId: string({ format: "uuid" }),
+    body: string({ description: "Markdown; @handle mentions notify members" }),
+    quote: nullable("string", { description: "The fragment the comment is about (top-level comments); null: the whole document" }),
+    outdated: { type: "boolean", description: "The quote no longer occurs in the current content" },
+    documentVersion: { type: "integer", description: "The document's version when the comment was posted" },
+    resolvedAt: nullable("string", { format: "date-time", description: "Set when the thread was marked resolved" }),
+    resolvedBy: nullable("string", { format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+    editedAt: nullable("string", { format: "date-time" }),
+  }),
+  DocumentCommentList: listOf("DocumentComment"),
+  CreateDocumentCommentInput: fromZod(createDocumentCommentInput),
+  ResolveDocumentCommentInput: fromZod(resolveDocumentCommentInput),
   InboxItem: object({
     id: { type: "integer", description: "Increasing; use as the `after` cursor" },
     kind: string({
-      enum: ["mention", "assigned", "comment", "reply", "rules"],
-      description: "rules: a project's rules were set or changed (returned only when asked for with `kinds`)",
+      enum: ["mention", "assigned", "comment", "reply", "rules", "document_mention", "document_comment", "document_reply"],
+      description:
+        "rules: a project's rules were set or changed; document_*: a comment on a document mentions you, replies to you, or is on your document or thread. Both are returned only when asked for with `kinds`",
     }),
     createdAt: string({ format: "date-time" }),
     readAt: nullable("string", { format: "date-time" }),
-    task: { oneOf: [object({ key: string(), title: string() }), { type: "null" }], description: "Null for rules items" },
+    task: { oneOf: [object({ key: string(), title: string() }), { type: "null" }], description: "Null for rules and document_* items" },
     document: {
-      oneOf: [object({ id: string({ format: "uuid" }), title: string(), projectKey: string() }), { type: "null" }],
-      description: "For rules items: the project's rules document",
+      oneOf: [object({ id: string({ format: "uuid" }), title: string(), projectKey: nullable("string") }), { type: "null" }],
+      description: "For rules items the project's rules document; for document_* items the commented document (projectKey null when organization-wide)",
     },
     comment: { oneOf: [object({ id: string({ format: "uuid" }), body: string() }), { type: "null" }] },
     from: object({ id: string({ format: "uuid" }), handle: string(), name: string(), type: string({ enum: ["human", "agent"] }) }),
@@ -1076,6 +1096,30 @@ const paths = {
       responses: { "200": ok("Diff", "DocumentDiff"), ...errors },
     },
   },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/comments": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: {
+      operationId: "listDocumentComments",
+      summary: "Comments on a document, oldest first, with their quotes and outdated and resolved states",
+      responses: { "200": ok("Comments", "DocumentCommentList"), ...errors },
+    },
+    post: {
+      operationId: "addDocumentComment",
+      summary:
+        "Comment on a document, or on a fragment of it (quote: text in the current version; top-level comments only). Mentions, the author replied to, the document's author and the thread are notified",
+      requestBody: body("CreateDocumentCommentInput"),
+      responses: { "201": ok("Created comment", "DocumentComment"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/comments/{commentId}": {
+    parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("commentId", "Comment id")],
+    patch: {
+      operationId: "resolveDocumentComment",
+      summary: "Mark a thread (a top-level comment) resolved, or reopen it; a repeat changes nothing",
+      requestBody: body("ResolveDocumentCommentInput"),
+      responses: { "200": ok("Comment", "DocumentComment"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/inbox": {
     parameters: [orgSlug],
     get: {
@@ -1090,7 +1134,8 @@ const paths = {
           name: "kinds",
           in: "query",
           schema: { type: "string" },
-          description: "Comma-separated kinds to return (mention, assigned, comment, reply, rules); default: all but rules",
+          description:
+            "Comma-separated kinds to return (mention, assigned, comment, reply, rules, document_mention, document_comment, document_reply); default: the task kinds (all but rules and document_*)",
         },
       ],
       responses: { "200": ok("Inbox items", "InboxList"), ...errors },

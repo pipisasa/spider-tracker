@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, type SQL } from "drizzle-orm";
 import { assertCanWrite, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { CommentDto, TaskInboxKind } from "./contracts";
@@ -13,7 +13,7 @@ import { parseInput } from "./validate";
 
 const { actors, comments, taskAssignees } = schema;
 
-/** Loop guard: an agent posts at most this many comments per task per minute. */
+/** Loop guard: an agent posts at most this many comments per task (or document) per minute. */
 export const AGENT_COMMENT_LIMIT = { perMinute: 5 };
 
 /** Handles mentioned as @handle (not inside emails such as a@b.com). */
@@ -23,6 +23,28 @@ export function parseMentions(body: string): string[] {
     if (match[1]) handles.add(match[1].toLowerCase());
   }
   return [...handles];
+}
+
+/** Active members of the organization named by `handles`. */
+export async function mentionedActors(tx: Tx, ctx: ActorContext, handles: string[]): Promise<{ id: string }[]> {
+  if (handles.length === 0) return [];
+  return tx
+    .select({ id: actors.id })
+    .from(actors)
+    .where(and(eq(actors.orgId, ctx.orgId), inArray(actors.handle, handles), isNull(actors.deactivatedAt)));
+}
+
+/** The agent loop guard: an agent posts at most AGENT_COMMENT_LIMIT comments per minute on one task or document. */
+export async function assertCommentRate(tx: Tx, ctx: ActorContext, subject: SQL, what: "task" | "document") {
+  const [author] = await tx.select({ type: actors.type }).from(actors).where(eq(actors.id, ctx.actorId)).limit(1);
+  if (author?.type !== "agent") return;
+  const recent = await tx
+    .select({ id: comments.id })
+    .from(comments)
+    .where(and(subject, eq(comments.authorId, ctx.actorId), gt(comments.createdAt, new Date(Date.now() - 60_000))));
+  if (recent.length >= AGENT_COMMENT_LIMIT.perMinute) {
+    throw new DomainError("rate_limited", `Too many comments on this ${what} in the last minute. Slow down`);
+  }
 }
 
 function toCommentDto(row: typeof comments.$inferSelect, taskKey: string): CommentDto {
@@ -62,23 +84,7 @@ export async function addComment(db: Db, ctx: ActorContext, taskKey: string, inp
  * the input): the agent rate limit, the insert, notifications, activity and the event.
  */
 export async function postComment(tx: Tx, ctx: ActorContext, { task, projectKey }: FoundTask, data: CreateCommentInput): Promise<CommentDto> {
-  const [author] = await tx.select({ type: actors.type }).from(actors).where(eq(actors.id, ctx.actorId)).limit(1);
-
-  if (author?.type === "agent") {
-    const recent = await tx
-      .select({ id: comments.id })
-      .from(comments)
-      .where(
-        and(
-          eq(comments.taskId, task.id),
-          eq(comments.authorId, ctx.actorId),
-          gt(comments.createdAt, new Date(Date.now() - 60_000)),
-        ),
-      );
-    if (recent.length >= AGENT_COMMENT_LIMIT.perMinute) {
-      throw new DomainError("rate_limited", "Too many comments on this task in the last minute. Slow down");
-    }
-  }
+  await assertCommentRate(tx, ctx, eq(comments.taskId, task.id), "task");
 
   let parentAuthor: string | undefined;
   if (data.parentId) {
@@ -98,12 +104,7 @@ export async function postComment(tx: Tx, ctx: ActorContext, { task, projectKey 
   if (!comment) throw new Error("Failed to add comment");
 
   const handles = parseMentions(data.body);
-  const mentioned = handles.length
-    ? await tx
-        .select({ id: actors.id })
-        .from(actors)
-        .where(and(eq(actors.orgId, ctx.orgId), inArray(actors.handle, handles), isNull(actors.deactivatedAt)))
-    : [];
+  const mentioned = await mentionedActors(tx, ctx, handles);
   const assignees = await tx
     .select({ id: taskAssignees.actorId })
     .from(taskAssignees)

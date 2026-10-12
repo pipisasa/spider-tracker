@@ -1,4 +1,4 @@
-// What the CLI (`--json`) and the MCP server print for tasks, comments, document versions and diffs
+// What the CLI (`--json`) and the MCP server print for tasks, comments, document comments, versions and diffs
 // (ST-107): the API DTOs plus names a reader needs (status, handles, tag names), built the same
 // way on both sides so scripts can switch between them. Browser-safe: no database imports.
 
@@ -6,6 +6,7 @@ import { formatUnifiedDiff } from "./diff";
 import type {
   ActorDto,
   CommentDto,
+  DocumentCommentDto,
   DocumentDiffDto,
   DocumentDto,
   DocumentSummaryDto,
@@ -46,6 +47,12 @@ export interface TaskDetailView extends Omit<TaskView, "subtasks"> {
 /** A comment with its author's handle. */
 export interface CommentView extends CommentDto {
   author: string;
+}
+
+/** A comment on a document (ST-118) with its author's handle, and the resolver's when resolved. */
+export interface DocumentCommentView extends DocumentCommentDto {
+  author: string;
+  resolver: string | null;
 }
 
 /** An older version of a document, with the current document's scope, id and version. */
@@ -95,6 +102,12 @@ export const relationView = (r: { kind: RelationKind; task: { key: string; title
 export const commentView = (comment: CommentDto, actors: ActorRef[]): CommentView => ({
   ...comment,
   author: actorHandle(actors, comment.authorId),
+});
+
+export const documentCommentView = (comment: DocumentCommentDto, actors: ActorRef[]): DocumentCommentView => ({
+  ...comment,
+  author: actorHandle(actors, comment.authorId),
+  resolver: comment.resolvedBy ? actorHandle(actors, comment.resolvedBy) : null,
 });
 
 export function documentVersionView(

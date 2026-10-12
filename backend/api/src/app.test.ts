@@ -884,6 +884,35 @@ withDb("comments and inbox API", () => {
     for (let i = 0; i < 4; i++) await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: `note ${i}` });
     expect((await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "too much" })).status).toBe(429);
   });
+
+  test("document comments (ST-118): a review stays on the document and reaches its author", async () => {
+    const cookie = await signIn(email);
+    const asOwner = (method: string, path: string, body?: unknown) =>
+      app.request(`/v1/orgs/${slug}${path}`, {
+        method,
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const doc = (await (await asOwner("POST", "/documents", { title: "Spec", project: "SPI", content: "Ship **it** today." })).json()) as { id: string };
+    const before = (await (await asOwner("GET", "/inbox?kinds=document_comment,document_reply")).json()) as { items: unknown[] };
+    expect(before.items).toEqual([]);
+
+    // Commenting on a fragment that isn't there is a 400; one that is, a 201.
+    expect((await asOwner("POST", `/documents/${doc.id}/comments`, { body: "?", quote: "tomorrow" })).status).toBe(400);
+    const posted = await asOwner("POST", `/documents/${doc.id}/comments`, { body: "Why today?", quote: "Ship it today" });
+    expect(posted.status).toBe(201);
+    const root = (await posted.json()) as { id: string };
+    expect(root).toMatchObject({ documentId: doc.id, quote: "Ship it today", outdated: false, documentVersion: 1, resolvedAt: null });
+
+    const listed = (await (await asOwner("GET", `/documents/${doc.id}/comments`)).json()) as { items: { id: string }[] };
+    expect(listed.items.map((c) => c.id)).toEqual([root.id]);
+
+    const resolved = await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, { resolved: true });
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({ resolvedAt: expect.any(String) });
+    expect((await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, {})).status).toBe(400);
+    expect((await asOwner("GET", `/documents/${crypto.randomUUID()}/comments`)).status).toBe(404);
+  });
 });
 
 withDb("realtime events (SSE)", () => {

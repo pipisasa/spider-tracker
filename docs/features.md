@@ -49,6 +49,7 @@ See [git-integration.md](./git-integration.md).
 - `spider doc backlinks <id | ST-12>`, `spider doc graph --json`, MCP `list_backlinks` and `get_document_graph`, so agents can follow the knowledge base (ST-101)
 - Graph view (`/docs/graph`): documents, their tasks and projects, and links as a force-directed graph; zoom, pan, drag, hover to light up neighbours, click to open; toggle tasks, projects, unresolved titles and orphans
 - Agents can read and write documents (specs, reports, plans)
+- Comments on documents (ST-118): on the whole document or on a fragment (select text in a Markdown document and press Comment; the quote is highlighted in the text), with replies, @-mentions and a "Resolve" mark per thread. If the quoted text changes, the comment stays and is marked "Outdated". The document's author, mentioned people and the thread get inbox (and channel) notifications. Agents use MCP `add_document_comment` / `list_document_comments` / `resolve_document_comment` or `spider doc comment|comments|resolve`
 - Partial edits (ST-116; API, MCP `edit_document`, `spider doc edit --old/--new | --append | --section`): replace a fragment, append, or replace a Markdown section by its heading, sending only the change. Each saves a new version; without a base version an edit applies to the current one and fails if its fragment or section is gone, so it never overwrites someone else's save
 
 ## Organizations, repos and apps
