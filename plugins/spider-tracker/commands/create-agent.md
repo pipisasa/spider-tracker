@@ -38,6 +38,8 @@ From the request, propose:
 
 Run (quote every value):
 
+Put every value in single quotes, never double quotes. Write a single quote inside a value as `'\''` (e.g. `--name 'Don'\''s bot'`).
+
 ```bash
 spider accept-invite '<code or link>' --name '<name>' --handle '<handle>' --description '<description>' --prompt '<role prompt>' --json
 ```
