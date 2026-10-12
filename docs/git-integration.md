@@ -75,7 +75,7 @@ Code can't do these; until they're done the feature stays off in production.
    - Callback URL: `https://tracker-api.batele.plus/github/setup`. Tick **Request user authorization (OAuth) during installation** (required: the callback uses the code to check the person can access the installation). Leave "Expire user authorization tokens" on.
    - Setup URL: leave empty (ignored when OAuth during installation is on).
    - Webhook: active, URL `https://tracker-api.batele.plus/webhooks/github`, secret from `openssl rand -hex 32` (the same value goes into `GITHUB_APP_WEBHOOK_SECRET`). GitHub Apps always send JSON.
-   - Repository permissions: Metadata read, Contents read, Pull requests read and write (write is for ST-87's `spider pr`; read is enough until then), Checks read, Commit statuses read.
+   - Repository permissions: Metadata read, Contents read, Pull requests read and write (write lets `spider pr` and MCP `open_pull_request` open pull requests, ST-87), Checks read, Commit statuses read.
    - Events to subscribe to now: **Repository** (handled from ST-83), **Create**, **Delete**, **Push** and **Pull request** (handled from ST-84). Pull request review, Check suite, Check run and Status can be ticked too; they are recorded and ignored until ST-86 handles them. `installation` and `installation_repositories` aren't in the list: GitHub sends them to every App.
    - Where can it be installed: only on this account.
 2. **Generate a private key** (downloads a `.pem`). Note the App ID, the slug (from `github.com/apps/<slug>`), the Client ID, and generate a Client secret.
@@ -159,9 +159,28 @@ Rules (`decideTransition` and `pullRequestEvent` in `@repo/core/git-automation-r
 
 Settings: `PATCH /v1/orgs/:org/projects/:key` with `gitAutomation` (only the fields given change; `null` resets to the defaults), MCP `update_project`, `spider project update KEY --automation on|off|defaults --on-draft|--on-opened|--on-merged|--on-closed <category|none>`, and **Status automation** in the web app's project settings. `ProjectDto.gitAutomation` always has every field, defaults filled in.
 
+## Opening pull requests (ST-87)
+
+`spider pr` opens the task's pull request without leaving the terminal; the API opens it on GitHub as the App, so it works the same for people and agents.
+
+1. **Push** (CLI only): `git push --set-upstream origin <current branch>` with the person's own git and credentials (the injected `git` runner, `pushBranch` in `backend/cli/src/git.ts`). `--no-push` skips it for a branch already pushed. A failed push stops before the API (exit 1).
+2. **Open:** `POST /v1/orgs/:org/tasks/:key/pull-request` (`openTaskPullRequest` in `packages/core/src/pull-request-open.ts`). The API's GitHub port (`createPullRequest` in `backend/api/src/github.ts`) calls `POST /repos/{owner}/{repo}/pulls` with the repo's installation token.
+3. **Link at once:** the answer is saved with the webhook code (`savePullRequest` in `git-links.ts`) as an `opened` event from the @github bot, so the task's Development panel shows it and [status automation](#status-automation-st-85) moves the task (In Review, or In Progress for a draft) right away. GitHub's own `pull_request` event arrives later and changes nothing more.
+
+Rules:
+
+- **Task:** the key given, or the current branch's (CLI). Guests can't; a scoped agent only in its projects (`404` otherwise).
+- **Repo:** one of the repos attached to the task's project: the one named (`repo`; the CLI sends the folder's `origin` remote, or `--repo owner/name`), or the only one. None attached, several without a name, or one not attached is `400`. The repo must be granted to a connected, unsuspended installation (`400` otherwise).
+- **Branches:** `head` defaults to the CLI's current branch, else the task's branch (`branchNameFor`); `base` to the repo's default branch. `head` equal to `base` is `400`.
+- **Title and body:** the title defaults to `<task title> (KEY)`; the body to a link to the task. The body always closes the task: `Closes KEY` is appended unless it already has a closing keyword for it, so merging the PR moves the task to Done.
+- **Already open:** a PR open for the head branch is `409 conflict` with `error.url` (the PR's address; in the message too). It is found in `pull_requests` first, without asking GitHub; when only GitHub knows it (its 422 "A pull request already exists"), it is fetched, linked when it names the task (as `edited`: nothing moves) and reported the same way.
+- **GitHub refusing it** (422: no commits between the branches, a branch that isn't pushed) is `400` with GitHub's reason; GitHub unreachable or refusing otherwise (no `Pull requests: write`) is `502 github_unavailable`. Without the App, `503 not_configured`.
+
+MCP `open_pull_request` does steps 2 and 3 for a branch already pushed (agents on MCP can't push) and returns the same JSON as `spider pr --json`: `OpenedPullRequestDto` `{ taskKey, pullRequest }`.
+
 ## Agents and Git
 
-- Agents can create branches, push commits and open pull requests linked to the task.
+- Agents can create branches, push commits and open pull requests linked to the task (`spider pr`, or MCP `open_pull_request` after pushing).
 - Pushing and merging can require a person's approval (see [agents.md](./agents.md#guardrails)).
 
 ## Processing

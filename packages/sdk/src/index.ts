@@ -2,6 +2,7 @@ import type {
   AcceptedAgentInviteDto,
   ActivityDto,
   TaskGitDto,
+  OpenedPullRequestDto,
   PresenceDto,
   ActorDto,
   AgentDto,
@@ -43,6 +44,7 @@ import type {
 } from "@repo/core/contracts";
 import type {
   AcceptAgentInviteInput,
+  OpenPullRequestInput,
   BulkUpdateTasksInput,
   CreateAgentInviteInput,
   CreateAgentInput,
@@ -119,6 +121,8 @@ export class SpiderApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** What the error is about, when the server names it: the pull request already open (409 from `tasks.openPullRequest`). */
+    readonly url?: string,
   ) {
     super(message);
     this.name = "SpiderApiError";
@@ -156,6 +160,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         res.status,
         error?.error?.code ?? "unknown",
         error?.error?.message || `${method} ${path} failed with HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`,
+        typeof error?.error?.url === "string" ? error.error.url : undefined,
       );
     }
     if (res.status === 204) return undefined as T;
@@ -497,6 +502,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<ListResponse<ActivityDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/activity`),
       /** Branches, commits and pull requests linked to the task from GitHub, most recent first. */
       git: (orgSlug: string, taskKey: string) => request<TaskGitDto>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/git`),
+      /**
+       * Opens the task's pull request on GitHub for a pushed branch and links it to the task (ST-87).
+       * A PR already open for the branch is a 409 SpiderApiError whose `url` is that PR.
+       */
+      openPullRequest: (orgSlug: string, taskKey: string, input: OpenPullRequestInput = {}) =>
+        request<OpenedPullRequestDto>("POST", `${org(orgSlug)}/tasks/${seg(taskKey)}/pull-request`, input),
     },
   };
 }

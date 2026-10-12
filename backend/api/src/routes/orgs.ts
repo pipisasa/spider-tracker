@@ -34,6 +34,7 @@ import {
   removeRelation,
   listTaskActivity,
   getTaskGit,
+  openTaskPullRequest,
   listComments,
   listInbox,
   markInboxRead,
@@ -98,7 +99,7 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { toActorDto } from "../dto";
 import type { GithubApp } from "../github";
-import { githubOrgRoutes } from "./github";
+import { githubOrgRoutes, notConfigured } from "./github";
 import type { Realtime } from "../realtime";
 import type { AppEnv } from "../types";
 
@@ -466,6 +467,18 @@ export function orgRoutes(
 
   // Branches, commits and pull requests linked to the task from GitHub (ST-84).
   app.get("/tasks/:taskKey/git", async (c) => c.json(await getTaskGit(db, c.get("actor"), c.req.param("taskKey"))));
+
+  // Opens the task's pull request on GitHub as the App and links it right away (ST-87); 409 with
+  // `error.url` when one is already open for the branch.
+  app.post("/tasks/:taskKey/pull-request", async (c) => {
+    const githubApp = github.app;
+    if (!githubApp) return c.json(notConfigured, 503);
+    const opened = await openTaskPullRequest(db, c.get("actor"), c.req.param("taskKey"), await body(c), {
+      create: (request) => githubApp.createPullRequest(request),
+      taskUrl: (key) => c.get("urls").task(key),
+    });
+    return c.json(opened, 201);
+  });
 
   // Documents mentioning the task: [[ST-12]] or a plain ST-12 (ST-101).
   app.get("/tasks/:taskKey/backlinks", async (c) =>

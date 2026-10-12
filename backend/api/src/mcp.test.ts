@@ -153,6 +153,7 @@ withDb("MCP server", () => {
         "get_inbox",
         "get_task_activity",
         "get_task_git",
+        "open_pull_request",
         "list_comments",
         "list_document_comments",
         "resolve_document_comment",

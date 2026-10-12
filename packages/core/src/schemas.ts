@@ -563,13 +563,16 @@ export const repoRemoteSchema = z
     return remote;
   });
 
+/** Git branch names (simplified): letters, digits, ".", "_", "-" and "/" between parts. */
+const BRANCH_NAME = /^(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9_][A-Za-z0-9._/-]*(?<![/.])$/;
+
 /** A branch name as git allows it (simplified): letters, digits, ".", "_", "-" and "/" between parts. */
 export const branchNameSchema = z
   .string()
   .trim()
   .min(1, "Required")
   .max(100, "At most 100 characters")
-  .regex(/^(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9_][A-Za-z0-9._/-]*(?<![/.])$/, "A git branch name, e.g. main");
+  .regex(BRANCH_NAME, "A git branch name, e.g. main");
 
 /** A folder in the repo, relative to its root ("web/app"; "." for the whole repo); "./" and a trailing "/" are dropped. */
 export const repoPathSchema = z
@@ -633,6 +636,24 @@ export const attachRepoInput = z.object({
 });
 
 export type AttachRepoInput = z.input<typeof attachRepoInput>;
+
+/** `POST /tasks/:key/pull-request` (ST-87): opens a pull request for the task on GitHub. */
+export const openPullRequestInput = z.object({
+  /** The repo ("owner/name" or a remote URL), one of those attached to the task's project; needed only when it has several. */
+  repo: z.string().trim().min(1, "Required").max(300).optional(),
+  /** The branch with the changes, already pushed to GitHub; default the task's branch ("st-12-short-title"). */
+  head: z.string().trim().min(1, "Required").max(255, "At most 255 characters").regex(BRANCH_NAME, "A git branch name, e.g. st-12-fix").optional(),
+  /** The branch to merge into; default the repo's default branch. */
+  base: branchNameSchema.optional(),
+  /** Default: the task's title and key, e.g. "Fix the login (ST-12)". */
+  title: z.string().trim().min(1, "Required").max(256, "At most 256 characters").optional(),
+  /** Markdown; "Closes ST-12" is added when it doesn't close the task already. Default: a link to the task and "Closes ST-12". */
+  body: z.string().max(60_000, "At most 60000 characters").optional(),
+  /** Open it as a draft. */
+  draft: z.boolean().optional(),
+});
+
+export type OpenPullRequestInput = z.input<typeof openPullRequestInput>;
 
 export const createAppInput = z.object({
   name: appSlug,

@@ -37,7 +37,8 @@ export interface MeResponse {
 }
 
 export interface ApiErrorBody {
-  error: { code: string; message: string };
+  /** `url`: what the error is about, e.g. the pull request that is already open (409 from `POST /tasks/:key/pull-request`). */
+  error: { code: string; message: string; url?: string };
 }
 
 export type AuthProvider = "magic-link" | "github" | "batele-id";
@@ -466,6 +467,12 @@ export interface TaskGitDto {
   branches: GitBranchDto[];
   /** The latest 100. */
   commits: GitCommitDto[];
+}
+
+/** `POST /tasks/:key/pull-request` (ST-87): the pull request opened on GitHub, as linked to the task. */
+export interface OpenedPullRequestDto {
+  taskKey: string;
+  pullRequest: PullRequestDto;
 }
 
 /** `POST /github/install`: the GitHub page that installs the App; it returns to `/github/setup`. */

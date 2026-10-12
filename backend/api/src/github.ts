@@ -1,5 +1,13 @@
-import type { GithubInstallationData, GithubRepoData } from "@repo/core";
+import {
+  DomainError,
+  type CreatePullRequestResult,
+  type GithubInstallationData,
+  type GithubPullRequestData,
+  type GithubPullRequestRequest,
+  type GithubRepoData,
+} from "@repo/core";
 import { App, Octokit, RequestError } from "octokit";
+import { z } from "zod";
 import type { GithubAppConfig } from "./env";
 
 // The GitHub port (ST-82): everything the API asks GitHub, behind an interface so tests use a fake
@@ -19,6 +27,12 @@ export interface GithubApp {
   getInstallation(installationId: number): Promise<GithubInstallationData | null>;
   /** Every repository the installation grants. */
   listInstallationRepos(installationId: number): Promise<GithubRepoData[]>;
+  /**
+   * Opens a pull request as the App, with the installation's token (ST-87). When one is already
+   * open for the branch, returns it with `created: false`. GitHub refusing it (no commits, a branch
+   * that isn't pushed) is a DomainError "validation" with GitHub's reason.
+   */
+  createPullRequest(request: GithubPullRequestRequest): Promise<CreatePullRequestResult>;
 }
 
 /** GitHub couldn't be reached or refused a request (the API answers 502). */
@@ -40,6 +54,55 @@ async function guarded<T>(what: string, run: () => Promise<T>): Promise<T> {
   } catch (err) {
     throw new GithubUnavailableError(`GitHub request failed: ${what}`, { cause: err });
   }
+}
+
+/** A pull request in GitHub's REST answers: only the fields used. */
+interface RestPullRequest {
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  merged?: boolean;
+  draft?: boolean;
+  merged_at: string | null;
+  closed_at: string | null;
+  updated_at: string;
+  head: { ref: string };
+  base: { ref: string };
+  user: { login: string } | null;
+}
+
+export const toPullRequestData = (pr: RestPullRequest): GithubPullRequestData => ({
+  number: pr.number,
+  title: pr.title,
+  body: pr.body,
+  state: pr.state === "closed" ? "closed" : "open",
+  merged: pr.merged === true || pr.merged_at !== null,
+  draft: pr.draft ?? false,
+  headBranch: pr.head.ref,
+  baseBranch: pr.base.ref,
+  author: pr.user?.login ?? null,
+  mergedAt: pr.merged_at,
+  closedAt: pr.closed_at,
+  updatedAt: pr.updated_at,
+});
+
+/** GitHub's 422 body: "Validation Failed" with the reasons in `errors`. */
+const validationFailed = z.object({
+  message: z.string().optional(),
+  errors: z
+    .array(z.union([z.string(), z.object({ message: z.string().optional(), field: z.string().optional(), code: z.string().optional() })]))
+    .optional(),
+});
+
+/** GitHub's reasons for refusing a request (422), joined. */
+export function githubReasons(data: unknown): string {
+  const parsed = validationFailed.safeParse(data);
+  if (!parsed.success) return "Validation Failed";
+  const reasons = (parsed.data.errors ?? []).map((e) =>
+    typeof e === "string" ? e : (e.message ?? [e.field, e.code].filter(Boolean).join(" ")),
+  );
+  return reasons.filter(Boolean).join("; ") || parsed.data.message || "Validation Failed";
 }
 
 export function createGithubApp(config: GithubAppConfig): GithubApp {
@@ -97,5 +160,26 @@ export function createGithubApp(config: GithubAppConfig): GithubApp {
         const repos = await octokit.paginate("GET /installation/repositories", { per_page: 100 });
         return repos.map((r) => ({ owner: r.owner.login, name: r.name, defaultBranch: r.default_branch }));
       }),
+
+    async createPullRequest({ installationId, owner, name, head, base, title, body, draft }) {
+      const octokit = await guarded("installation token", () => app.getInstallationOctokit(installationId));
+      try {
+        const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls", { owner, repo: name, head, base, title, body, draft });
+        return { created: true, pullRequest: toPullRequestData(data) };
+      } catch (err) {
+        if (!(err instanceof RequestError) || err.status !== 422) {
+          throw new GithubUnavailableError("GitHub request failed: create pull request", { cause: err });
+        }
+        const reasons = githubReasons(err.response?.data);
+        if (!/already exists/i.test(reasons)) throw new DomainError("validation", `GitHub refused the pull request: ${reasons}`);
+      }
+      // Already open for the branch: GitHub's own.
+      return guarded("open pull requests", async () => {
+        const { data } = await octokit.request("GET /repos/{owner}/{repo}/pulls", { owner, repo: name, head: `${owner}:${head}`, state: "open", per_page: 1 });
+        const [open] = data;
+        if (!open) throw new Error(`GitHub reported an open pull request for ${head} but lists none`);
+        return { created: false, pullRequest: toPullRequestData(open) };
+      });
+    },
   };
 }

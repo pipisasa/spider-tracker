@@ -37,6 +37,7 @@ See [git-integration.md](./git-integration.md).
 - GitHub App per organization (ST-82): owners and admins connect it in Settings → GitHub; the repos it grants are linked to the organization's repos or added, and git-driven changes are attributed to a GitHub bot
 - Branches, commits and pull requests link to tasks automatically (ST-84): a branch named after the task, commits that mention its key, pull requests that name it in their branch, title or body, in repos attached to its project. The task page's Development panel lists them with PR state (open, draft, closed, merged); `spider task git` and MCP `get_task_git` give agents the same
 - Status changes driven by pull request events (ST-85): a linked pull request opened or ready moves its task to In Review, a draft to In Progress, a merge to Done; closed without merging changes nothing. Per project (on by default; each event's target category or none, in project settings, `spider project update --automation/--on-*` or MCP `update_project`); forward only, ordinary tasks only, and only for PRs that name the task by branch, title or closing keyword
+- Opening the pull request from the tracker (ST-87): `spider pr` pushes the task's branch and opens its PR on GitHub as the App, titled after the task and closing it, linked at once; MCP `open_pull_request` does the same for a branch already pushed
 - Agents can open pull requests
 
 ## Documents

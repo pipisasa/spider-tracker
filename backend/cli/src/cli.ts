@@ -103,6 +103,7 @@ import {
   isDirty,
   isRepo,
   originUrl,
+  pushBranch,
   remoteRepo,
   runGit,
   taskKeyFromBranch,
@@ -2295,6 +2296,70 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     output(opts, found, () => taskGitLines(found));
   });
 
+  // Pushes the branch with the person's own git, then the API opens the pull request as the
+  // GitHub App and links it to the task (ST-87).
+  type PrOptions = JsonOption & { draft?: boolean; base?: string; push: boolean; repo?: string };
+  const openPullRequest = async (key: string | undefined, opts: PrOptions) => {
+    const resolved = taskKey(key, cwd, git);
+    const inRepo = isRepo(cwd, git);
+    const head = inRepo ? currentBranch(cwd, git) : null;
+    if (opts.push && !head) {
+      throw usageError(
+        inRepo
+          ? "Not on a branch (detached HEAD): check out the task's branch, or pass --no-push to open a PR for a branch already pushed"
+          : "Not in a git repository: run spider pr in the task's repo, or pass --no-push to open a PR for a branch already pushed",
+      );
+    }
+    let repo: string | undefined;
+    if (opts.repo !== undefined) {
+      const remote = parseRepoRemote(opts.repo);
+      if (!remote) throw usageError(`Not a GitHub repo: "${opts.repo}". Use owner/name or a GitHub URL`);
+      repo = repoFullName(remote);
+    } else if (inRepo) {
+      repo = remoteRepo(cwd, git) ?? undefined;
+    }
+    const notes: string[] = [];
+    if (opts.push && head) {
+      if (!originUrl(cwd, git)) throw usageError("This repository has no origin remote: push the branch yourself and pass --no-push");
+      try {
+        pushBranch(cwd, head, git);
+      } catch (err) {
+        throw new CliError(EXIT.unexpected, `git push failed: ${err instanceof Error ? err.message : String(err)}`, "git");
+      }
+      notes.push(`Pushed ${head} to origin`);
+    }
+    const { sdk, org } = conn();
+    const opened = await (await sdk()).tasks.openPullRequest(await org(), resolved, {
+      ...(repo !== undefined ? { repo } : {}),
+      ...(head ? { head } : {}),
+      ...(opts.base !== undefined ? { base: opts.base } : {}),
+      ...(opts.draft ? { draft: true } : {}),
+    });
+    const pr = opened.pullRequest;
+    output(opts, opened, () =>
+      [
+        ...notes,
+        `Opened ${pr.repo}#${pr.number}${pr.draft ? " (draft)" : ""} for ${opened.taskKey}: ${pr.title}  (${pr.headBranch} → ${pr.baseBranch})`,
+        pr.url,
+      ].join("\n"),
+    );
+  };
+  const prCommand = (cmd: Command) =>
+    withJson(
+      cmd
+        .description(
+          "push the current branch, then open its pull request on GitHub for the task (default: the branch's) and link it; the body closes the task",
+        )
+        .argument("[key]")
+        .option("--draft", "open it as a draft")
+        .option("--base <branch>", "the branch to merge into (default: the repo's default branch)")
+        .option("--no-push", "don't push: open the PR for a branch already pushed")
+        .option("--repo <owner/name>", "the repo, when the project has several (default: the origin remote)"),
+    ).action(openPullRequest);
+
+  prCommand(task.command("pr"));
+  prCommand(program.command("pr"));
+
   taskOptions(
     task
       .command("create")
@@ -3020,7 +3085,9 @@ export async function run(argv: string[], options: RunOptions): Promise<number> 
     // Every failure says something, even when the cause had no message (ST-107).
     const message = err.message.trim() || `Failed with ${err.code === "error" ? "an unknown error" : err.code} (exit code ${err.exitCode})`;
     options.stderr.write(
-      json ? `${JSON.stringify({ error: { code: err.code, message } })}\n` : `spider: ${message}\n`,
+      json
+        ? `${JSON.stringify({ error: err.url === undefined ? { code: err.code, message } : { code: err.code, message, url: err.url } })}\n`
+        : `spider: ${message}\n`,
     );
     return err.exitCode;
   };
