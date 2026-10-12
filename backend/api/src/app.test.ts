@@ -273,6 +273,11 @@ withDb("projects and tasks API", () => {
     expect((await call(outsider, "POST", "/projects", { name: "x", key: "XX" })).status).toBe(404);
   });
 
+  test("malformed ids are a 404, not a 500", async () => {
+    const res = await call(owner, "DELETE", "/tags/not-a-uuid");
+    expect(res.status).toBe(404);
+  });
+
   test("update, archive and restore a project", async () => {
     const updated = await call(owner, "PATCH", "/projects/spi", { name: "Spider Tracker", description: "The tracker" });
     expect(updated.status).toBe(200);

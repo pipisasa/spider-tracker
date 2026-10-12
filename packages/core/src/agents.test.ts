@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import {
   authenticateApiKey,
@@ -12,6 +12,7 @@ import {
   updateAgent,
 } from "./agents";
 import { createOrganization } from "./organizations";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -115,6 +116,31 @@ run("agents and API keys", () => {
     expect(await authenticateApiKey(db, key.secret)).toBeNull();
     expect((await listAgents(db, admin)).some((a) => a.actor.id === agentId)).toBe(false);
     await expect(updateAgent(db, alice, agentId, { name: "Back" })).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  test("malformed ids are not found", async () => {
+    for (const call of [
+      () => updateAgent(db, ctx, "nope", { name: "x" }),
+      () => deleteAgent(db, ctx, "nope"),
+      () => createApiKey(db, ctx, "nope", { name: "x" }),
+      () => revokeApiKey(db, ctx, "nope"),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ code: "not_found" });
+    }
+  });
+
+  test("two agents taking the same handle at once: one gets it, the other a conflict", async () => {
+    const stamp = Date.now();
+    const a = await createAgent(db, ctx, { name: `Race A ${stamp}` });
+    const b = await createAgent(db, ctx, { name: `Race B ${stamp}` });
+    const handle = `raced-${stamp}`;
+    // B passes the "is it taken?" check, then waits on its row while A takes the handle.
+    const release = await holdLock(db, sql`select 1 from actors where id = ${b.actor.id} for update`);
+    const second = settle(updateAgent(db, ctx, b.actor.id, { handle }));
+    await waitForLockWaiters(db, "actors", 1);
+    await updateAgent(db, ctx, a.actor.id, { handle });
+    await release();
+    expect(await second).toMatchObject({ code: "conflict" });
   });
 
   test("an agent's keys stop working when its owner is deactivated", async () => {

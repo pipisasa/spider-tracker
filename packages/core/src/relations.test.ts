@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { listTaskActivity } from "./activity-feed";
 import type { ActorContext } from "./access";
 import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { addRelation, listRelations, removeRelation } from "./relations";
 import { createTask, deleteTask } from "./tasks";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -56,5 +58,40 @@ run("task relations", () => {
     await expect(removeRelation(db, ctx, "SPI-1", { kind: "blocks", task: "SPI-2" })).rejects.toMatchObject({ code: "not_found" });
     await deleteTask(db, ctx, "SPI-4");
     expect(await kinds("SPI-1")).toEqual([]);
+  });
+
+  test("the same link added from both sides at once is stored once", async () => {
+    const [a, b] = [await createTask(db, ctx, "SPI", { title: "Left" }), await createTask(db, ctx, "SPI", { title: "Right" })];
+    // Both pass the "already linked?" check, then queue on the foreign-key check of a locked task.
+    const release = await holdLock(db, sql`select 1 from tasks where id = ${a.id} for update`);
+    const results = [
+      settle(addRelation(db, ctx, a.key, { kind: "relates", task: b.key })),
+      settle(addRelation(db, ctx, b.key, { kind: "relates", task: a.key })),
+    ];
+    await waitForLockWaiters(db, "task_relations", 2);
+    await release();
+    const errors = await Promise.all(results);
+    expect(errors.filter((e) => e === null)).toHaveLength(1);
+    expect(errors.find((e) => e !== null)).toMatchObject({ code: "conflict" });
+    expect(await kinds(a.key)).toEqual([`relates ${b.key}`]);
+    await removeRelation(db, ctx, a.key, { kind: "relates", task: b.key });
+  });
+
+  test("adding and removing a link is recorded on both tasks", async () => {
+    const [a, b] = [await createTask(db, ctx, "SPI", { title: "Blocker" }), await createTask(db, ctx, "SPI", { title: "Blocked" })];
+    await addRelation(db, ctx, a.key, { kind: "blocks", task: b.key });
+    await removeRelation(db, ctx, b.key, { kind: "blocked_by", task: a.key });
+    const log = async (key: string) =>
+      (await listTaskActivity(db, ctx.orgId, key))
+        .filter((e) => e.action.startsWith("relation."))
+        .map((e) => ({ action: e.action, changes: e.changes }));
+    expect(await log(a.key)).toEqual([
+      { action: "relation.added", changes: { kind: "blocks", task: b.key } },
+      { action: "relation.removed", changes: { kind: "blocks", task: b.key } },
+    ]);
+    expect(await log(b.key)).toEqual([
+      { action: "relation.added", changes: { kind: "blocked_by", task: a.key } },
+      { action: "relation.removed", changes: { kind: "blocked_by", task: a.key } },
+    ]);
   });
 });

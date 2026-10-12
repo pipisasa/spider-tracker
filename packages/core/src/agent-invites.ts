@@ -24,7 +24,7 @@ import type {
   CreatedAgentInviteDto,
   ProjectRefDto,
 } from "./contracts";
-import { DomainError } from "./errors";
+import { DomainError, isUniqueViolation } from "./errors";
 import { handleFrom } from "./handles";
 import {
   formatInvitationCode,
@@ -385,11 +385,19 @@ export async function acceptAgentInvite(
     else if (data.name)
       handle = await uniqueHandle(tx, organization.id, handleFrom(data.name));
 
-    const [actor] = await tx
-      .update(actors)
-      .set({ name, handle, deactivatedAt: null })
-      .where(eq(actors.id, agentRow.actor.id))
-      .returning();
+    let actor: typeof actors.$inferSelect | undefined;
+    try {
+      [actor] = await tx
+        .update(actors)
+        .set({ name, handle, deactivatedAt: null })
+        .where(eq(actors.id, agentRow.actor.id))
+        .returning();
+    } catch (err) {
+      // Someone took the handle after the check above; the code stays usable.
+      if (isUniqueViolation(err, "actors_org_handle_key"))
+        throw new DomainError("conflict", `Handle @${handle} is already used`);
+      throw err;
+    }
     if (!actor) throw new Error("Failed to activate agent");
     if (data.description !== undefined) {
       await tx

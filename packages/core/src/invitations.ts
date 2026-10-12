@@ -5,8 +5,9 @@ import { and, desc, eq, gt, like, or, sql } from "drizzle-orm";
 import { assertRole, type ActivitySource, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
 import type { InvitationDto, InvitationStatus } from "./contracts";
-import { DomainError } from "./errors";
+import { DomainError, isUniqueViolation } from "./errors";
 import { handleFrom } from "./handles";
+import { isUuid } from "./ids";
 import type { UserIdentity } from "./organizations";
 import { createInvitationInput, invitationCodeInput } from "./schemas";
 import { parseInput } from "./validate";
@@ -150,6 +151,8 @@ export async function revokeInvitation(
   invitationId: string,
 ): Promise<void> {
   assertRole(ctx, ["owner", "admin"], "revoke invitations");
+  if (!isUuid(invitationId))
+    throw new DomainError("not_found", "Invitation not found");
   await db.transaction(async (tx) => {
     const [row] = await tx
       .update(invitations)
@@ -288,22 +291,41 @@ export async function acceptInvitation(
         .where(eq(actors.id, existing.id))
         .returning();
     } else {
-      [actor] = await tx
-        .insert(actors)
-        .values({
-          orgId: organization.id,
-          type: "human",
-          userId: user.id,
-          name: user.name || user.email,
-          handle: await uniqueHandle(
-            tx,
-            organization.id,
-            handleFrom(user.email),
-          ),
-          avatarUrl: user.image ?? null,
-          role,
-        })
-        .returning();
+      // A concurrent join can take the picked handle; pick the next free one.
+      for (let attempt = 0; attempt < 5 && !actor; attempt++) {
+        try {
+          [actor] = await tx
+            .insert(actors)
+            .values({
+              orgId: organization.id,
+              type: "human",
+              userId: user.id,
+              name: user.name || user.email,
+              handle: await uniqueHandle(
+                tx,
+                organization.id,
+                handleFrom(user.email),
+              ),
+              avatarUrl: user.image ?? null,
+              role,
+            })
+            .onConflictDoNothing({ target: [actors.orgId, actors.handle] })
+            .returning();
+        } catch (err) {
+          // The same person joining twice at once (e.g. with two codes).
+          if (isUniqueViolation(err, "actors_org_user_key"))
+            throw new DomainError(
+              "conflict",
+              `You're already a member of ${organization.name}`,
+            );
+          throw err;
+        }
+      }
+      if (!actor)
+        throw new DomainError(
+          "conflict",
+          "Couldn't pick a free handle; please try again",
+        );
     }
     if (!actor) throw new Error("Failed to add member");
 

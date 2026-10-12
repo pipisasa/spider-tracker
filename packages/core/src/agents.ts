@@ -6,8 +6,9 @@ import { alias } from "drizzle-orm/pg-core";
 import { assertRole, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
 import type { ApiKeyDto, CreatedApiKeyDto, ProjectRefDto } from "./contracts";
-import { DomainError } from "./errors";
+import { DomainError, isUniqueViolation } from "./errors";
 import { handleFrom } from "./handles";
+import { isUuid } from "./ids";
 import { createAgentInput, createApiKeyInput, updateAgentInput } from "./schemas";
 import { parseInput } from "./validate";
 
@@ -149,6 +150,7 @@ export async function agentProjectRefs(db: Db | Tx, agentActorIds: string[]) {
 }
 
 async function findAgent(db: Db | Tx, orgId: string, agentActorId: string) {
+  if (!isUuid(agentActorId)) throw new DomainError("not_found", "Agent not found");
   const [row] = await db
     .select({ actor: actors, ownerId: agents.ownerId, description: agents.description })
     .from(agents)
@@ -182,7 +184,13 @@ export async function updateAgent(db: Db, ctx: ActorContext, agentActorId: strin
       actorPatch.handle = changes.handle = data.handle;
     }
     if (Object.keys(actorPatch).length > 0) {
-      await tx.update(actors).set(actorPatch).where(eq(actors.id, agentActorId));
+      try {
+        await tx.update(actors).set(actorPatch).where(eq(actors.id, agentActorId));
+      } catch (err) {
+        // Someone took the handle between the check above and this update.
+        if (isUniqueViolation(err, "actors_org_handle_key")) throw new DomainError("conflict", `Handle @${data.handle} is already used`);
+        throw err;
+      }
     }
     if (data.description !== undefined && (data.description || null) !== current.description) {
       const description = data.description || null;
@@ -255,6 +263,7 @@ export async function createApiKey(
 }
 
 export async function revokeApiKey(db: Db, ctx: ActorContext, keyId: string) {
+  if (!isUuid(keyId)) throw new DomainError("not_found", "API key not found");
   await db.transaction(async (tx) => {
     const [row] = await tx
       .select({ id: apiTokens.id, actorId: apiTokens.actorId, ownerId: agents.ownerId })

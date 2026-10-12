@@ -6,6 +6,7 @@ import { recordActivity } from "./activity";
 import type { TagDto } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
+import { isUuid } from "./ids";
 import { createTagInput } from "./schemas";
 import { parseInput } from "./validate";
 
@@ -28,7 +29,8 @@ export async function createTag(db: Db, ctx: ActorContext, input: unknown): Prom
     const [row] = await tx
       .insert(tags)
       .values({ orgId: ctx.orgId, name, color: color ?? null })
-      .onConflictDoNothing({ target: [tags.orgId, tags.name] })
+      // Names are unique per organization regardless of case (unique index on lower(name)).
+      .onConflictDoNothing()
       .returning();
     if (!row) throw new DomainError("conflict", `Tag "${name}" already exists`);
     await recordActivity(tx, ctx, { entityType: "tag", entityId: row.id, action: "tag.created", changes: { name } });
@@ -39,6 +41,7 @@ export async function createTag(db: Db, ctx: ActorContext, input: unknown): Prom
 
 export async function deleteTag(db: Db, ctx: ActorContext, tagId: string) {
   assertRole(ctx, ["owner", "admin"], "delete tags");
+  if (!isUuid(tagId)) throw new DomainError("not_found", "Tag not found");
   await db.transaction(async (tx) => {
     const [row] = await tx
       .delete(tags)
