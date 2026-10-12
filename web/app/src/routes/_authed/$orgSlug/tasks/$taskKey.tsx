@@ -70,50 +70,8 @@ function TaskPage() {
     });
   }
 
-  return (
-    <div className="flex min-h-0 flex-1">
-      <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-8 py-6">
-        <nav className="flex items-center gap-1 text-sm text-muted-foreground">
-          <Link
-            to="/$orgSlug/projects/$projectKey"
-            params={{ orgSlug, projectKey: project.key }}
-            className="hover:text-foreground"
-          >
-            {project.name}
-          </Link>
-          <ChevronRightIcon className="size-4" />
-          {task.parentKey && (
-            <>
-              <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.parentKey }} className="hover:text-foreground">
-                {task.parentKey}
-              </Link>
-              <ChevronRightIcon className="size-4" />
-            </>
-          )}
-          <span>{task.key}</span>
-        </nav>
-        {visitors.length > 0 && (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span aria-hidden className="size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
-            Working now: {visitors.map((a) => `@${a.handle}`).join(", ")}
-          </p>
-        )}
-        {/* Keyed by task so local edits reset when navigating between tasks. */}
-        <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"} />
-        <Subtasks
-          key={`subtasks-${task.id}`}
-          orgSlug={orgSlug}
-          task={task}
-          projectKey={project.key}
-          statuses={project.statuses}
-          members={actors}
-        />
-        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
-        <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
-        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
-      </main>
-
-      <aside className="flex w-72 shrink-0 flex-col gap-4 border-l p-4">
+  const fields = (
+    <>
         <Field label="Status">
           <StatusSelect statuses={project.statuses} value={task.statusId} onChange={(statusId) => save({ statusId })} />
         </Field>
@@ -152,7 +110,55 @@ function TaskPage() {
           <Trash2Icon />
           Delete task
         </Button>
-      </aside>
+    </>
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1">
+      <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
+        <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+          <Link
+            to="/$orgSlug/projects/$projectKey"
+            params={{ orgSlug, projectKey: project.key }}
+            className="hover:text-foreground"
+          >
+            {project.name}
+          </Link>
+          <ChevronRightIcon className="size-4" />
+          {task.parentKey && (
+            <>
+              <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.parentKey }} className="hover:text-foreground">
+                {task.parentKey}
+              </Link>
+              <ChevronRightIcon className="size-4" />
+            </>
+          )}
+          <span>{task.key}</span>
+        </nav>
+        {visitors.length > 0 && (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span aria-hidden className="size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
+            Working now: {visitors.map((a) => `@${a.handle}`).join(", ")}
+          </p>
+        )}
+        {/* Keyed by task so local edits reset when navigating between tasks. */}
+        <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"}
+          afterTitle={<div className="flex flex-col gap-4 rounded-lg border p-3 md:hidden">{fields}</div>}
+        />
+        <Subtasks
+          key={`subtasks-${task.id}`}
+          orgSlug={orgSlug}
+          task={task}
+          projectKey={project.key}
+          statuses={project.statuses}
+          members={actors}
+        />
+        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
+        <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
+        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
+      </main>
+
+      <aside className="hidden w-72 shrink-0 flex-col gap-4 border-l p-4 md:flex">{fields}</aside>
     </div>
   );
 }
@@ -163,10 +169,13 @@ function TaskText({
   task,
   onSave,
   canEdit,
+  afterTitle,
 }: {
   task: TaskDto;
   onSave: (input: UpdateTaskInput, callbacks?: SaveCallbacks) => void;
   canEdit: boolean;
+  /** Shown between the title and the description (the side fields on phones). */
+  afterTitle?: ReactNode;
 }) {
   const [title, setTitle] = useState(task.title);
   // What the editor was mounted with; a new key remounts it with `value`.
@@ -286,6 +295,7 @@ function TaskText({
           }
         }}
       />
+      {afterTitle}
       {/* -ml-7 lines the text up with the title; the gutter holds the drag handle. */}
       <Suspense fallback={<div className="min-h-32" />}>
         <RichEditor
@@ -301,7 +311,7 @@ function TaskText({
           label="Description"
           placeholder="Add a description… type '/' for commands"
           autofocus={false}
-          className="-ml-7 min-h-32"
+          className="min-h-32 md:-ml-7"
         />
       </Suspense>
     </>

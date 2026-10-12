@@ -7,7 +7,8 @@ import { useUpdateTask } from "@/lib/work";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCorners,
   useDroppable,
   useSensor,
@@ -113,13 +114,13 @@ function Column({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: columnId(status.id), data: { statusId: status.id } });
   return (
-    <section className="flex w-72 shrink-0 flex-col gap-2">
+    <section className="flex w-[85vw] max-w-80 shrink-0 snap-center flex-col gap-2 md:w-72 md:snap-align-none">
       <header className="flex items-center gap-2 px-1 text-sm font-medium">
         <StatusIcon status={status} />
         {status.name}
         <span className="text-muted-foreground">{tasks.length}</span>
         {onAdd && (
-          <Button variant="ghost" size="icon" className="ml-auto size-6" aria-label={`Add to ${status.name}`} onClick={onAdd}>
+          <Button variant="ghost" size="icon" className="ml-auto size-9 md:size-6" aria-label={`Add to ${status.name}`} onClick={onAdd}>
             <PlusIcon className="size-4" />
           </Button>
         )}
@@ -155,7 +156,11 @@ export function Board({
 }) {
   const update = useUpdateTask(orgSlug);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    // On touch, a short press starts a drag; a quick swipe still scrolls the board.
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+  );
   const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const byStatus = useMemo(() => {
     const map = new Map<string, TaskDto[]>(statuses.map((s) => [s.id, []]));
@@ -215,7 +220,7 @@ export function Board({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex flex-1 gap-4 overflow-x-auto p-4">
+      <div className="flex flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 md:snap-none md:gap-4 md:p-4">
         {statuses.map((status) => (
           <Column
             key={status.id}

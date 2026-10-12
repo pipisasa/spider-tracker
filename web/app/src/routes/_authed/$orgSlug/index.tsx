@@ -21,7 +21,7 @@ function EmptyOrg() {
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+    <main className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
       <h1 className="text-lg font-semibold">No projects yet</h1>
       <p className="max-w-sm text-sm text-muted-foreground">
         Projects hold tasks. Each one gets a short key that prefixes its task numbers.

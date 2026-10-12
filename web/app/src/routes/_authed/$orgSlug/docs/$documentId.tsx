@@ -117,9 +117,9 @@ function DocumentPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
-      <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-8 py-6">
-        <nav className="flex items-center gap-1 text-sm text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
+        <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
           <Link
             to="/$orgSlug/docs"
             params={{ orgSlug }}
@@ -166,7 +166,7 @@ function DocumentPage() {
           />
         ) : (
           <>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <DocumentIcon format={doc.format} />
               <h1 className="min-w-0 flex-1 truncate text-2xl font-semibold">
                 {doc.title}
@@ -236,7 +236,7 @@ function DocumentPage() {
       )}
 
       {showHistory && !edit && (
-        <aside className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto border-l p-4">
+        <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto border-t p-4 md:w-72 md:border-t-0 md:border-l">
           <VersionHistory
             orgSlug={orgSlug}
             doc={doc}

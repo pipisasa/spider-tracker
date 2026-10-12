@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
 import { useOrgEvents } from "@/lib/realtime";
 import { actorsQuery, membersQuery, projectsQuery } from "@/lib/work";
@@ -24,6 +25,7 @@ import {
   LayoutGridIcon,
   LogInIcon,
   LogOutIcon,
+  MenuIcon,
   PlusIcon,
   UserIcon,
   UsersIcon,
@@ -51,15 +53,15 @@ function OrgLayout() {
   const { membership, me } = Route.useRouteContext();
   const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   useOrgEvents(orgSlug);
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
   const canCreateAgents = membership.actor.role !== "guest";
 
   const signOut = useSignOut();
 
-  return (
-    <div className="flex min-h-svh">
-      <aside className="flex w-60 shrink-0 flex-col gap-4 border-r bg-muted/30 p-3">
+  const sidebar = (
+    <>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="justify-between px-2 font-semibold">
@@ -115,7 +117,7 @@ function OrgLayout() {
           <Link
             to="/$orgSlug/docs"
             params={{ orgSlug }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+            className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
             activeProps={{ className: "bg-muted font-medium" }}
           >
             <FileTextIcon className="size-4 text-muted-foreground" />
@@ -143,7 +145,7 @@ function OrgLayout() {
               key={p.id}
               to="/$orgSlug/projects/$projectKey"
               params={{ orgSlug, projectKey: p.key }}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+              className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
               activeProps={{ className: "bg-muted font-medium" }}
             >
               <FolderIcon className="size-4 text-muted-foreground" />
@@ -159,7 +161,7 @@ function OrgLayout() {
           <Link
             to="/$orgSlug/settings/members"
             params={{ orgSlug }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+            className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
             activeProps={{ className: "bg-muted font-medium" }}
           >
             <UsersIcon className="size-4 text-muted-foreground" />
@@ -169,7 +171,7 @@ function OrgLayout() {
             <Link
               to="/$orgSlug/settings/projects"
               params={{ orgSlug }}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+              className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
               activeProps={{ className: "bg-muted font-medium" }}
             >
               <FolderCogIcon className="size-4 text-muted-foreground" />
@@ -180,7 +182,7 @@ function OrgLayout() {
             <Link
               to="/$orgSlug/settings/agents"
               params={{ orgSlug }}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+              className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
               activeProps={{ className: "bg-muted font-medium" }}
             >
               <BotIcon className="size-4 text-muted-foreground" />
@@ -190,6 +192,32 @@ function OrgLayout() {
         </nav>
 
         <div className="mt-auto truncate px-2 text-xs text-muted-foreground">{me.user.email}</div>
+    </>
+  );
+
+  return (
+    <div className="flex min-h-svh flex-col md:flex-row">
+      <header className="sticky top-0 z-30 flex items-center gap-2 border-b bg-background px-2 pt-[env(safe-area-inset-top)] md:hidden">
+        <Button variant="ghost" size="icon" className="size-10" aria-label="Open menu" onClick={() => setMenuOpen(true)}>
+          <MenuIcon className="size-5" />
+        </Button>
+        <span className="truncate font-semibold">{membership.organization.name}</span>
+      </header>
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <SheetContent side="left" className="w-[85vw] max-w-72 p-0 md:hidden" aria-describedby={undefined}>
+          <SheetTitle className="sr-only">Menu</SheetTitle>
+          <div
+            className="flex h-full flex-col gap-4 overflow-y-auto p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            onClick={(e) => {
+              if (e.target instanceof Element && e.target.closest("a")) setMenuOpen(false);
+            }}
+          >
+            {sidebar}
+          </div>
+        </SheetContent>
+      </Sheet>
+      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-muted/30 p-3 md:flex">
+        {sidebar}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

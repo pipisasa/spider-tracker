@@ -48,10 +48,10 @@ function DocumentsPage() {
 
   return (
     <>
-      <header className="flex items-center gap-3 border-b px-6 py-3">
+      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3 md:px-6">
         <h1 className="font-semibold">Documents</h1>
         <Select value={filter} onValueChange={setFilter}>
-          <SelectTrigger size="sm" className="ml-auto w-48" aria-label="Filter by project">
+          <SelectTrigger size="sm" className="ml-auto w-48 max-w-full" aria-label="Filter by project">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -76,7 +76,7 @@ function DocumentsPage() {
           </Button>
         )}
       </header>
-      <main className="flex flex-col gap-3 overflow-y-auto px-6 py-4">
+      <main className="flex flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
         <DocumentList
           orgSlug={orgSlug}
           documents={shown}
