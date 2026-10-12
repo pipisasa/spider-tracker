@@ -7,6 +7,9 @@ import {
   revokeAgentInvite,
   scopedProjectKeys,
   addComment,
+  addDocumentComment,
+  listDocumentComments,
+  resolveDocumentComment,
   createTag,
   createSavedView,
   deleteSavedView,
@@ -380,6 +383,22 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
 
   app.get("/documents/:documentId/versions/:version", async (c) =>
     c.json(await getDocumentVersion(db, c.get("actor"), c.req.param("documentId"), c.req.param("version"))),
+  );
+
+  // Comments on a document (ST-118): on the whole document, or on a fragment ({ quote }).
+  app.get("/documents/:documentId/comments", async (c) =>
+    c.json(list(await listDocumentComments(db, c.get("actor"), c.req.param("documentId")))),
+  );
+
+  app.post("/documents/:documentId/comments", async (c) =>
+    c.json(await addDocumentComment(db, c.get("actor"), c.req.param("documentId"), await body(c)), 201),
+  );
+
+  // PATCH { resolved: true | false }: resolve or reopen a thread (a top-level comment).
+  app.patch("/documents/:documentId/comments/:commentId", async (c) =>
+    c.json(
+      await resolveDocumentComment(db, c.get("actor"), c.req.param("documentId"), c.req.param("commentId"), await body(c)),
+    ),
   );
 
   // GET ?from=3&to=5: a line diff of two versions; without `to`, against the current one (ST-117).

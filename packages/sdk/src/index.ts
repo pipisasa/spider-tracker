@@ -7,6 +7,7 @@ import type {
   BulkUpdateTasksResponse,
   ApiErrorBody,
   CommentDto,
+  DocumentCommentDto,
   AgentInviteDto,
   CreatedAgentInviteDto,
   CreatedApiKeyDto,
@@ -39,6 +40,7 @@ import type {
   CreateAgentInviteInput,
   CreateAgentInput,
   CreateCommentInput,
+  CreateDocumentCommentInput,
   CreateDocumentInput,
   CreateProjectInput,
   CreateSavedViewInput,
@@ -256,7 +258,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     inbox: {
       /**
        * Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items.
-       * `kinds` defaults to the task kinds; ask for "rules" to get project rules changes too.
+       * `kinds` defaults to the task kinds; ask for "rules" and the "document_*" kinds to get project rules changes and document comments too.
        */
       list: (
         orgSlug: string,
@@ -304,6 +306,17 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
           request<ListResponse<DocumentVersionSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions`),
         get: (orgSlug: string, id: string, version: number) =>
           request<DocumentVersionDto>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions/${version}`),
+      },
+      /** Comments on a document (ST-118): on the whole document or on a quoted fragment, with replies. */
+      comments: {
+        /** Oldest first, with `outdated` (the quote is gone from the current content) and resolved state. */
+        list: (orgSlug: string, id: string) =>
+          request<ListResponse<DocumentCommentDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/comments`),
+        create: (orgSlug: string, id: string, input: CreateDocumentCommentInput) =>
+          request<DocumentCommentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/comments`, input),
+        /** Resolves or reopens a thread (a top-level comment). */
+        resolve: (orgSlug: string, id: string, commentId: string, resolved = true) =>
+          request<DocumentCommentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}/comments/${seg(commentId)}`, { resolved }),
       },
       /** A line diff of two saved versions; without `to`, against the current one. 404 for a missing version. */
       diff: (orgSlug: string, id: string, { from, to }: DocumentDiffQuery) => {

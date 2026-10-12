@@ -16,6 +16,7 @@ import { MIN_CLI_HEADER } from "@repo/core/version";
 import {
   actorHandle,
   commentView,
+  documentCommentView,
   documentDiffView,
   documentVersionView,
   projectRulesView,
@@ -1741,7 +1742,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     program
       .command("inbox")
-      .description("your notifications: mentions, assignments, comments and replies, and changed project rules")
+      .description("your notifications: mentions, assignments, comments and replies, changed project rules, and comments on documents")
       .option("--all", "include items already read")
       .option("--wait <seconds>", "wait up to this long (max 25) for a new item")
       .option("--mark-read", "mark the listed items read"),
@@ -1758,7 +1759,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         ? "Inbox is empty"
         : items
             .map((i) => {
-              const about = i.task?.key ?? (i.document ? `${i.document.projectKey} "${i.document.title}" (${i.document.id})` : "");
+              const about =
+                i.task?.key ?? (i.document ? `${i.document.projectKey ?? "document"} "${i.document.title}" (${i.document.id})` : "");
               const head = `#${i.id} ${about} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
               return i.comment ? `${head}\n  ${i.comment.body.split("\n").join("\n  ")}` : head;
             })
@@ -2002,6 +2004,73 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       saved.version === before ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
     );
   }
+
+  withJson(
+    doc
+      .command("comment")
+      .description("comment on a document (reviews belong here, not in task comments); @handle mentions notify people and agents")
+      .argument("<id>", "document id")
+      .argument("[text...]", "the comment (Markdown)")
+      .option("--file <path>", 'the comment from a file, or "-" for standard input')
+      .option("--quote <text>", "comment on this fragment of the document (text from its current version)")
+      .option("--reply-to <commentId>", "reply in the thread of this comment"),
+  ).action(async (id: string, words: string[], opts: JsonOption & { file?: string; quote?: string; replyTo?: string }) => {
+    if (words.length > 0 && opts.file !== undefined) throw usageError("Pass the comment as text or with --file, not both");
+    const body = (opts.file === undefined ? words.join(" ") : await readContent(opts.file)).trim();
+    if (!body) throw usageError('Nothing to say. Usage: spider doc comment <id> "text" [--quote "fragment"]');
+    if (opts.quote !== undefined && opts.replyTo !== undefined) throw usageError("A reply can't quote: it belongs to its thread's quote");
+    const { sdk, org, actors } = conn();
+    const comment = await (await sdk()).documents.comments.create(await org(), id, {
+      body,
+      quote: opts.quote ?? null,
+      parentId: opts.replyTo ?? null,
+    });
+    output(opts, documentCommentView(comment, await actors()), () => `Commented on document ${comment.documentId} (comment ${comment.id})`);
+  });
+
+  withJson(
+    doc
+      .command("comments")
+      .description("show a document's comments: threads, quoted fragments, outdated and resolved marks")
+      .argument("<id>", "document id"),
+  ).action(async (id: string, opts: JsonOption) => {
+    const { sdk, org, actors } = conn();
+    const [{ items }, rows] = await Promise.all([(await sdk()).documents.comments.list(await org(), id), actors()]);
+    const views = items.map((c) => documentCommentView(c, rows));
+    output(opts, { items: views }, () => {
+      if (views.length === 0) return `No comments on document ${id}`;
+      const indent = (text: string, by: string) => text.split("\n").map((line) => `${by}${line}`).join("\n");
+      const line = (c: (typeof views)[number], by: string) => {
+        const marks = [c.outdated ? "outdated" : null, c.resolvedAt ? `resolved by @${c.resolver ?? "?"}` : null].filter(Boolean);
+        const head = `${by}@${c.author} · ${c.createdAt.slice(0, 16).replace("T", " ")} · ${c.id}${marks.length ? ` (${marks.join(", ")})` : ""}`;
+        const quote = c.quote ? `\n${indent(c.quote, `${by}> `)}` : "";
+        return `${head}${quote}\n${indent(c.body, by)}`;
+      };
+      // Replies (at any depth) under their thread's first comment.
+      const byId = new Map(views.map((c) => [c.id, c]));
+      const rootOf = (c: (typeof views)[number]): string => {
+        const parent = c.parentId ? byId.get(c.parentId) : undefined;
+        return parent && parent.id !== c.id ? rootOf(parent) : c.id;
+      };
+      return views
+        .filter((c) => rootOf(c) === c.id)
+        .map((root) => [root, ...views.filter((c) => c !== root && rootOf(c) === root.id)].map((c) => line(c, c === root ? "" : "  ")).join("\n\n"))
+        .join("\n\n");
+    });
+  });
+
+  withJson(
+    doc
+      .command("resolve")
+      .description("mark a comment thread on a document resolved (or --reopen it)")
+      .argument("<id>", "document id")
+      .argument("<commentId>", "the thread's first comment")
+      .option("--reopen", "reopen a resolved thread"),
+  ).action(async (id: string, commentId: string, opts: JsonOption & { reopen?: boolean }) => {
+    const { sdk, org, actors } = conn();
+    const comment = await (await sdk()).documents.comments.resolve(await org(), id, commentId, !opts.reopen);
+    output(opts, documentCommentView(comment, await actors()), () => `${comment.resolvedAt ? "Resolved" : "Reopened"} comment ${comment.id}`);
+  });
 
   withJson(
     doc

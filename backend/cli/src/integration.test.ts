@@ -410,6 +410,21 @@ withDb("spider CLI against the API", () => {
     expect((await spider("project", "update", "SPI", "--rules", "", "--json")).json()).toMatchObject({ rulesDocumentId: null });
     expect((await asOwner("DELETE", `/documents/${rulesDoc.id}`, {})).status).toBeLessThan(300);
 
+    // Document comments (ST-118): a mention on a document is pushed with its document_id; the reply goes there.
+    const spec = (await (await asOwner("POST", "/documents", { title: "Spec", project: "SPI", content: "Plan" })).json()) as { id: string };
+    const asked = (await (await asOwner("POST", `/documents/${spec.id}/comments`, { body: "@cli-bot review this?" })).json()) as { id: string };
+    for (let i = 0; i < 50 && pushed.length < 3; i++) await Bun.sleep(100);
+    expect(pushed[2]?.meta).toMatchObject({ kind: "document_mention", project: "SPI", document_id: spec.id, comment_id: asked.id });
+    expect(pushed[2]?.meta).not.toHaveProperty("task");
+    expect(pushed[2]?.content).toContain('mentioned you in a comment on document "Spec"');
+    const docReply = await session.callTool({ name: "reply", arguments: { document_id: spec.id, text: "Reviewed", reply_to: asked.id } });
+    expect(docReply.isError).toBeFalsy();
+    const docThread = await session.callTool({ name: "get_comments", arguments: { document_id: spec.id } });
+    expect(JSON.stringify(docThread.content)).toContain("Reviewed");
+    const both = await session.callTool({ name: "reply", arguments: { task: "SPI-1", document_id: spec.id, text: "?" } });
+    expect(both).toMatchObject({ isError: true, content: [{ text: "Pass either task or document_id" }] });
+    expect((await asOwner("DELETE", `/documents/${spec.id}`, {})).status).toBeLessThan(300);
+
     stop.abort();
     await pumping;
     await session.close();
@@ -911,7 +926,7 @@ withDb("spider CLI against the API", () => {
     expect(doc.json()).toMatchObject({ projectKey: "OPS", title: "Runbook" });
   });
 
-  test("CLI --json and MCP return tasks, documents, comments and projects in the same shape (ST-107)", async () => {
+  test("CLI --json and MCP return tasks, documents, comments, document comments and projects in the same shape (ST-107)", async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${env.API_ORIGIN}/mcp`), {
       fetch: async (url, init) => app.request(url, init),
       requestInit: { headers: { Authorization: `Bearer ${token}` } },
@@ -961,6 +976,15 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("get_document", { id: doc?.id, version: 1 })).toEqual(await cli("doc", "view", doc?.id ?? "", "--rev", "1"));
       expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(await cli("doc", "diff", doc?.id ?? "", "--from", "1"));
       expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(await cli("comments", "SPI-1"));
+      // Document comments (ST-118), with a quoted fragment, a reply and a resolved thread.
+      const docComment = (await cli("doc", "comment", doc?.id ?? "", "Parity review")) as { id: string };
+      await cli("doc", "comment", doc?.id ?? "", "Agreed", "--reply-to", docComment.id);
+      await cli("doc", "resolve", doc?.id ?? "", docComment.id);
+      const listedText = (await spider("doc", "comments", doc?.id ?? "")).stdout;
+      expect(listedText).toContain(`${docComment.id} (resolved by @`);
+      expect(listedText).toMatch(/\n {2}@[\w-]+ · .*\n {2}Agreed/);
+      expect((await spider("doc", "comment", doc?.id ?? "", "x", "--quote", "a", "--reply-to", docComment.id)).code).toBe(2);
+      expect(await mcp("list_document_comments", { id: doc?.id })).toEqual(await cli("doc", "comments", doc?.id ?? ""));
       // Backlinks and the documents graph (ST-101), with a document that mentions SPI-1.
       stdin = "Mentions [[SPI-1]]";
       await cli("doc", "create", "--title", "Parity links", "--project", "SPI", "--file", "-");
@@ -989,6 +1013,13 @@ withDb("spider CLI against the API", () => {
         shape(await cli("task", "update", "SPI-1", "--start", "2020-01-02", "--target", "2020-02-02")),
       );
       expect(shape(await mcp("add_comment", { key: "SPI-1", body: "From MCP" }))).toEqual(shape(await cli("comment", "SPI-1", "From CLI")));
+      expect(shape(await mcp("add_document_comment", { id: doc?.id, body: "From MCP" }))).toEqual(
+        shape(await cli("doc", "comment", doc?.id ?? "", "From CLI")),
+      );
+      await mcp("resolve_document_comment", { id: doc?.id, comment_id: docComment.id, resolved: false });
+      expect(shape(await mcp("resolve_document_comment", { id: doc?.id, comment_id: docComment.id }))).toEqual(
+        shape(await cli("doc", "resolve", doc?.id ?? "", docComment.id)),
+      );
       expect(shape(await mcp("update_tasks", { keys: ["SPI-1", "SPI-999"], priority: 3 }))).toEqual(
         shape(await spider("task", "update", "SPI-1", "SPI-999", "--priority", "3", "--json").then((r) => r.json())),
       );

@@ -17,7 +17,8 @@ export type OrgEvent =
   | { type: "project.changed"; orgId: string; projectKey: string }
   | { type: "tags.changed"; orgId: string }
   | {
-      type: "document.changed" | "document.deleted";
+      /** `document.commented`: a comment on the document was added, resolved or reopened (ST-118). */
+      type: "document.changed" | "document.deleted" | "document.commented";
       orgId: string;
       documentId: string;
       projectKey: string | null;
@@ -53,6 +54,7 @@ export function eventInScope(event: OrgEvent, keys: Set<string> | null): boolean
       return keys.has(event.taskKey.split("-")[0] ?? "");
     case "document.changed":
     case "document.deleted":
+    case "document.commented":
       return event.projectKey === null || keys.has(event.projectKey);
     default:
       return true;

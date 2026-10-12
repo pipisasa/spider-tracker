@@ -36,8 +36,8 @@ activity (append-only log for everything)
 | **Git link** | A branch, commit or pull request linked to a task |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
-| **Comment** | A threaded Markdown comment on a task |
-| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task, or (`rules`, about a document instead of a task) changed rules of their project; its id is a cursor for waiting clients |
+| **Comment** | A threaded Markdown comment on a task or (ST-118) a document; a document comment may quote the fragment it is about and its thread can be resolved |
+| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task; or, about a document instead of a task, changed rules of their project (`rules`) or a comment on a document (`document_mention`, `document_reply`, `document_comment`); its id is a cursor for waiting clients |
 | **Device code** | A pending `spider login` (RFC 8628): hashed device code, user code, approver, expiry |
 | **Activity** | Append-only audit log of every change |
 | **Agent run** | One execution of an agent on a task |
@@ -326,12 +326,18 @@ create table files (
 create table comments (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations,
-  task_id uuid not null references tasks on delete cascade,
+  task_id uuid references tasks on delete cascade,          -- exactly one of task_id
+  document_id uuid references documents on delete cascade,  -- and document_id (ST-118)
   parent_id uuid references comments,
   author_id uuid not null references actors,
   body text not null,
+  quote text,                    -- document comments: the fragment it is about (top-level only)
+  document_version int,          -- document comments: the version it was posted on
+  resolved_at timestamptz, resolved_by uuid references actors,   -- a resolved thread
   run_id uuid,
-  created_at timestamptz not null default now(), edited_at timestamptz, deleted_at timestamptz
+  created_at timestamptz not null default now(), edited_at timestamptz, deleted_at timestamptz,
+  check ((task_id is null) <> (document_id is null)),
+  check (quote is null or document_id is not null)
 );
 
 create table activity (

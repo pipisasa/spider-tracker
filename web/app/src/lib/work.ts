@@ -5,6 +5,7 @@ import type {
   AgentInviteDto,
   CommentDto,
   CreatedAgentInviteDto,
+  DocumentCommentDto,
   DocumentDiffDto,
   DocumentDto,
   DocumentGraphDto,
@@ -27,6 +28,7 @@ import type {
 import type {
   CreateAgentInput,
   CreateAgentInviteInput,
+  CreateDocumentCommentInput,
   CreateDocumentInput,
   CreateInvitationInput,
   CreateProjectInput,
@@ -94,6 +96,9 @@ export const keys = {
     ["orgs", org, "documents", "list", "backlinks", id] as const,
   taskBacklinks: (org: string, taskKey: string) =>
     ["orgs", org, "documents", "list", "task-backlinks", taskKey] as const,
+  // Under the document, so a new version refreshes them too (their `outdated` marks).
+  documentComments: (org: string, id: string) =>
+    ["orgs", org, "documents", id, "comments"] as const,
   documentVersions: (org: string, id: string) =>
     ["orgs", org, "documents", id, "versions"] as const,
   documentVersion: (org: string, id: string, version: number) =>
@@ -657,6 +662,51 @@ export const taskBacklinksQuery = (org: string, taskKey: string) =>
         )
       ).items,
   });
+
+/** Comments on a document (ST-118), oldest first. */
+export const documentCommentsQuery = (org: string, id: string) =>
+  queryOptions({
+    queryKey: keys.documentComments(org, id),
+    queryFn: async () =>
+      (
+        await api<ListResponse<DocumentCommentDto>>(
+          `${orgPath(org)}/documents/${id}/comments`,
+        )
+      ).items,
+  });
+
+export function useAddDocumentComment(org: string, id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateDocumentCommentInput) =>
+      api<DocumentCommentDto>(`${orgPath(org)}/documents/${id}/comments`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (comment) =>
+      qc.setQueryData<DocumentCommentDto[]>(
+        keys.documentComments(org, id),
+        (old) => (old ? [...old, comment] : [comment]),
+      ),
+  });
+}
+
+/** Resolves or reopens a thread (its first comment). */
+export function useResolveDocumentComment(org: string, id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ commentId, resolved }: { commentId: string; resolved: boolean }) =>
+      api<DocumentCommentDto>(
+        `${orgPath(org)}/documents/${id}/comments/${commentId}`,
+        { method: "PATCH", body: JSON.stringify({ resolved }) },
+      ),
+    onSuccess: (comment) =>
+      qc.setQueryData<DocumentCommentDto[]>(
+        keys.documentComments(org, id),
+        (old) => old?.map((c) => (c.id === comment.id ? comment : c)),
+      ),
+  });
+}
 
 export const documentVersionsQuery = (org: string, id: string) =>
   queryOptions({

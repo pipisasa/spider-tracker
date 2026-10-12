@@ -261,7 +261,31 @@ export const createCommentInput = z.object({
 
 export type CreateCommentInput = z.infer<typeof createCommentInput>;
 
-export const INBOX_KINDS = ["mention", "assigned", "comment", "reply", "rules"] as const;
+/**
+ * A comment on a document (ST-118); `quote` is the fragment it is about (top-level comments only),
+ * which must occur in the document's current text.
+ */
+export const createDocumentCommentInput = createCommentInput.extend({
+  quote: z.string().trim().min(1, "Required").max(2_000, "At most 2,000 characters").nullable().optional(),
+});
+
+export type CreateDocumentCommentInput = z.infer<typeof createDocumentCommentInput>;
+
+/** Marks a document comment thread resolved, or reopens it. */
+export const resolveDocumentCommentInput = z.object({ resolved: z.boolean() });
+
+export type ResolveDocumentCommentInput = z.infer<typeof resolveDocumentCommentInput>;
+
+export const INBOX_KINDS = [
+  "mention",
+  "assigned",
+  "comment",
+  "reply",
+  "rules",
+  "document_mention",
+  "document_comment",
+  "document_reply",
+] as const;
 
 /** Task notifications: what the inbox returns when `kinds` isn't given (clients from before ST-111 expect a task). */
 export const TASK_INBOX_KINDS = ["mention", "assigned", "comment", "reply"] as const;
@@ -273,7 +297,7 @@ export const inboxQuery = z.object({
     .union([z.boolean(), z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1")])
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  /** Which kinds to return, as a list or comma-separated; default: the task kinds (no `rules`). */
+  /** Which kinds to return, as a list or comma-separated; default: the task kinds (no `rules` or `document_*`). */
   kinds: z
     .preprocess(
       (v) => (typeof v === "string" ? v.split(",").map((k) => k.trim()).filter(Boolean) : v),

@@ -62,6 +62,9 @@ export function useOrgEvents(orgSlug: string) {
       // Also refreshes its version history.
       void qc.invalidateQueries({ queryKey: keys.document(orgSlug, e.documentId) });
     });
+    on("document.commented", (e) =>
+      void qc.invalidateQueries({ queryKey: keys.documentComments(orgSlug, e.documentId) }),
+    );
     on("document.deleted", (e) => {
       void qc.invalidateQueries({ queryKey: keys.documentLists(orgSlug) });
       qc.removeQueries({ queryKey: keys.document(orgSlug, e.documentId) });
