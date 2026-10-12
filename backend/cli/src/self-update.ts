@@ -2,6 +2,9 @@ import type { FetchLike } from "@repo/sdk";
 import { chmod, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { binaryUrl } from "./update-check";
+import { compareVersions } from "./version";
+
+const FIRST_VERSION_WITH_SUMS = "0.1.3";
 
 /** True when running as a `bun build --compile` binary rather than from source. */
 export const isCompiled = () =>
@@ -55,8 +58,12 @@ export async function replaceBinary(
       throw new Error(`Download failed: ${url} (HTTP ${res.status})`);
     const bytes = await res.arrayBuffer();
 
-    // Releases before cli-v0.1.3 have no SHA256SUMS.
+    // Releases before cli-v0.1.3 have no SHA256SUMS; from 0.1.3 on a missing file means a broken
+    // or tampered release, so it is an error.
     const sumsRes = await get(sumsUrl);
+    if (sumsRes.status === 404 && compareVersions(version, FIRST_VERSION_WITH_SUMS) >= 0) {
+      throw new Error(`${sumsUrl} is missing; refusing to install an unverified binary`);
+    }
     if (sumsRes.status === 404) {
       options.warn?.(`${sumsUrl} not found; skipping checksum verification`);
     } else {

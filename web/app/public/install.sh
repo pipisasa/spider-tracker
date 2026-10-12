@@ -77,12 +77,15 @@ echo "Downloading $url"
 download "$url" "$tmp" || fail "download failed: $url"
 [ -s "$tmp" ] || fail "downloaded file is empty: $url"
 
-# Releases before cli-v0.1.3 have no SHA256SUMS.
+# Releases before cli-v0.1.3 have no SHA256SUMS (only allowed when SPIDER_VERSION pins one).
 if download "$base/SHA256SUMS" "$sums" 2>/dev/null; then
   expected="$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1; exit }' "$sums")"
   [ -n "$expected" ] || fail "$asset is not listed in $base/SHA256SUMS"
   actual="$(sha256 "$tmp")" || fail "sha256sum or shasum is required to verify the download"
   [ "$actual" = "$expected" ] || fail "checksum mismatch for $asset (expected $expected, got $actual)"
+elif [ -z "${SPIDER_VERSION:-}" ]; then
+  # The latest release always has SHA256SUMS (from cli-v0.1.3 on): missing means broken or tampered.
+  fail "$base/SHA256SUMS is missing; refusing to install an unverified binary"
 else
   echo "spider install: warning: $base/SHA256SUMS not found; skipping checksum verification" >&2
 fi

@@ -98,14 +98,23 @@ test("an asset missing from SHA256SUMS fails and leaves the old binary", async (
   expect(readFileSync(target, "utf8")).toBe(OLD_BINARY);
 });
 
-test("a release without SHA256SUMS warns and still replaces the binary", async () => {
+test("a release from 0.1.3 on without SHA256SUMS fails and leaves the old binary", async () => {
   const { target } = installed();
+  await expect(replace(target, release(null).fetch)).rejects.toThrow("refusing to install an unverified binary");
+  expect(readFileSync(target, "utf8")).toBe(OLD_BINARY);
+});
+
+test("an older release without SHA256SUMS (before 0.1.3) warns and still replaces the binary", async () => {
+  const { target } = installed();
+  const old = "0.1.2";
+  const oldUrl = binaryUrl(old, "linux", "x64");
+  const oldBinary = `#!/bin/sh\necho ${old}\n`;
+  const fetch = async (input: string) =>
+    input === oldUrl ? new Response(oldBinary) : new Response("Not Found", { status: 404 });
   const warnings: string[] = [];
-  expect(await replace(target, release(null).fetch, warnings)).toBe(target);
-  expect(warnings).toEqual([
-    `${SUMS_URL} not found; skipping checksum verification`,
-  ]);
-  expect(readFileSync(target, "utf8")).toBe(NEW_BINARY);
+  await replaceBinary(old, fetch, { target, platform: "linux", arch: "x64", warn: (m) => warnings.push(m) });
+  expect(warnings).toEqual([`${oldUrl.replace(/[^/]+$/, "SHA256SUMS")} not found; skipping checksum verification`]);
+  expect(readFileSync(target, "utf8")).toBe(oldBinary);
 });
 
 test("a binary that reports another version is not installed", async () => {
