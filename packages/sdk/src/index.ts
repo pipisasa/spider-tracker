@@ -30,11 +30,13 @@ import type {
   CreateAgentInput,
   CreateCommentInput,
   CreateDocumentInput,
+  CreateProjectInput,
   CreateTagInput,
   CreateTaskInput,
   RelationInput,
   UpdateAgentInput,
   UpdateDocumentInput,
+  UpdateProjectInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
 
@@ -166,10 +168,22 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       accept: (input: AcceptAgentInviteInput) => request<AcceptedAgentInviteDto>("POST", "/v1/agent-invites/accept", input),
     },
 
+    /** Owners and admins create, change and archive projects. */
     projects: {
-      list: (orgSlug: string) => request<ListResponse<ProjectDto>>("GET", `${org(orgSlug)}/projects`),
+      /** Archived projects only with `archived: true`. */
+      list: (orgSlug: string, query: { archived?: boolean } = {}) =>
+        request<ListResponse<ProjectDto>>("GET", `${org(orgSlug)}/projects${query.archived ? "?archived=true" : ""}`),
       get: (orgSlug: string, projectKey: string) =>
         request<ProjectDetailDto>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}`),
+      create: (orgSlug: string, input: CreateProjectInput) =>
+        request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects`, input),
+      update: (orgSlug: string, projectKey: string, input: UpdateProjectInput) =>
+        request<ProjectDetailDto>("PATCH", `${org(orgSlug)}/projects/${seg(projectKey)}`, input),
+      /** Hides it from lists and refuses new tasks; archiving twice changes nothing. */
+      archive: (orgSlug: string, projectKey: string) =>
+        request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
+      unarchive: (orgSlug: string, projectKey: string) =>
+        request<ProjectDetailDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
     },
 
     tags: {

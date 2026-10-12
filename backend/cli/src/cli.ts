@@ -3,6 +3,7 @@ import type {
   DocumentFormat,
   DocumentSummaryDto,
   ProjectDetailDto,
+  ProjectDto,
   StatusDto,
   TagDto,
   TaskDto,
@@ -10,7 +11,7 @@ import type {
 } from "@repo/core/contracts";
 import { parseTaskKey } from "@repo/core/schemas";
 import { MIN_CLI_HEADER } from "@repo/core/version";
-import type { CreateTaskInput, UpdateDocumentInput, UpdateTaskInput } from "@repo/core/schemas";
+import type { CreateTaskInput, UpdateDocumentInput, UpdateProjectInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError } from "commander";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -358,6 +359,8 @@ function taskDetail(task: CliTask): string {
   if (task.description) lines.push("", task.description);
   return lines.join("\n");
 }
+
+const projectLine = (p: ProjectDto) => `${p.key}  ${p.name}${p.archivedAt ? "  (archived)" : ""}`;
 
 const documentScope = (d: DocumentSummaryDto) => d.taskKey ?? d.projectKey ?? "org";
 
@@ -1036,10 +1039,82 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     output(opts, { items }, () => (items.length ? items.map((t) => t.name).join("\n") : "No tags"));
   });
 
-  withJson(program.command("projects").description("list projects")).action(async (opts: JsonOption) => {
+  withJson(
+    program.command("projects").description("list projects").option("--archived", "include archived projects"),
+  ).action(async (opts: JsonOption & { archived?: boolean }) => {
     const { sdk, org } = conn();
-    const { items } = await (await sdk()).projects.list(await org());
-    output(opts, { items }, () => items.map((p) => `${p.key}  ${p.name}`).join("\n"));
+    const { items } = await (await sdk()).projects.list(await org(), { archived: opts.archived });
+    output(opts, { items }, () => items.map(projectLine).join("\n"));
+  });
+
+  const projectCommand = program.command("project").description("manage projects (create, change, archive: owners and admins)");
+
+  withJson(
+    projectCommand
+      .command("create")
+      .description("create a project with the default statuses")
+      .requiredOption("--key <KEY>", "2–10 letters or digits, starting with a letter; prefixes task keys")
+      .requiredOption("--name <text>", "name")
+      .option("--description <text>", "description (Markdown)"),
+  ).action(async (opts: JsonOption & { key: string; name: string; description?: string }) => {
+    const { sdk, org } = conn();
+    const created = await (await sdk()).projects.create(await org(), {
+      key: opts.key,
+      name: opts.name,
+      description: opts.description,
+    });
+    output(opts, created, () => `Created ${projectLine(created)}`);
+  });
+
+  withJson(projectCommand.command("view").description("show a project, its statuses and task counts").argument("<key>")).action(
+    async (key: string, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const client = await sdk();
+      const slug = await org();
+      const [detail, tasks] = await Promise.all([client.projects.get(slug, key), client.tasks.list(slug, key)]);
+      const statuses = detail.statuses.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
+      const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
+      output(opts, { ...detail, statuses }, () =>
+        [
+          projectLine(detail),
+          `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
+          "",
+          "Statuses:",
+          ...statuses.map((s) => `  ${s.name.padEnd(nameWidth)}  ${s.taskCount}`),
+          ...(detail.description ? ["", detail.description] : []),
+        ].join("\n"),
+      );
+    },
+  );
+
+  withJson(
+    projectCommand
+      .command("update")
+      .description("change a project's name or description (the key can't change)")
+      .argument("<key>")
+      .option("--name <text>", "name")
+      .option("--description <text>", 'description (Markdown; "" clears it)'),
+  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string }) => {
+    const input: UpdateProjectInput = {};
+    if (opts.name !== undefined) input.name = opts.name;
+    if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name or --description");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).projects.update(await org(), key, input);
+    output(opts, updated, () => `Updated ${projectLine(updated)}`);
+  });
+
+  withJson(
+    projectCommand
+      .command("archive")
+      .description("archive a project: hidden from lists, no new tasks")
+      .argument("<key>")
+      .option("--undo", "restore an archived project"),
+  ).action(async (key: string, opts: JsonOption & { undo?: boolean }) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const result = await (opts.undo ? client.projects.unarchive : client.projects.archive)(await org(), key);
+    output(opts, result, () => `${opts.undo ? "Restored" : "Archived"} ${result.key}  ${result.name}`);
   });
 
   const task = program.command("task").description("work with tasks");

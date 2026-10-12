@@ -175,11 +175,13 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       .update(projects)
       .set({ taskSeq: sql`${projects.taskSeq} + 1` })
       .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, projectKey.toUpperCase())))
-      .returning({ id: projects.id, key: projects.key, taskSeq: projects.taskSeq });
+      .returning({ id: projects.id, key: projects.key, taskSeq: projects.taskSeq, archivedAt: projects.archivedAt });
     const scope = await projectScope(tx, ctx);
     if (!project || !inScope(scope, project.id)) {
       throw new DomainError("not_found", `Project ${projectKey} not found`);
     }
+    // Throwing rolls back the counter bump.
+    if (project.archivedAt) throw new DomainError("validation", `Project ${project.key} is archived`);
 
     let status: StatusRow | undefined;
     if (data.statusId) {

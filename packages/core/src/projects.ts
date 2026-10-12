@@ -1,4 +1,4 @@
-import type { Db } from "@repo/db";
+import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { assertRole, inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
@@ -6,7 +6,7 @@ import { recordActivity } from "./activity";
 import { publish } from "./events";
 import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto } from "./contracts";
 import { DomainError } from "./errors";
-import { createProjectInput } from "./schemas";
+import { createProjectInput, updateProjectInput } from "./schemas";
 import { parseInput } from "./validate";
 
 const { projects, statuses } = schema;
@@ -30,6 +30,7 @@ export function toProjectDto(row: ProjectRow): ProjectDto {
     name: row.name,
     description: row.description,
     createdAt: row.createdAt.toISOString(),
+    archivedAt: row.archivedAt?.toISOString() ?? null,
   };
 }
 
@@ -66,13 +67,22 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
   });
 }
 
-export async function listProjects(db: Db, viewer: Viewer): Promise<ProjectDto[]> {
+/** Active projects; archived ones too with `includeArchived`. */
+export async function listProjects(
+  db: Db,
+  viewer: Viewer,
+  { includeArchived = false }: { includeArchived?: boolean } = {},
+): Promise<ProjectDto[]> {
   const scope = await projectScope(db, viewer);
   const rows = await db
     .select()
     .from(projects)
     .where(
-      and(eq(projects.orgId, orgIdOf(viewer)), isNull(projects.archivedAt), scope ? inArray(projects.id, [...scope]) : undefined),
+      and(
+        eq(projects.orgId, orgIdOf(viewer)),
+        includeArchived ? undefined : isNull(projects.archivedAt),
+        scope ? inArray(projects.id, [...scope]) : undefined,
+      ),
     )
     .orderBy(asc(projects.createdAt));
   return rows.map(toProjectDto);
@@ -87,4 +97,71 @@ export async function getProject(db: Db, viewer: Viewer, key: string): Promise<P
   if (!project || !inScope(await projectScope(db, viewer), project.id)) throw new DomainError("not_found", `Project ${key} not found`);
   const rows = await db.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
   return { ...toProjectDto(project), statuses: rows.map(toStatusDto) };
+}
+
+/** Locks the project row for a change; out-of-scope projects are "not found". */
+async function findProjectForUpdate(tx: Tx, ctx: ActorContext, key: string): Promise<ProjectRow> {
+  const [project] = await tx
+    .select()
+    .from(projects)
+    .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, key.toUpperCase())))
+    .limit(1)
+    .for("update");
+  if (!project || !inScope(await projectScope(tx, ctx), project.id)) {
+    throw new DomainError("not_found", `Project ${key} not found`);
+  }
+  return project;
+}
+
+async function withStatuses(tx: Tx, project: ProjectRow): Promise<ProjectDetailDto> {
+  const rows = await tx.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
+  return { ...toProjectDto(project), statuses: rows.map(toStatusDto) };
+}
+
+/** Renames a project or changes its description; the key stays. */
+export async function updateProject(db: Db, ctx: ActorContext, key: string, input: unknown): Promise<ProjectDetailDto> {
+  assertRole(ctx, ["owner", "admin"], "change projects");
+  const data = parseInput(updateProjectInput, input);
+
+  return db.transaction(async (tx) => {
+    const current = await findProjectForUpdate(tx, ctx, key);
+    const next = {
+      name: data.name ?? current.name,
+      description: data.description === undefined ? current.description : data.description || null,
+    };
+    const changes: Record<string, [unknown, unknown]> = {};
+    if (next.name !== current.name) changes.name = [current.name, next.name];
+    if (next.description !== current.description) changes.description = [current.description, next.description];
+    if (Object.keys(changes).length === 0) return withStatuses(tx, current);
+
+    const [project] = await tx.update(projects).set(next).where(eq(projects.id, current.id)).returning();
+    if (!project) throw new Error("Failed to update project");
+    await recordActivity(tx, ctx, { entityType: "project", entityId: project.id, action: "project.updated", changes });
+    await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+    return withStatuses(tx, project);
+  });
+}
+
+/** Archives a project (hidden from lists, no new tasks) or restores it; archiving twice changes nothing. */
+export async function archiveProject(db: Db, ctx: ActorContext, key: string, archived: boolean): Promise<ProjectDetailDto> {
+  assertRole(ctx, ["owner", "admin"], archived ? "archive projects" : "restore projects");
+
+  return db.transaction(async (tx) => {
+    const current = await findProjectForUpdate(tx, ctx, key);
+    if ((current.archivedAt !== null) === archived) return withStatuses(tx, current);
+
+    const [project] = await tx
+      .update(projects)
+      .set({ archivedAt: archived ? new Date() : null })
+      .where(eq(projects.id, current.id))
+      .returning();
+    if (!project) throw new Error("Failed to archive project");
+    await recordActivity(tx, ctx, {
+      entityType: "project",
+      entityId: project.id,
+      action: archived ? "project.archived" : "project.unarchived",
+    });
+    await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+    return withStatuses(tx, project);
+  });
 }

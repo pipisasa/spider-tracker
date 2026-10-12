@@ -63,6 +63,7 @@ withDb("MCP server", () => {
   const userIds = [`test-${crypto.randomUUID()}`, `test-${crypto.randomUUID()}`];
   let client: Client;
   let otherClient: Client;
+  const agentIds: string[] = [];
 
   /** Creates an org with a project and an agent key; returns the key's secret. */
   async function setUpOrg(i: number) {
@@ -76,6 +77,7 @@ withDb("MCP server", () => {
     const ctx: ActorContext = { orgId: organization.id, actorId: actor.id, role: "owner", source: "ui" };
     await createProject(db, ctx, { name: "Spider", key: "SPI" });
     const agent = await createAgent(db, ctx, { name: "Claude Code" });
+    agentIds[i] = agent.actor.id;
     return (await createApiKey(db, ctx, agent.actor.id, { name: "test" })).secret;
   }
 
@@ -96,13 +98,16 @@ withDb("MCP server", () => {
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
         "add_comment",
+        "archive_project",
         "assign_to_me",
         "create_document",
+        "create_project",
         "create_tag",
         "create_task",
         "get_document",
         "list_documents",
         "update_document",
+        "update_project",
         "get_inbox",
         "get_task_activity",
         "list_comments",
@@ -269,6 +274,35 @@ withDb("MCP server", () => {
 
     const missing = await call(client, "get_task", { key: "SPI-999" });
     expect(missing).toMatchObject({ isError: true, text: "Task SPI-999 not found" });
+  });
+
+  test("projects: members are refused; admins create, update, archive and restore", async () => {
+    const refused = await call(client, "create_project", { key: "OPS", name: "Ops" });
+    expect(refused).toMatchObject({ isError: true, text: "Your role can't create projects" });
+
+    const agentId = agentIds[0] ?? "";
+    await db.update(schema.actors).set({ role: "admin" }).where(eq(schema.actors.id, agentId));
+    try {
+      expect((await call(client, "create_project", { key: "ops", name: "Ops", description: "Runbooks" })).json()).toMatchObject({
+        key: "OPS",
+        name: "Ops",
+        description: "Runbooks",
+        archived: false,
+        statuses: ["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"].map((name) => ({ name })),
+      });
+      const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
+      expect(updated.json()).toMatchObject({ name: "Operations", description: null });
+      expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
+      expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([{ key: "SPI", name: "Spider", description: null }]);
+      expect((await call(client, "get_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
+      expect(await call(client, "create_task", { projectKey: "OPS", title: "x" })).toMatchObject({
+        isError: true,
+        text: "Project OPS is archived",
+      });
+      expect((await call(client, "archive_project", { projectKey: "OPS", undo: true })).json()).toMatchObject({ archived: false });
+    } finally {
+      await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, agentId));
+    }
   });
 
   test("a key from another organization can't see this one's tasks", async () => {

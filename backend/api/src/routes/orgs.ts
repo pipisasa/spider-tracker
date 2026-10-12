@@ -25,6 +25,7 @@ import {
   createInvitation,
   listInvitations,
   revokeInvitation,
+  archiveProject,
   createProject,
   createTask,
   deleteTask,
@@ -43,6 +44,7 @@ import {
   listTasks,
   resolveMembership,
   revokeApiKey,
+  updateProject,
   updateTask,
 } from "@repo/core";
 import type { Db } from "@repo/db";
@@ -170,12 +172,27 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     return c.body(null, 204);
   });
 
-  app.get("/projects", async (c) => c.json(list(await listProjects(db, c.get("actor")))));
+  // GET /projects?archived=true includes archived projects.
+  app.get("/projects", async (c) =>
+    c.json(list(await listProjects(db, c.get("actor"), { includeArchived: c.req.query("archived") === "true" }))),
+  );
 
   app.post("/projects", async (c) => c.json(await createProject(db, c.get("actor"), await body(c)), 201));
 
   app.get("/projects/:projectKey", async (c) =>
     c.json(await getProject(db, c.get("actor"), c.req.param("projectKey"))),
+  );
+
+  app.patch("/projects/:projectKey", async (c) =>
+    c.json(await updateProject(db, c.get("actor"), c.req.param("projectKey"), await body(c))),
+  );
+
+  app.post("/projects/:projectKey/archive", async (c) =>
+    c.json(await archiveProject(db, c.get("actor"), c.req.param("projectKey"), true)),
+  );
+
+  app.delete("/projects/:projectKey/archive", async (c) =>
+    c.json(await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false)),
   );
 
   app.get("/projects/:projectKey/tasks", async (c) =>

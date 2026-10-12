@@ -53,6 +53,8 @@ export interface ProjectDto {
   name: string;
   description: string | null;
   createdAt: string;
+  /** Archived projects are left out of lists and refuse new tasks. */
+  archivedAt: string | null;
 }
 
 export interface ProjectDetailDto extends ProjectDto {

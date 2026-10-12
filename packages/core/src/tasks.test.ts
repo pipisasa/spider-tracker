@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { DomainError } from "./errors";
 import { createOrganization } from "./organizations";
-import { createProject, getProject } from "./projects";
+import { archiveProject, createProject, getProject, listProjects, updateProject } from "./projects";
 import { listTaskActivity } from "./activity-feed";
 import { createTask, deleteTask, getTask, listTasks, updateTask } from "./tasks";
 
@@ -42,6 +42,42 @@ run("projects and tasks", () => {
     await expect(createProject(db, { ...ctx, role: "member" }, { name: "X", key: "XX" })).rejects.toMatchObject({
       code: "forbidden",
     });
+  });
+
+  test("updates a project's name and description; the key stays", async () => {
+    await createProject(db, ctx, { name: "Docs", key: "DOC" });
+    const updated = await updateProject(db, ctx, "doc", { name: "Documentation", description: "All the docs", key: "XYZ" });
+    expect(updated).toMatchObject({ key: "DOC", name: "Documentation", description: "All the docs", archivedAt: null });
+    expect(updated.statuses).toHaveLength(6);
+    expect((await updateProject(db, ctx, "DOC", { description: "" })).description).toBeNull();
+    await expect(updateProject(db, ctx, "DOC", {})).rejects.toMatchObject({ code: "validation" });
+    await expect(updateProject(db, ctx, "NOPE", { name: "x" })).rejects.toMatchObject({ code: "not_found" });
+    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, updated.id));
+    expect(log.map((e) => e.action)).toEqual(["project.created", "project.updated", "project.updated"]);
+  });
+
+  test("members can't change or archive projects", async () => {
+    const member: ActorContext = { ...ctx, role: "member" };
+    await expect(updateProject(db, member, "DOC", { name: "Mine" })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(archiveProject(db, member, "DOC", true)).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  test("archived projects leave the list, refuse new tasks and come back when restored", async () => {
+    const archived = await archiveProject(db, ctx, "DOC", true);
+    expect(archived.archivedAt).not.toBeNull();
+    expect((await archiveProject(db, ctx, "DOC", true)).archivedAt).toBe(archived.archivedAt);
+    expect((await listProjects(db, ctx)).map((p) => p.key)).not.toContain("DOC");
+    expect((await listProjects(db, ctx, { includeArchived: true })).map((p) => p.key)).toContain("DOC");
+    expect((await getProject(db, ctx, "DOC")).archivedAt).toBe(archived.archivedAt);
+    await expect(createTask(db, ctx, "DOC", { title: "Too late" })).rejects.toMatchObject({
+      code: "validation",
+      message: "Project DOC is archived",
+    });
+
+    const restored = await archiveProject(db, ctx, "DOC", false);
+    expect(restored.archivedAt).toBeNull();
+    expect((await listProjects(db, ctx)).map((p) => p.key)).toContain("DOC");
+    expect((await createTask(db, ctx, "DOC", { title: "Back again" })).key).toBe("DOC-1");
   });
 
   test("numbers tasks per project and defaults to Todo", async () => {

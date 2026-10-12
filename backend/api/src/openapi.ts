@@ -16,6 +16,7 @@ import {
   markInboxReadInput,
   updateAgentInput,
   updateDocumentInput,
+  updateProjectInput,
   updateTaskInput,
 } from "@repo/core/schemas";
 import { z } from "zod";
@@ -72,6 +73,10 @@ const schemas: Record<string, JsonSchema> = {
     name: string(),
     description: nullable("string"),
     createdAt: string({ format: "date-time" }),
+    archivedAt: nullable("string", {
+      format: "date-time",
+      description: "Archived projects are left out of lists and refuse new tasks",
+    }),
   }),
   ProjectDetail: {
     allOf: [ref("Project"), object({ statuses: { type: "array", items: ref("Status") } })],
@@ -229,6 +234,7 @@ const schemas: Record<string, JsonSchema> = {
   ProjectList: listOf("Project"),
   TaskList: listOf("Task"),
   CreateProjectInput: fromZod(createProjectInput),
+  UpdateProjectInput: fromZod(updateProjectInput),
   CreateTaskInput: fromZod(createTaskInput),
   UpdateTaskInput: fromZod(updateTaskInput),
   CreateOrganizationInput: fromZod(createOrganizationInput),
@@ -549,11 +555,14 @@ const paths = {
     get: {
       operationId: "listProjects",
       summary: "List projects",
+      parameters: [
+        { name: "archived", in: "query", schema: { type: "boolean" }, description: "Include archived projects" },
+      ],
       responses: { "200": ok("Projects", "ProjectList"), ...errors },
     },
     post: {
       operationId: "createProject",
-      summary: "Create a project with the default statuses",
+      summary: "Create a project with the default statuses (owners and admins)",
       requestBody: body("CreateProjectInput"),
       responses: { "201": ok("Created project", "ProjectDetail"), ...errors },
     },
@@ -562,8 +571,27 @@ const paths = {
     parameters: [orgSlug, projectKey],
     get: {
       operationId: "getProject",
-      summary: "Get a project with its statuses",
+      summary: "Get a project with its statuses (archived ones too)",
       responses: { "200": ok("Project", "ProjectDetail"), ...errors },
+    },
+    patch: {
+      operationId: "updateProject",
+      summary: "Change a project's name or description (owners and admins); the key can't change",
+      requestBody: body("UpdateProjectInput"),
+      responses: { "200": ok("Updated project", "ProjectDetail"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/archive": {
+    parameters: [orgSlug, projectKey],
+    post: {
+      operationId: "archiveProject",
+      summary: "Archive a project: hidden from lists, no new tasks (owners and admins)",
+      responses: { "200": ok("Archived project", "ProjectDetail"), ...errors },
+    },
+    delete: {
+      operationId: "unarchiveProject",
+      summary: "Restore an archived project (owners and admins)",
+      responses: { "200": ok("Restored project", "ProjectDetail"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/tasks": {
