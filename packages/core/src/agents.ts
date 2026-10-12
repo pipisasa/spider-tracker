@@ -284,7 +284,7 @@ export async function authenticateApiKey(db: Db, secret: string) {
   if (!secret.startsWith(KEY_PREFIX)) return null;
   const owners = alias(actors, "owner");
   const [row] = await db
-    .select({ token: apiTokens, actor: actors, organization: organizations })
+    .select({ token: apiTokens, actor: actors, organization: organizations, ownerId: agents.ownerId })
     .from(apiTokens)
     .innerJoin(actors, eq(apiTokens.actorId, actors.id))
     .innerJoin(organizations, eq(actors.orgId, organizations.id))
@@ -307,7 +307,7 @@ export async function authenticateApiKey(db: Db, secret: string) {
   if (!row.token.lastUsedAt || now.getTime() - row.token.lastUsedAt.getTime() > 60_000) {
     await db.update(apiTokens).set({ lastUsedAt: now }).where(eq(apiTokens.id, row.token.id));
   }
-  return { actor: row.actor, organization: row.organization, keyId: row.token.id };
+  return { actor: row.actor, organization: row.organization, ownerId: row.ownerId, keyId: row.token.id };
 }
 
 /** Revokes the key a request authenticated with (`spider logout`). */

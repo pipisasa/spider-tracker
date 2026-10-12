@@ -1,11 +1,11 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull } from "drizzle-orm";
 import { DomainError } from "./errors";
 import { handleFrom } from "./handles";
 import { createOrganizationInput } from "./schemas";
 
-const { actors, organizations } = schema;
+const { actors, agents, organizations } = schema;
 
 export interface UserIdentity {
   id: string;
@@ -64,11 +64,13 @@ export async function listMemberships(db: Db, userId: string) {
 /**
  * Active members (people and agents) of an organization. `includeDeactivated` adds
  * deactivated ones, so tasks still assigned to them can show who they were.
+ * `ownerId` is the owning person's actor id for agents, null for people.
  */
 export async function listMembers(db: Db, orgId: string, opts: { includeDeactivated?: boolean } = {}) {
   return db
-    .select()
+    .select({ ...getTableColumns(actors), ownerId: agents.ownerId })
     .from(actors)
+    .leftJoin(agents, eq(agents.actorId, actors.id))
     .where(opts.includeDeactivated ? eq(actors.orgId, orgId) : and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt)))
     .orderBy(actors.name);
 }

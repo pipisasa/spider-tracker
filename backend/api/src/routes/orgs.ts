@@ -108,7 +108,7 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   // GET /members?all=true includes deactivated actors, to name the ones still assigned to tasks.
   app.get("/members", async (c) => {
     const rows = await listMembers(db, c.get("actor").orgId, { includeDeactivated: c.req.query("all") === "true" });
-    return c.json(list(rows.map(toActorDto)));
+    return c.json(list(rows.map((r) => toActorDto(r, r.ownerId))));
   });
 
   app.get("/invitations", async (c) => c.json(list(await listInvitations(db, c.get("actor")))));
@@ -122,20 +122,20 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.get("/agents", async (c) => {
     const rows = await listAgents(db, c.get("actor"));
-    return c.json(list<AgentDto>(rows.map((r) => ({ ...r, actor: toActorDto(r.actor) }))));
+    return c.json(list<AgentDto>(rows.map((r) => ({ ...r, actor: toActorDto(r.actor, r.ownerId) }))));
   });
 
   // An agent updating itself (name, handle, description).
   app.patch("/agents/me", async (c) => {
     const actor = c.get("actor");
     const updated = await updateAgent(db, actor, actor.actorId, await body(c));
-    const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor) };
+    const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor, updated.ownerId) };
     return c.json(agent);
   });
 
   app.patch("/agents/:agentId", async (c) => {
     const updated = await updateAgent(db, c.get("actor"), c.req.param("agentId"), await body(c));
-    const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor) };
+    const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor, updated.ownerId) };
     return c.json(agent);
   });
 
@@ -146,7 +146,7 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.post("/agents", async (c) => {
     const created = await createAgent(db, c.get("actor"), await body(c));
-    const agent: AgentDto = { ...created, actor: toActorDto(created.actor) };
+    const agent: AgentDto = { ...created, actor: toActorDto(created.actor, created.ownerId) };
     return c.json(agent, 201);
   });
 

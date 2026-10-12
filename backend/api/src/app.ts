@@ -133,7 +133,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
         throw err;
       },
     );
-    const body: AcceptedAgentInviteDto = { ...accepted, actor: toActorDto(accepted.actor) };
+    const body: AcceptedAgentInviteDto = { ...accepted, actor: toActorDto(accepted.actor, accepted.owner.id) };
     return c.json(body, 201);
   });
 

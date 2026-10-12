@@ -10,6 +10,7 @@ const actor = (id: string, deactivated = false): ActorDto => ({
   avatarUrl: null,
   role: "member",
   deactivated,
+  ownerId: null,
 });
 const alice = actor("alice");
 const bob = actor("bob");

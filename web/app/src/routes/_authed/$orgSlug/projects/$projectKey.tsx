@@ -11,7 +11,6 @@ import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   actorsQuery,
-  agentsQuery,
   documentsQuery,
   membersQuery,
   projectQuery,
@@ -64,9 +63,6 @@ function ProjectPage() {
   // Deactivated assignees too, so cards and rows still show them.
   const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const { data: tags = [] } = useQuery(tagsQuery(orgSlug));
-  // Only for "Me and my agents" (assignee=mine): which agents are the viewer's.
-  const mineSelected = filters.assignee?.includes("mine") ?? false;
-  const { data: agents } = useQuery({ ...agentsQuery(orgSlug), enabled: mineSelected });
   const [newTaskStatus, setNewTaskStatus] = useState<string | undefined>();
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newDocumentOpen, setNewDocumentOpen] = useState(false);
@@ -76,7 +72,7 @@ function ProjectPage() {
   const archived = project.archivedAt !== null;
 
   const meId = membership.actor.id;
-  const mineIds = useMemo(() => mineActorIds(meId, agents ?? []), [meId, agents]);
+  const mineIds = useMemo(() => mineActorIds(meId, actors), [meId, actors]);
   const visibleTasks = useMemo(() => applyFilters(tasks, filters, meId, mineIds), [tasks, filters, meId, mineIds]);
   const filtered = !isEmptyFilters(filters);
 

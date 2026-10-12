@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ActorDto, AgentDto, ProjectDetailDto, StatusDto } from "@repo/core/contracts";
+import type { ActorDto, ProjectDetailDto, StatusDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 import {
   matchesTaskFilter,
@@ -47,6 +47,7 @@ const member = (id: string, handle: string): ActorDto => ({
   avatarUrl: null,
   role: "member",
   deactivated: false,
+  ownerId: null,
 });
 
 describe("status resolution", () => {
@@ -87,25 +88,29 @@ describe("assignee resolution", () => {
 });
 
 describe('"mine" for the client-side re-check', () => {
-  const agent = (id: string, ownerId: string): AgentDto => ({
-    actor: { ...member(id, id), type: "agent" },
+  const agent = (id: string, ownerId: string, deactivated = false): ActorDto => ({
+    ...member(id, id),
+    type: "agent",
     ownerId,
-    owner: { id: ownerId, name: ownerId, handle: ownerId },
-    description: null,
-    canManage: false,
-    keys: [],
-    projects: null,
+    deactivated,
   });
-  const agents = [agent("bot1", "alice"), agent("bot2", "alice"), agent("bot3", "bob")];
-  const gone: ActorDto = { ...member("gone", "gone"), type: "agent", deactivated: true };
-  const actors = [member("alice", "alice"), member("bob", "bob"), ...agents.map((a) => a.actor), gone];
+  const actors = [
+    member("alice", "alice"),
+    member("bob", "bob"),
+    agent("bot1", "alice"),
+    agent("bot2", "alice"),
+    agent("bot3", "bob"),
+    agent("gone-alice", "alice", true),
+    agent("gone-bob", "bob", true),
+  ];
 
-  test("a person: themselves, their agents and (ownership unknown) deactivated agents", () => {
-    expect(mineActorIds(member("alice", "alice"), agents, actors).sort()).toEqual(["alice", "bot1", "bot2", "gone"]);
+  test("a person: themselves and their agents, deleted ones included, not other people's", () => {
+    expect(mineActorIds(member("alice", "alice"), actors).sort()).toEqual(["alice", "bot1", "bot2", "gone-alice"]);
   });
   test("an agent: its owner and the owner's agents, itself included", () => {
-    expect(mineActorIds({ ...member("bot2", "bot2"), type: "agent" }, agents, actors).sort()).toEqual(["alice", "bot1", "bot2", "gone"]);
-    expect(mineActorIds({ ...member("bot3", "bot3"), type: "agent" }, agents, actors).sort()).toEqual(["bob", "bot3", "gone"]);
+    expect(mineActorIds(agent("bot2", "alice"), actors).sort()).toEqual(["alice", "bot1", "bot2", "gone-alice"]);
+    // Without ownerId on the caller, the owner comes from the actors list.
+    expect(mineActorIds({ ...agent("bot3", "bob"), ownerId: null }, actors).sort()).toEqual(["bob", "bot3", "gone-bob"]);
   });
 });
 
@@ -150,4 +155,14 @@ describe("client-side task filter (older servers ignore the query)", () => {
     expect(matchesTaskFilter(task, { assignee: ["none"] })).toBe(false);
     expect(matchesTaskFilter(task, { assignee: ["none", "a1"] })).toBe(true);
   });
+});
+
+test("mine: against a server without ownerId, the re-check doesn't narrow (every actor)", () => {
+  const legacy = (id: string, type: "human" | "agent") =>
+    ({ id, type, name: id, handle: id, avatarUrl: null, role: "member", deactivated: false }) as unknown as ActorDto;
+  const me = legacy("p1", "human");
+  const ids = mineActorIds(me, [me, legacy("a1", "agent"), legacy("p2", "human"), legacy("a2", "agent")]);
+  expect(ids.sort()).toEqual(["a1", "a2", "p1", "p2"]);
+  // An agent caller keeps its (active, human) owner's tasks too.
+  expect(mineActorIds(legacy("a1", "agent"), [me, legacy("a1", "agent")]).sort()).toEqual(["a1", "p1"]);
 });
