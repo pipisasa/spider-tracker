@@ -1,3 +1,4 @@
+import { CommentBody } from "@/components/comment-body";
 import { RELATION_LABELS } from "@/components/relations";
 import { ActorAvatar } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import type {
 } from "@repo/core/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { BotIcon, HistoryIcon, ReplyIcon } from "lucide-react";
-import { Fragment, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 const timeFormat = new Intl.DateTimeFormat(undefined, {
@@ -20,26 +21,6 @@ const timeFormat = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
-/** Plain text with @handles of known members highlighted. */
-function Body({ body, handles }: { body: string; handles: Set<string> }) {
-  const parts = body.split(/(@[a-z0-9]+(?:-[a-z0-9]+)*)/gi);
-  return (
-    <p className="text-sm whitespace-pre-wrap break-words">
-      {parts.map((part, i) =>
-        part.startsWith("@") && handles.has(part.slice(1).toLowerCase()) ? (
-          <span
-            key={i}
-            className="rounded bg-primary/10 px-0.5 font-medium text-primary"
-          >
-            {part}
-          </span>
-        ) : (
-          <Fragment key={i}>{part}</Fragment>
-        ),
-      )}
-    </p>
-  );
-}
 
 const PRIORITY_LABELS = ["no priority", "urgent", "high", "medium", "low"];
 
@@ -179,7 +160,7 @@ function CommentItem({
             <ReplyIcon /> Reply
           </Button>
         </div>
-        <Body body={comment.body} handles={handles} />
+        <CommentBody body={comment.body} handles={handles} />
       </div>
     </div>
   );
