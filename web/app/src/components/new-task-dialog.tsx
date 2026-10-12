@@ -3,11 +3,12 @@ import { AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { useCreateTask } from "@/lib/work";
 import type { ActorDto, Priority, ProjectDetailDto } from "@repo/core/contracts";
-import { useState, type FormEvent } from "react";
+import { lazy, Suspense, useState, type FormEvent, type KeyboardEvent } from "react";
 import { toast } from "sonner";
+
+const RichEditor = lazy(() => import("@/components/editor/rich-editor"));
 
 export function NewTaskDialog({
   orgSlug,
@@ -64,33 +65,57 @@ export function NewTaskDialog({
     );
   }
 
+  // Cmd/Ctrl+Enter creates the task from anywhere, including inside the editor
+  // (captured before ProseMirror sees it).
+  function submitShortcut(event: KeyboardEvent<HTMLFormElement>) {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      event.currentTarget.requestSubmit();
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <form onSubmit={submit} className="flex flex-col gap-4">
+      <DialogContent
+        className="sm:max-w-xl"
+        onEscapeKeyDown={(event) => {
+          // Esc inside the / menu closes the menu only, not the dialog.
+          if (document.querySelector("[data-slash-menu]")) event.preventDefault();
+        }}
+      >
+        <form
+          onSubmit={submit}
+          onKeyDownCapture={submitShortcut}
+          className="flex max-h-[85vh] flex-col gap-4"
+        >
           <DialogHeader>
             <DialogTitle>New task in {project.name}</DialogTitle>
           </DialogHeader>
-          <Input
-            autoFocus
-            placeholder="Task title"
-            aria-label="Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <Textarea
-            placeholder="Add a description… (Markdown)"
-            aria-label="Description"
-            rows={5}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <div className="grid grid-cols-3 gap-2">
-            <StatusSelect statuses={project.statuses} value={statusId} onChange={setStatusId} />
-            <PrioritySelect value={priority} onChange={setPriority} />
-            <AssigneePicker members={members} value={assigneeIds} onChange={setAssigneeIds} />
+          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+            <Input
+              autoFocus
+              placeholder="Task title"
+              aria-label="Title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+            <Suspense fallback={<div className="min-h-32" />}>
+              <RichEditor
+                value={description}
+                onChange={setDescription}
+                label="Description"
+                placeholder="Add a description… type '/' for commands"
+                autofocus={false}
+                className="-ml-7 min-h-32 pb-2"
+              />
+            </Suspense>
+            <div className="grid grid-cols-3 gap-2">
+              <StatusSelect statuses={project.statuses} value={statusId} onChange={setStatusId} />
+              <PrioritySelect value={priority} onChange={setPriority} />
+              <AssigneePicker members={members} value={assigneeIds} onChange={setAssigneeIds} />
+            </div>
+            <TagPicker orgSlug={orgSlug} value={tagIds} onChange={setTagIds} />
           </div>
-          <TagPicker orgSlug={orgSlug} value={tagIds} onChange={setTagIds} />
           <DialogFooter>
             <Button type="submit" disabled={create.isPending || !title.trim()}>
               {create.isPending ? "Creating…" : "Create task"}

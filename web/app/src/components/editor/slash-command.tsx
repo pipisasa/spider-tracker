@@ -157,6 +157,7 @@ const SlashMenu = forwardRef<MenuHandle, SuggestionProps<SlashItem, SlashItem>>(
       <div
         ref={listRef}
         role="listbox"
+        data-slash-menu=""
         className="z-50 max-h-80 w-72 overflow-y-auto rounded-lg bg-popover p-1 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10"
       >
         {items.length ? (
