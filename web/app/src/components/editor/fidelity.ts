@@ -4,7 +4,11 @@ type TextNode = { marks?: ({ type: string } | string)[] };
 type HtmlToken = { text?: string; raw?: string; block?: boolean };
 type ParentNode = { type?: string } | undefined;
 
-/** The slice of @tiptap/markdown's (private) MarkdownManager we adapt. */
+/**
+ * The slice of @tiptap/markdown's (private) MarkdownManager we adapt.
+ * A @tiptap/markdown bump must re-check the monkeypatched private members below
+ * (htmlAsLiteralText, getSchemaParseDomTags, codeTypes, encodeTextForMarkdown).
+ */
 type ManagerInternals = {
   codeTypes: Set<string>;
   getSchemaParseDomTags(): Set<string>;

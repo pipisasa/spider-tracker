@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { descriptionToSave, remoteChange } from "./description-sync";
+import { afterSave, descriptionToSave, remoteChange } from "./description-sync";
 
 describe("remoteChange", () => {
   const base = { baseline: "a", draft: "a", dirty: false };
@@ -13,6 +13,30 @@ describe("remoteChange", () => {
     expect(remoteChange({ baseline: "a", draft: "mine", dirty: true, server: "mine" })).toBe("adopt"));
   test("someone else changed it under an edit", () =>
     expect(remoteChange({ baseline: "a", draft: "mine", dirty: true, server: "theirs" })).toBe("conflict"));
+});
+
+describe("save in flight", () => {
+  const flight = { baseline: "a", draft: "mine", dirty: true, saving: "mine" };
+  test("optimistic echo is not adopted", () =>
+    expect(remoteChange({ ...flight, server: "mine" })).toBe("none"));
+  test("failed save: rollback keeps the draft, still dirty", () => {
+    // echo while in flight, then the cache rolls back to the baseline
+    expect(remoteChange({ ...flight, server: "mine" })).toBe("none");
+    expect(remoteChange({ ...flight, server: "a" })).toBe("none");
+    // nothing reset the draft, so a retry on blur still saves it
+    expect(descriptionToSave({ dirty: true, draft: "mine", server: "a" })).toBe("mine");
+  });
+  test("someone else's change during a save is still a conflict", () =>
+    expect(remoteChange({ ...flight, server: "theirs" })).toBe("conflict"));
+  test("success: baseline moves, clean", () => {
+    expect(afterSave({ saved: "mine", draft: "mine" })).toEqual({ baseline: "mine", dirty: false });
+    // the settled server value now equals the baseline
+    expect(remoteChange({ baseline: "mine", draft: "mine", dirty: false, server: "mine" })).toBe("none");
+  });
+  test("success while the user kept typing stays dirty", () =>
+    expect(afterSave({ saved: "mine", draft: "mine more" })).toEqual({ baseline: "mine", dirty: true }));
+  test("saving null clears", () =>
+    expect(afterSave({ saved: null, draft: "" })).toEqual({ baseline: null, dirty: false }));
 });
 
 describe("descriptionToSave", () => {

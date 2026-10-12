@@ -6,7 +6,7 @@ import { TaskComments } from "@/components/task-comments";
 import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { descriptionToSave, remoteChange } from "@/components/editor/description-sync";
+import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
 import { membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import type { UpdateTaskInput } from "@repo/core/schemas";
@@ -15,6 +15,8 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+
+type SaveCallbacks = { onSuccess?: () => void; onError?: () => void };
 
 const projectKeyOf = (taskKey: string) => taskKey.slice(0, taskKey.lastIndexOf("-")).toUpperCase();
 const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -48,7 +50,8 @@ function TaskPage() {
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
 
-  const save = (input: UpdateTaskInput) => update.mutate({ taskKey: task.key, input });
+  const save = (input: UpdateTaskInput, callbacks?: SaveCallbacks) =>
+    update.mutate({ taskKey: task.key, input }, callbacks);
   const creator = members.find((m) => m.id === task.creatorId);
 
   function deleteTask() {
@@ -148,7 +151,7 @@ function TaskText({
   canEdit,
 }: {
   task: TaskDto;
-  onSave: (input: UpdateTaskInput) => void;
+  onSave: (input: UpdateTaskInput, callbacks?: SaveCallbacks) => void;
   canEdit: boolean;
 }) {
   const [title, setTitle] = useState(task.title);
@@ -159,6 +162,8 @@ function TaskText({
   const baseline = useRef(task.description);
   const dirty = useRef(false);
   const draft = useRef(task.description ?? "");
+  // The description being saved, until the save settles (undefined: none in flight).
+  const saving = useRef<string | null | undefined>(undefined);
   const conflictToast = useRef<string | number | undefined>(undefined);
 
   function load(server: string | null) {
@@ -166,6 +171,27 @@ function TaskText({
     dirty.current = false;
     draft.current = server ?? "";
     setLoaded((l) => ({ value: server ?? "", key: l.key + 1 }));
+  }
+
+  // Baseline and dirty only move once the server accepted the save; the optimistic
+  // cache write is not proof, and a rollback must leave the draft alone.
+  function saveText(next: string | null) {
+    saving.current = next;
+    onSave(
+      { description: next },
+      {
+        onSuccess: () => {
+          saving.current = undefined;
+          const after = afterSave({ saved: next, draft: draft.current });
+          baseline.current = after.baseline;
+          dirty.current = after.dirty;
+          resolveConflict();
+        },
+        onError: () => {
+          saving.current = undefined;
+        },
+      },
+    );
   }
 
   function resolveConflict() {
@@ -179,6 +205,7 @@ function TaskText({
       baseline: baseline.current,
       draft: draft.current,
       dirty: dirty.current,
+      saving: saving.current,
     });
     if (change === "none") return;
     if (change === "remount") load(task.description);
@@ -196,8 +223,8 @@ function TaskText({
           onClick: () => {
             conflictToast.current = undefined;
             const next = descriptionToSave({ dirty: true, draft: draft.current, server: null });
-            // After this lands the server value equals the draft and the baseline follows.
-            onSave({ description: next ?? null });
+            // Once this lands the baseline follows.
+            saveText(next ?? null);
           },
         },
         cancel: {
@@ -225,7 +252,7 @@ function TaskText({
     // A pending conflict is resolved through its toast, never by a stray blur.
     if (!canEdit || conflictToast.current !== undefined) return;
     const next = descriptionToSave({ dirty: dirty.current, draft: draft.current, server: task.description });
-    if (next !== undefined) onSave({ description: next });
+    if (next !== undefined) saveText(next);
   }
 
   return (

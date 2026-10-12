@@ -120,7 +120,7 @@ function Column({
   members: Map<string, ActorDto>;
   tags: TagDto[];
   progress: Progress;
-  onAdd: () => void;
+  onAdd?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: columnId(status.id), data: { statusId: status.id } });
   return (
@@ -129,9 +129,11 @@ function Column({
         <StatusIcon status={status} />
         {status.name}
         <span className="text-muted-foreground">{tasks.length}</span>
-        <Button variant="ghost" size="icon" className="ml-auto size-6" aria-label={`Add to ${status.name}`} onClick={onAdd}>
-          <PlusIcon className="size-4" />
-        </Button>
+        {onAdd && (
+          <Button variant="ghost" size="icon" className="ml-auto size-6" aria-label={`Add to ${status.name}`} onClick={onAdd}>
+            <PlusIcon className="size-4" />
+          </Button>
+        )}
       </header>
       <div
         ref={setNodeRef}
@@ -160,7 +162,7 @@ export function Board({
   tasks: TaskDto[];
   members: ActorDto[];
   tags: TagDto[];
-  onAdd: (statusId: string) => void;
+  onAdd?: (statusId: string) => void;
 }) {
   const update = useUpdateTask(orgSlug);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -247,7 +249,7 @@ export function Board({
             members={memberMap}
             tags={tags}
             progress={progress}
-            onAdd={() => onAdd(status.id)}
+            onAdd={onAdd && (() => onAdd(status.id))}
           />
         ))}
       </div>
