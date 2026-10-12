@@ -17,6 +17,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { documents } from "./documents";
 import { actors, organizations } from "./tenancy";
 
 // Fractional-index keys must compare byte-wise; the default locale collation reorders them.
@@ -43,6 +44,10 @@ export const projects = pgTable(
     description: text("description"),
     // Counter for task numbers (SPI-<n>); incremented in the task-creating transaction.
     taskSeq: integer("task_seq").notNull().default(0),
+    // The project's rules for agents (ST-111): one of its own project-level documents, or none.
+    rulesDocumentId: uuid("rules_document_id").references((): AnyPgColumn => documents.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },

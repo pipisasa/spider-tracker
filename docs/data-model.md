@@ -34,10 +34,10 @@ activity (append-only log for everything)
 | **Repo** | A linked Git/GitHub repository |
 | **App** | A deployable product, linked to repos and projects |
 | **Git link** | A branch, commit or pull request linked to a task |
-| **Document** | Markdown or HTML content at organization, project or task level, with versions |
+| **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
 | **Comment** | A threaded Markdown comment on a task |
-| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task; its id is a cursor for waiting clients |
+| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task, or (`rules`, about a document instead of a task) changed rules of their project; its id is a cursor for waiting clients |
 | **Device code** | A pending `spider login` (RFC 8628): hashed device code, user code, approver, expiry |
 | **Activity** | Append-only audit log of every change |
 | **Agent run** | One execution of an agent on a task |
@@ -148,6 +148,7 @@ create table projects (
   lead_id uuid references actors,
   task_seq int not null default 0,
   settings jsonb not null default '{}',
+  rules_document_id uuid references documents on delete set null,  -- rules for agents: one of its own project-level documents (ST-111)
   archived_at timestamptz,
   unique (org_id, key)
 );

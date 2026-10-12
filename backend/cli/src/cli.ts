@@ -9,7 +9,7 @@ import type {
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { normalizeHandle, parseTaskKey } from "@repo/core/schemas";
+import { INBOX_KINDS, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import type {
   CreateTaskInput,
@@ -1187,9 +1187,11 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const client = await sdk();
       const slug = await org();
       const [detail, tasks] = await Promise.all([client.projects.get(slug, key), client.tasks.list(slug, key)]);
+      const rulesDoc = detail.rulesDocumentId ? await client.documents.get(slug, detail.rulesDocumentId) : null;
+      const rules = rulesDoc && { documentId: rulesDoc.id, title: rulesDoc.title, version: rulesDoc.version, content: rulesDoc.content };
       const statuses = detail.statuses.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
       const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
-      output(opts, { ...detail, statuses }, () =>
+      output(opts, { ...detail, statuses, rules }, () =>
         [
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
@@ -1197,6 +1199,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
           "Statuses:",
           ...statuses.map((s) => `  ${s.name.padEnd(nameWidth)}  ${s.taskCount}`),
           ...(detail.description ? ["", detail.description] : []),
+          ...(rules ? ["", `Rules for agents: ${rules.title} (${rules.documentId}, v${rules.version})`, "", rules.content] : []),
         ].join("\n"),
       );
     },
@@ -1205,15 +1208,17 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     projectCommand
       .command("update")
-      .description("change a project's name or description (the key can't change)")
+      .description("change a project's name, description or rules for agents (the key can't change)")
       .argument("<key>")
       .option("--name <text>", "name")
-      .option("--description <text>", 'description (Markdown; "" clears it)'),
-  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string }) => {
+      .option("--description <text>", 'description (Markdown; "" clears it)')
+      .option("--rules <document-id>", 'one of the project\'s documents as its rules for agents ("" clears them); its agents are notified'),
+  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string; rules?: string }) => {
     const input: UpdateProjectInput = {};
     if (opts.name !== undefined) input.name = opts.name;
     if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
-    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name or --description");
+    if (opts.rules !== undefined) input.rulesDocumentId = opts.rules === "" ? null : opts.rules;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name, --description or --rules");
     const { sdk, org } = conn();
     const updated = await (await sdk()).projects.update(await org(), key, input);
     output(opts, updated, () => `Updated ${projectLine(updated)}`);
@@ -1443,7 +1448,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     program
       .command("inbox")
-      .description("your notifications: mentions, assignments, comments and replies")
+      .description("your notifications: mentions, assignments, comments and replies, and changed project rules")
       .option("--all", "include items already read")
       .option("--wait <seconds>", "wait up to this long (max 25) for a new item")
       .option("--mark-read", "mark the listed items read"),
@@ -1452,7 +1457,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const client = await sdk();
     const slug = await org();
     const wait = opts.wait === undefined ? undefined : parseLimit(opts.wait);
-    const { items } = await client.inbox.list(slug, { unread: !opts.all, wait });
+    const { items } = await client.inbox.list(slug, { unread: !opts.all, wait, kinds: [...INBOX_KINDS] });
     const last = items.at(-1);
     if (opts.markRead && last) await client.inbox.markRead(slug, { upTo: last.id });
     output(opts, { items }, () =>
@@ -1460,7 +1465,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         ? "Inbox is empty"
         : items
             .map((i) => {
-              const head = `#${i.id} ${i.task.key} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
+              const about = i.task?.key ?? (i.document ? `${i.document.projectKey} "${i.document.title}" (${i.document.id})` : "");
+              const head = `#${i.id} ${about} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
               return i.comment ? `${head}\n  ${i.comment.body.split("\n").join("\n  ")}` : head;
             })
             .join("\n"),

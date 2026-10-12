@@ -2,6 +2,7 @@ import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import {
+  assertCanManageProjects,
   assertCanWrite,
   inScope,
   orgIdOf,
@@ -24,6 +25,7 @@ import { DomainError } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
 import { normalizeTitle, outgoingLinksIn, resolveTitle } from "./links";
+import { announceRulesChange, rulesProjectOf } from "./project-rules";
 import {
   createDocumentInput,
   documentListQuery,
@@ -149,6 +151,42 @@ async function findDocument(
   if (!row || !visible)
     throw new DomainError("not_found", "Document not found");
   return { document: row.document, scope: scopeOf(row) };
+}
+
+/**
+ * A project's rules document (ST-111) is changed, moved or deleted only by those who manage
+ * projects: owners, admins and their agents. Returns the project it is the rules of.
+ */
+async function guardRules(tx: Tx, ctx: ActorContext, documentId: string) {
+  const project = await rulesProjectOf(tx, documentId);
+  if (project) await assertCanManageProjects(tx, ctx, `change the rules of ${project.key}`);
+  return project;
+}
+
+/** A rules document left its project: the project has no rules until new ones are set. */
+async function dropRules(tx: Tx, ctx: ActorContext, documentId: string, project: { id: string; key: string } | undefined) {
+  if (!project) return;
+  await tx.update(projects).set({ rulesDocumentId: null }).where(eq(projects.id, project.id));
+  await recordActivity(tx, ctx, {
+    entityType: "project",
+    entityId: project.id,
+    action: "project.updated",
+    changes: { rulesDocumentId: [documentId, null] },
+  });
+  await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+}
+
+/** Saves through `save`; when it made a new version of a rules document, tells the project's agents. */
+async function saveGuarded(
+  tx: Tx,
+  ctx: ActorContext,
+  current: DocumentRow,
+  save: () => Promise<DocumentDto>,
+): Promise<DocumentDto> {
+  const rulesOf = await guardRules(tx, ctx, current.id);
+  const saved = await save();
+  if (rulesOf && saved.version !== current.version) await announceRulesChange(tx, ctx, rulesOf.id, current.id);
+  return saved;
 }
 
 /** Rewrites what a document links to from its current content (ST-100). */
@@ -291,11 +329,13 @@ export async function updateDocument(
   return db.transaction(async (tx) => {
     const { document: current, scope } = await findDocument(tx, ctx, id, true);
     assertBaseVersion(current, data.baseVersion);
-    return saveVersion(tx, ctx, current, scope, {
-      title: data.title ?? current.title,
-      format: data.format ?? current.format,
-      content: data.content ?? current.content,
-    });
+    return saveGuarded(tx, ctx, current, () =>
+      saveVersion(tx, ctx, current, scope, {
+        title: data.title ?? current.title,
+        format: data.format ?? current.format,
+        content: data.content ?? current.content,
+      }),
+    );
   });
 }
 
@@ -321,13 +361,15 @@ export async function editDocument(
     if (new TextEncoder().encode(content).length > MAX_DOCUMENT_BYTES) {
       throw new DomainError("validation", "The edited document would be over 1 MB");
     }
-    return saveVersion(
-      tx,
-      ctx,
-      current,
-      scope,
-      { title: current.title, format: current.format, content },
-      { edits: data.edits.map((e) => ("old" in e ? "replace" : "append" in e ? "append" : "section")) },
+    return saveGuarded(tx, ctx, current, () =>
+      saveVersion(
+        tx,
+        ctx,
+        current,
+        scope,
+        { title: current.title, format: current.format, content },
+        { edits: data.edits.map((e) => ("old" in e ? "replace" : "append" in e ? "append" : "section")) },
+      ),
     );
   });
 }
@@ -428,6 +470,8 @@ export async function moveDocument(
     const projectId = target?.id ?? null;
     if (projectId === current.projectId && current.taskId === null)
       return toDocumentDto(current, from);
+    // A rules document (never a task's) only gets here when it leaves its project.
+    await dropRules(tx, ctx, current.id, await guardRules(tx, ctx, current.id));
 
     const [updated] = await tx
       .update(documents)
@@ -458,6 +502,7 @@ export async function deleteDocument(db: Db, ctx: ActorContext, id: string) {
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
     const { document, scope } = await findDocument(tx, ctx, id);
+    await dropRules(tx, ctx, document.id, await guardRules(tx, ctx, document.id));
     await tx
       .update(documents)
       .set({ deletedAt: new Date() })

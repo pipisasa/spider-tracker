@@ -19,13 +19,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useArchiveProject, useUpdateProject } from "@/lib/work";
+import { documentsQuery, useArchiveProject, useUpdateProject } from "@/lib/work";
 import type { ProjectDto } from "@repo/core/contracts";
 import { updateProjectInput } from "@repo/core/schemas";
+import { useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
-/** Edit name and description, or archive. Owners and admins only (the API enforces it). */
+const NO_RULES = "none";
+
+/** Edit name, description and rules for agents, or archive. Owners and admins only (the API enforces it). */
 export function ProjectSettingsDialog({
   orgSlug,
   project,
@@ -39,6 +43,10 @@ export function ProjectSettingsDialog({
 }) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? "");
+  const [rules, setRules] = useState(project.rulesDocumentId ?? NO_RULES);
+  // Only the project's own documents (not its tasks') can be its rules.
+  const { data: documents = [] } = useQuery({ ...documentsQuery(orgSlug, { project: project.key }), enabled: open });
+  const candidates = documents.filter((d) => d.taskKey === null);
   const [error, setError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const update = useUpdateProject(orgSlug, project.key);
@@ -51,6 +59,7 @@ export function ProjectSettingsDialog({
     if (open) {
       setName(project.name);
       setDescription(project.description ?? "");
+      setRules(project.rulesDocumentId ?? NO_RULES);
       setError(null);
     }
   }
@@ -60,13 +69,17 @@ export function ProjectSettingsDialog({
     const parsed = updateProjectInput.safeParse({
       name,
       description: description.trim() === "" ? null : description,
+      rulesDocumentId: rules === NO_RULES ? null : rules,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid input");
       return;
     }
     setError(null);
-    const unchanged = parsed.data.name === project.name && (parsed.data.description ?? null) === (project.description ?? null);
+    const unchanged =
+      parsed.data.name === project.name &&
+      (parsed.data.description ?? null) === (project.description ?? null) &&
+      (parsed.data.rulesDocumentId ?? null) === project.rulesDocumentId;
     if (unchanged) {
       onOpenChange(false);
       return;
@@ -103,6 +116,26 @@ export function ProjectSettingsDialog({
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="project-rules">Rules for agents</Label>
+              <Select value={rules} onValueChange={setRules}>
+                <SelectTrigger id="project-rules" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_RULES}>None</SelectItem>
+                  {candidates.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                One of this project&apos;s documents. Agents working in {project.key} get it automatically and are
+                notified when it changes; only owners, admins and their agents can edit it.
+              </p>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 p-3">

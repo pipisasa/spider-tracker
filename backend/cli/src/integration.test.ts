@@ -378,6 +378,29 @@ withDb("spider CLI against the API", () => {
     const comments = ((await thread.json()) as { items: { body: string; parentId: string | null }[] }).items;
     expect(comments.at(-1)).toMatchObject({ body: "Docs checked", parentId: pushed[0]?.meta.comment_id });
 
+    // Project rules (ST-111): the owner sets them; the channel pushes the change, the CLI shows them.
+    const asOwner = (method: string, path: string, body: unknown) =>
+      app.request(`/v1/orgs/${slug}${path}`, {
+        method,
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const rulesDoc = (await (
+      await asOwner("POST", "/documents", { title: "Rules", project: "SPI", content: "Done means merged." })
+    ).json()) as { id: string };
+    expect((await asOwner("PATCH", "/projects/SPI", { rulesDocumentId: rulesDoc.id })).status).toBe(200);
+    for (let i = 0; i < 50 && pushed.length < 2; i++) await Bun.sleep(100);
+    expect(pushed[1]?.meta).toMatchObject({ kind: "rules", project: "SPI", document_id: rulesDoc.id });
+    expect(pushed[1]?.meta).not.toHaveProperty("task");
+    expect(pushed[1]?.content).toContain('changed the rules of project SPI: "Rules"');
+
+    const view = await spider("project", "view", "SPI");
+    expect(view.stdout).toContain(`Rules for agents: Rules (${rulesDoc.id}, v1)`);
+    expect(view.stdout).toContain("Done means merged.");
+    // An owner's agent may clear them.
+    expect((await spider("project", "update", "SPI", "--rules", "", "--json")).json()).toMatchObject({ rulesDocumentId: null });
+    expect((await asOwner("DELETE", `/documents/${rulesDoc.id}`, {})).status).toBeLessThan(300);
+
     stop.abort();
     await pumping;
     await session.close();

@@ -7,10 +7,12 @@ import {
   addComment,
   createAgent,
   createApiKey,
+  createDocument,
   createOrganization,
   createProject,
   createTask,
   deleteAgent,
+  updateProject,
 } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { and, eq, inArray } from "drizzle-orm";
@@ -74,6 +76,7 @@ withDb("MCP server", () => {
   let otherClient: Client;
   const agentIds: string[] = [];
   const ownerCtxs: ActorContext[] = [];
+  const secrets: string[] = [];
 
   /** Creates an org with a project and an agent key; returns the key's secret. */
   async function setUpOrg(i: number) {
@@ -89,7 +92,9 @@ withDb("MCP server", () => {
     await createProject(db, ctx, { name: "Spider", key: "SPI" });
     const agent = await createAgent(db, ctx, { name: "Claude Code" });
     agentIds[i] = agent.actor.id;
-    return (await createApiKey(db, ctx, agent.actor.id, { name: "test" })).secret;
+    const { secret } = await createApiKey(db, ctx, agent.actor.id, { name: "test" });
+    secrets[i] = secret;
+    return secret;
   }
 
   beforeAll(async () => {
@@ -421,7 +426,47 @@ withDb("MCP server", () => {
     expect(await titles("me", "mine-check")).toEqual([]);
   });
 
-    test("a key from another organization can't see this one's tasks", async () => {
+  test("project rules (ST-111): in the server instructions, whoami and get_project; changes reach the inbox", async () => {
+    const owner = ownerCtxs[1];
+    if (!owner) throw new Error("no owner");
+    expect((await call(otherClient, "whoami")).json()).toMatchObject({ projectRules: [] });
+    expect((await call(otherClient, "get_project", { projectKey: "SPI" })).json()).toMatchObject({ rules: null });
+
+    const doc = await createDocument(db, owner, { title: "Agent rules", project: "SPI", content: "Finished reviews go to Done." });
+    await updateProject(db, owner, "SPI", { rulesDocumentId: doc.id });
+
+    // A new session gets them with its first answer (initialize), without calling anything.
+    const fresh = await connect(secrets[1] ?? "");
+    try {
+      const instructions = fresh.getInstructions() ?? "";
+      expect(instructions).toContain("Rules of project SPI (Spider)");
+      expect(instructions).toContain("Finished reviews go to Done.");
+    } finally {
+      await fresh.close();
+    }
+    // Without rules there are no instructions.
+    expect(client.getInstructions()).toBeUndefined();
+
+    const rules = { project: "SPI", documentId: doc.id, title: "Agent rules", content: "Finished reviews go to Done." };
+    expect((await call(otherClient, "whoami")).json()).toMatchObject({ projectRules: [rules] });
+    expect((await call(otherClient, "get_project", { projectKey: "SPI" })).json()).toMatchObject({
+      rulesDocumentId: doc.id,
+      rules,
+    });
+    expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual([
+      expect.objectContaining({ kind: "rules", project: "SPI", rulesDocument: { id: doc.id, title: "Agent rules" } }),
+    ]);
+
+    // The owner's agent can change them through update_project; a non-document id is a tool error.
+    expect((await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: null })).json()).toMatchObject({
+      rulesDocumentId: null,
+    });
+    expect(await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: "nope" })).toMatchObject({
+      isError: true,
+    });
+  });
+
+  test("a key from another organization can't see this one's tasks", async () => {
     expect(await call(otherClient, "get_task", { key: "SPI-1" })).toMatchObject({ isError: true });
     expect((await call(otherClient, "list_tasks", { projectKey: "SPI" })).json()).toMatchObject({ total: 0 });
     expect((await call(otherClient, "whoami")).json()).toMatchObject({ organization: { slug: slugs[1] } });
