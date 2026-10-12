@@ -58,15 +58,17 @@ export function projectScope(db: Db | Tx, viewer: Viewer): Promise<ProjectScope>
   if (typeof viewer === "string") return Promise.resolve(null);
   let scope = scopeCache.get(viewer);
   if (!scope) {
-    scope = Promise.all([
-      db.select({ scoped: agents.scoped }).from(agents).where(eq(agents.actorId, viewer.actorId)).limit(1),
-      db
-        .select({ projectId: agentProjects.projectId })
-        .from(agentProjects)
-        .where(eq(agentProjects.agentId, viewer.actorId)),
-    ]).then(([[agent], rows]) =>
-      agent?.scoped || rows.length > 0 ? new Set(rows.map((r) => r.projectId)) : null,
-    );
+    // One query: people get a single row with no agent and no projects.
+    scope = db
+      .select({ scoped: agents.scoped, projectId: agentProjects.projectId })
+      .from(actors)
+      .leftJoin(agents, eq(agents.actorId, actors.id))
+      .leftJoin(agentProjects, eq(agentProjects.agentId, actors.id))
+      .where(eq(actors.id, viewer.actorId))
+      .then((rows) => {
+        const projectIds = rows.flatMap((r) => (r.projectId ? [r.projectId] : []));
+        return rows.some((r) => r.scoped) || projectIds.length > 0 ? new Set(projectIds) : null;
+      });
     scopeCache.set(viewer, scope);
   }
   return scope;

@@ -54,27 +54,39 @@ type InviteRow = typeof agentInvites.$inferSelect;
 /**
  * Removes pending agents whose unused invite expired more than LIST_RETENTION_DAYS ago: they are
  * no longer listed, so nobody could revoke them. Deleting the actor cascades to the invite and
- * its project rows, like a revoke.
+ * its project rows, like a revoke. Runs when an invite is created (a write already), not when
+ * invites are listed, so reading stays side-effect free; until then they are only hidden.
  */
-async function purgeExpiredPendingAgents(db: Db | Tx, orgId: string) {
-  await db.delete(actors).where(
-    and(
-      eq(actors.type, "agent"),
-      isNotNull(actors.deactivatedAt),
-      inArray(
-        actors.id,
-        db
-          .select({ id: agentInvites.agentId })
-          .from(agentInvites)
-          .where(
-            and(
-              eq(agentInvites.orgId, orgId),
-              isNull(agentInvites.usedAt),
-              isNull(agentInvites.revokedAt),
-              sql`${agentInvites.expiresAt} <= now() - make_interval(days => ${LIST_RETENTION_DAYS})`,
-            ),
-          ),
+async function purgeExpiredPendingAgents(tx: Tx, ctx: ActorContext) {
+  const stale = await tx
+    .select({ agentId: agentInvites.agentId, inviteId: agentInvites.id })
+    .from(agentInvites)
+    .innerJoin(actors, eq(actors.id, agentInvites.agentId))
+    .where(
+      and(
+        eq(agentInvites.orgId, ctx.orgId),
+        isNull(agentInvites.usedAt),
+        isNull(agentInvites.revokedAt),
+        sql`${agentInvites.expiresAt} <= now() - make_interval(days => ${LIST_RETENTION_DAYS})`,
+        eq(actors.type, "agent"),
+        isNotNull(actors.deactivatedAt),
       ),
+    )
+    // Concurrent creates wait here and then skip the rows already purged.
+    .for("update", { of: agentInvites });
+  if (stale.length === 0) return;
+  for (const { agentId, inviteId } of stale) {
+    await recordActivity(tx, ctx, {
+      entityType: "actor",
+      entityId: agentId,
+      action: "agent_invite.purged",
+      changes: { inviteId },
+    });
+  }
+  await tx.delete(actors).where(
+    inArray(
+      actors.id,
+      stale.map((r) => r.agentId),
     ),
   );
 }
@@ -132,7 +144,7 @@ export async function createAgentInvite(
   );
 
   return db.transaction(async (tx) => {
-    await purgeExpiredPendingAgents(tx, ctx.orgId);
+    await purgeExpiredPendingAgents(tx, ctx);
     const found = await tx
       .select({ id: projects.id, key: projects.key, name: projects.name })
       .from(projects)
@@ -216,7 +228,6 @@ export async function listAgentInvites(
   ctx: ActorContext,
 ): Promise<AgentInviteDto[]> {
   assertRole(ctx, ["owner", "admin", "member"], "see agent invites");
-  await purgeExpiredPendingAgents(db, ctx.orgId);
   const rows = await db
     .select({
       invite: agentInvites,
@@ -334,7 +345,7 @@ export async function acceptAgentInvite(
     const { invite, organization } = row;
 
     const [agentRow] = await tx
-      .select({ actor: actors, ownerId: agents.ownerId })
+      .select({ actor: actors, ownerId: agents.ownerId, scoped: agents.scoped })
       .from(actors)
       .innerJoin(agents, eq(agents.actorId, actors.id))
       .where(eq(actors.id, invite.agentId))
@@ -353,6 +364,14 @@ export async function acceptAgentInvite(
       : [];
     if (!agentRow || !owner || owner.deactivatedAt)
       throw new DomainError("validation", INVALID_CODE);
+    // A scoped agent whose projects were all deleted would see nothing; the code stays unused.
+    const refs = await agentProjectRefs(tx, [agentRow.actor.id]);
+    const projectRefs = refs.get(agentRow.actor.id) ?? [];
+    if (agentRow.scoped && projectRefs.length === 0)
+      throw new DomainError(
+        "validation",
+        "The projects this invite was for no longer exist; ask for a new invite",
+      );
 
     const name = data.name ?? agentRow.actor.name;
     let handle = data.handle ?? agentRow.actor.handle;
@@ -396,7 +415,6 @@ export async function acceptAgentInvite(
       changes: { inviteId: invite.id, name, handle },
     });
     const { secret } = await issueApiKey(tx, ctx, actor.id, "invite");
-    const refs = await agentProjectRefs(tx, [actor.id]);
     return {
       token: secret,
       actor,
@@ -405,7 +423,7 @@ export async function acceptAgentInvite(
         slug: organization.slug,
         name: organization.name,
       },
-      projects: refs.get(actor.id) ?? [],
+      projects: projectRefs,
       owner: { id: owner.id, name: owner.name, handle: owner.handle },
     };
   });
