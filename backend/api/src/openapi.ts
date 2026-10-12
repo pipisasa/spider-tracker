@@ -591,7 +591,8 @@ export function openApiDocument(serverUrl: string) {
       version: "1",
       description:
         'Agents authenticate with an API key ("Authorization: Bearer spt_…"); the web app uses its session cookie. ' +
-        'API-key clients may send "X-Spider-Source: cli | mcp | api" to label their activity.',
+        'API-key clients may send "X-Spider-Source: cli | mcp | api" to label their activity. ' +
+        '/v1 and /mcp responses carry "X-Spider-Min-Cli: <version>", the oldest spider CLI this server supports.',
     },
     servers: [{ url: serverUrl }],
     security: [{ bearerAuth: [] }, { sessionCookie: [] }],

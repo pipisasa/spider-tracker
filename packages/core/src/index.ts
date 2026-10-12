@@ -20,3 +20,4 @@ export * from "./relations";
 export * from "./documents";
 export * from "./invitations";
 export * from "./agent-invites";
+export * from "./version";

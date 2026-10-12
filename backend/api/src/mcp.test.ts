@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ActorContext } from "@repo/core";
-import { addComment, createAgent, createApiKey, createOrganization, createProject } from "@repo/core";
+import { MIN_CLI_VERSION, addComment, createAgent, createApiKey, createOrganization, createProject } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { createApp } from "./app";
@@ -32,6 +32,7 @@ test("/mcp requires an agent API key", async () => {
   });
   expect(res.status).toBe(401);
   expect(res.headers.get("www-authenticate")).toStartWith("Bearer");
+  expect(res.headers.get("X-Spider-Min-Cli")).toBe(MIN_CLI_VERSION);
   expect(await res.json()).toMatchObject({ error: { code: "unauthorized" } });
 });
 

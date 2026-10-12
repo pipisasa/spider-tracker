@@ -2,6 +2,8 @@ import type { AcceptedAgentInviteDto, ApiErrorBody, AuthProvidersResponse, MeRes
 import type { InvitationPreviewDto } from "@repo/core";
 import {
   DomainError,
+  MIN_CLI_HEADER,
+  MIN_CLI_VERSION,
   acceptAgentInvite,
   acceptInvitation,
   authenticateApiKey,
@@ -12,7 +14,7 @@ import {
 } from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { enabledAuthProviders, type Auth } from "./auth";
@@ -52,7 +54,16 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     }),
   );
 
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  app.get("/health", (c) => c.json({ status: "ok", minCliVersion: MIN_CLI_VERSION }));
+
+  // Lets the spider CLI warn when it is older than this server supports.
+  const minCli: MiddlewareHandler = async (c, next) => {
+    await next();
+    c.header(MIN_CLI_HEADER, MIN_CLI_VERSION);
+  };
+  app.use("/v1/*", minCli);
+  app.use("/mcp", minCli);
+  app.use("/mcp/*", minCli);
 
   app.get("/health/ready", async (c) => {
     await db.execute(sql`select 1`);

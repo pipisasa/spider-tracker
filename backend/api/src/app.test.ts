@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import type { MeResponse, MembershipDto } from "@repo/core";
+import { MIN_CLI_VERSION, type MeResponse, type MembershipDto } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { SpiderApiError, createClient } from "@repo/sdk";
 import { eq } from "drizzle-orm";
@@ -34,7 +34,13 @@ describe("public routes", () => {
   test("GET /health", async () => {
     const res = await app.request("/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: "ok" });
+    expect(await res.json()).toEqual({ status: "ok", minCliVersion: MIN_CLI_VERSION });
+  });
+
+  test("/v1 responses carry the oldest supported CLI version, errors included", async () => {
+    const res = await app.request("/v1/me", { headers: { Authorization: "Bearer spt_nope" } });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("X-Spider-Min-Cli")).toBe(MIN_CLI_VERSION);
   });
 
   test("GET /auth/providers lists only configured sign-in methods", async () => {
