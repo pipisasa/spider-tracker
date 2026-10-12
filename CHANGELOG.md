@@ -54,6 +54,10 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
 
+### Plugin 0.3.8
+
+- The `tasks` skill explains document comments: feedback goes on the document (`add_document_comment` / `spider doc comment`, with `quote` for a fragment), not in task comments (ST-118).
+
 ### Plugin 0.3.7
 
 - The `tasks` skill mentions `spider doc publish <dir>` for publishing a set of documents from local files (ST-119).
