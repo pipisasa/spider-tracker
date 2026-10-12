@@ -50,6 +50,7 @@ function OrgLayout() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   useOrgEvents(orgSlug);
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
+  const canCreateAgents = membership.actor.role !== "guest";
 
   const signOut = useSignOut();
 
@@ -159,7 +160,7 @@ function OrgLayout() {
             <UsersIcon className="size-4 text-muted-foreground" />
             Members
           </Link>
-          {canManage && (
+          {canCreateAgents && (
             <Link
               to="/$orgSlug/settings/agents"
               params={{ orgSlug }}

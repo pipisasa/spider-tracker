@@ -1,4 +1,6 @@
 import {
+  createAgentInput,
+  createApiKeyInput,
   createCommentInput,
   createTagInput,
   relationInput,
@@ -8,6 +10,7 @@ import {
   createInvitationInput,
   invitationCodeInput,
   markInboxReadInput,
+  updateAgentInput,
   updateDocumentInput,
   updateTaskInput,
 } from "@repo/core/schemas";
@@ -167,6 +170,27 @@ const schemas: Record<string, JsonSchema> = {
   }),
   CreateInvitationInput: fromZod(createInvitationInput),
   InvitationCodeInput: fromZod(invitationCodeInput),
+  ApiKey: object({
+    id: string({ format: "uuid" }),
+    name: string(),
+    prefix: string({ examples: ["spt_a1b2c3"], description: "First characters of the key, to recognise it" }),
+    createdAt: string({ format: "date-time" }),
+    lastUsedAt: nullable("string", { format: "date-time" }),
+    revokedAt: nullable("string", { format: "date-time" }),
+  }),
+  CreatedApiKey: object({ key: ref("ApiKey"), secret: string({ description: "Shown only once" }) }),
+  Agent: object({
+    actor: ref("Actor"),
+    ownerId: string({ format: "uuid" }),
+    owner: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+    description: nullable("string"),
+    canManage: { type: "boolean", description: "The caller owns the agent or is an organization owner/admin" },
+    keys: { type: "array", items: ref("ApiKey"), description: "Empty unless canManage" },
+  }),
+  AgentList: listOf("Agent"),
+  CreateAgentInput: fromZod(createAgentInput),
+  UpdateAgentInput: fromZod(updateAgentInput),
+  CreateApiKeyInput: fromZod(createApiKeyInput),
   ActorList: listOf("Actor"),
   ProjectList: listOf("Project"),
   TaskList: listOf("Task"),
@@ -255,6 +279,51 @@ const paths = {
     delete: {
       operationId: "revokeInvitation",
       summary: "Revoke an invitation code",
+      responses: { "204": { description: "Revoked" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/agents": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listAgents",
+      summary: "Active agents with their owners; keys only for agents you can manage",
+      responses: { "200": ok("Agents", "AgentList"), ...errors },
+    },
+    post: {
+      operationId: "createAgent",
+      summary: "Create an agent owned by you (people with owner, admin or member role; not guests or agent keys)",
+      requestBody: body("CreateAgentInput"),
+      responses: { "201": ok("Created agent", "Agent"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/agents/{agentId}": {
+    parameters: [orgSlug, pathParam("agentId", "Agent actor id")],
+    patch: {
+      operationId: "updateAgent",
+      summary: "Change an agent's name, handle or description (its owner, or owners and admins)",
+      requestBody: body("UpdateAgentInput"),
+      responses: { "200": ok("Updated agent", "Agent"), ...errors },
+    },
+    delete: {
+      operationId: "deleteAgent",
+      summary: "Deactivate an agent and revoke its keys; its history and assignments stay",
+      responses: { "204": { description: "Deleted" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/agents/{agentId}/keys": {
+    parameters: [orgSlug, pathParam("agentId", "Agent actor id")],
+    post: {
+      operationId: "createApiKey",
+      summary: "Issue an API key for an agent you can manage; the secret is returned only once",
+      requestBody: body("CreateApiKeyInput"),
+      responses: { "201": ok("Created key", "CreatedApiKey"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/api-keys/{keyId}": {
+    parameters: [orgSlug, pathParam("keyId", "API key id")],
+    delete: {
+      operationId: "revokeApiKey",
+      summary: "Revoke a key of an agent you can manage",
       responses: { "204": { description: "Revoked" }, ...errors },
     },
   },

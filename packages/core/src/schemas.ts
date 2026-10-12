@@ -77,19 +77,31 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
   return { projectKey: match[1].toUpperCase(), number: Number(match[2]) };
 }
 
+const agentName = z.string().trim().min(1, "Required").max(80, "At most 80 characters");
+const agentHandle = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
+  .max(32);
+
 export const createAgentInput = z.object({
-  name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
-  handle: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
-    .max(32)
-    .optional(),
+  name: agentName,
+  handle: agentHandle.optional(),
   description: z.string().trim().max(500).optional(),
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentInput>;
+
+export const updateAgentInput = z
+  .object({
+    name: agentName.optional(),
+    handle: agentHandle.optional(),
+    description: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateAgentInput = z.infer<typeof updateAgentInput>;
 
 export const createApiKeyInput = z.object({
   name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),

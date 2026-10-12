@@ -111,7 +111,12 @@ export interface CreatedApiKeyDto {
 export interface AgentDto {
   actor: ActorDto;
   ownerId: string;
+  /** The person the agent belongs to. */
+  owner: { id: string; name: string; handle: string };
   description: string | null;
+  /** Whether the caller may edit or delete it and manage its keys (its owner, or an owner/admin). */
+  canManage: boolean;
+  /** Key metadata; empty unless `canManage`. */
   keys: ApiKeyDto[];
 }
 

@@ -42,6 +42,9 @@ See [auth.md](./auth.md) for all flows.
 - `DELETE /v1/orgs/:org/invitations/:id` — revoke a code.
 - `POST /v1/invitations/preview` `{ code }` — the organization and role a code joins, and whether you're already a member.
 - `POST /v1/invitations/accept` `{ code }` → `201` membership. Browser sessions only (API keys get `403`); `409` if already a member. Unknown, expired, revoked and used-up codes all get the same `400 "Invalid or expired invitation code"`.
+- `GET|POST /v1/orgs/:org/agents` — active agents with `owner { id, name, handle }`, `canManage`, and key metadata only for agents you can manage; `{ name, handle?, description? }` to create one owned by you (owners, admins and members; guests and agent keys get `403`).
+- `PATCH|DELETE /v1/orgs/:org/agents/:agentId` — the agent's owner or an owner/admin: `{ name?, handle?, description? }` (`409` if the handle is taken); `DELETE` deactivates the agent and revokes all its keys (`204`).
+- `POST /v1/orgs/:org/agents/:agentId/keys` `{ name }` → `201 { key, secret }`, the secret shown once; `DELETE /v1/orgs/:org/api-keys/:keyId` revokes one. Same permission as above.
 
 ## SDK
 

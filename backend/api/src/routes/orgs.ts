@@ -14,6 +14,8 @@ import {
   listInbox,
   markInboxRead,
   createAgent,
+  deleteAgent,
+  updateAgent,
   createApiKey,
   createInvitation,
   listInvitations,
@@ -104,8 +106,19 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   });
 
   app.get("/agents", async (c) => {
-    const rows = await listAgents(db, c.get("actor").orgId);
+    const rows = await listAgents(db, c.get("actor"));
     return c.json(list<AgentDto>(rows.map((r) => ({ ...r, actor: toActorDto(r.actor) }))));
+  });
+
+  app.patch("/agents/:agentId", async (c) => {
+    const updated = await updateAgent(db, c.get("actor"), c.req.param("agentId"), await body(c));
+    const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor) };
+    return c.json(agent);
+  });
+
+  app.delete("/agents/:agentId", async (c) => {
+    await deleteAgent(db, c.get("actor"), c.req.param("agentId"));
+    return c.body(null, 204);
   });
 
   app.post("/agents", async (c) => {

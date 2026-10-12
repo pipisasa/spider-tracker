@@ -713,3 +713,77 @@ withDb("invitation codes", () => {
     expect((await send({ token: secret }, "POST", "/v1/invitations/preview", { code: fresh.code })).status).toBe(403);
   });
 });
+
+withDb("members manage their own agents", () => {
+  const stamp = Date.now();
+  const emails = ["owner", "alice", "bob", "admin", "guest"].map((n) => `agents-${n}-${stamp}@example.com`);
+  const slug = `own-agents-${stamp}`;
+
+  afterAll(async () => {
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    for (const email of emails) await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  const send = (credentials: { cookie?: string; token?: string }, method: string, path: string, body?: unknown) =>
+    app.request(path, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(credentials.cookie ? { Cookie: credentials.cookie } : {}),
+        ...(credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  test("members create their own agents; only the owner or an admin manages them", async () => {
+    const [owner, alice, bob, admin, guest] = await Promise.all(
+      emails.map(async (email) => ({ cookie: await signIn(email) })),
+    );
+    if (!owner || !alice || !bob || !admin || !guest) throw new Error("sign-in failed");
+    await send(owner, "POST", "/v1/organizations", { name: "Own Agents", slug });
+    for (const [who, role] of [
+      [alice, "member"],
+      [bob, "member"],
+      [admin, "admin"],
+      [guest, "guest"],
+    ] as const) {
+      const { code } = (await (await send(owner, "POST", `/v1/orgs/${slug}/invitations`, { role })).json()) as {
+        code: string;
+      };
+      expect((await send(who, "POST", "/v1/invitations/accept", { code })).status).toBe(201);
+    }
+    const agents = `/v1/orgs/${slug}/agents`;
+
+    const created = await send(alice, "POST", agents, { name: "Alice Bot" });
+    expect(created.status).toBe(201);
+    const agent = (await created.json()) as { actor: { id: string }; canManage: boolean };
+    expect(agent.canManage).toBe(true);
+    expect((await send(guest, "POST", agents, { name: "Guest Bot" })).status).toBe(403);
+
+    const keyRes = await send(alice, "POST", `${agents}/${agent.actor.id}/keys`, { name: "laptop" });
+    expect(keyRes.status).toBe(201);
+    const { secret, key } = (await keyRes.json()) as { secret: string; key: { id: string } };
+    expect((await send({ token: secret }, "POST", agents, { name: "Child Bot" })).status).toBe(403);
+
+    // Bob sees the agent and its owner, but no keys and no actions.
+    const bobList = (await (await send(bob, "GET", agents)).json()) as {
+      items: { actor: { id: string }; canManage: boolean; keys: unknown[]; owner: { handle: string } }[];
+    };
+    const seen = bobList.items.find((a) => a.actor.id === agent.actor.id);
+    expect(seen).toMatchObject({ canManage: false, keys: [] });
+    expect((await send(bob, "PATCH", `${agents}/${agent.actor.id}`, { name: "Mine" })).status).toBe(403);
+    expect((await send(bob, "POST", `${agents}/${agent.actor.id}/keys`, { name: "x" })).status).toBe(403);
+    expect((await send(bob, "DELETE", `/v1/orgs/${slug}/api-keys/${key.id}`)).status).toBe(403);
+    expect((await send(bob, "DELETE", `${agents}/${agent.actor.id}`)).status).toBe(403);
+
+    const renamed = await send(admin, "PATCH", `${agents}/${agent.actor.id}`, { name: "Renamed", handle: "renamed" });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ actor: { name: "Renamed", handle: "renamed" }, canManage: true });
+
+    expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(200);
+    expect((await send(alice, "DELETE", `${agents}/${agent.actor.id}`)).status).toBe(204);
+    expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(401);
+    const members = (await (await send(alice, "GET", `/v1/orgs/${slug}/members`)).json()) as { items: { id: string }[] };
+    expect(members.items.map((m) => m.id)).not.toContain(agent.actor.id);
+  });
+});

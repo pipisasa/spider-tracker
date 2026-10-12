@@ -1,8 +1,10 @@
 import type {
   ActivityDto,
   ActorDto,
+  AgentDto,
   ApiErrorBody,
   CommentDto,
+  CreatedApiKeyDto,
   DocumentDto,
   DocumentSummaryDto,
   DocumentVersionDto,
@@ -20,11 +22,13 @@ import type {
   WhoAmIResponse,
 } from "@repo/core/contracts";
 import type {
+  CreateAgentInput,
   CreateCommentInput,
   CreateDocumentInput,
   CreateTagInput,
   CreateTaskInput,
   RelationInput,
+  UpdateAgentInput,
   UpdateDocumentInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
@@ -127,6 +131,22 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
 
     members: {
       list: (orgSlug: string) => request<ListResponse<ActorDto>>("GET", `${org(orgSlug)}/members`),
+    },
+
+    /** Anyone but guests creates agents; the owner (or an org owner/admin) manages them and their keys. */
+    agents: {
+      list: (orgSlug: string) => request<ListResponse<AgentDto>>("GET", `${org(orgSlug)}/agents`),
+      create: (orgSlug: string, input: CreateAgentInput) => request<AgentDto>("POST", `${org(orgSlug)}/agents`, input),
+      update: (orgSlug: string, agentId: string, input: UpdateAgentInput) =>
+        request<AgentDto>("PATCH", `${org(orgSlug)}/agents/${seg(agentId)}`, input),
+      /** Deactivates the agent and revokes all its keys. */
+      delete: (orgSlug: string, agentId: string) => request<void>("DELETE", `${org(orgSlug)}/agents/${seg(agentId)}`),
+      keys: {
+        /** The secret is returned only here. */
+        create: (orgSlug: string, agentId: string, input: { name: string }) =>
+          request<CreatedApiKeyDto>("POST", `${org(orgSlug)}/agents/${seg(agentId)}/keys`, input),
+        revoke: (orgSlug: string, keyId: string) => request<void>("DELETE", `${org(orgSlug)}/api-keys/${seg(keyId)}`),
+      },
     },
 
     projects: {

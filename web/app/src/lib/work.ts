@@ -23,6 +23,7 @@ import type {
   CreateProjectInput,
   CreateTagInput,
   CreateTaskInput,
+  UpdateAgentInput,
   UpdateDocumentInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
@@ -228,6 +229,39 @@ export function useCreateAgent(org: string) {
         method: "POST",
         body: JSON.stringify(input),
       }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.agents(org) });
+      void qc.invalidateQueries({ queryKey: keys.members(org) });
+    },
+  });
+}
+
+export function useUpdateAgent(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      input,
+    }: {
+      agentId: string;
+      input: UpdateAgentInput;
+    }) =>
+      api<AgentDto>(`${orgPath(org)}/agents/${agentId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.agents(org) });
+      void qc.invalidateQueries({ queryKey: keys.members(org) });
+    },
+  });
+}
+
+export function useDeleteAgent(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (agentId: string) =>
+      api<void>(`${orgPath(org)}/agents/${agentId}`, { method: "DELETE" }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.agents(org) });
       void qc.invalidateQueries({ queryKey: keys.members(org) });

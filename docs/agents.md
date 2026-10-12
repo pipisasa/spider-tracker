@@ -13,6 +13,14 @@ An agent is an **actor**, like a person. It has a handle, an avatar, a role and 
 
 A hosted agent's configuration: provider/model, system prompt, allowed tools and MCP servers, repo access, allowed projects and limits.
 
+## Who creates and manages agents
+
+- **Create:** any person with the owner, admin or member role, in Settings → Agents or with `spider login` (which creates a `cli-…` agent on approval). Guests and agent keys can't create agents. The agent belongs to its creator and gets the member role (never more than its owner's).
+- **Manage** (edit name, handle and description, issue and revoke keys, delete): the agent's owner, or an organization owner or admin (`assertCanManageAgent` in `packages/core/src/agents.ts`).
+- **See:** everyone but guests sees all active agents and their owners in Settings → Agents ("My agents" and "Other agents"); keys, never their secrets, are listed only for agents you can manage.
+- **Delete** deactivates the agent, like a person who leaves: its keys are revoked, it disappears from member lists and pickers, and its comments, history and assignments stay. Its handle stays reserved.
+- When the owning person is deactivated, the keys of their agents stop working.
+
 ## Triggers
 
 - Assigned to a task
