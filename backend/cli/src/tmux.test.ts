@@ -169,6 +169,15 @@ describe("spider claude --tmux", () => {
     expect(result.stderr).not.toContain("development-channels");
   });
 
+  test("a list of agents without --: the other agents never reach claude", async () => {
+    const { tmux, calls, state } = fakeTmux();
+    const result = await cli(["claude", "ant-owner", "st-dev", "--tmux", "team"], { tmux });
+    expect(result.code).toBe(0);
+    expect(state.get("team")).toEqual(["ant-owner", "st-dev"]);
+    const commands = calls.filter((c) => c[0] === "new-session" || c[0] === "new-window").map((c) => c.at(-1));
+    expect(commands).toEqual(["/usr/local/bin/spider claude prod/acme/ant-owner", "/usr/local/bin/spider claude prod/acme/st-dev"]);
+  });
+
   test("--dry-run prints the plan and opens nothing", async () => {
     const { tmux, calls } = fakeTmux({ sessions: { team: ["ant-sales"] } });
     const result = await cli(["claude", "--all", "--project", "ANT", "--server", "prod", "--tmux", "team", "--dry-run"], { tmux });
@@ -212,6 +221,7 @@ describe("spider claude --tmux", () => {
     await expectUsage(["claude", "st-dev", "--all", "--tmux", "t"], "Name agents or use --all, not both");
     await expectUsage(["claude", "--tmux", "t"], "Which agents?");
     await expectUsage(["claude", "st-dev", "--tmux", "a:b"], 'Invalid tmux session name "a:b"');
+    for (const bad of ["=team", "$1", "%2"]) await expectUsage(["claude", "st-dev", "--tmux", bad], `Invalid tmux session name "${bad}"`);
     await expectUsage(["claude", "--all"], "--all goes with --tmux <session>");
     await expectUsage(["claude", "st-dev", "--dry-run"], "--dry-run goes with --tmux <session>");
     await expectUsage(["claude", "nobody", "--tmux", "t"], 'No saved agent "nobody"');
