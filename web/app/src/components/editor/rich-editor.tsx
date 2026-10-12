@@ -2,6 +2,7 @@ import { Placeholder } from "@tiptap/extensions";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { cn } from "@/lib/utils";
 import { useRef } from "react";
+import { markdownChanged } from "./markdown-change";
 import { EditorBubbleMenu } from "./bubble-menu";
 import { DragHandle } from "./drag-handle";
 import "./editor.css";
@@ -10,7 +11,7 @@ import { SlashCommand } from "./slash-command";
 
 /**
  * Notion-style WYSIWYG editor over a Markdown string: loads `value` once and
- * reports every change (never the initial load) as Markdown. Remount it (key) to load new content.
+ * reports every real change (never the initial load, nor tiptap's own trailing-paragraph fix-up) as Markdown. Remount it (key) to load new content.
  */
 export default function RichEditor({
   value,
@@ -33,6 +34,8 @@ export default function RichEditor({
   editable?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  // The Markdown last known to the parent; reset whenever the editor is created.
+  const lastMarkdown = useRef(value);
   const editor = useEditor({
     extensions: [
       ...markdownExtensions(),
@@ -56,7 +59,15 @@ export default function RichEditor({
           "rich-editor prose prose-sm max-w-none dark:prose-invert sm:prose-base focus:outline-none",
       },
     },
-    onUpdate: ({ editor: e }) => onChange(e.getMarkdown()),
+    onCreate: ({ editor: e }) => {
+      lastMarkdown.current = e.getMarkdown();
+    },
+    onUpdate: ({ editor: e }) => {
+      const markdown = e.getMarkdown();
+      if (!markdownChanged(lastMarkdown.current, markdown)) return;
+      lastMarkdown.current = markdown;
+      onChange(markdown);
+    },
     onBlur: () => onBlur?.(),
   });
 

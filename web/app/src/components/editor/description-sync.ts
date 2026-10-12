@@ -20,10 +20,26 @@ export function remoteChange(input: {
   baseline: string | null;
   draft: string;
   dirty: boolean;
+  /**
+   * The description of a save still in flight. The optimistic cache write echoes
+   * it back as the server value; that is not a success (it may be rolled back),
+   * so it counts as no change until the save settles.
+   */
+  saving?: string | null;
 }): RemoteChange {
   if (norm(input.server) === norm(input.baseline)) return "none";
+  if (input.saving !== undefined && norm(input.server).trim() === norm(input.saving).trim())
+    return "none";
   if (!input.dirty) return "remount";
   return input.draft.trim() === norm(input.server).trim() ? "adopt" : "conflict";
+}
+
+/**
+ * After a save succeeded: the baseline moves to what was saved, and the editor is
+ * clean unless the user kept typing while the save was in flight.
+ */
+export function afterSave(input: { saved: string | null; draft: string }): { baseline: string | null; dirty: boolean } {
+  return { baseline: input.saved, dirty: input.draft.trim() !== norm(input.saved).trim() };
 }
 
 /**

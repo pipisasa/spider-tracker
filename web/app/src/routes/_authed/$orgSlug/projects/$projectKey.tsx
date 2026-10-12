@@ -72,10 +72,12 @@ function ProjectPage() {
               </Button>
             )
           ) : (
-            <Button size="sm" className="ml-2" onClick={() => openNewTask()}>
-              <PlusIcon />
-              New task
-            </Button>
+            membership.actor.role !== "guest" && (
+              <Button size="sm" className="ml-2" onClick={() => openNewTask()}>
+                <PlusIcon />
+                New task
+              </Button>
+            )
           )}
         </div>
       </header>
@@ -88,7 +90,7 @@ function ProjectPage() {
           tasks={tasks}
           members={members}
           tags={tags}
-          onAdd={openNewTask}
+          onAdd={membership.actor.role !== "guest" ? openNewTask : undefined}
         />
       ) : (
         <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={members} tags={tags} />
