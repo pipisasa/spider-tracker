@@ -73,7 +73,7 @@ export function windowArgv(self: string[], entry: AgentEntry, opts: WindowOption
 }
 
 export function checkSession(session: string) {
-  if (!isSessionName(session)) throw usageError(`Invalid tmux session name "${session}": no spaces, ":" or "."`);
+  if (!isSessionName(session)) throw usageError(`Invalid tmux session name "${session}": no spaces, ":" or ".", and no "=", "$" or "%" at the start`);
 }
 
 /** The plan as text: one line per agent, with the command for windows that will start. */

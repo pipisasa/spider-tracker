@@ -1209,12 +1209,17 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     .option("--project <key>", "with --all: only saved agents scoped to this project")
     .option("--dry-run", "with --tmux: print the launch plan, start nothing")
     .action(async (named: string | undefined, rest: string[], opts: ClaudeOptions) => {
-      // Everything after "--" goes to claude; an agent is only an operand before it.
+      // Everything after "--" goes to claude; an agent is only an operand before it. Commander puts the
+      // args after "--" into the operands too, so drop as many from the end: for
+      // `spider claude a b -- -p hi` the operands are [a, b, -p, hi], afterDash is [-p, hi], agents are [a, b].
       const dash = argv.indexOf("--");
-      const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
-      const given = (dash >= 0 && named !== undefined && 1 + rest.length <= extra.length ? undefined : named) ?? globals().as;
-      // The operands before "--": with --tmux, all of them are agents.
-      const operands = [...(named === undefined ? [] : [named]), ...rest].slice(0, dash >= 0 ? Math.max(0, 1 + rest.length - extra.length) : undefined);
+      const afterDash = dash >= 0 ? argv.slice(dash + 1) : [];
+      const positional = [...(named === undefined ? [] : [named]), ...rest];
+      const operands = positional.slice(0, Math.max(0, positional.length - afterDash.length));
+      const given = operands[0] ?? globals().as;
+      // With --tmux every operand before "--" is an agent, so claude gets only what follows "--". A single
+      // agent also takes claude args without "--" (`spider claude a -p hi`).
+      const extra = dash >= 0 || opts.tmux !== undefined ? afterDash : rest;
 
       const store = await readStore(options.env);
       const all = listAgents(store);
@@ -1225,7 +1230,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
       }
       if (opts.tmux !== undefined) {
-        const names = operands.length ? operands : globals().as ? [globals().as ?? ""] : [];
+        const names = operands.length ? operands : given ? [given] : [];
         return claudeInTmux(store, opts.tmux, names, extra, opts);
       }
       const loose = opts.all ? "--all" : opts.project !== undefined ? "--project" : opts.dryRun ? "--dry-run" : undefined;
