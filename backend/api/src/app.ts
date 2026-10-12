@@ -109,7 +109,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   });
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
-  app.route("/mcp", mcpRoutes(db, realtime));
+  app.route("/mcp", mcpRoutes(db, realtime, env.WEB_ORIGIN));
 
   // Agent invites are accepted without a session: the code is the credential (ST-31).
   // Registered before the /v1 auth middleware; rate limited per client IP, and failed codes from
@@ -223,7 +223,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     return c.body(null, 204);
   });
 
-  app.route("/v1/orgs/:orgSlug", orgRoutes(db, realtime));
+  app.route("/v1/orgs/:orgSlug", orgRoutes(db, realtime, env.WEB_ORIGIN));
 
   app.notFound((c) => c.json(errorBody("not_found", "Route not found"), 404));
 

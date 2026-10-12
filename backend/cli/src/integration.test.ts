@@ -487,11 +487,68 @@ withDb("spider CLI against the API", () => {
     }
   });
 
+  test("task update with several keys, or by filter with a preview until --yes (ST-106)", async () => {
+    const parent = (await spider("task", "create", "--project", "SPI", "--title", "Bulk parent", "--json")).json().key as string;
+    const kids: string[] = [];
+    for (const title of ["Bulk 1", "Bulk 2", "Bulk 3"]) {
+      kids.push((await spider("task", "create", "--project", "SPI", "--title", title, "--parent", parent, "--json")).json().key as string);
+    }
+    const [k1 = "", k2 = "", k3 = ""] = kids;
+    const statusOf = async (key: string) => ((await spider("task", "view", key, "--json")).json().status as { name: string }).name;
+
+    // Several keys: --status sets, as for one key; a missing task fails alone, with exit code 1.
+    const byKeys = await spider("task", "update", k1, k2, "SPI-999", "--status", "In Review", "--assign", "me");
+    expect(byKeys.code).toBe(1);
+    expect(byKeys.stdout).toContain(`${k1.padEnd(7)}  changed  In Review  Bulk 1`);
+    expect(byKeys.stdout).toContain("SPI-999  failed   Task SPI-999 not found");
+    expect(byKeys.stdout).toEndWith("2 changed, 0 unchanged, 1 failed\n");
+    expect(await statusOf(k2)).toBe("In Review");
+    const again = await spider("task", "update", k1, k2, "--set-status", "in_review", "--json");
+    expect(again.code).toBe(0);
+    expect(again.json()).toMatchObject({
+      dryRun: false,
+      summary: { changed: 0, unchanged: 2, failed: 0 },
+      results: [{ key: k1, outcome: "unchanged", task: { status: { name: "In Review" }, assignees: ["cli-bot"] } }, { key: k2 }],
+    });
+
+    // By filter: --status filters and --set-status sets; without --yes it only previews.
+    const filter = ["task", "update", "--project", "spi", "--parent", parent, "--status", "in_review", "--set-status", "Backlog"];
+    const preview = await spider(...filter);
+    expect(preview.code).toBe(0);
+    expect(preview.stdout).toContain(`${k1}  would change  Backlog  Bulk 1`);
+    expect(preview.stdout).toEndWith("Dry run: 2 would change, 0 unchanged, 0 failed; nothing was changed. Run again with --yes to apply.\n");
+    expect(await statusOf(k1)).toBe("In Review");
+    const applied = await spider(...filter, "--yes", "--json");
+    expect(applied.json()).toMatchObject({ dryRun: false, summary: { changed: 2 }, results: [{ key: k1 }, { key: k2 }] });
+    expect(await statusOf(k1)).toBe("Backlog");
+    expect(await statusOf(k3)).toBe("Todo");
+    expect((await spider(...filter, "--yes")).stdout).toBe("No matching tasks\n");
+
+    // --dry-run previews several keys too.
+    const dry = await spider("task", "update", k3, k1, "--status", "Done", "--dry-run", "--json");
+    expect(dry.json()).toMatchObject({ dryRun: true, summary: { changed: 2 } });
+    expect(await statusOf(k3)).toBe("Todo");
+
+    const usage = async (...argv: string[]) => {
+      const result = await spider(...argv);
+      expect(result.code).toBe(2);
+      return result.stderr;
+    };
+    expect(await usage("task", "update", k1, "--project", "SPI", "--set-status", "Done")).toContain("not both");
+    expect(await usage("task", "update", "--project", "SPI", "--assign", "me")).toContain("--set-assign");
+    expect(await usage("task", "update", "--project", "SPI", "--status", "todo")).toContain("--set-status");
+    expect(await usage("task", "update", k1, k2, "--title", "Same")).toContain("one task at a time");
+    expect(await usage("task", "update", k1, "--status", "Done", "--set-status", "Todo")).toContain("not both");
+    expect(await usage("task", "update", k1, "--assignee", "me")).toContain("--project");
+    expect(await usage("task", "update", "--project", "SPI", "--status", "Nope", "--set-status", "Done")).toContain('Unknown status "Nope"');
+  });
+
   test("sub-tasks: --parent on create, shown by view, cleared with an empty --parent", async () => {
     const child = await spider("task", "create", "--project", "SPI", "--title", "Child", "--parent", "spi-1", "--json");
     expect(child.json()).toMatchObject({ parentKey: "SPI-1" });
     const key = child.json().key as string;
     const parent = await spider("task", "view", "SPI-1", "--json");
+    expect(parent.json().url).toBe(`${env.WEB_ORIGIN}/${slug}/tasks/SPI-1`);
     expect((parent.json().subtasks as { key: string }[]).map((t) => t.key)).toContain(key);
     expect((await spider("task", "view", "SPI-1")).stdout).toContain("Sub-tasks:");
     expect((await spider("task", "view", key)).stdout).toContain("Parent: SPI-1");
@@ -514,6 +571,9 @@ withDb("spider CLI against the API", () => {
     const spec = (await spider("doc", "create", "--title", "Spec", "--project", "spi", "--file", "spec.html", "--json")).json();
     expect(spec).toMatchObject({ projectKey: "SPI", taskKey: null, format: "html", content: "<h1>Spec</h1>", version: 1 });
     const id = spec.id as string;
+    // The web page's address (ST-115).
+    const url = `${env.WEB_ORIGIN}/${slug}/docs/${id}`;
+    expect(spec.url).toBe(url);
 
     stdin = "# Notes";
     const notes = (await spider("doc", "create", "--title", "Notes", "--task", "spi-1", "--file", "-", "--json")).json();
@@ -537,10 +597,12 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "edit", id, "--title", "Spec", "--base-version", "x")).code).toBe(2);
     expect((await spider("doc", "edit", id, "--title", "Spec", "--force")).stdout).toBe("No changes to Spec\n");
     expect((await spider("doc", "view", id)).stdout).toContain("<h1>Spec v2</h1>");
+    expect((await spider("doc", "view", id)).stdout).toContain(`\n${url}\n`);
     expect((await spider("doc", "view", id, "--rev", "1", "--json")).json()).toMatchObject({
       version: 1,
       currentVersion: 2,
       content: "<h1>Spec</h1>",
+      url,
     });
     expect((await spider("doc", "edit", id)).code).toBe(2);
     expect((await spider("doc", "view", "00000000-0000-7000-8000-000000000000")).code).toBe(3);

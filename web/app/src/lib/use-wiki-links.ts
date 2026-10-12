@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { toast } from "sonner";
-import { wikiDestination, wikiSuggestions } from "./wiki-links";
+import { wikiDestination, wikiLabel, wikiSuggestions } from "./wiki-links";
 
 /**
  * Resolves, opens and suggests `[[links]]` written in a document (ST-100). Opening a title no
@@ -35,6 +35,7 @@ export function useWikiLinks({
         if (to.type === "task") return `/${orgSlug}/tasks/${to.key}`;
         return null;
       },
+      label: (target) => wikiLabel(documents, target),
       open: (target) => {
         const to = destination(target);
         if (to.type === "document") {
@@ -47,6 +48,8 @@ export function useWikiLinks({
             to: "/$orgSlug/tasks/$taskKey",
             params: { orgSlug, taskKey: to.key },
           });
+        } else if (to.type === "unknown") {
+          toast.info("This document doesn’t exist or isn’t visible to you");
         } else if (!canWrite) {
           toast.info(`No document is titled “${to.title}” yet`);
         } else {

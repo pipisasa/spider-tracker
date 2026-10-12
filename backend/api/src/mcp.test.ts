@@ -140,6 +140,7 @@ withDb("MCP server", () => {
         "start_task",
         "unlink_tasks",
         "update_task",
+        "update_tasks",
         "whoami",
       ].sort(),
     );
@@ -167,6 +168,8 @@ withDb("MCP server", () => {
 
     const task = await call(client, "get_task", { key: "spi-1" });
     expect(task.json()).toMatchObject({ key: "SPI-1", title: "Wire up MCP", status: "In Progress", creator: "claude-code" });
+    // The web page's address (ST-115).
+    expect(task.json()).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1` });
 
     const mine = await call(client, "list_tasks", { projectKey: "SPI", assignee: "me", status: "in progress" });
     expect(mine.json()).toMatchObject({ total: 1, tasks: [{ key: "SPI-1" }] });
@@ -236,11 +239,13 @@ withDb("MCP server", () => {
     expect(created.isError).toBeFalsy();
     const doc = created.json() as { id: string; version: number };
     expect(doc).toMatchObject({ project: "SPI", task: null, version: 1, updatedBy: "claude-code" });
+    expect(created.json()).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${doc.id}` });
 
     const onTask = (await call(client, "create_document", { title: "Notes", task: "SPI-1" })).json() as { id: string };
     expect((await call(client, "get_task", { key: "SPI-1" })).json()).toMatchObject({ documents: [{ id: onTask.id, title: "Notes" }] });
     const project = (await call(client, "get_project", { projectKey: "SPI" })).json() as { documents: { title: string }[] };
     expect(project.documents.map((d) => d.title).sort()).toEqual(["Notes", "Spec"]);
+    expect(project).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI` });
 
     const updated = await call(client, "update_document", { id: doc.id, baseVersion: 1, content: "# v2" });
     expect(updated.json()).toMatchObject({ version: 2 });
@@ -261,6 +266,42 @@ withDb("MCP server", () => {
     const orgWide = await call(client, "move_document", { id: doc.id, project: null });
     expect(orgWide.json()).toMatchObject({ id: doc.id, project: null, version: 2 });
     expect((await call(client, "move_document", { id: doc.id, project: "NOPE" })).isError).toBe(true);
+  });
+
+  test("update_tasks: by keys or a filter, per-task results, dry run, scope checked per task (ST-106)", async () => {
+    const parent = (await call(client, "create_task", { projectKey: "SPI", title: "Bulk parent" })).json();
+    const kids: string[] = [];
+    for (const title of ["Bulk kid 1", "Bulk kid 2"]) {
+      kids.push(String((await call(client, "create_task", { projectKey: "SPI", title, parent: parent.key })).json().key));
+    }
+
+    const byKeys = await call(client, "update_tasks", { keys: [...kids, "SPI-999"], status: "In Review", assignees: ["me"], tags: [] });
+    expect(byKeys.isError).toBe(false);
+    expect(byKeys.json()).toMatchObject({
+      dryRun: false,
+      summary: { changed: 2, unchanged: 0, failed: 1 },
+      results: [
+        { key: kids[0], outcome: "changed", status: "In Review", assignees: ["claude-code"] },
+        { key: kids[1], outcome: "changed", status: "In Review" },
+        { key: "SPI-999", outcome: "error", error: "Task SPI-999 not found" },
+      ],
+    });
+
+    const filter = { projectKey: "spi", parent: parent.key, status: "in_review" };
+    const preview = await call(client, "update_tasks", { filter, status: "Backlog", priority: 4, dryRun: true });
+    expect(preview.json()).toMatchObject({ dryRun: true, summary: { changed: 2 }, results: [{ status: "Backlog", priority: "low" }, {}] });
+    expect((await call(client, "list_tasks", { projectKey: "SPI", status: "backlog" })).json()).toMatchObject({ total: 0 });
+    const applied = await call(client, "update_tasks", { filter, status: "Backlog" });
+    expect(applied.json()).toMatchObject({ summary: { changed: 2 } });
+    expect((await call(client, "list_tasks", { projectKey: "SPI", status: "backlog" })).json()).toMatchObject({ total: 2 });
+
+    // Another organization's agent sees these tasks as missing, one by one.
+    const foreign = await call(otherClient, "update_tasks", { keys: kids, priority: 1 });
+    expect(foreign.json()).toMatchObject({ summary: { failed: 2 }, results: [{ outcome: "error" }, { outcome: "error" }] });
+
+    expect(await call(client, "update_tasks", { keys: kids })).toMatchObject({ isError: true, text: expect.stringContaining("Nothing to update") });
+    expect(await call(client, "update_tasks", { keys: kids, filter, priority: 1 })).toMatchObject({ isError: true });
+    expect(await call(client, "update_tasks", { keys: kids, tags: ["nope"] })).toMatchObject({ isError: true });
   });
 
   test("edit_document: partial edits without resending the document", async () => {
@@ -362,7 +403,9 @@ withDb("MCP server", () => {
     const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
     expect(updated.json()).toMatchObject({ name: "Operations", description: null });
     expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
-    expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([{ key: "SPI", name: "Spider", description: null }]);
+    expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([
+      { key: "SPI", name: "Spider", description: null, url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI` },
+    ]);
     expect((await call(client, "get_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
     expect(await call(client, "create_task", { projectKey: "OPS", title: "x" })).toMatchObject({
       isError: true,

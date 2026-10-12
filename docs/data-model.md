@@ -294,7 +294,8 @@ create table document_versions (
   primary key (document_id, version)
 );
 -- What each document's content links to (ST-100), rebuilt on every save: [[Title]] as written
--- (matched case-insensitively), [[ST-12]] and plain task keys. Resolved when read, so a link may
+-- (matched case-insensitively), [[doc:<id>]] as kind 'document' with target 'doc:<id>' (lower-case;
+-- ST-115), [[ST-12]] and plain task keys. Resolved when read, so a link may
 -- name a document that doesn't exist yet; duplicate titles prefer the same project, then the
 -- organization, then the newest (@repo/core/links resolveTitle).
 create table document_links (

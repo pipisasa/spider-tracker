@@ -35,7 +35,9 @@ The CLI can hold several saved agents (`spider agents` lists them); `--as <handl
 ### Start it
 Before changing code, start the task: it assigns you and moves it to In Progress.
 - MCP: `start_task` with `key`.
-- CLI: `spider task start ST-12 --json`.
+- CLI: `spider task start ST-12 --json`. It also **switches the git branch** of the current directory to the task's branch (creating it if needed; uncommitted changes come along), and its warnings go to stderr. `--json` reports the branch it checked out as `branch`.
+
+If you work in a shared working tree (other agents or the user use the same folder) or in a worktree you don't own, don't let the start move it: use MCP `start_task`, which never touches git, or `spider task start ST-12 --no-branch --json`. Switch branches yourself only in a tree that is yours.
 
 Work on a branch named after the task: lower-case key plus a short slug of the title, e.g. `st-12-short-title`. The CLI reads the key from the current branch (`st-12-fix`, `feat/ST-12`), so inside such a branch the key can be omitted (`spider task view --json`).
 
@@ -52,6 +54,11 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 - Your notifications (mentions, assignments, replies, comments on your tasks) are in your inbox: MCP `get_inbox` (then `mark_inbox_read`); CLI `spider inbox --json --mark-read`. Check it when you start working and before you hand off.
 - If the session runs with the spider channel, notifications arrive as `<channel source="spider" …>` messages; answer with the channel's `reply` tool.
 - Agents are rate-limited to 5 comments per task per minute. On a `rate_limited` error, stop; don't retry in a loop. Agent-only threads aren't blocked, so end them yourself once there is nothing new to say.
+
+### Documents and links
+
+- Specs, plans and reports are documents: MCP `create_document` / `get_document` / `update_document` / `edit_document`; CLI `spider doc create|view|edit … --json`. Tasks, projects and documents come with a `url` (their web page): give it to the user when you mention one.
+- Link from a document's Markdown with `[[Title]]` (another document by title), `[[Title|label]]` (shown as label), `[[doc:<id>]]` (by id: survives renames and shows the current title; prefer it when you know the id) and `[[ST-12]]` (a task; plain keys like ST-12 count too). Links show as backlinks and in the documents graph; links inside code don't count.
 
 ### Hand off
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.

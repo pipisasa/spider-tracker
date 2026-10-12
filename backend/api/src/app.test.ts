@@ -67,6 +67,7 @@ describe("public routes", () => {
     expect(doc.openapi).toStartWith("3.1");
     expect(doc.components.securitySchemes.bearerAuth).toMatchObject({ type: "http", scheme: "bearer" });
     expect(doc.components.schemas.CreateTaskInput?.required).toEqual(["title"]);
+    for (const name of ["Project", "Task", "DocumentSummary"]) expect(doc.components.schemas[name]?.required).toContain("url");
 
     // Every documented operation is a real route, and every route is documented.
     const routes = new Set(app.routes.map((r) => `${r.method} ${r.path}`));
@@ -454,6 +455,12 @@ withDb("SDK and client-declared source", () => {
 
     const created = await client.tasks.create(slug, "SPI", { title: "Via SDK", assigneeIds: [agentId] });
     expect(created).toMatchObject({ key: "SPI-1", title: "Via SDK", creatorId: agentId, assigneeIds: [agentId] });
+    // Web page addresses (ST-115), following the web app's routes.
+    const web = `${env.WEB_ORIGIN}/${slug}`;
+    expect(created.url).toBe(`${web}/tasks/SPI-1`);
+    expect(project.url).toBe(`${web}/projects/SPI`);
+    expect(projects.items[0]?.url).toBe(`${web}/projects/SPI`);
+    expect((await client.tasks.list(slug, "SPI")).items[0]?.url).toBe(`${web}/tasks/SPI-1`);
 
     const updated = await client.tasks.update(slug, created.key, { title: "Via SDK, done", statusId: done?.id });
     expect(updated.completedAt).not.toBeNull();
@@ -470,14 +477,49 @@ withDb("SDK and client-declared source", () => {
     expect(error).toMatchObject({ status: 404, code: "not_found" });
   });
 
+  test("bulk updates through the SDK: keys or a filter, per-task outcomes, dry run, 400 on bad input (ST-106)", async () => {
+    const client = sdk();
+    const parent = await client.tasks.create(slug, "SPI", { title: "Bulk parent" });
+    const kids = [];
+    for (const title of ["Bulk kid 1", "Bulk kid 2"]) kids.push(await client.tasks.create(slug, "SPI", { title, parentId: parent.id }));
+    const keys = kids.map((t) => t.key);
+
+    const byKeys = await client.tasks.bulkUpdate(slug, { keys: [...keys, "SPI-999"], set: { status: "in_review", priority: 2 } });
+    expect(byKeys.summary).toEqual({ changed: 2, unchanged: 0, failed: 1 });
+    expect(byKeys.results.map((r) => r.outcome)).toEqual(["changed", "changed", "error"]);
+    expect(byKeys.results[2]).toMatchObject({ key: "SPI-999", task: null, error: { code: "not_found" } });
+    expect((await client.tasks.list(slug, "SPI", { parent: parent.key, status: ["in_review"] })).items).toHaveLength(2);
+
+    const filter = { project: "SPI", parent: parent.key, status: ["in_review"] };
+    const preview = await client.tasks.bulkUpdate(slug, { filter, set: { status: "Backlog" }, dryRun: true });
+    expect(preview).toMatchObject({ dryRun: true, summary: { changed: 2 } });
+    expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(0);
+    const applied = await client.tasks.bulkUpdate(slug, { filter, set: { status: "Backlog" } });
+    expect(applied.results.map((r) => r.key)).toEqual(keys);
+    expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(2);
+
+    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, kids[0]?.id ?? ""));
+    expect(log.map((e) => e.action)).toEqual(["task.created", "task.updated", "task.updated"]);
+
+    const bad = await client.tasks.bulkUpdate(slug, { keys, filter, set: { priority: 1 } }).catch((e: unknown) => e);
+    expect(bad).toMatchObject({ status: 400, code: "validation" });
+    const tooMany = await client.tasks
+      .bulkUpdate(slug, { keys: Array.from({ length: 101 }, (_, i) => `SPI-${i + 1}`), set: { priority: 1 } })
+      .catch((e: unknown) => e);
+    expect(tooMany).toMatchObject({ status: 400 });
+    const nothing = await client.tasks.bulkUpdate(slug, { keys, set: {} }).catch((e: unknown) => e);
+    expect(nothing).toMatchObject({ status: 400 });
+  });
+
   test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
     const client = sdk();
     const doc = await client.documents.create(slug, { title: "Spec", project: "SPI", content: "v1" });
-    expect(doc).toMatchObject({ projectKey: "SPI", version: 1 });
+    expect(doc).toMatchObject({ projectKey: "SPI", version: 1, url: `${env.WEB_ORIGIN}/${slug}/docs/${doc.id}` });
     expect((await client.documents.list(slug, { project: "SPI" })).items.map((d) => d.id)).toEqual([doc.id]);
+    expect((await client.documents.get(slug, doc.id)).url).toBe(doc.url);
 
     const saved = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "v2" });
-    expect(saved.version).toBe(2);
+    expect(saved).toMatchObject({ version: 2, url: doc.url });
     const stale = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "lost" }).catch((e: unknown) => e);
     expect(stale).toMatchObject({ status: 409, code: "conflict" });
 
@@ -529,6 +571,14 @@ withDb("SDK and client-declared source", () => {
     expect(graph.links).toContainEqual({ from: source.id, to: { type: "document", id: target.id } });
     expect(graph.documents.map((d) => d.id)).toEqual(expect.arrayContaining([source.id, target.id]));
     expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id]);
+    expect(graph.documents.find((d) => d.id === target.id)?.url).toBe(`${env.WEB_ORIGIN}/${slug}/docs/${target.id}`);
+
+    // [[doc:<id>]] links by id (ST-115): they survive renames and count as backlinks.
+    const byId = await client.documents.create(slug, { title: "By id", content: `[[doc:${target.id}]]` });
+    await client.documents.update(slug, target.id, { baseVersion: 1, title: "Graph target renamed" });
+    expect((await client.documents.graph(slug)).links).toContainEqual({ from: byId.id, to: { type: "document", id: target.id } });
+    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([byId.id]);
+    await client.documents.delete(slug, byId.id);
     expect(await client.documents.backlinks(slug, crypto.randomUUID()).catch((e: unknown) => e)).toMatchObject({ status: 404 });
     await client.documents.delete(slug, source.id);
     await client.documents.delete(slug, target.id);

@@ -1,5 +1,6 @@
 import {
   acceptAgentInviteInput,
+  bulkUpdateTasksInput,
   createAgentInviteInput,
   createAgentInput,
   createApiKeyInput,
@@ -41,6 +42,9 @@ const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
   properties,
   required: Object.keys(properties),
 });
+/** The `url` field: the web page of a project, task or document (ST-115). */
+const webUrl = (what: string): JsonSchema =>
+  string({ format: "uri", description: `The ${what}'s page in the web app, from the server's web origin` });
 const listOf = (item: string): JsonSchema => object({ items: { type: "array", items: ref(item) } });
 
 /** Request-side JSON Schema of a Zod schema, without the $schema header. */
@@ -89,6 +93,7 @@ const schemas: Record<string, JsonSchema> = {
       format: "uuid",
       description: "The project's rules for agents: one of its project-level documents (set with PATCH rulesDocumentId)",
     }),
+    url: webUrl("project"),
   }),
   ProjectDetail: {
     allOf: [ref("Project"), object({ statuses: { type: "array", items: ref("Status") } })],
@@ -117,6 +122,7 @@ const schemas: Record<string, JsonSchema> = {
       required: ["done", "total"],
       additionalProperties: false,
     }),
+    url: webUrl("task"),
   }),
   Presence: object({
     taskKey: string(),
@@ -201,6 +207,7 @@ const schemas: Record<string, JsonSchema> = {
     createdBy: string({ format: "uuid" }),
     createdAt: string({ format: "date-time" }),
     updatedAt: string({ format: "date-time" }),
+    url: webUrl("document"),
   }),
   Document: { allOf: [ref("DocumentSummary"), object({ content: string() })] },
   DocumentList: listOf("DocumentSummary"),
@@ -323,6 +330,22 @@ const schemas: Record<string, JsonSchema> = {
   UpdateProjectInput: fromZod(updateProjectInput),
   CreateTaskInput: fromZod(createTaskInput),
   UpdateTaskInput: fromZod(updateTaskInput),
+  BulkUpdateTasksInput: fromZod(bulkUpdateTasksInput),
+  BulkTaskResult: object({
+    key: string({ description: "The task's key; for an error, the key as given" }),
+    outcome: string({ enum: ["changed", "unchanged", "error"], description: 'In a dry run, "changed" means it would change' }),
+    task: { oneOf: [ref("Task"), { type: "null" }], description: "The task after the change (as it would be, in a dry run); null on error" },
+    error: nullable("object", {
+      description: 'Why this task wasn\'t changed, e.g. { code: "not_found" } for a missing or out-of-scope task',
+      properties: { code: string(), message: string() },
+      required: ["code", "message"],
+    }),
+  }),
+  BulkUpdateTasksResult: object({
+    dryRun: { type: "boolean" },
+    summary: object({ changed: { type: "integer" }, unchanged: { type: "integer" }, failed: { type: "integer" } }),
+    results: { type: "array", items: ref("BulkTaskResult"), description: "In the order of the keys given, or board order for a filter" },
+  }),
   CreateOrganizationInput: fromZod(createOrganizationInput),
   AuthProviders: object({ providers: { type: "array", items: string({ enum: ["magic-link", "github", "batele-id"] }) } }),
   Activity: object({
@@ -732,6 +755,7 @@ const paths = {
           description: "0 none, 1 urgent, 2 high, 3 medium, 4 low",
         },
         { name: "q", in: "query", schema: { type: "string" }, description: "Case-insensitive text in the title" },
+        { name: "parent", in: "query", schema: { type: "string" }, description: 'Direct sub-tasks of this task key, e.g. "SPI-3"' },
       ],
       responses: { "200": ok("Tasks", "TaskList"), ...errors },
     },
@@ -777,6 +801,21 @@ const paths = {
       operationId: "deleteSavedView",
       summary: "Delete a view (its owner, or organization owners and admins)",
       responses: { "204": { description: "Deleted" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/bulk-update": {
+    parameters: [orgSlug],
+    post: {
+      operationId: "bulkUpdateTasks",
+      summary: "Update several tasks at once, by keys or a filter (at most 100)",
+      description:
+        "Pass `keys` (any projects) or `filter` (one project; the same filters as listing tasks, plus `parent`), and `set`: " +
+        "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`. " +
+        "Each task is updated on its own with the same permission and agent-scope checks as PATCH /tasks/{taskKey}; " +
+        "a task that fails (missing, out of scope, unknown status, …) is reported in `results` without stopping the others, so the response is 200. " +
+        "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing.",
+      requestBody: body("BulkUpdateTasksInput"),
+      responses: { "200": ok("One result per task", "BulkUpdateTasksResult"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}": {
@@ -884,7 +923,7 @@ const paths = {
     get: {
       operationId: "getDocumentGraph",
       summary:
-        "Documents as a graph: visible documents, the tasks and projects they sit in or link to, and their links ([[Title]], [[KEY-1]] and plain task keys)",
+        "Documents as a graph: visible documents, the tasks and projects they sit in or link to, and their links ([[Title]], [[doc:<id>]], [[KEY-1]] and plain task keys)",
       responses: { "200": ok("Graph", "DocumentGraph"), ...errors },
     },
   },
@@ -922,7 +961,7 @@ const paths = {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     get: {
       operationId: "listDocumentBacklinks",
-      summary: "Documents linking here with [[its title]], most recently updated first",
+      summary: "Documents linking here with [[its title]] or [[doc:<its id>]], most recently updated first",
       responses: { "200": ok("Linking documents", "DocumentList"), ...errors },
     },
   },
