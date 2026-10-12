@@ -111,6 +111,10 @@ Done means finished, not shipped; releases ship Done tasks.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
 
+### Plugin 0.3.12
+
+- The `tasks` skill explains milestones and the roadmap: how to read a task's milestone, put a task in one (`update_task` with `milestone`, `spider task update --milestone`) and that the tracker moves a finished milestone to Ready to close while a person closes it (ST-96).
+
 ### Plugin 0.3.11
 
 - The `tasks` skill shows how to open the task's pull request when the work is ready: `spider pr` (pushes and opens it, closing the task on merge), or MCP `open_pull_request` after pushing (ST-87).

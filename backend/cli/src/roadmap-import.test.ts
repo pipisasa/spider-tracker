@@ -101,5 +101,6 @@ withDb("roadmap import against the API (ST-96)", () => {
     expect(again.outcomes.filter((o) => o.action === "created" || o.action === "assigned")).toEqual([]);
     expect(importReportLines(again)).toContain("Done: 0 milestones created, 0 tasks assigned, 8 milestones and 32 tasks already in place.");
     expect((await client.milestones.list(slug, "ST")).items).toHaveLength(9);
-  });
+    // Seeding 125 tasks takes a few seconds under the full suite's load.
+  }, 30_000);
 });
