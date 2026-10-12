@@ -5,7 +5,7 @@ import { loadEnv } from "@repo/api/src/env";
 import type { Mailer } from "@repo/api/src/mailer";
 import { createDb, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -607,6 +607,24 @@ withDb("spider CLI against the API", () => {
     expect((await spider("link", "SPI-1", "depends", other)).code).toBe(2);
   });
 
+  test("task duplicate: links, cancels and comments in one call; a repeat changes nothing; self is refused (ST-114)", async () => {
+    const create = async (title: string) => (await spider("task", "create", "--project", "SPI", "--title", title, "--json")).json().key as string;
+    const [copy, original] = [await create("Dup copy"), await create("Dup original")];
+    const marked = await spider("task", "duplicate", copy.toLowerCase(), "--of", original.toLowerCase(), "--comment", "Subset of it");
+    expect(marked.stdout).toStartWith(`Marked ${copy} as a duplicate of ${original}\n${copy}`);
+    expect(marked.stdout).toContain("Canceled");
+    const view = (await spider("task", "view", copy, "--json")).json();
+    expect(view).toMatchObject({ status: { category: "canceled" }, relations: [{ kind: "duplicates", task: original }] });
+    const again = await spider("task", "duplicate", copy, "--of", original, "--json");
+    expect(again.json()).toMatchObject({ key: copy, updatedAt: view.updatedAt });
+    const comments = (await spider("comments", copy, "--json")).json().items as { body: string }[];
+    expect(comments.map((c) => c.body)).toEqual([`Duplicate of ${original}: Dup original\n\nSubset of it`]);
+    const self = await spider("task", "duplicate", copy, "--of", copy);
+    expect(self.code).toBe(2);
+    expect(self.stderr).toContain("itself");
+    expect((await spider("task", "duplicate", original)).code).toBe(2);
+  });
+
   test("docs: create from a file and stdin, list by scope, view, edit from a base version", async () => {
     writeFileSync(join(repo, "spec.html"), "<h1>Spec</h1>");
     const spec = (await spider("doc", "create", "--title", "Spec", "--project", "spi", "--file", "spec.html", "--json")).json();
@@ -745,6 +763,98 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "move", id)).code).toBe(2);
     expect((await spider("doc", "move", id, "--org", "--project", "SPI")).code).toBe(2);
     expect((await spider("doc", "move", id, "--project", "NOPE")).code).toBe(3);
+  });
+
+  test("docs: publish a folder of 30 files with links; a rerun changes nothing; conflicts aren't overwritten (ST-119)", async () => {
+    const dir = join(repo, "publish");
+    mkdirSync(join(dir, "specs"), { recursive: true });
+    mkdirSync(join(dir, ".obsidian"), { recursive: true });
+    const names = Array.from({ length: 29 }, (_, i) => `Doc ${i + 1}`);
+    writeFileSync(
+      join(dir, "index.md"),
+      `---\ntitle: Index\nproject: SPI\n---\n\n# Index\n\n${names.map((n) => `- [[${n}]]`).join("\n")}\n`,
+    );
+    names.forEach((name, i) =>
+      writeFileSync(
+        join(dir, "specs", `doc-${i + 1}.md`),
+        `---\ntitle: ${name}\n---\n\nBack to [the index](../index.md). Next: [[Doc ${i + 2}]]. \`[[Doc 1]]\` stays.\n`,
+      ),
+    );
+    writeFileSync(join(dir, ".obsidian", "workspace.md"), "not a document");
+    writeFileSync(join(dir, "notes.txt"), "not a document");
+    const file = (name: string) => join(dir, name === "index" ? "index.md" : `specs/doc-${name}.md`);
+    const read = (name: string) => readFileSync(file(name), "utf8");
+    const snapshot = () => ["index", ...names.map((_, i) => String(i + 1))].map(read);
+    const idIn = (name: string) => /^id: (\S+)$/m.exec(read(name))?.[1] ?? "";
+    const versionIn = (name: string) => Number(/^version: (\d+)$/m.exec(read(name))?.[1]);
+    type Report = { dryRun: boolean; results: { file: string; status: string; id: string | null; version: number | null; message?: string }[]; summary: Record<string, number> };
+    const publish = async (...extra: string[]) => {
+      const res = await spider("doc", "publish", "publish", "--json", ...extra);
+      return { code: res.code, report: res.json() as unknown as Report };
+    };
+
+    const before = snapshot();
+    const plan = await publish("--dry-run");
+    expect(plan.code).toBe(0);
+    expect(plan.report).toMatchObject({ dryRun: true, summary: { created: 30, updated: 0, unchanged: 0, conflict: 0, failed: 0 } });
+    expect(snapshot()).toEqual(before);
+
+    const first = await publish();
+    expect(first.code).toBe(0);
+    expect(first.report.summary).toEqual({ created: 30, updated: 0, unchanged: 0, conflict: 0, failed: 0 });
+    expect(first.report.results[0]).toMatchObject({ file: "index.md", status: "created", id: idIn("index"), version: 2 });
+    // Ids and versions are written back; the links in the files stay as written.
+    expect(read("index")).toStartWith(`---\ntitle: Index\nproject: SPI\nid: ${idIn("index")}\nversion: 2\n---\n\n# Index\n\n- [[Doc 1]]\n`);
+    const index = (await spider("doc", "view", idIn("index"), "--json")).json();
+    expect(index).toMatchObject({ projectKey: "SPI", title: "Index", version: 2 });
+    expect(index.content).toContain(`- [[doc:${idIn("1")}]]\n- [[doc:${idIn("2")}]]\n`);
+    expect((await spider("doc", "view", idIn("1"), "--json")).json()).toMatchObject({
+      projectKey: null,
+      content: `Back to [[doc:${idIn("index")}|the index]]. Next: [[doc:${idIn("2")}]]. \`[[Doc 1]]\` stays.\n`,
+    });
+    // Doc 29's [[Doc 30]] isn't a file of the folder: published as written, in one version.
+    expect(versionIn("29")).toBe(1);
+    expect((await spider("doc", "backlinks", idIn("1"), "--json")).json().items).toHaveLength(1);
+
+    const published = snapshot();
+    const rerun = await publish();
+    expect(rerun.report.summary).toEqual({ created: 0, updated: 0, unchanged: 30, conflict: 0, failed: 0 });
+    expect(snapshot()).toEqual(published);
+
+    // Someone edits Doc 2 in the tracker while the file changes too: a conflict, their edit stays.
+    const doc2 = idIn("2");
+    await spider("doc", "edit", doc2, "--append", "--text", "Their line.");
+    writeFileSync(file("2"), `${read("2")}My line.\n`);
+    writeFileSync(file("3"), `${read("3")}More.\n`);
+    const mixed = await spider("doc", "publish", "publish");
+    expect(mixed.code).toBe(1);
+    expect(mixed.stdout).toContain(`conflict   specs/doc-2.md   Doc 2  (${doc2}, v3)\n  Changed in the tracker since version 2 (now 3)`);
+    expect(mixed.stdout).toContain("updated    specs/doc-3.md   Doc 3");
+    expect(mixed.stdout).toEndWith("0 created, 1 updated, 28 unchanged, 1 conflict, 0 failed\n");
+    const kept = (await spider("doc", "view", doc2, "--json")).json();
+    expect(kept).toMatchObject({ version: 3 });
+    expect(kept.content).toEndWith("Their line.");
+    expect(versionIn("2")).toBe(2);
+    expect(versionIn("3")).toBe(3);
+
+    // A dry run plans without saving; after merging and setting the version, the file publishes.
+    writeFileSync(file("4"), `${read("4")}Later.\n`);
+    const dry = await publish("--dry-run");
+    expect(dry.report.results.filter((r) => r.status !== "unchanged").map((r) => [r.file, r.status])).toEqual([
+      ["specs/doc-2.md", "conflict"],
+      ["specs/doc-4.md", "updated"],
+    ]);
+    expect((await spider("doc", "view", idIn("4"), "--json")).json()).toMatchObject({ version: 2 });
+    writeFileSync(file("2"), read("2").replace("version: 2", "version: 3"));
+    const merged = await publish();
+    expect(merged.code).toBe(0);
+    expect(merged.report.summary).toMatchObject({ updated: 2, conflict: 0 });
+    expect(versionIn("2")).toBe(4);
+
+    expect((await spider("doc", "publish", "missing")).code).toBe(2);
+    writeFileSync(join(dir, "bad.md"), "---\nid: D31\n---\n");
+    expect((await spider("doc", "publish", "publish", "--json")).stderr).toContain('bad.md: id \\"D31\\" isn\'t a document id');
+    rmSync(join(dir, "bad.md"));
   });
 
   test("projects: an agent acts with its owner's rights; refused when the owner is a member", async () => {

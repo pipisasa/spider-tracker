@@ -44,6 +44,7 @@ import type {
   CreateSavedViewInput,
   CreateTagInput,
   CreateTaskInput,
+  MarkDuplicateInput,
   RelationInput,
   UpdateAgentInput,
   UpdateDocumentInput,
@@ -346,6 +347,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<BulkUpdateTasksResponse>("POST", `${org(orgSlug)}/tasks/bulk-update`, input),
       delete: (orgSlug: string, taskKey: string) =>
         request<void>("DELETE", `${org(orgSlug)}/tasks/${seg(taskKey)}`),
+      /**
+       * Marks the task as a duplicate of `input.of` in one step: the `duplicates` link, the project's first
+       * canceled status and a "Duplicate of KEY" comment. A repeat changes nothing.
+       */
+      markDuplicate: (orgSlug: string, taskKey: string, input: MarkDuplicateInput) =>
+        request<TaskDto>("POST", `${org(orgSlug)}/tasks/${seg(taskKey)}/duplicate`, input),
       relations: {
         list: (orgSlug: string, taskKey: string) =>
           request<ListResponse<RelationDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/relations`),

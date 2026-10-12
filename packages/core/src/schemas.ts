@@ -309,6 +309,15 @@ export const relationInput = z.object({
 
 export type RelationInput = z.infer<typeof relationInput>;
 
+/** Marks a task as a duplicate of `of` (ST-114); `comment` is appended to the automatic one. */
+export const markDuplicateInput = z.object({
+  /** The original task's key, e.g. "ST-12". */
+  of: z.string().trim().min(1),
+  comment: z.string().trim().max(10_000, "At most 10,000 characters").optional(),
+});
+
+export type MarkDuplicateInput = z.infer<typeof markDuplicateInput>;
+
 export const documentFormatSchema = z.enum(["md", "html"]);
 
 /** Documents are capped at 1 MB of UTF-8. */

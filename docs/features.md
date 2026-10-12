@@ -7,7 +7,7 @@
 - Create, edit and delete tasks with readable keys (`SPI-123`)
 - Statuses that each project can customise, mapped to fixed categories: backlog, todo, in progress, in review, done, canceled
 - Priority, estimate, due date, sub-tasks
-- Relations: blocks / blocked by, relates to, duplicates
+- Relations: blocks / blocked by, relates to, duplicates; marking a duplicate (link, cancel, comment) is one action in the web, CLI and MCP
 - Several assignees per task, which can be people or agents
 - Views: list, board (kanban), timeline, calendar
 - Filters (status, assignee, priority, tag, title text) on the board and list, kept in the page URL so links are shareable; saved views per project, personal or shared with everyone who sees the project; the same filters (tags by name, all required) on the API, MCP `list_tasks` and `spider task list`, where the assignee filter also finds tasks still assigned to deactivated members; "Me and my agents" (`assignee=mine`) shows the tasks of a person and every agent they own (from an agent: its owner and the owner's agents), savable in views

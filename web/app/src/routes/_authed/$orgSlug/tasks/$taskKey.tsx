@@ -1,4 +1,5 @@
 import { TaskDocuments, TaskMentions } from "@/components/documents";
+import { DuplicateDialog } from "@/components/duplicate-dialog";
 import { Relations } from "@/components/relations";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
@@ -15,7 +16,7 @@ import { branchNameFor } from "@repo/core/git";
 import { isOverdue, type UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, CopyIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -56,6 +57,8 @@ function TaskPage() {
   const update = useUpdateTask(orgSlug);
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
+  const [markingDuplicate, setMarkingDuplicate] = useState(false);
+  const canEdit = membership.actor.role !== "guest";
 
   const save = (input: UpdateTaskInput, callbacks?: SaveCallbacks) =>
     update.mutate({ taskKey: task.key, input }, callbacks);
@@ -129,6 +132,12 @@ function TaskPage() {
           <GitBranchIcon />
           Copy branch name
         </Button>
+        {canEdit && (
+          <Button variant="ghost" className="justify-start" onClick={() => setMarkingDuplicate(true)}>
+            <CopyIcon />
+            Duplicate of…
+          </Button>
+        )}
         <Button
           variant="ghost"
           className="justify-start text-destructive hover:text-destructive"
@@ -188,6 +197,7 @@ function TaskPage() {
       </main>
 
       <aside className="hidden w-72 shrink-0 flex-col gap-4 border-l p-4 md:flex">{fields}</aside>
+      <DuplicateDialog orgSlug={orgSlug} taskKey={task.key} open={markingDuplicate} onOpenChange={setMarkingDuplicate} />
     </div>
   );
 }

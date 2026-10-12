@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { DomainError } from "./errors";
 import { createAgent, deleteAgent } from "./agents";
@@ -56,7 +56,11 @@ run("projects and tasks", () => {
     expect((await updateProject(db, ctx, "DOC", { description: "" })).description).toBeNull();
     await expect(updateProject(db, ctx, "DOC", {})).rejects.toMatchObject({ code: "validation" });
     await expect(updateProject(db, ctx, "NOPE", { name: "x" })).rejects.toMatchObject({ code: "not_found" });
-    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, updated.id));
+    const log = await db
+      .select()
+      .from(schema.activity)
+      .where(eq(schema.activity.entityId, updated.id))
+      .orderBy(asc(schema.activity.id));
     expect(log.map((e) => e.action)).toEqual(["project.created", "project.updated", "project.updated"]);
   });
 
