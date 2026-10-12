@@ -127,7 +127,7 @@ function Column({
       </header>
       <div
         ref={setNodeRef}
-        className={`flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain rounded-lg p-1 transition-colors ${isOver ? "bg-muted" : "bg-muted/40"}`}
+        className={`flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg p-1 transition-colors ${isOver ? "bg-muted" : "bg-muted/40"}`}
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
