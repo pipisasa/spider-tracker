@@ -7,6 +7,7 @@ import { createAgent } from "./agents";
 import {
   createDocument,
   deleteDocument,
+  diffDocumentVersions,
   editDocument,
   getDocument,
   getDocumentVersion,
@@ -196,6 +197,47 @@ run("documents", () => {
     ]);
   });
 
+  test("diffs two versions line by line; without to, against the current one", async () => {
+    const doc = await createDocument(db, ctx, { title: "Diffed", content: "# Plan\n\n- one\n- two\n" });
+    await updateDocument(db, ctx, doc.id, { baseVersion: 1, content: "# Plan\n\n- one\n- 2\n- three\n" });
+    await updateDocument(db, ctx, doc.id, { baseVersion: 2, title: "Diffed plan", content: "# Plan\n\n- 2\n- three\n" });
+
+    const diff = await diffDocumentVersions(db, ctx, doc.id, { from: 1, to: 2 });
+    expect(diff).toMatchObject({
+      documentId: doc.id,
+      from: { version: 1, title: "Diffed", authorId: ctx.actorId },
+      to: { version: 2, title: "Diffed" },
+      added: 2,
+      removed: 1,
+    });
+    expect(diff.hunks).toHaveLength(1);
+    expect(diff.hunks[0]!.lines.map((l) => `${l.kind[0]} ${l.text}`)).toEqual([
+      "c # Plan",
+      "c ",
+      "c - one",
+      "r - two",
+      "a - 2",
+      "a - three",
+    ]);
+
+    // Query strings work as they come from the API; no `to` is the current version.
+    const toCurrent = await diffDocumentVersions(db, ctx, doc.id, { from: "2" });
+    expect(toCurrent).toMatchObject({ from: { version: 2 }, to: { version: 3, title: "Diffed plan" }, added: 0, removed: 1 });
+    // Backwards works too.
+    expect(await diffDocumentVersions(db, ctx, doc.id, { from: 3, to: 1 })).toMatchObject({ added: 2, removed: 2 });
+    expect((await diffDocumentVersions(db, ctx, doc.id, { from: 2, to: 2 })).hunks).toEqual([]);
+
+    await expect(diffDocumentVersions(db, ctx, doc.id, { from: 9 })).rejects.toMatchObject({ code: "not_found" });
+    await expect(diffDocumentVersions(db, ctx, doc.id, { from: 1, to: 4 })).rejects.toMatchObject({ code: "not_found" });
+    await expect(diffDocumentVersions(db, ctx, doc.id, {})).rejects.toMatchObject({ code: "validation" });
+    await expect(diffDocumentVersions(db, ctx, doc.id, { from: "x" })).rejects.toMatchObject({ code: "validation" });
+    await expect(diffDocumentVersions(db, ctx, crypto.randomUUID(), { from: 1 })).rejects.toMatchObject({
+      code: "not_found",
+    });
+    // Guests read, so they diff.
+    expect((await diffDocumentVersions(db, { ...ctx, role: "guest" }, doc.id, { from: 1 })).to.version).toBe(3);
+  });
+
   test("concurrent saves from the same version: one wins, the other conflicts", async () => {
     const doc = await createDocument(db, ctx, { title: "Race" });
     const results = await Promise.allSettled([
@@ -366,6 +408,9 @@ run("documents", () => {
       await expect(
         getDocumentVersion(db, agent(), hidden.id, 1),
       ).rejects.toMatchObject({ code: "not_found" });
+      await expect(
+        diffDocumentVersions(db, agent(), hidden.id, { from: 1 }),
+      ).rejects.toMatchObject({ code: "not_found" });
     }
     for (const visible of [orgDoc, inScope]) {
       expect((await getDocument(db, agent(), visible.id)).id).toBe(visible.id);
@@ -377,6 +422,9 @@ run("documents", () => {
       expect(
         (await getDocumentVersion(db, agent(), visible.id, 1)).version,
       ).toBe(1);
+      expect(
+        (await diffDocumentVersions(db, agent(), visible.id, { from: 1 })).hunks,
+      ).toEqual([]);
     }
 
     // An unscoped agent reads everything.

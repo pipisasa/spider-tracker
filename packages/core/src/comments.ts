@@ -3,7 +3,7 @@ import { schema } from "@repo/db";
 import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { assertCanWrite, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
-import type { CommentDto, InboxKind } from "./contracts";
+import type { CommentDto, TaskInboxKind } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { notify } from "./inbox";
@@ -105,7 +105,7 @@ export async function addComment(db: Db, ctx: ActorContext, taskKey: string, inp
       .where(eq(taskAssignees.taskId, task.id));
 
     // Order matters: the first entry per recipient wins, so a mention beats a plain comment.
-    const entries: { recipientId: string; kind: InboxKind; commentId: string }[] = [
+    const entries: { recipientId: string; kind: TaskInboxKind; commentId: string }[] = [
       ...mentioned.map((m) => ({ recipientId: m.id, kind: "mention" as const, commentId: comment.id })),
       ...(parentAuthor ? [{ recipientId: parentAuthor, kind: "reply" as const, commentId: comment.id }] : []),
       ...assignees.map((a) => ({ recipientId: a.id, kind: "comment" as const, commentId: comment.id })),

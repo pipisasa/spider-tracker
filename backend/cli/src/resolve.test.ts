@@ -29,6 +29,7 @@ const project: ProjectDetailDto = {
   description: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   archivedAt: null,
+  rulesDocumentId: null,
   // Deliberately out of board order.
   statuses: [
     status("review", "In Review", "in_review", 3),

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { DocumentVersionDto, TaskDto } from "./contracts";
-import { actorHandle, commentView, documentVersionView, relationView, taskView } from "./views";
+import { formatUnifiedDiff } from "./diff";
+import type { DocumentDiffDto, DocumentVersionDto, TaskDto } from "./contracts";
+import { actorHandle, commentView, documentDiffView, documentVersionView, projectRulesView, relationView, taskView } from "./views";
 
 const task: TaskDto = {
   id: "t",
@@ -63,6 +64,45 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
       projectKey: "ST",
       taskKey: null,
       currentVersion: 3,
+      url: "https://web/d",
+    });
+  });
+
+  test("document diffs get their unified text; rules come from the project and its document", () => {
+    const side = (version: number) => ({ version, title: "Spec", format: "md" as const, authorId: null, createdAt: "x" });
+    const dto: DocumentDiffDto = {
+      documentId: "d",
+      from: side(1),
+      to: side(2),
+      added: 1,
+      removed: 1,
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: [
+            { kind: "removed", text: "old", oldLine: 1, newLine: null },
+            { kind: "added", text: "new", oldLine: null, newLine: 1 },
+          ],
+        },
+      ],
+    };
+    expect(documentDiffView(dto)).toEqual({ ...dto, diff: formatUnifiedDiff(dto.hunks, "v1", "v2") });
+    expect(documentDiffView(dto).diff).toStartWith("--- v1\n+++ v2\n@@ -1 +1 @@\n-old\n+new");
+    expect(documentDiffView({ ...dto, hunks: [] }).diff).toBe("");
+
+    const document = { id: "d", title: "Rules", format: "md" as const, version: 3, updatedAt: "y", content: "Be kind", url: "https://web/d" };
+    expect(projectRulesView({ key: "ST", name: "Spider" }, document)).toEqual({
+      projectKey: "ST",
+      projectName: "Spider",
+      documentId: "d",
+      title: "Rules",
+      format: "md",
+      version: 3,
+      updatedAt: "y",
+      content: "Be kind",
       url: "https://web/d",
     });
   });

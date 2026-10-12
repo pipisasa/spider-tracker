@@ -387,6 +387,29 @@ withDb("spider CLI against the API", () => {
     const comments = ((await thread.json()) as { items: { body: string; parentId: string | null }[] }).items;
     expect(comments.at(-1)).toMatchObject({ body: "Docs checked", parentId: pushed[0]?.meta.comment_id });
 
+    // Project rules (ST-111): the owner sets them; the channel pushes the change, the CLI shows them.
+    const asOwner = (method: string, path: string, body: unknown) =>
+      app.request(`/v1/orgs/${slug}${path}`, {
+        method,
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const rulesDoc = (await (
+      await asOwner("POST", "/documents", { title: "Rules", project: "SPI", content: "Done means merged." })
+    ).json()) as { id: string };
+    expect((await asOwner("PATCH", "/projects/SPI", { rulesDocumentId: rulesDoc.id })).status).toBe(200);
+    for (let i = 0; i < 50 && pushed.length < 2; i++) await Bun.sleep(100);
+    expect(pushed[1]?.meta).toMatchObject({ kind: "rules", project: "SPI", document_id: rulesDoc.id });
+    expect(pushed[1]?.meta).not.toHaveProperty("task");
+    expect(pushed[1]?.content).toContain('changed the rules of project SPI: "Rules"');
+
+    const view = await spider("project", "view", "SPI");
+    expect(view.stdout).toContain(`Rules for agents: Rules (${rulesDoc.id}, v1)`);
+    expect(view.stdout).toContain("Done means merged.");
+    // An owner's agent may clear them.
+    expect((await spider("project", "update", "SPI", "--rules", "", "--json")).json()).toMatchObject({ rulesDocumentId: null });
+    expect((await asOwner("DELETE", `/documents/${rulesDoc.id}`, {})).status).toBeLessThan(300);
+
     stop.abort();
     await pumping;
     await session.close();
@@ -627,6 +650,30 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "view", id, "--json")).json()).toMatchObject({ version: 4, title: "Plan" });
   });
 
+  test("docs: diff two versions, or a version against the current one (ST-117)", async () => {
+    stdin = "# Diff\n\none\ntwo\n";
+    const created = (await spider("doc", "create", "--title", "Diff", "--project", "SPI", "--file", "-", "--json")).json();
+    const id = created.id as string;
+    await spider("doc", "edit", id, "--old", "two", "--new", "2");
+    await spider("doc", "edit", id, "--append", "--text", "three");
+
+    expect((await spider("doc", "diff", id, "--from", "1", "--to", "2")).stdout).toBe(
+      "--- Diff (v1)\n+++ Diff (v2)\n@@ -1,4 +1,4 @@\n # Diff\n \n one\n-two\n+2\n",
+    );
+    const json = (await spider("doc", "diff", id, "--from", "1", "--json")).json();
+    expect(json).toMatchObject({ from: { version: 1 }, to: { version: 3 }, added: 2, removed: 1 });
+    expect((json.hunks as { lines: { kind: string; text: string; oldLine: number | null; newLine: number | null }[] }[])[0]?.lines.filter((l) => l.kind !== "context")).toEqual([
+      { kind: "removed", text: "two", oldLine: 4, newLine: null },
+      { kind: "added", text: "2", oldLine: null, newLine: 4 },
+      { kind: "added", text: "three", oldLine: null, newLine: 5 },
+    ]);
+    expect((await spider("doc", "diff", id, "--from", "3")).stdout).toBe("No changes in content between version 3 and 3\n");
+
+    expect((await spider("doc", "diff", id, "--from", "9")).code).toBe(3);
+    expect((await spider("doc", "diff", id, "--from", "x")).code).toBe(2);
+    expect((await spider("doc", "diff", id)).code).toBe(2);
+  });
+
   test("docs: move to the organization and back to a project", async () => {
     stdin = "# Movable";
     const created = (await spider("doc", "create", "--title", "Movable", "--project", "SPI", "--file", "-", "--json")).json();
@@ -734,10 +781,14 @@ withDb("spider CLI against the API", () => {
       expect(doc).toBeDefined();
       expect(await mcp("get_document", { id: doc?.id })).toEqual(await cli("doc", "view", doc?.id ?? ""));
       expect(await mcp("get_document", { id: doc?.id, version: 1 })).toEqual(await cli("doc", "view", doc?.id ?? "", "--rev", "1"));
+      expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(await cli("doc", "diff", doc?.id ?? "", "--from", "1"));
       expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(await cli("comments", "SPI-1"));
       expect(await mcp("list_projects")).toEqual(await cli("projects"));
+      // With rules (ST-111), get_project and project view give them as ProjectRulesDto.
+      expect(await cli("project", "update", "SPI", "--rules", doc?.id ?? "")).toMatchObject({ rulesDocumentId: doc?.id });
       // project view adds task counts per status, which get_project leaves out.
       const view = (await cli("project", "view", "SPI")) as { statuses: Record<string, unknown>[] };
+      expect(view).toMatchObject({ rules: { projectKey: "SPI", documentId: doc?.id, content: expect.any(String) } });
       expect(await mcp("get_project", { projectKey: "SPI" })).toEqual({
         ...view,
         statuses: view.statuses.map((status) => {

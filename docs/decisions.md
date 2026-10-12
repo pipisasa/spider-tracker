@@ -157,3 +157,17 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Trade-off:** no interactive HTML (scripts, forms), and the frame can't size itself to its content, so it gets a fixed, resizable height. Revisit with a separate sandbox origin if interactive reports are ever needed.
 
 **Avatar credits:** generated avatars use the DiceBear styles Notionists (CC0) and Bottts (by Pablo Stanley, free for personal and commercial use), rendered locally with @dicebear 9.4.3.
+
+---
+
+## 12. Project rules are a pointer to a project document
+
+**Decision:** a project's rules for agents (ST-111) are a nullable `projects.rules_document_id` pointing at one of the project's own project-level documents, not a flag on documents or a separate text field.
+
+**Why:**
+- "At most one per project" is the column itself; no partial unique index, and replacing the rules is one update.
+- The rules stay a normal document: versions, links, the editor and the API all work unchanged.
+- Agents get them through the MCP server's instructions on `initialize`, which every MCP session (plugin or `spider claude`) reads first, so neither the generated agent file nor the channel has to be regenerated when they change.
+- Changes are inbox items of a new kind `rules` about a document (`inbox_items.task_id` became nullable, with a `document_id`). Clients from before it expect a task on every item, so the API returns `rules` items only when `kinds` asks for them.
+
+**Trade-off:** rules belong to one project; organization-wide rules shared by several projects would need a different shape.

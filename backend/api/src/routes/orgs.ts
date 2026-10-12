@@ -38,6 +38,7 @@ import {
   editDocument,
   getDocument,
   getDocumentGraph,
+  diffDocumentVersions,
   getDocumentVersion,
   listBacklinks,
   listDocuments,
@@ -366,6 +367,11 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
 
   app.get("/documents/:documentId/versions/:version", async (c) =>
     c.json(await getDocumentVersion(db, c.get("actor"), c.req.param("documentId"), c.req.param("version"))),
+  );
+
+  // GET ?from=3&to=5: a line diff of two versions; without `to`, against the current one (ST-117).
+  app.get("/documents/:documentId/diff", async (c) =>
+    c.json(await diffDocumentVersions(db, c.get("actor"), c.req.param("documentId"), c.req.query())),
   );
 
   // The caller's inbox. With ?wait=N (seconds, max 25) it holds the request until an item

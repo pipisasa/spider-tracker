@@ -395,7 +395,7 @@ run("agent invites and project scope", () => {
     // Inbox: mentions on out-of-scope tasks are not delivered.
     await addComment(db, owner, xy.key, { body: `@${actor.handle} secret` });
     await addComment(db, owner, st.key, { body: `@${actor.handle} visible` });
-    expect((await listInbox(db, ctx())).map((i) => i.task.key)).toEqual([
+    expect((await listInbox(db, ctx())).map((i) => i.task?.key)).toEqual([
       st.key,
     ]);
 

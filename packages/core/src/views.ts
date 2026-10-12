@@ -1,12 +1,17 @@
-// What the CLI (`--json`) and the MCP server print for tasks, comments and old document versions
+// What the CLI (`--json`) and the MCP server print for tasks, comments, document versions and diffs
 // (ST-107): the API DTOs plus names a reader needs (status, handles, tag names), built the same
 // way on both sides so scripts can switch between them. Browser-safe: no database imports.
 
+import { formatUnifiedDiff } from "./diff";
 import type {
   ActorDto,
   CommentDto,
+  DocumentDiffDto,
+  DocumentDto,
   DocumentSummaryDto,
   DocumentVersionDto,
+  ProjectDto,
+  ProjectRulesDto,
   RelationKind,
   StatusDto,
   TagDto,
@@ -105,3 +110,29 @@ export function documentVersionView(
     ...(current.url ? { url: current.url } : {}),
   };
 }
+
+/** A document diff (ST-117) with its hunks also as unified diff text (`--- v1` / `+++ v2`; empty when the contents match). */
+export interface DocumentDiffView extends DocumentDiffDto {
+  diff: string;
+}
+
+export const documentDiffView = (dto: DocumentDiffDto): DocumentDiffView => ({
+  ...dto,
+  diff: formatUnifiedDiff(dto.hunks, `v${dto.from.version}`, `v${dto.to.version}`),
+});
+
+/** A project's rules (ST-111) from the project and its rules document, as the API's ProjectRulesDto. */
+export const projectRulesView = (
+  project: Pick<ProjectDto, "key" | "name">,
+  document: Pick<DocumentDto, "id" | "title" | "format" | "version" | "updatedAt" | "content" | "url">,
+): ProjectRulesDto & { url?: string } => ({
+  projectKey: project.key,
+  projectName: project.name,
+  documentId: document.id,
+  title: document.title,
+  format: document.format,
+  version: document.version,
+  updatedAt: document.updatedAt,
+  content: document.content,
+  ...(document.url ? { url: document.url } : {}),
+});

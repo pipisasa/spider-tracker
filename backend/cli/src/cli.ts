@@ -10,9 +10,20 @@ import type {
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { normalizeHandle, parseTaskKey } from "@repo/core/schemas";
+import { INBOX_KINDS, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
+import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
-import { actorHandle, commentView, documentVersionView, relationView, taskView, type RelationView, type TaskView } from "@repo/core/views";
+import {
+  actorHandle,
+  commentView,
+  documentDiffView,
+  documentVersionView,
+  projectRulesView,
+  relationView,
+  taskView,
+  type RelationView,
+  type TaskView,
+} from "@repo/core/views";
 import type {
   BulkUpdateTasksInput,
   CreateTaskInput,
@@ -65,6 +76,8 @@ import {
 import { branchNameFor, taskKeysIn } from "@repo/core/git";
 import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
 import { isCompiled } from "./self-update";
+import { checkSession, planLines, teamAgents, windowArgv } from "./claude-team";
+import { TMUX_MISSING, openWindows, runTmux, shellQuote, tmuxPlan, tmuxVersion, windowCommand, windowNames, type TmuxRunner } from "./tmux";
 import { describePlan, runUninstall, uninstallPlan } from "./uninstall";
 import { checkForUpdates } from "./update-check";
 import {
@@ -127,6 +140,8 @@ export interface RunOptions {
   spawn?: (argv: string[], options: { env: Record<string, string | undefined> }) => Promise<number>;
   /** Runs `git <args>` in a directory (branch lookups, `spider start`); defaults to the real git. */
   git?: GitRunner;
+  /** Runs `tmux <args>` (`spider claude --tmux`); defaults to the real tmux. */
+  tmux?: TmuxRunner;
   /** The command that runs this CLI, for the MCP config `spider claude` writes; defaults to the running one. */
   self?: string[];
   /** Runs `claude <args>` capturing its output (plugin setup); undefined result when Claude Code is missing. */
@@ -149,6 +164,16 @@ export interface Choice {
   /** Choices are shown under their group, e.g. "prod › batele". */
   group?: string;
   hint?: string;
+}
+
+/** `spider claude` options. */
+interface ClaudeOptions {
+  channel: boolean;
+  permissionMode?: PermissionMode;
+  tmux?: string;
+  all?: boolean;
+  project?: string;
+  dryRun?: boolean;
 }
 
 /** Program-wide options. */
@@ -307,9 +332,6 @@ const scopeOf = (entry: AgentEntry) => {
   if (!projects) return "all projects";
   return projects.length ? projects.map((p) => p.key).join(", ") : "no projects";
 };
-
-/** Quotes a word for a shell command line (Claude Code runs headersHelper through a shell). */
-const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
 
 /** The MCP config `spider claude` passes to Claude Code: no secrets, the key comes from mcp-headers. */
 export function claudeMcpConfig(entry: AgentEntry, self: string[], channel: boolean) {
@@ -873,28 +895,90 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     );
   });
 
+  /**
+   * `spider claude … --tmux <session>`: a window per agent, named by handle, each running
+   * `spider claude <agent>` with the same options; agents whose window exists are skipped.
+   */
+  const claudeInTmux = (store: Store, session: string, names: string[], claudeArgs: string[], opts: ClaudeOptions) => {
+    checkSession(session);
+    const server = globals().server;
+    const agents = teamAgents(store, {
+      names,
+      all: !!opts.all,
+      project: opts.project,
+      server: server === undefined ? undefined : resolveServer(store, server).key,
+    });
+    if (!agents.length) throw usageError(`Which agents? Name them or use --all: spider claude <agent>… --tmux ${session}`);
+    const tmux = options.tmux ?? runTmux;
+    const installed = tmuxVersion(tmux) !== null;
+    if (!installed && !opts.dryRun) throw new CliError(EXIT.unexpected, TMUX_MISSING, "tmux_missing");
+    const self = options.self ?? selfInvocation();
+    const plan = tmuxPlan(
+      session,
+      installed ? windowNames(session, tmux) : null,
+      agents.map((a) => ({
+        window: a.agent,
+        agent: a.ref,
+        argv: windowArgv(self, a, { channel: opts.channel, permissionMode: opts.permissionMode, claudeArgs }),
+      })),
+    );
+    if (opts.dryRun) {
+      if (!installed) stderr.write(`Note: ${TMUX_MISSING}\n`);
+      print(planLines(plan, true, windowCommand).join("\n"));
+      return;
+    }
+    // Windows of a running tmux server don't inherit this process's environment: pass the credentials folder on.
+    const configDir = options.env.SPIDER_CONFIG_DIR?.trim();
+    try {
+      openWindows(plan, cwd, configDir ? { SPIDER_CONFIG_DIR: configDir } : {}, tmux);
+    } catch (err) {
+      throw new CliError(EXIT.unexpected, err instanceof Error ? err.message : String(err), "tmux_failed");
+    }
+    print(planLines(plan, false, windowCommand).join("\n"));
+    if (opts.channel && plan.windows.some((w) => w.start)) {
+      stderr.write(
+        `Each new window waits at Claude Code's development-channels dialog: attach and press Enter in each, or see docs/agents.md for tmux send-keys\n`,
+      );
+    }
+  };
+
   program
     .command("claude")
     .description("start Claude Code as a saved agent, with the spider MCP server and its inbox channel")
     .argument("[agent]", "handle, org/handle or server/org/handle (default: pick one, or the default agent)")
-    .argument("[claudeArgs...]", "arguments for claude, after --")
+    .argument("[claudeArgs...]", "arguments for claude, after -- (with --tmux, more agents before --)")
     .option("--no-channel", "don't push the agent's inbox into the session")
     .addOption(
       new Option("--permission-mode <mode>", "the permission mode to start in (default: the agent's, see spider agents permission-mode, else auto)").choices(
         PERMISSION_MODES,
       ),
     )
-    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean; permissionMode?: PermissionMode }) => {
+    .option("--tmux <session>", "start each agent in its own window (named by handle) of this tmux session; running ones are skipped")
+    .option("--all", "with --tmux: every saved agent (narrow with --project and --server)")
+    .option("--project <key>", "with --all: only saved agents scoped to this project")
+    .option("--dry-run", "with --tmux: print the launch plan, start nothing")
+    .action(async (named: string | undefined, rest: string[], opts: ClaudeOptions) => {
       // Everything after "--" goes to claude; an agent is only an operand before it.
       const dash = argv.indexOf("--");
       const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
       const given = (dash >= 0 && named !== undefined && 1 + rest.length <= extra.length ? undefined : named) ?? globals().as;
+      // The operands before "--": with --tmux, all of them are agents.
+      const operands = [...(named === undefined ? [] : [named]), ...rest].slice(0, dash >= 0 ? Math.max(0, 1 + rest.length - extra.length) : undefined);
 
       const store = await readStore(options.env);
       const all = listAgents(store);
       if (!all.length) {
         throw new CliError(EXIT.auth, "No saved agents. Run `spider accept-invite <code>` or `spider login` first", "unauthorized");
       }
+      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
+        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
+      }
+      if (opts.tmux !== undefined) {
+        const names = operands.length ? operands : globals().as ? [globals().as ?? ""] : [];
+        return claudeInTmux(store, opts.tmux, names, extra, opts);
+      }
+      const loose = opts.all ? "--all" : opts.project !== undefined ? "--project" : opts.dryRun ? "--dry-run" : undefined;
+      if (loose) throw usageError(`${loose} goes with --tmux <session>`);
       let entry: AgentEntry | undefined;
       if (given) entry = findAgent(store, given);
       else if (options.select && all.length > 1) {
@@ -920,9 +1004,6 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const config = join(dir, "mcp.json");
       await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
       const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env, entry);
-      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
-        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
-      }
       const permission = permissionModeFor(opts.permissionMode, extra, entry.saved.permissionMode);
       const command = claudeCommand({ claudeArgs: extra, agent: agentName, mcpConfig: config, channel: opts.channel, permission });
       // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
@@ -1231,10 +1312,13 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
           .then((r) => r.items)
           .catch(() => [] as DocumentSummaryDto[]),
       ]);
+      const rulesDoc = detail.rulesDocumentId ? await client.documents.get(slug, detail.rulesDocumentId) : null;
+      // ProjectRulesDto, as MCP get_project and whoami give them.
+      const rules = rulesDoc && projectRulesView(detail, rulesDoc);
       const statuses = detail.statuses.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
       const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
       // MCP get_project has the same shape, without taskCount.
-      output(opts, { ...detail, statuses, documents }, () =>
+      output(opts, { ...detail, statuses, rules, documents }, () =>
         [
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
@@ -1242,6 +1326,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
           "Statuses:",
           ...statuses.map((s) => `  ${s.name.padEnd(nameWidth)}  ${s.taskCount}`),
           ...(detail.description ? ["", detail.description] : []),
+          ...(rules ? ["", `Rules for agents: ${rules.title} (${rules.documentId}, v${rules.version})`, "", rules.content] : []),
         ].join("\n"),
       );
     },
@@ -1250,15 +1335,17 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     projectCommand
       .command("update")
-      .description("change a project's name or description (the key can't change)")
+      .description("change a project's name, description or rules for agents (the key can't change)")
       .argument("<key>")
       .option("--name <text>", "name")
-      .option("--description <text>", 'description (Markdown; "" clears it)'),
-  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string }) => {
+      .option("--description <text>", 'description (Markdown; "" clears it)')
+      .option("--rules <document-id>", 'one of the project\'s documents as its rules for agents ("" clears them); its agents are notified'),
+  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string; rules?: string }) => {
     const input: UpdateProjectInput = {};
     if (opts.name !== undefined) input.name = opts.name;
     if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
-    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name or --description");
+    if (opts.rules !== undefined) input.rulesDocumentId = opts.rules === "" ? null : opts.rules;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name, --description or --rules");
     const { sdk, org } = conn();
     const updated = await (await sdk()).projects.update(await org(), key, input);
     output(opts, updated, () => `Updated ${projectLine(updated)}`);
@@ -1592,7 +1679,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     program
       .command("inbox")
-      .description("your notifications: mentions, assignments, comments and replies")
+      .description("your notifications: mentions, assignments, comments and replies, and changed project rules")
       .option("--all", "include items already read")
       .option("--wait <seconds>", "wait up to this long (max 25) for a new item")
       .option("--mark-read", "mark the listed items read"),
@@ -1601,7 +1688,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const client = await sdk();
     const slug = await org();
     const wait = opts.wait === undefined ? undefined : parseLimit(opts.wait);
-    const { items } = await client.inbox.list(slug, { unread: !opts.all, wait });
+    const { items } = await client.inbox.list(slug, { unread: !opts.all, wait, kinds: [...INBOX_KINDS] });
     const last = items.at(-1);
     if (opts.markRead && last) await client.inbox.markRead(slug, { upTo: last.id });
     output(opts, { items }, () =>
@@ -1609,7 +1696,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         ? "Inbox is empty"
         : items
             .map((i) => {
-              const head = `#${i.id} ${i.task.key} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
+              const about = i.task?.key ?? (i.document ? `${i.document.projectKey} "${i.document.title}" (${i.document.id})` : "");
+              const head = `#${i.id} ${about} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
               return i.comment ? `${head}\n  ${i.comment.body.split("\n").join("\n  ")}` : head;
             })
             .join("\n"),
@@ -1679,6 +1767,28 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         shown.content,
       ].join("\n"),
     );
+  });
+
+  withJson(
+    doc
+      .command("diff")
+      .description("show what changed between two versions of a document, as a unified diff of its lines")
+      .argument("<id>")
+      .requiredOption("--from <n>", "the older version")
+      .option("--to <n>", "the newer version (default: the current one)"),
+  ).action(async (id: string, opts: JsonOption & { from: string; to?: string }) => {
+    const { sdk, org } = conn();
+    const from = parseVersion(opts.from);
+    const to = opts.to === undefined ? undefined : parseVersion(opts.to);
+    const diff = await (await sdk()).documents.diff(await org(), id, { from, to });
+    // DocumentDiffView: the API's diff plus its unified text, as MCP diff_document.
+    output(opts, documentDiffView(diff), () => {
+      const label = (v: typeof diff.from) => `${v.title} (v${v.version})`;
+      const text = formatUnifiedDiff(diff.hunks, label(diff.from), label(diff.to));
+      if (text) return text;
+      const renamed = diff.from.title !== diff.to.title ? ` (title: ${diff.from.title} → ${diff.to.title})` : "";
+      return `No changes in content between version ${diff.from.version} and ${diff.to.version}${renamed}`;
+    });
   });
 
   withJson(

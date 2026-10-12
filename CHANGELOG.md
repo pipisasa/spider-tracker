@@ -18,12 +18,14 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 - **Documents**: `project` and `task` are now `projectKey` and `taskKey`; `updatedBy` (a handle) is now `authorId`. `create_document`, `update_document`, `edit_document` and `move_document` return the whole document, `content` included. An older version (`get_document` with `version`) has `authorId` and `createdAt` instead of `savedBy` and `savedAt`, plus `documentId`, `projectKey` and `taskKey`.
 - **Comments**: `list_comments` items are the API comment (`authorId`, `taskKey`, `editedAt`, …) plus `author` (the handle, as before). `add_comment` returns the whole comment instead of `{ id, task, createdAt }`.
 - **Projects**: `archived` (true/false) is now `archivedAt` (a date or null); `statuses` carry `id`, `color` and `position` too; `id` and `createdAt` are new. `get_project`'s `documents` are document summaries (`taskKey` instead of `task`).
+- **Project rules** (ST-111; `rules` on `get_project`, `projectRules` on `whoami`) are the API's `ProjectRulesDto` plus `url`: `project` is now `projectKey`, and `projectName` and `format` are new.
+- **Document diffs** (`diff_document`, ST-117) are the API's diff plus the unified `diff` text: `id` is now `documentId`; `from`/`to` have `authorId` and `createdAt` instead of `savedBy` and `savedAt`; `hunks` (the structured lines) are new.
 
-Unchanged: `whoami`, `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
+Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
 ### CLI
 
-- `task view --json` adds `documents`; `project view --json` adds the project's `documents`; `comment --json` and `comments --json` add `author` (the handle). Nothing was removed or renamed (ST-107).
+- `task view --json` adds `documents`; `project view --json` adds the project's `documents`, and its `rules` gain `projectKey`, `projectName`, `format`, `updatedAt` and `url` (the full `ProjectRulesDto`); `doc diff --json` adds `diff` (the unified text); `comment --json` and `comments --json` add `author` (the handle). Nothing was removed or renamed (ST-107).
 - `task update` and other commands that fail with "not found" or "forbidden" while acting as a saved agent limited to some projects say which agent acted, how it was chosen (`--as`, `SPIDER_AGENT` or the default agent) and which projects it sees: a task in another project reads as missing to it (ST-107).
 - An error response without a JSON body (a proxy page, or HTTP/2 without status text) no longer prints an empty `spider: ` line; it says which request failed with which HTTP status (ST-107).
 
@@ -31,6 +33,6 @@ Unchanged: `whoami`, `get_inbox`, `get_task_activity`, `list_tags`, `list_member
 
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 
-### Plugin
+### Plugin 0.3.6
 
 - The `tasks` skill says that MCP and CLI `--json` return the same shapes, and what a "not found" from the CLI for a task MCP can see usually means (ST-107).

@@ -89,6 +89,10 @@ const schemas: Record<string, JsonSchema> = {
       format: "date-time",
       description: "Archived projects are left out of lists and refuse new tasks",
     }),
+    rulesDocumentId: nullable("string", {
+      format: "uuid",
+      description: "The project's rules for agents: one of its project-level documents (set with PATCH rulesDocumentId)",
+    }),
     url: webUrl("project"),
   }),
   ProjectDetail: {
@@ -149,10 +153,17 @@ const schemas: Record<string, JsonSchema> = {
   }),
   InboxItem: object({
     id: { type: "integer", description: "Increasing; use as the `after` cursor" },
-    kind: string({ enum: ["mention", "assigned", "comment", "reply"] }),
+    kind: string({
+      enum: ["mention", "assigned", "comment", "reply", "rules"],
+      description: "rules: a project's rules were set or changed (returned only when asked for with `kinds`)",
+    }),
     createdAt: string({ format: "date-time" }),
     readAt: nullable("string", { format: "date-time" }),
-    task: object({ key: string(), title: string() }),
+    task: { oneOf: [object({ key: string(), title: string() }), { type: "null" }], description: "Null for rules items" },
+    document: {
+      oneOf: [object({ id: string({ format: "uuid" }), title: string(), projectKey: string() }), { type: "null" }],
+      description: "For rules items: the project's rules document",
+    },
     comment: { oneOf: [object({ id: string({ format: "uuid" }), body: string() }), { type: "null" }] },
     from: object({ id: string({ format: "uuid" }), handle: string(), name: string(), type: string({ enum: ["human", "agent"] }) }),
   }),
@@ -211,6 +222,31 @@ const schemas: Record<string, JsonSchema> = {
     allOf: [ref("DocumentVersionSummary"), object({ documentId: string({ format: "uuid" }), content: string() })],
   },
   DocumentVersionList: listOf("DocumentVersionSummary"),
+  DiffLine: object({
+    kind: string({ enum: ["context", "added", "removed"] }),
+    text: string(),
+    oldLine: nullable("integer", { description: "1-based line in the older version; null for added lines" }),
+    newLine: nullable("integer", { description: "1-based line in the newer version; null for removed lines" }),
+  }),
+  DiffHunk: object({
+    oldStart: { type: "integer" },
+    oldLines: { type: "integer" },
+    newStart: { type: "integer" },
+    newLines: { type: "integer" },
+    lines: { type: "array", items: ref("DiffLine") },
+  }),
+  DocumentDiff: object({
+    documentId: string({ format: "uuid" }),
+    from: ref("DocumentVersionSummary"),
+    to: ref("DocumentVersionSummary"),
+    added: { type: "integer", description: "Lines added" },
+    removed: { type: "integer", description: "Lines removed" },
+    hunks: {
+      type: "array",
+      items: ref("DiffHunk"),
+      description: "Changes with 3 lines of context, as in a unified diff; empty when the contents match",
+    },
+  }),
   DocumentLink: object({
     from: string({ format: "uuid", description: "The linking document" }),
     to: {
@@ -682,7 +718,8 @@ const paths = {
     },
     patch: {
       operationId: "updateProject",
-      summary: "Change a project's name or description (owners, admins and their agents); the key can't change",
+      summary:
+        "Change a project's name, description or rules document (owners, admins and their agents); the key can't change. Setting rules notifies the project's agents",
       requestBody: body("UpdateProjectInput"),
       responses: { "200": ok("Updated project", "ProjectDetail"), ...errors },
     },
@@ -965,6 +1002,18 @@ const paths = {
     parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("version", "Version number")],
     get: { operationId: "getDocumentVersion", summary: "One saved version with its content", responses: { "200": ok("Version", "DocumentVersion"), ...errors } },
   },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/diff": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: {
+      operationId: "diffDocumentVersions",
+      summary: "A line diff of two saved versions; without to, against the current one. 404 for a missing version",
+      parameters: [
+        { name: "from", in: "query", required: true, schema: { type: "integer", minimum: 1 }, description: "The older version" },
+        { name: "to", in: "query", schema: { type: "integer", minimum: 1 }, description: "The newer version; defaults to the current one" },
+      ],
+      responses: { "200": ok("Diff", "DocumentDiff"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/inbox": {
     parameters: [orgSlug],
     get: {
@@ -975,6 +1024,12 @@ const paths = {
         { name: "unread", in: "query", schema: { type: "boolean" }, description: "Only unread items" },
         { name: "limit", in: "query", schema: { type: "integer", maximum: 100 } },
         { name: "wait", in: "query", schema: { type: "integer", maximum: 25 }, description: "Seconds to wait for a new item" },
+        {
+          name: "kinds",
+          in: "query",
+          schema: { type: "string" },
+          description: "Comma-separated kinds to return (mention, assigned, comment, reply, rules); default: all but rules",
+        },
       ],
       responses: { "200": ok("Inbox items", "InboxList"), ...errors },
     },
