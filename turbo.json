@@ -17,7 +17,9 @@
     "SPIDER_TOKEN",
     "SPIDER_API_URL",
     "SPIDER_NO_UPDATE_CHECK",
-    "SIGNUP_ALLOWLIST"
+    "SIGNUP_ALLOWLIST",
+    "RESEND_API_KEY",
+    "MAIL_FROM"
   ],
   "tasks": {
     "build": {

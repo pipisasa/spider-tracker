@@ -2,11 +2,11 @@ import { createDb } from "@repo/db";
 import { createApp } from "./app";
 import { createAuth } from "./auth";
 import { loadEnv } from "./env";
-import { consoleMailer } from "./mailer";
+import { createMailer } from "./mailer";
 
 const env = loadEnv();
 const db = createDb(env.DATABASE_URL);
-const auth = createAuth(db, env, consoleMailer);
+const auth = createAuth(db, env, createMailer(env));
 const app = createApp({ db, auth, env });
 
 console.info(`api listening on ${env.API_ORIGIN}`);

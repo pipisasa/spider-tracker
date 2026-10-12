@@ -35,7 +35,7 @@ Spider Tracker is its own **OAuth 2.1 / OpenID Connect (OIDC) provider**: MCP cl
 | Need | Plugin |
 |---|---|
 | GitHub / Google sign-in | Built-in social providers |
-| Email login | Magic link |
+| Email login | Magic link, emailed with Resend (`RESEND_API_KEY`, `MAIL_FROM`; console in development) |
 | OAuth / OIDC provider (MCP clients, third-party apps) | OAuth/OIDC provider plugin + JWT plugin (signing keys at `/jwks`) |
 | CLI login | Device authorization plugin |
 | `id.batele.plus` login (later) | Generic OAuth plugin, pointed at its discovery URL |

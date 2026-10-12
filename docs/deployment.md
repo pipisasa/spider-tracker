@@ -105,7 +105,7 @@ The API **deploys automatically from GitHub**: Railway builds `main` on every pu
 
 Check progress with `railway domain status 85cd76b1-5729-478c-9941-b52346e5840e`.
 
-**Email:** the API still uses the console mailer, so magic links appear in `railway logs -s api`, not in an inbox.
+**Email:** magic links are sent with [Resend](https://resend.com) when `RESEND_API_KEY` is set (`railway variable set RESEND_API_KEY --stdin -s api`), from `MAIL_FROM` (default `Spider Tracker <noreply@batele.plus>`; the `batele.plus` domain must be verified in Resend). Without the key the API logs a warning at startup and magic links only appear in `railway logs -s api`.
 
 ## Private access: Cloudflare Access
 
