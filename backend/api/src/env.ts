@@ -13,6 +13,10 @@ const envSchema = z.object({
   /** Emails and "@domain" entries allowed to create accounts; empty = anyone (ST-17). */
   SIGNUP_ALLOWLIST: z.string().optional(),
   BATELE_ID_ISSUER: z.url().default("https://api-v2.batele.plus/auth"),
+  /** Resend API key; without it magic links are printed to the console (ST-18). */
+  RESEND_API_KEY: z.string().optional(),
+  /** Sender of outgoing email; the domain must be verified in Resend. */
+  MAIL_FROM: z.string().default("Spider Tracker <noreply@batele.plus>"),
 });
 
 export type Env = z.infer<typeof envSchema>;
