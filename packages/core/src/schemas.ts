@@ -45,6 +45,42 @@ export const updateProjectInput = z
 
 export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
 
+/** Task kinds (ST-90); each has its own workflow of statuses in every project. */
+export const taskKindSchema = z.enum(["task", "release", "milestone"]);
+
+export const TASK_KINDS = taskKindSchema.options;
+
+export const statusCategorySchema = z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]);
+
+const statusName = z.string().trim().min(1, "Required").max(40, "At most 40 characters");
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "A hex colour like #22c55e");
+/** Index in the kind's workflow, from 0; past the end means last. */
+const statusPosition = z.number().int().min(0).max(1000);
+
+/** A new status in one kind's workflow (ST-90); appended unless `position` is given. Its category can't change later. */
+export const createStatusInput = z.object({
+  kind: taskKindSchema.default("task"),
+  name: statusName,
+  category: statusCategorySchema,
+  color: hexColor.nullable().optional(),
+  position: statusPosition.optional(),
+});
+
+export type CreateStatusInput = z.input<typeof createStatusInput>;
+
+/** Rename, recolor (null clears) or move a status within its workflow (ST-90). */
+export const updateStatusInput = z
+  .object({ name: statusName, color: hexColor.nullable(), position: statusPosition })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateStatusInput = z.infer<typeof updateStatusInput>;
+
+/** Deleting a status first moves its tasks to `moveTo`, another status of the same workflow (ST-90). */
+export const deleteStatusInput = z.object({ moveTo: z.uuid("The id of the status to move its tasks to") });
+
+export type DeleteStatusInput = z.infer<typeof deleteStatusInput>;
+
 export const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
 
 const taskTitle = z.string().trim().min(1, "Required").max(255, "At most 255 characters");
@@ -71,6 +107,8 @@ export const isOverdue = (
 
 export const createTaskInput = z
   .object({
+    /** Default "task"; it can't change later (ST-90). */
+    kind: taskKindSchema.optional(),
     title: taskTitle,
     description: taskDescription.optional(),
     statusId: z.uuid().optional(),
@@ -121,6 +159,8 @@ export type TagMatch = z.infer<typeof tagMatchSchema>;
  * `assignee` and `priority` are OR-ed; `tags` per `tagMatch` (default every one); keys are AND-ed.
  */
 export const taskListFilters = z.object({
+  /** Only tasks of this kind (ST-90); status names and categories then match its workflow only. */
+  kind: taskKindSchema.optional(),
   /** Status ids, names or categories ("In Progress", "in_progress"), case-insensitive. */
   status: z.array(filterValue).max(50).optional(),
   /** Actor ids, handles (with or without "@", deactivated ones too), "me", "mine" or "none". */
@@ -149,7 +189,7 @@ export const MAX_BULK_TASKS = 100;
 
 /**
  * What a bulk update changes on every task. `status` is a status id, name or category, matched in
- * each task's own project (keys may span projects); assignees and tags replace the lists.
+ * each task's own project and kind's workflow (keys may span projects); assignees and tags replace the lists.
  */
 export const bulkTaskChanges = z
   .object({

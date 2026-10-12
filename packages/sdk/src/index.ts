@@ -7,6 +7,7 @@ import type {
   BulkUpdateTasksResponse,
   ApiErrorBody,
   CommentDto,
+  DeleteStatusResponse,
   AgentInviteDto,
   CreatedAgentInviteDto,
   CreatedApiKeyDto,
@@ -30,6 +31,7 @@ import type {
   TagDto,
   SubtaskDto,
   TaskDto,
+  TaskKind,
   UpdatedDocumentDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
@@ -42,6 +44,7 @@ import type {
   CreateDocumentInput,
   CreateProjectInput,
   CreateSavedViewInput,
+  CreateStatusInput,
   CreateTagInput,
   CreateTaskInput,
   MarkDuplicateInput,
@@ -53,6 +56,7 @@ import type {
   MoveDocumentInput,
   UpdateProjectInput,
   UpdateSavedViewInput,
+  UpdateStatusInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
 
@@ -61,6 +65,8 @@ import type {
 
 /** Filters of `tasks.list` (see `taskListFilters` in @repo/core/schemas). */
 export interface TaskListQuery {
+  /** Only tasks of this kind (ST-90); status names then match its workflow only. */
+  kind?: TaskKind;
   /** Status ids, names or categories. */
   status?: string[];
   /** Actor ids or handles (deactivated ones too), "me", "mine" (the caller's person and their agents) or "none". */
@@ -226,6 +232,19 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
       unarchive: (orgSlug: string, projectKey: string) =>
         request<ProjectDetailDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
+      /** Workflow editing (ST-90, owners, admins and their agents); each answers with the project's workflows. */
+      statuses: {
+        create: (orgSlug: string, projectKey: string, input: CreateStatusInput) =>
+          request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/statuses`, input),
+        update: (orgSlug: string, projectKey: string, statusId: string, input: UpdateStatusInput) =>
+          request<ProjectDetailDto>("PATCH", `${org(orgSlug)}/projects/${seg(projectKey)}/statuses/${seg(statusId)}`, input),
+        /** Moves the status's tasks to `moveTo` (a status of the same workflow), then deletes it. */
+        delete: (orgSlug: string, projectKey: string, statusId: string, { moveTo }: { moveTo: string }) =>
+          request<DeleteStatusResponse>(
+            "DELETE",
+            `${org(orgSlug)}/projects/${seg(projectKey)}/statuses/${seg(statusId)}?${new URLSearchParams({ moveTo })}`,
+          ),
+      },
     },
 
     views: {
@@ -320,6 +339,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
        */
       list: (orgSlug: string, projectKey: string, query: TaskListQuery = {}) => {
         const params = new URLSearchParams();
+        if (query.kind) params.set("kind", query.kind);
         for (const value of query.status ?? []) params.append("status", value);
         for (const value of query.assignee ?? []) params.append("assignee", value);
         for (const value of query.tags ?? []) params.append("tag", value);

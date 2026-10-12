@@ -9,8 +9,9 @@ import type {
   ProjectRulesDto,
   StatusDto,
   TaskDto,
+  TaskKind,
 } from "@repo/core";
-import { matchStatuses } from "@repo/core/statuses";
+import { allStatuses, firstStatusOf, kindOf, matchStatuses, unknownStatusMessage, workflowOf } from "@repo/core/statuses";
 import {
   DomainError,
   MAX_BULK_TASKS,
@@ -30,7 +31,10 @@ import {
   moveDocument,
   updateDocument,
   createProject,
+  createStatus,
   createTask,
+  deleteStatus,
+  updateStatus,
   getProject,
   getProjectRules,
   getTask,
@@ -88,6 +92,9 @@ const targetDateInput = dateInput.nullable().describe('Target date, "YYYY-MM-DD"
 const overdueInput = z
   .boolean()
   .describe("true: only tasks past their target date (today = the server's UTC date) that aren't done or canceled");
+const kindInput = z
+  .enum(["task", "release", "milestone"])
+  .describe("Task kind; each has its own workflow of statuses (see get_project workflows)");
 const assigneesInput = z
   .array(z.string())
   .max(20)
@@ -180,15 +187,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     });
   };
 
-  const resolveStatus = (project: ProjectDetailDto, name: string): StatusDto => {
-    // A category ("in_progress") picks its first status in board order, like the CLI.
-    const status = matchStatuses(project, name)[0];
-    if (!status) {
-      throw new DomainError(
-        "validation",
-        `Unknown status "${name}" in ${project.key}. Valid statuses: ${project.statuses.map((s) => s.name).join(", ")}`,
-      );
-    }
+  /** A status of the workflow of `kind` (ST-90); a category ("in_progress") picks its first status in board order, like the CLI. */
+  const resolveStatus = (project: ProjectDetailDto, name: string, kind: TaskKind = "task"): StatusDto => {
+    const status = workflowOf(project, kind).find((s) => s.id === name) ?? matchStatuses(project, name, kind)[0];
+    if (!status) throw new DomainError("validation", unknownStatusMessage(project, name, kind));
     return status;
   };
 
@@ -215,7 +217,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   /** A task with its status, assignee handles and tag names (TaskView). */
   const describeTask = async (task: TaskDto, project: ProjectDetailDto) => {
     const [actors, tags] = await Promise.all([actorRefs(), task.tagIds.length ? loadTags() : []]);
-    return withTaskUrl(urls, taskView(task, { statuses: project.statuses, actors, tags }));
+    return withTaskUrl(urls, taskView(task, { statuses: allStatuses(project), actors, tags }));
   };
 
   const describeProject = <T extends { key: string }>(project: T) => withProjectUrl(urls, project);
@@ -255,7 +257,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_project",
     {
       description:
-        "Get a project, its rules for agents (follow them), its workflow statuses (in board order, with their categories) and its documents (read them with get_document).",
+        "Get a project, its rules for agents (follow them), its workflows (`workflows`: the statuses of each task kind, task, release and milestone, in board order with their categories; `statuses` is the task workflow) and its documents (read them with get_document).",
       inputSchema: { projectKey: z.string().describe('Project key, e.g. "ST"') },
     },
     ({ projectKey }) =>
@@ -276,7 +278,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "create_project",
     {
       description:
-        "Create a project with the default statuses (Backlog, Todo, In Progress, In Review, Done, Canceled). Owners, admins and their agents only.",
+        "Create a project with the default workflows: task (Backlog, Todo, In Progress, In Review, Done, Canceled), release (Planned, On staging, Release review, Released, Canceled) and milestone (Planned, Active, Ready to close, Done). Owners, admins and their agents only.",
       inputSchema: {
         key: z
           .string()
@@ -322,13 +324,87 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ projectKey, undo }) => run(async () => describeProject(await archiveProject(db, ctx, projectKey, !undo))),
   );
 
+  // Workflow editing (ST-90). Statuses are named by id or name within one kind's workflow.
+  const statusRef = z.string().describe("Status name or id");
+  const colorInput = z.string().describe("Hex colour like #22c55e");
+  const positionInput = z.number().int().min(0).describe("Place in the workflow, from 0; past the end means last");
+  const findStatus = async (projectKey: string, kind: TaskKind, ref: string) => {
+    const project = await getProject(db, ctx, projectKey);
+    const statuses = workflowOf(project, kind);
+    const status = statuses.find((s) => s.id === ref) ?? statuses.find((s) => s.name.toLowerCase() === ref.trim().toLowerCase());
+    if (!status) throw new DomainError("validation", unknownStatusMessage(project, ref, kind));
+    return { project, status };
+  };
+
+  server.registerTool(
+    "create_status",
+    {
+      description:
+        "Add a status to a project's workflow for one task kind (default task), at the end or at position. Its category (backlog, todo, in_progress, in_review, done, canceled) can't change later. Owners, admins and their agents only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional(),
+        name: z.string().describe("Up to 40 characters, unique in the workflow"),
+        category: z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]),
+        color: colorInput.optional(),
+        position: positionInput.optional(),
+      },
+    },
+    ({ projectKey, kind, name, category, color, position }) =>
+      run(async () => describeProject(await createStatus(db, ctx, projectKey, { kind, name, category, color, position }))),
+  );
+
+  server.registerTool(
+    "update_status",
+    {
+      description:
+        "Rename, recolor or move a status within its workflow (kind default task). Owners, admins and their agents only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional(),
+        status: statusRef,
+        name: z.string().optional().describe("New name"),
+        color: colorInput.nullable().optional().describe("Hex colour like #22c55e; null clears it"),
+        position: positionInput.optional(),
+      },
+    },
+    ({ projectKey, kind, status: ref, name, color, position }) =>
+      run(async () => {
+        const { project, status } = await findStatus(projectKey, kind ?? "task", ref);
+        return describeProject(await updateStatus(db, ctx, project.key, status.id, { name, color, position }));
+      }),
+  );
+
+  server.registerTool(
+    "delete_status",
+    {
+      description:
+        "Delete a status from its workflow (kind default task), first moving its tasks to another status of the same workflow. Every workflow keeps at least one open status and one done status. Owners, admins and their agents only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional(),
+        status: statusRef,
+        moveTo: statusRef.describe("Status (name or id) of the same workflow to move its tasks to"),
+      },
+    },
+    ({ projectKey, kind, status: ref, moveTo }) =>
+      run(async () => {
+        const { project, status } = await findStatus(projectKey, kind ?? "task", ref);
+        const target = await findStatus(project.key, kind ?? "task", moveTo);
+        const result = await deleteStatus(db, ctx, project.key, status.id, { moveTo: target.status.id });
+        // DeleteStatusResponse, as `spider project status delete --json`.
+        return { ...result, project: describeProject(result.project) };
+      }),
+  );
+
   server.registerTool(
     "list_tasks",
     {
       description:
-        "List tasks in a project, in board order. Filter by status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority, title text and overdue (target date passed, not done or canceled); status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
+        "List tasks in a project, in board order. Filter by kind, status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority, title text and overdue (target date passed, not done or canceled); status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional().describe("Only tasks of this kind; status names then match its workflow only (without it, every workflow)"),
         status: oneOrMany.optional().describe('Status id, name ("In Progress") or category ("in_progress"); an array matches any'),
         assignee: oneOrMany
           .optional()
@@ -343,10 +419,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         limit: z.number().int().min(1).max(200).optional().describe("Maximum tasks to return (default 50)"),
       },
     },
-    ({ projectKey, status, assignee, tags, tagMatch, priority: priorities, query, overdue, limit }) =>
+    ({ projectKey, kind, status, assignee, tags, tagMatch, priority: priorities, query, overdue, limit }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const tasks = await listTasks(db, ctx, project.key, {
+          kind,
           status: status === undefined ? undefined : [status].flat(),
           assignee: assignee === undefined ? undefined : [assignee].flat(),
           tags,
@@ -432,7 +509,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         key: z.string().describe('Task key, e.g. "ST-12"'),
         title: z.string().optional(),
         description: z.string().nullable().optional().describe("Markdown; null clears it"),
-        status: z.string().optional().describe("Status name; see get_project"),
+        status: z.string().optional().describe("Status name or category, in the workflow of the task's kind; see get_project"),
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
@@ -444,11 +521,13 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
+        // A status is matched in the workflow of the task's kind.
+        const kind = status ? kindOf(await getTask(db, ctx, taskKey)) : "task";
         const task = await updateTask(db, ctx, taskKey, {
           title,
           description,
           priority,
-          statusId: status ? resolveStatus(project, status).id : undefined,
+          statusId: status ? resolveStatus(project, status, kind).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
@@ -468,6 +547,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         filter: z
           .object({
             projectKey: z.string().describe('Project key, e.g. "ST"'),
+            kind: kindInput.optional().describe("Only tasks of this kind"),
             parent: z.string().optional().describe('Only direct sub-tasks of this task key, e.g. "ST-1"'),
             status: oneOrMany.optional().describe("Current status: id, name or category; an array matches any"),
             assignee: oneOrMany.optional().describe('"me", "mine", "none" or a handle; an array matches any'),
@@ -479,7 +559,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           })
           .optional()
           .describe(`Tasks to change, as in list_tasks; fails if more than ${MAX_BULK_TASKS} match`),
-        status: z.string().optional().describe("New status name or category, matched in each task's project; see get_project"),
+        status: z.string().optional().describe("New status name or category, matched in each task's project and kind's workflow; see get_project"),
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
@@ -495,6 +575,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           keys,
           filter: filter && {
             project: filter.projectKey,
+            kind: filter.kind,
             parent: filter.parent,
             status: filter.status === undefined ? undefined : [filter.status].flat(),
             assignee: filter.assignee === undefined ? undefined : [filter.assignee].flat(),
@@ -540,8 +621,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     const current = await getTask(db, ctx, taskKey);
     let statusId: string | undefined;
     if (moveToInProgress) {
-      const status = project.statuses.find((s) => s.category === "in_progress");
-      if (!status) throw new DomainError("validation", `${project.key} has no in-progress status`);
+      const kind = kindOf(current);
+      const status = firstStatusOf(project, "in_progress", kind);
+      if (!status) throw new DomainError("validation", `${project.key}${kind === "task" ? "" : `'s ${kind} workflow`} has no in-progress status`);
       statusId = status.id;
     }
     const assigneeIds = current.assigneeIds.includes(ctx.actorId)
@@ -564,7 +646,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   server.registerTool(
     "start_task",
     {
-      description: "Start working on a task: assign it to yourself and move it to the project's first in-progress status.",
+      description: "Start working on a task: assign it to yourself and move it to the first in-progress status of its workflow.",
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) => run(() => takeTask(taskKey, true)),
@@ -604,7 +686,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "mark_duplicate",
     {
       description:
-        "Mark a task as a duplicate of another in one step: link it (duplicates), move it to its project's first canceled status and comment \"Duplicate of KEY\". Calling it again changes nothing; a task can't duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).",
+        "Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment \"Duplicate of KEY\". Calling it again changes nothing; a task can't duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).",
       inputSchema: {
         key: z.string().describe('The duplicate, e.g. "ST-12"'),
         of: z.string().describe('The original task, e.g. "ST-9"'),
@@ -818,7 +900,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
-        const statusName = (id: unknown) => project.statuses.find((s) => s.id === id)?.name ?? id;
+        const statusName = (id: unknown) => allStatuses(project).find((s) => s.id === id)?.name ?? id;
         const handles = async (ids: unknown) => (Array.isArray(ids) ? Promise.all(ids.map((id) => handleOf(String(id)))) : ids);
         return Promise.all(
           (await listTaskActivity(db, ctx, taskKey)).map(async (e) => {

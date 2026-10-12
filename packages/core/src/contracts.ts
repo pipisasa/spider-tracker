@@ -45,11 +45,17 @@ export interface AuthProvidersResponse {
 
 export type StatusCategory = "backlog" | "todo" | "in_progress" | "in_review" | "done" | "canceled";
 
+/** What a task is (ST-90): ordinary work, a release (ST-93) or a milestone (ST-96); each kind has its own workflow. */
+export type TaskKind = "task" | "release" | "milestone";
+
 export interface StatusDto {
   id: string;
+  /** The workflow it belongs to (ST-90); servers from before it send none (read it as "task"). */
+  kind: TaskKind;
   name: string;
   category: StatusCategory;
   color: string | null;
+  /** Board order within its kind's workflow, from 0. */
   position: number;
 }
 
@@ -68,7 +74,16 @@ export interface ProjectDto {
 }
 
 export interface ProjectDetailDto extends ProjectDto {
+  /** The workflow of ordinary tasks (kind "task"), in board order, as before kinds (ST-90). */
   statuses: StatusDto[];
+  /** Every kind's workflow, in board order (ST-90); servers from before it send none (see workflowOf). */
+  workflows: Record<TaskKind, StatusDto[]>;
+}
+
+/** A deleted status (ST-90): the project afterwards and how many tasks moved to the target status. */
+export interface DeleteStatusResponse {
+  project: ProjectDetailDto;
+  movedTasks: number;
 }
 
 /** A project's rules for agents (ST-111): its rules document, with content. */
@@ -91,6 +106,8 @@ export interface TaskDto {
   key: string;
   number: number;
   projectId: string;
+  /** Fixed at creation (ST-90); its status is one of its project's statuses of this kind. */
+  kind: TaskKind;
   title: string;
   description: string | null;
   statusId: string;

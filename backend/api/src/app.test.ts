@@ -496,6 +496,49 @@ withDb("SDK and client-declared source", () => {
     expect(error).toMatchObject({ status: 404, code: "not_found" });
   });
 
+  test("workflows through the SDK: kinds, add, rename, reorder and delete statuses (ST-90)", async () => {
+    const client = sdk();
+    // New projects get all three default workflows.
+    const fresh = await client.projects.create(slug, { name: "Workflows", key: "WFL" });
+    expect(fresh.workflows.task.map((s) => s.name)).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"]);
+    expect(fresh.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Release review", "Released", "Canceled"]);
+    expect(fresh.workflows.milestone.map((s) => s.name)).toEqual(["Planned", "Active", "Ready to close", "Done"]);
+    expect(fresh.statuses).toEqual(fresh.workflows.task);
+    expect(fresh.url).toBe(`${env.WEB_ORIGIN}/${slug}/projects/WFL`);
+
+    const task = await client.tasks.create(slug, "WFL", { title: "Plain" });
+    const release = await client.tasks.create(slug, "WFL", { title: "v1", kind: "release" });
+    expect([task.kind, release.kind]).toEqual(["task", "release"]);
+    expect(release.statusId).toBe(fresh.workflows.release[0]!.id);
+    expect((await client.tasks.list(slug, "WFL", { kind: "release" })).items.map((t) => t.key)).toEqual([release.key]);
+    const wrong = await client.tasks.update(slug, task.key, { statusId: fresh.workflows.release[1]?.id }).catch((e: unknown) => e);
+    expect(wrong).toMatchObject({ status: 400, code: "validation" });
+
+    let project = await client.projects.statuses.create(slug, "WFL", { kind: "release", name: "Smoke test", category: "in_review", position: 2 });
+    expect(project.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Smoke test", "Release review", "Released", "Canceled"]);
+    const smoke = project.workflows.release[2]!;
+    project = await client.projects.statuses.update(slug, "WFL", smoke.id, { name: "Staging checks", color: "#123456", position: 1 });
+    expect(project.workflows.release[1]).toMatchObject({ id: smoke.id, name: "Staging checks", color: "#123456", position: 1 });
+    const clash = await client.projects.statuses.update(slug, "WFL", smoke.id, { name: "planned" }).catch((e: unknown) => e);
+    expect(clash).toMatchObject({ status: 409, code: "conflict" });
+
+    // Deleting moves the tasks first; the last done status can't go.
+    await client.tasks.update(slug, release.key, { statusId: smoke.id });
+    const planned = project.workflows.release[0]!;
+    const deleted = await client.projects.statuses.delete(slug, "WFL", smoke.id, { moveTo: planned.id });
+    expect(deleted.movedTasks).toBe(1);
+    expect(deleted.project.url).toBe(`${env.WEB_ORIGIN}/${slug}/projects/WFL`);
+    expect((await client.tasks.get(slug, release.key)).statusId).toBe(planned.id);
+    const released = project.workflows.release.find((s) => s.category === "done")!;
+    const last = await client.projects.statuses.delete(slug, "WFL", released.id, { moveTo: planned.id }).catch((e: unknown) => e);
+    expect(last).toMatchObject({ status: 400, code: "validation" });
+    const noTarget = await app.request(`/v1/orgs/${slug}/projects/WFL/statuses/${planned.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${secret}` },
+    });
+    expect(noTarget.status).toBe(400);
+  });
+
   test("bulk updates through the SDK: keys or a filter, per-task outcomes, dry run, 400 on bad input (ST-106)", async () => {
     const client = sdk();
     const parent = await client.tasks.create(slug, "SPI", { title: "Bulk parent" });

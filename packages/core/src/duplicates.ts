@@ -10,14 +10,14 @@ import { markDuplicateInput } from "./schemas";
 import { applyTaskUpdate, findTask } from "./tasks";
 import { parseInput } from "./validate";
 
-// Marking a duplicate in one step (ST-114): the `duplicates` link, the project's first canceled
-// status and a comment naming the original, in one transaction.
+// Marking a duplicate in one step (ST-114): the `duplicates` link, the first canceled status of the
+// task's workflow (its project and kind, ST-90) and a comment naming the original, in one transaction.
 
 const { projects, statuses, taskRelations, tasks } = schema;
 
 /**
- * Marks `taskKey` as a duplicate of `input.of`: links it (`duplicates`), moves it to its project's first
- * status of category `canceled` (unless it already is in a canceled one) and comments "Duplicate of KEY".
+ * Marks `taskKey` as a duplicate of `input.of`: links it (`duplicates`), moves it to the first status of
+ * category `canceled` in its project's workflow for its kind (unless it already is in a canceled one) and comments "Duplicate of KEY".
  * Idempotent: when the link and a canceled status are already there, nothing changes (no comment either).
  * Refused: a task as its own duplicate, a cycle of duplicates, a task already marked as a duplicate of
  * another task, and a project without a canceled status. The original may be in any status, even closed
@@ -57,10 +57,15 @@ export async function markDuplicate(db: Db, ctx: ActorContext, taskKey: string, 
       const [canceled] = await tx
         .select({ id: statuses.id })
         .from(statuses)
-        .where(and(eq(statuses.projectId, self.task.projectId), eq(statuses.category, "canceled")))
+        .where(
+          and(eq(statuses.projectId, self.task.projectId), eq(statuses.kind, self.task.kind), eq(statuses.category, "canceled")),
+        )
         .orderBy(asc(statuses.position))
         .limit(1);
-      if (!canceled) throw new DomainError("validation", `Project ${self.projectKey} has no canceled status to move the duplicate to`);
+      if (!canceled) {
+        const where = self.task.kind === "task" ? `Project ${self.projectKey}` : `${self.projectKey}'s ${self.task.kind} workflow`;
+        throw new DomainError("validation", `${where} has no canceled status to move the duplicate to`);
+      }
       statusId = canceled.id;
     }
 

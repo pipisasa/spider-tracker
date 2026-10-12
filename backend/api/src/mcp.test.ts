@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ActorContext } from "@repo/core";
+import type { ActorContext, ProjectDetailDto } from "@repo/core";
 import {
   MIN_CLI_VERSION,
   addComment,
@@ -129,6 +129,9 @@ withDb("MCP server", () => {
         "edit_document",
         "update_document",
         "update_project",
+        "create_status",
+        "update_status",
+        "delete_status",
         "get_inbox",
         "get_task_activity",
         "list_comments",
@@ -435,6 +438,48 @@ withDb("MCP server", () => {
     const moved = await call(client, "update_task", { key: "SPI-1", status: "in_review" });
     expect(moved.isError).toBeFalsy();
     expect(moved.text).toContain("In Review");
+  });
+
+  test("task kinds and workflow editing (ST-90): statuses match the task's kind; create, update and delete statuses", async () => {
+    await call(client, "create_project", { key: "MWF", name: "MCP workflows" });
+    const project = (await call(client, "get_project", { projectKey: "MWF" })).json() as unknown as ProjectDetailDto;
+    expect(project.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Release review", "Released", "Canceled"]);
+
+    // Releases can't be created through MCP yet (ST-93); core makes one here.
+    const release = await createTask(db, ownerCtxs[0]!, "MWF", { title: "v1", kind: "release" });
+    const started = await call(client, "start_task", { key: release.key });
+    expect(started.json()).toMatchObject({ kind: "release", status: { name: "On staging", category: "in_progress" } });
+    const reviewed = await call(client, "update_task", { key: release.key, status: "in_review" });
+    expect(reviewed.json()).toMatchObject({ status: { name: "Release review" } });
+    const wrong = await call(client, "update_task", { key: release.key, status: "Backlog" });
+    expect(wrong).toMatchObject({ isError: true });
+    expect(wrong.text).toContain("release workflow");
+    const plain = await call(client, "create_task", { projectKey: "MWF", title: "Plain", status: "done" });
+    expect(plain.json()).toMatchObject({ kind: "task", status: { name: "Done" } });
+    expect((await call(client, "list_tasks", { projectKey: "MWF", kind: "release" })).json()).toMatchObject({ total: 1, items: [{ key: release.key }] });
+    expect((await call(client, "list_tasks", { projectKey: "MWF", status: "in_review" })).json()).toMatchObject({ total: 1 });
+
+    const added = await call(client, "create_status", { projectKey: "MWF", kind: "release", name: "Smoke test", category: "in_review", position: 1 });
+    expect((added.json() as unknown as ProjectDetailDto).workflows.release.map((s) => s.name)).toEqual([
+      "Planned",
+      "Smoke test",
+      "On staging",
+      "Release review",
+      "Released",
+      "Canceled",
+    ]);
+    const renamed = await call(client, "update_status", { projectKey: "MWF", kind: "release", status: "smoke test", name: "Smoke", position: 9 });
+    expect((renamed.json() as unknown as ProjectDetailDto).workflows.release.at(-1)?.name).toBe("Smoke");
+    expect((await call(client, "update_status", { projectKey: "MWF", status: "Smoke", name: "X" })).text).toContain('Unknown status "Smoke" in MWF');
+
+    await call(client, "update_task", { key: release.key, status: "Smoke" });
+    const deleted = await call(client, "delete_status", { projectKey: "MWF", kind: "release", status: "Smoke", moveTo: "Planned" });
+    expect(deleted.json()).toMatchObject({ movedTasks: 1, project: { key: "MWF" } });
+    const lastDone = await call(client, "delete_status", { projectKey: "MWF", status: "Done", moveTo: "Todo" });
+    expect(lastDone).toMatchObject({ isError: true });
+    expect(lastDone.text).toContain("done status");
+    // Out of the way of the project list checks below.
+    await call(client, "archive_project", { projectKey: "MWF" });
   });
 
   test("comments and inbox: a mention reaches the agent, which replies", async () => {

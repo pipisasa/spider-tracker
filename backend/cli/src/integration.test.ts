@@ -885,7 +885,9 @@ withDb("spider CLI against the API", () => {
     expect(counts).toEqual([["Backlog", 0], ["Todo", 1], ["In Progress", 0], ["In Review", 0], ["Done", 0], ["Canceled", 0]]);
     const human = (await spider("project", "view", "OPS")).stdout;
     expect(human).toStartWith("OPS  Ops\n");
-    expect(human).toContain("  Todo         1\n");
+    expect(human).toContain("\nTask workflow:\n");
+    expect(human).toContain("  Todo         todo         1\n");
+    expect(human).toContain("\nRelease workflow:\n  Planned         todo         0\n");
     expect(human).toEndWith("\nRunbooks\n");
 
     const updated = await spider("project", "update", "OPS", "--name", "Operations", "--description", "", "--json");
@@ -909,6 +911,51 @@ withDb("spider CLI against the API", () => {
     const doc = await spider("doc", "create", "--title", "Runbook", "--project", "OPS", "--file", "-", "--json");
     expect(doc.code).toBe(0);
     expect(doc.json()).toMatchObject({ projectKey: "OPS", title: "Runbook" });
+  });
+
+  test("project status: list, add, rename, recolor, reorder and delete statuses per kind (ST-90)", async () => {
+    await spider("project", "create", "--key", "WFC", "--name", "Workflows");
+    expect((await spider("task", "create", "--project", "WFC", "--title", "In todo")).code).toBe(0);
+    const all = await spider("project", "status", "list", "WFC", "--json");
+    expect((all.json().items as { kind: string }[]).map((s) => s.kind)).toEqual([
+      ...Array<string>(6).fill("task"),
+      ...Array<string>(5).fill("release"),
+      ...Array<string>(4).fill("milestone"),
+    ]);
+    expect((await spider("project", "status", "WFC", "--kind", "milestone")).stdout).toBe(
+      "Milestone workflow:\n  Planned         todo\n  Active          in_progress\n  Ready to close  in_review\n  Done            done\n",
+    );
+
+    const added = await spider("project", "status", "add", "WFC", "QA", "--category", "in review", "--position", "3", "--json");
+    expect(added.code).toBe(0);
+    const names = (json: Record<string, unknown>, kind: string) =>
+      ((json.workflows as Record<string, { name: string }[]>)[kind] ?? []).map((s) => s.name);
+    expect(names(added.json(), "task")).toEqual(["Backlog", "Todo", "In Progress", "QA", "In Review", "Done", "Canceled"]);
+    const moved = await spider("project", "status", "update", "WFC", "qa", "--name", "Testing", "--color", "#00ff00", "--position", "0", "--json");
+    expect(names(moved.json(), "task")[0]).toBe("Testing");
+    const release = await spider("project", "status", "update", "WFC", "On staging", "--kind", "release", "--name", "Staging");
+    expect(release.stdout).toStartWith('Updated "On staging" in WFC\'s release workflow\nRelease workflow:\n  Planned ');
+    expect(release.stdout).toContain("\n  Staging         in_progress\n");
+
+    const deleted = await spider("project", "status", "delete", "WFC", "Todo", "--move-to", "backlog", "--json");
+    expect(deleted.json()).toMatchObject({ movedTasks: 1, project: { key: "WFC" } });
+    expect((await spider("task", "list", "--project", "WFC", "--status", "Backlog", "--json")).json().items).toMatchObject([{ title: "In todo" }]);
+    const human = await spider("project", "status", "delete", "WFC", "Staging", "--kind", "release", "--move-to", "Planned");
+    expect(human.stdout).toStartWith('Deleted "Staging" from WFC\'s release workflow; 0 tasks moved to "Planned"\n');
+
+    // Refusals: the last done status, unknown names, kinds and categories, nothing to change.
+    const lastDone = await spider("project", "status", "delete", "WFC", "Done", "--move-to", "Backlog");
+    expect(lastDone).toMatchObject({ code: 2, stderr: "spider: The task workflow needs at least one done status\n" });
+    expect((await spider("project", "status", "update", "WFC", "Released", "--name", "X")).stderr).toContain('Unknown status "Released" in WFC');
+    expect((await spider("project", "status", "add", "WFC", "X", "--category", "shipped")).code).toBe(2);
+    expect((await spider("project", "status", "list", "WFC", "--kind", "epic")).code).toBe(2);
+    expect((await spider("project", "status", "update", "WFC", "Backlog")).code).toBe(2);
+    expect((await spider("project", "status", "add", "WFC", "backlog", "--category", "todo")).code).toBe(2);
+
+    // Task lists filter by kind; the task is of kind task.
+    expect((await spider("task", "list", "--project", "WFC", "--kind", "release", "--json")).json().items).toEqual([]);
+    expect((await spider("task", "list", "--project", "WFC", "--kind", "task", "--json")).json().items).toMatchObject([{ kind: "task" }]);
+    await spider("project", "archive", "WFC");
   });
 
   test("CLI --json and MCP return tasks, documents, comments and projects in the same shape (ST-107)", async () => {
@@ -972,15 +1019,21 @@ withDb("spider CLI against the API", () => {
       // With rules (ST-111), get_project and project view give them as ProjectRulesDto.
       expect(await cli("project", "update", "SPI", "--rules", doc?.id ?? "")).toMatchObject({ rulesDocumentId: doc?.id });
       // project view adds task counts per status, which get_project leaves out.
-      const view = (await cli("project", "view", "SPI")) as { statuses: Record<string, unknown>[] };
+      const view = (await cli("project", "view", "SPI")) as {
+        statuses: Record<string, unknown>[];
+        workflows: Record<string, Record<string, unknown>[]>;
+      };
       expect(view).toMatchObject({ rules: { projectKey: "SPI", documentId: doc?.id, content: expect.any(String) } });
-      expect(await mcp("get_project", { projectKey: "SPI" })).toEqual({
-        ...view,
-        statuses: view.statuses.map((status) => {
+      const uncounted = (statuses: Record<string, unknown>[]) =>
+        statuses.map((status) => {
           const rest = { ...status };
           delete rest.taskCount;
           return rest;
-        }),
+        });
+      expect(await mcp("get_project", { projectKey: "SPI" })).toEqual({
+        ...view,
+        statuses: uncounted(view.statuses),
+        workflows: Object.fromEntries(Object.entries(view.workflows).map(([kind, statuses]) => [kind, uncounted(statuses)])),
       });
 
       // Writes return the same fields.
@@ -991,6 +1044,10 @@ withDb("spider CLI against the API", () => {
       expect(shape(await mcp("add_comment", { key: "SPI-1", body: "From MCP" }))).toEqual(shape(await cli("comment", "SPI-1", "From CLI")));
       expect(shape(await mcp("update_tasks", { keys: ["SPI-1", "SPI-999"], priority: 3 }))).toEqual(
         shape(await spider("task", "update", "SPI-1", "SPI-999", "--priority", "3", "--json").then((r) => r.json())),
+      );
+      // Workflow edits (ST-90) answer with the project and its workflows.
+      expect(shape(await mcp("update_status", { projectKey: "SPI", kind: "release", status: "Planned", color: "#111111" }))).toEqual(
+        shape(await cli("project", "status", "update", "SPI", "Planned", "--kind", "release", "--color", "#222222")),
       );
       expect(shape(await mcp("create_document", { title: "Parity", project: "SPI" }))).toEqual(
         shape(await cli("doc", "create", "--title", "Parity CLI", "--project", "SPI")),

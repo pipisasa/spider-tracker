@@ -13,6 +13,7 @@ import { useWorkingNow } from "@/lib/use-presence";
 import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import { branchNameFor } from "@repo/core/git";
+import { allStatuses, kindOf, workflowOf } from "@repo/core/statuses";
 import { isOverdue, type UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -63,7 +64,9 @@ function TaskPage() {
   const save = (input: UpdateTaskInput, callbacks?: SaveCallbacks) =>
     update.mutate({ taskKey: task.key, input }, callbacks);
   const creator = actors.find((m) => m.id === task.creatorId);
-  const overdue = isOverdue(task, project.statuses.find((s) => s.id === task.statusId)?.category);
+  // Every kind's statuses, for looking up other tasks' (ST-90); the picker offers this task's workflow.
+  const statuses = allStatuses(project);
+  const overdue = isOverdue(task, statuses.find((s) => s.id === task.statusId)?.category);
 
   function deleteTask() {
     remove.mutate(task.key, {
@@ -88,7 +91,7 @@ function TaskPage() {
   const fields = (
     <>
         <Field label="Status">
-          <StatusSelect statuses={project.statuses} value={task.statusId} onChange={(statusId) => save({ statusId })} />
+          <StatusSelect statuses={workflowOf(project, kindOf(task))} value={task.statusId} onChange={(statusId) => save({ statusId })} />
         </Field>
         <Field label="Priority">
           <PrioritySelect value={task.priority} onChange={(priority) => save({ priority })} />
@@ -187,13 +190,13 @@ function TaskPage() {
           orgSlug={orgSlug}
           task={task}
           projectKey={project.key}
-          statuses={project.statuses}
+          statuses={statuses}
           members={actors}
         />
-        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
+        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={statuses} />
         <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
         <TaskMentions orgSlug={orgSlug} taskKey={task.key} />
-        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
+        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={statuses} />
       </main>
 
       <aside className="hidden w-72 shrink-0 flex-col gap-4 border-l p-4 md:flex">{fields}</aside>

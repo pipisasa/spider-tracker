@@ -14,6 +14,8 @@ import {
   relationInput,
   relationKindSchema,
   createProjectInput,
+  createStatusInput,
+  updateStatusInput,
   createTaskInput,
   createDocumentInput,
   createInvitationInput,
@@ -75,10 +77,15 @@ const schemas: Record<string, JsonSchema> = {
   }),
   Status: object({
     id: string({ format: "uuid" }),
+    kind: ref("TaskKind"),
     name: string(),
     category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
     color: nullable("string"),
-    position: { type: "integer" },
+    position: { type: "integer", description: "Board order within its kind's workflow, from 0" },
+  }),
+  TaskKind: string({
+    enum: ["task", "release", "milestone"],
+    description: "What a task is; each kind has its own workflow of statuses in every project",
   }),
   Project: object({
     id: string({ format: "uuid" }),
@@ -97,16 +104,34 @@ const schemas: Record<string, JsonSchema> = {
     url: webUrl("project"),
   }),
   ProjectDetail: {
-    allOf: [ref("Project"), object({ statuses: { type: "array", items: ref("Status") } })],
+    allOf: [
+      ref("Project"),
+      object({
+        statuses: { type: "array", items: ref("Status"), description: "The workflow of kind task, in board order" },
+        workflows: {
+          ...object({
+            task: { type: "array", items: ref("Status") },
+            release: { type: "array", items: ref("Status") },
+            milestone: { type: "array", items: ref("Status") },
+          }),
+          description: "Every kind's workflow, in board order",
+        },
+      }),
+    ],
   },
+  DeletedStatus: object({
+    project: ref("ProjectDetail"),
+    movedTasks: { type: "integer", description: "Tasks moved to the target status (deleted ones too)" },
+  }),
   Task: object({
     id: string({ format: "uuid" }),
     key: string({ examples: ["SPI-12"] }),
     number: { type: "integer" },
     projectId: string({ format: "uuid" }),
+    kind: ref("TaskKind"),
     title: string(),
     description: nullable("string"),
-    statusId: string({ format: "uuid" }),
+    statusId: string({ format: "uuid", description: "A status of the workflow of the task's project and kind" }),
     priority: { type: "integer", enum: [0, 1, 2, 3, 4], description: "0 none, 1 urgent, 2 high, 3 medium, 4 low" },
     parentId: nullable("string", { format: "uuid" }),
     parentKey: nullable("string", { examples: ["SPI-3"] }),
@@ -390,6 +415,8 @@ const schemas: Record<string, JsonSchema> = {
   PresenceList: listOf("Presence"),
   CreateProjectInput: fromZod(createProjectInput),
   UpdateProjectInput: fromZod(updateProjectInput),
+  CreateStatusInput: fromZod(createStatusInput),
+  UpdateStatusInput: fromZod(updateStatusInput),
   CreateTaskInput: fromZod(createTaskInput),
   UpdateTaskInput: fromZod(updateTaskInput),
   BulkUpdateTasksInput: fromZod(bulkUpdateTasksInput),
@@ -741,7 +768,7 @@ const paths = {
     },
     post: {
       operationId: "createProject",
-      summary: "Create a project with the default statuses (owners, admins and their agents)",
+      summary: "Create a project with the default workflow of every task kind (owners, admins and their agents)",
       requestBody: body("CreateProjectInput"),
       responses: { "201": ok("Created project", "ProjectDetail"), ...errors },
     },
@@ -750,7 +777,7 @@ const paths = {
     parameters: [orgSlug, projectKey],
     get: {
       operationId: "getProject",
-      summary: "Get a project with its statuses (archived ones too)",
+      summary: "Get a project with its workflows (archived ones too)",
       responses: { "200": ok("Project", "ProjectDetail"), ...errors },
     },
     patch: {
@@ -774,6 +801,36 @@ const paths = {
       responses: { "200": ok("Restored project", "ProjectDetail"), ...errors },
     },
   },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/statuses": {
+    parameters: [orgSlug, projectKey],
+    post: {
+      operationId: "createStatus",
+      summary: "Add a status to one kind's workflow (owners, admins and their agents)",
+      description: "Appended unless `position` is given; names are unique per workflow, case-insensitively (409). The category can't change later.",
+      requestBody: body("CreateStatusInput"),
+      responses: { "201": ok("The project with its workflows", "ProjectDetail"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/statuses/{statusId}": {
+    parameters: [orgSlug, projectKey, pathParam("statusId", "Status id")],
+    patch: {
+      operationId: "updateStatus",
+      summary: "Rename, recolor or move a status within its workflow (owners, admins and their agents)",
+      requestBody: body("UpdateStatusInput"),
+      responses: { "200": ok("The project with its workflows", "ProjectDetail"), ...errors },
+    },
+    delete: {
+      operationId: "deleteStatus",
+      summary: "Delete a status after moving its tasks to another status of the same workflow (owners, admins and their agents)",
+      description:
+        "Its tasks (deleted ones too) go to the end of `moveTo`'s column; completedAt is set or cleared when they close or reopen. " +
+        "Refused (400) when the workflow would be left without an open status (not done or canceled) or without a done status.",
+      parameters: [
+        { name: "moveTo", in: "query", required: true, schema: { type: "string", format: "uuid" }, description: "The status to move its tasks to" },
+      ],
+      responses: { "200": ok("The project and how many tasks moved", "DeletedStatus"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/tasks": {
     parameters: [orgSlug, projectKey],
     get: {
@@ -784,11 +841,13 @@ const paths = {
         "a task must carry every `tag` (or any of them with `tagMatch=any`); parameters combine with AND. " +
         "Missing or out-of-scope projects are 404s; unknown statuses, members and tags are 400s.",
       parameters: [
+        { name: "kind", in: "query", schema: ref("TaskKind"), description: "Only tasks of this kind; status names then match its workflow only" },
         {
           name: "status",
           in: "query",
           schema: { type: "array", items: { type: "string" } },
-          description: 'Status id, name or category ("In Progress", "in_progress"), case-insensitive',
+          description:
+            'Status id, name or category ("In Progress", "in_progress"), case-insensitive; without `kind`, matched in every workflow',
         },
         {
           name: "assignee",
