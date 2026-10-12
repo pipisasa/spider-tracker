@@ -38,6 +38,8 @@ export const updateProjectInput = z
   .object({
     name: projectName.optional(),
     description: z.string().trim().max(2000).nullable().optional(),
+    /** One of the project's own (project-level) documents as its rules for agents; null clears it. */
+    rulesDocumentId: z.uuid("A document id").nullable().optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
 
@@ -230,6 +232,11 @@ export const createCommentInput = z.object({
 
 export type CreateCommentInput = z.infer<typeof createCommentInput>;
 
+export const INBOX_KINDS = ["mention", "assigned", "comment", "reply", "rules"] as const;
+
+/** Task notifications: what the inbox returns when `kinds` isn't given (clients from before ST-111 expect a task). */
+export const TASK_INBOX_KINDS = ["mention", "assigned", "comment", "reply"] as const;
+
 export const inboxQuery = z.object({
   after: z.coerce.number().int().nonnegative().optional(),
   // Query strings: "true"/"1" mean yes (z.coerce.boolean would read "false" as true).
@@ -237,6 +244,13 @@ export const inboxQuery = z.object({
     .union([z.boolean(), z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1")])
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  /** Which kinds to return, as a list or comma-separated; default: the task kinds (no `rules`). */
+  kinds: z
+    .preprocess(
+      (v) => (typeof v === "string" ? v.split(",").map((k) => k.trim()).filter(Boolean) : v),
+      z.array(z.enum(INBOX_KINDS)).min(1),
+    )
+    .default([...TASK_INBOX_KINDS]),
 });
 
 export const markInboxReadInput = z

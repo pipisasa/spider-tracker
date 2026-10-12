@@ -6,6 +6,7 @@ import { recordActivity } from "./activity";
 import { publish } from "./events";
 import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto } from "./contracts";
 import { DomainError } from "./errors";
+import { announceRulesChange, assertRulesDocument } from "./project-rules";
 import { createProjectInput, updateProjectInput } from "./schemas";
 import { parseInput } from "./validate";
 
@@ -31,6 +32,7 @@ export function toProjectDto(row: ProjectRow): ProjectDto {
     description: row.description,
     createdAt: row.createdAt.toISOString(),
     archivedAt: row.archivedAt?.toISOString() ?? null,
+    rulesDocumentId: row.rulesDocumentId,
   };
 }
 
@@ -125,7 +127,10 @@ async function withStatuses(tx: Tx, project: ProjectRow): Promise<ProjectDetailD
   return { ...toProjectDto(project), statuses: rows.map(toStatusDto) };
 }
 
-/** Renames a project or changes its description; the key stays. */
+/**
+ * Renames a project, changes its description or sets its rules document (ST-111); the key stays.
+ * Setting rules tells the project's agents (see announceRulesChange).
+ */
 export async function updateProject(db: Db, ctx: ActorContext, key: string, input: unknown): Promise<ProjectDetailDto> {
   await assertCanManageProjects(db, ctx, "change projects");
   const data = parseInput(updateProjectInput, input);
@@ -135,15 +140,23 @@ export async function updateProject(db: Db, ctx: ActorContext, key: string, inpu
     const next = {
       name: data.name ?? current.name,
       description: data.description === undefined ? current.description : data.description || null,
+      rulesDocumentId: data.rulesDocumentId === undefined ? current.rulesDocumentId : data.rulesDocumentId,
     };
     const changes: Record<string, [unknown, unknown]> = {};
     if (next.name !== current.name) changes.name = [current.name, next.name];
     if (next.description !== current.description) changes.description = [current.description, next.description];
+    if (next.rulesDocumentId !== current.rulesDocumentId) {
+      if (next.rulesDocumentId) await assertRulesDocument(tx, current, next.rulesDocumentId);
+      changes.rulesDocumentId = [current.rulesDocumentId, next.rulesDocumentId];
+    }
     if (Object.keys(changes).length === 0) return withStatuses(tx, current);
 
     const [project] = await tx.update(projects).set(next).where(eq(projects.id, current.id)).returning();
     if (!project) throw new Error("Failed to update project");
     await recordActivity(tx, ctx, { entityType: "project", entityId: project.id, action: "project.updated", changes });
+    if (changes.rulesDocumentId && project.rulesDocumentId) {
+      await announceRulesChange(tx, ctx, project.id, project.rulesDocumentId);
+    }
     await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
     return withStatuses(tx, project);
   });

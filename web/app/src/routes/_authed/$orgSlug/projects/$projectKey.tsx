@@ -6,11 +6,13 @@ import { ProjectSettingsDialog } from "@/components/project-settings";
 import { SavedViewsMenu } from "@/components/saved-views";
 import { TaskFilterBar } from "@/components/task-filter-bar";
 import { Button } from "@/components/ui/button";
+import { DocumentContent } from "@/components/document-content";
 import { useAppAction } from "@/lib/app-events";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   actorsQuery,
+  documentQuery,
   documentsQuery,
   membersQuery,
   projectQuery,
@@ -30,7 +32,7 @@ import {
 import type { SavedViewDto } from "@repo/core/contracts";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileTextIcon, KanbanIcon, ListIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import { FileTextIcon, KanbanIcon, ListIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 type View = "board" | "list" | "docs";
@@ -129,6 +131,19 @@ function ProjectPage() {
               <span className="max-sm:sr-only">Docs</span>
             </Link>
           </Button>
+          {project.rulesDocumentId && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="sm" className="max-md:h-10" asChild>
+                  <Link to="/$orgSlug/docs/$documentId" params={{ orgSlug, documentId: project.rulesDocumentId }}>
+                    <ScrollTextIcon />
+                    <span className="max-sm:sr-only">Rules</span>
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>The project&apos;s rules for agents</TooltipContent>
+            </Tooltip>
+          )}
           {view !== "docs" && (
             <SavedViewsMenu
               orgSlug={orgSlug}
@@ -212,7 +227,7 @@ function ProjectPage() {
         </p>
       )}
       {view === "docs" ? (
-        <ProjectDocuments orgSlug={orgSlug} projectKey={project.key} />
+        <ProjectDocuments orgSlug={orgSlug} projectKey={project.key} rulesDocumentId={project.rulesDocumentId} />
       ) : view === "board" ? (
         <Board
           orgSlug={orgSlug}
@@ -246,10 +261,19 @@ function ProjectPage() {
   );
 }
 
-function ProjectDocuments({ orgSlug, projectKey }: { orgSlug: string; projectKey: string }) {
+function ProjectDocuments({
+  orgSlug,
+  projectKey,
+  rulesDocumentId,
+}: {
+  orgSlug: string;
+  projectKey: string;
+  rulesDocumentId: string | null;
+}) {
   const { data: documents = [], isPending } = useQuery(documentsQuery(orgSlug, { project: projectKey }));
   return (
     <main className="flex flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
+      {rulesDocumentId && <ProjectRules orgSlug={orgSlug} documentId={rulesDocumentId} />}
       {!isPending && (
         <DocumentList
           orgSlug={orgSlug}
@@ -259,5 +283,31 @@ function ProjectDocuments({ orgSlug, projectKey }: { orgSlug: string; projectKey
         />
       )}
     </main>
+  );
+}
+
+/** The project's rules for agents (ST-111): what every agent working here gets automatically. */
+function ProjectRules({ orgSlug, documentId }: { orgSlug: string; documentId: string }) {
+  const { data: rules } = useQuery(documentQuery(orgSlug, documentId));
+  if (!rules) return null;
+  return (
+    <section aria-labelledby="project-rules-title" className="rounded-lg border">
+      <header className="flex items-center gap-2 border-b px-3 py-2 text-sm">
+        <ScrollTextIcon className="size-4 text-muted-foreground" />
+        <h2 id="project-rules-title" className="font-medium">
+          Rules for agents
+        </h2>
+        <Link
+          to="/$orgSlug/docs/$documentId"
+          params={{ orgSlug, documentId }}
+          className="min-w-0 truncate text-muted-foreground hover:underline"
+        >
+          {rules.title} · v{rules.version}
+        </Link>
+      </header>
+      <div className="max-h-96 overflow-y-auto px-3 py-2">
+        <DocumentContent format={rules.format} content={rules.content} />
+      </div>
+    </section>
   );
 }

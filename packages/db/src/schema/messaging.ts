@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
-import { bigint, index, pgTable, text, timestamp, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { bigint, check, index, pgTable, text, timestamp, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { actors, organizations } from "./tenancy";
+import { documents } from "./documents";
 import { tasks } from "./work";
 
 // Comments under tasks, by people and agents (Markdown, @mentions).
@@ -26,7 +27,8 @@ export const comments = pgTable(
   (t) => [index("comments_task_idx").on(t.taskId, t.createdAt)],
 );
 
-// Per-actor inbox: mentions, assignments, comments and replies on their tasks.
+// Per-actor inbox: mentions, assignments, comments and replies on their tasks, and changes of
+// the rules of their projects (`rules`, ST-111: a document instead of a task).
 // The identity id doubles as a cursor for agents that wait for new items.
 export const inboxItems = pgTable(
   "inbox_items",
@@ -38,10 +40,9 @@ export const inboxItems = pgTable(
     recipientId: uuid("recipient_id")
       .notNull()
       .references(() => actors.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["mention", "assigned", "comment", "reply"] }).notNull(),
-    taskId: uuid("task_id")
-      .notNull()
-      .references(() => tasks.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["mention", "assigned", "comment", "reply", "rules"] }).notNull(),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "cascade" }),
     commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
     /** Who caused it (the commenter or assigner). */
     actorId: uuid("actor_id")
@@ -50,5 +51,8 @@ export const inboxItems = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     readAt: timestamp("read_at", { withTimezone: true }),
   },
-  (t) => [index("inbox_recipient_idx").on(t.recipientId, t.id)],
+  (t) => [
+    index("inbox_recipient_idx").on(t.recipientId, t.id),
+    check("inbox_items_subject", sql`${t.taskId} is not null or ${t.documentId} is not null`),
+  ],
 );

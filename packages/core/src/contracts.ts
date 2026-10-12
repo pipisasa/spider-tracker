@@ -61,12 +61,26 @@ export interface ProjectDto {
   createdAt: string;
   /** Archived projects are left out of lists and refuse new tasks. */
   archivedAt: string | null;
+  /** The project's rules for agents (ST-111): one of its project-level documents, or null. */
+  rulesDocumentId: string | null;
   /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
   url?: string;
 }
 
 export interface ProjectDetailDto extends ProjectDto {
   statuses: StatusDto[];
+}
+
+/** A project's rules for agents (ST-111): its rules document, with content. */
+export interface ProjectRulesDto {
+  projectKey: string;
+  projectName: string;
+  documentId: string;
+  title: string;
+  format: "md" | "html";
+  version: number;
+  updatedAt: string;
+  content: string;
 }
 
 /** 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
@@ -259,7 +273,10 @@ export interface CommentDto {
   editedAt: string | null;
 }
 
-export type InboxKind = "mention" | "assigned" | "comment" | "reply";
+/** `rules`: the rules of one of your projects were set or changed (ST-111); it has a document, not a task. */
+export type InboxKind = "mention" | "assigned" | "comment" | "reply" | "rules";
+/** The kinds about a task. */
+export type TaskInboxKind = Exclude<InboxKind, "rules">;
 
 export interface InboxItemDto {
   /** Increasing; pass the last one seen as `after` to get only newer items. */
@@ -267,7 +284,10 @@ export interface InboxItemDto {
   kind: InboxKind;
   createdAt: string;
   readAt: string | null;
-  task: { key: string; title: string };
+  /** Null for `rules` items. */
+  task: { key: string; title: string } | null;
+  /** Set for `rules` items: the project's rules document. */
+  document: { id: string; title: string; projectKey: string } | null;
   comment: { id: string; body: string } | null;
   from: { id: string; handle: string; name: string; type: "human" | "agent" };
 }

@@ -120,6 +120,13 @@
       "when": 1791816414797,
       "tag": "0016_document_links",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791835876350,
+      "tag": "0017_project_rules",
+      "breakpoints": true
     }
   ]
 }

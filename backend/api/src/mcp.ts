@@ -1,7 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { ActorContext, DocumentSummaryDto, ProjectDetailDto, StatusDto, TaskDto } from "@repo/core";
+import type {
+  ActorContext,
+  DocumentSummaryDto,
+  ProjectDetailDto,
+  ProjectRulesDto,
+  StatusDto,
+  TaskDto,
+} from "@repo/core";
 import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
@@ -21,7 +28,10 @@ import {
   createProject,
   createTask,
   getProject,
+  getProjectRules,
   getTask,
+  INBOX_KINDS,
+  listProjectRules,
   listMembers,
   listProjects,
   createTag,
@@ -81,8 +91,44 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
   }
 }
 
+/** Rules longer than this are cut in the server instructions; get_project has them in full. */
+const RULES_INSTRUCTIONS_CHARS = 12_000;
+
+/**
+ * The server's instructions (ST-111): the rules of the agent's projects, so a new session has
+ * them from its first MCP answer (Claude Code puts them in the system prompt).
+ */
+export function rulesInstructions(handle: string, rules: ProjectRulesDto[]): string | undefined {
+  if (rules.length === 0) return undefined;
+  return [
+    `You are @${handle} in Spider Tracker. Your projects have rules for agents. Follow them when you work on these projects' tasks; they win over your general habits (statuses, where to put results, how to name tasks). get_project returns the current rules, and when they change you get an inbox item of kind "rules".`,
+    ...rules.map((r) => {
+      const cut = r.content.length > RULES_INSTRUCTIONS_CHARS;
+      return [
+        "",
+        `## Rules of project ${r.projectKey} (${r.projectName}): "${r.title}" (document ${r.documentId}, version ${r.version})`,
+        "",
+        cut ? r.content.slice(0, RULES_INSTRUCTIONS_CHARS) : r.content,
+        ...(cut ? ["", `[Cut here: read the rest with get_document ${r.documentId}.]`] : []),
+      ].join("\n");
+    }),
+  ].join("\n");
+}
+
+/** Whether a JSON-RPC request (or batch) starts a session; only then are instructions sent. */
+async function isInitialize(request: Request): Promise<boolean> {
+  try {
+    const body: unknown = await request.clone().json();
+    return (Array.isArray(body) ? body : [body]).some(
+      (m: unknown) => typeof m === "object" && m !== null && "method" in m && m.method === "initialize",
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Tracker tools for one request, acting as the key's agent inside its organization. */
-function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string) {
+function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string, instructions?: string) {
   const ctx: ActorContext = {
     orgId: key.organization.id,
     actorId: key.actor.id,
@@ -178,18 +224,35 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     description: project.description,
     archived: project.archivedAt !== null,
     statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
+    rulesDocumentId: project.rulesDocumentId,
     url: urls.project(project.key),
   });
 
-  const server = new McpServer({ name: "spider-tracker", version: "0.1.0" });
+  /** A project's rules as the model sees them. */
+  const describeRules = (r: ProjectRulesDto) => ({
+    project: r.projectKey,
+    documentId: r.documentId,
+    title: r.title,
+    version: r.version,
+    updatedAt: r.updatedAt,
+    content: r.content,
+    url: urls.document(r.documentId),
+  });
+
+  const server = new McpServer({ name: "spider-tracker", version: "0.1.0" }, instructions ? { instructions } : undefined);
 
   server.registerTool(
     "whoami",
-    { description: "Show which agent you are and which organization you act in.", inputSchema: {} },
+    {
+      description:
+        "Show which agent you are, which organization you act in, and the rules of your projects (follow them). Call it first in a session.",
+      inputSchema: {},
+    },
     () =>
       run(async () => ({
         organization: { slug: key.organization.slug, name: key.organization.name },
         you: { handle: key.actor.handle, name: key.actor.name, role: key.actor.role },
+        projectRules: (await listProjectRules(db, ctx)).map(describeRules),
       })),
   );
 
@@ -211,15 +274,19 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_project",
     {
       description:
-        "Get a project, its workflow statuses (in board order, with their categories) and its documents (read them with get_document).",
+        "Get a project, its rules for agents (follow them), its workflow statuses (in board order, with their categories) and its documents (read them with get_document).",
       inputSchema: { projectKey: z.string().describe('Project key, e.g. "ST"') },
     },
     ({ projectKey }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
-        const documents = await listDocuments(db, ctx, { project: project.key });
+        const [documents, rules] = await Promise.all([
+          listDocuments(db, ctx, { project: project.key }),
+          getProjectRules(db, ctx, project.key),
+        ]);
         return {
           ...describeProject(project),
+          rules: rules ? describeRules(rules) : null,
           documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey, url: urls.document(d.id) })),
         };
       }),
@@ -248,15 +315,21 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   server.registerTool(
     "update_project",
     {
-      description: "Change a project's name or description (the key can't change). Owners, admins and their agents only.",
+      description:
+        "Change a project's name, description or rules document (the key can't change). The rules are one of the project's own documents; agents of the project get them automatically and are notified when they change. Owners, admins and their agents only.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         name: projectName.optional(),
         description: projectDescription.nullable().optional().describe("Markdown; null clears it"),
+        rulesDocumentId: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Id of a document in this project (not a task's) to use as its rules; null clears them"),
       },
     },
-    ({ projectKey, name, description }) =>
-      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description }))),
+    ({ projectKey, name, description, rulesDocumentId }) =>
+      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description, rulesDocumentId }))),
   );
 
   server.registerTool(
@@ -792,7 +865,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_inbox",
     {
       description:
-        "Your notifications: mentions, assignments, comments and replies on your tasks, oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
+        "Your notifications: mentions, assignments, comments and replies on your tasks, and changed rules of your projects (kind \"rules\": read them with get_project), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
       inputSchema: {
         unread_only: z.boolean().optional().describe("Only items not marked read (default true)"),
         after: z.number().int().nonnegative().optional().describe("Only items with a larger id"),
@@ -802,7 +875,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     },
     ({ unread_only, after, wait_seconds, limit }) =>
       run(async () => {
-        const query = { unread: unread_only ?? true, after, limit };
+        const query = { unread: unread_only ?? true, after, limit, kinds: [...INBOX_KINDS] };
         const deadline = Date.now() + (wait_seconds ?? 0) * 1000;
         let items = await listInbox(db, ctx, query);
         while (items.length === 0 && Date.now() < deadline) {
@@ -815,8 +888,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         return items.map((i) => ({
           id: i.id,
           kind: i.kind,
-          task: i.task.key,
-          title: i.task.title,
+          ...(i.task ? { task: i.task.key, title: i.task.title } : {}),
+          ...(i.document
+            ? { project: i.document.projectKey, rulesDocument: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) } }
+            : {}),
           from: i.from.handle,
           comment: i.comment ? { id: i.comment.id, body: i.comment.body } : null,
           createdAt: i.createdAt,
@@ -889,7 +964,10 @@ export function mcpRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   app.post("/", async (c) => {
     const key = c.get("apiKey");
     if (!key) throw new Error("API key middleware didn't run");
-    const server = createMcpServer(db, key, realtime, webOrigin);
+    const instructions = (await isInitialize(c.req.raw))
+      ? rulesInstructions(key.actor.handle, await listProjectRules(db, { orgId: key.organization.id, actorId: key.actor.id, role: key.actor.role, source: "mcp" }))
+      : undefined;
+    const server = createMcpServer(db, key, realtime, webOrigin, instructions);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     await server.connect(transport);
     try {
