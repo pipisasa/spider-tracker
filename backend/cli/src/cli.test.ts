@@ -58,12 +58,21 @@ function fakeApi(overrides: Record<string, () => Response> = {}) {
   return { fetch, requests };
 }
 
+/** The default git for `cli()`: tests that need git inject a fake, so none runs real git in the runner's directory. */
+const noGit: GitRunner = (args) => {
+  throw new Error(`test ran git ${args.join(" ")} without injecting a fake git`);
+};
+
+/** A git runner for a directory that is not a repository. */
+const notARepo: GitRunner = () => ({ exitCode: 128, stdout: "", stderr: "fatal: not a git repository" });
+
 async function cli(argv: string[], options: Partial<RunOptions> = {}) {
   let stdout = "";
   let stderr = "";
   const code = await run(argv, {
     env: { SPIDER_TOKEN: "spt_secret", SPIDER_API_URL: "https://api.test" },
     fetch: fakeApi().fetch,
+    git: noGit,
     stdout: { write: (s: string) => (stdout += s) },
     stderr: { write: (s: string) => (stderr += s) },
     ...options,
@@ -107,14 +116,9 @@ describe("exit codes", () => {
   });
 
   test("2 when the key is omitted and the branch has none", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "spider-cli-"));
-    try {
-      const result = await cli(["task", "view"], { cwd: dir });
-      expect(result.code).toBe(2);
-      expect(result.stderr).toContain("No task key given");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const result = await cli(["task", "view"], { git: notARepo, cwd: "/work" });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("No task key given");
   });
 
   test("mcp-headers prints the Authorization header for Claude Code", async () => {
@@ -203,7 +207,7 @@ function savedAgents() {
 }
 
 /** A fake git repository: records commands and answers the ones `spider start` runs. */
-function fakeGit({ repo = true, branch = "main", branches = ["main"], dirty = false, failSwitch = false } = {}) {
+function fakeGit({ repo = true, branch = "main", branches = ["main"], remote = [] as string[], dirty = false, failSwitch = false } = {}) {
   const state = { branch, branches: new Set(branches) };
   const calls: string[] = [];
   const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
@@ -214,12 +218,18 @@ function fakeGit({ repo = true, branch = "main", branches = ["main"], dirty = fa
     if (!repo) return fail("fatal: not a git repository");
     const [command, ...rest] = args;
     if (command === "rev-parse" && rest[0] === "--is-inside-work-tree") return ok("true\n");
-    if (command === "rev-parse") return state.branches.has(rest.at(-1)?.replace("refs/heads/", "") ?? "") ? ok() : fail();
+    if (command === "rev-parse") {
+      const ref = rest.at(-1) ?? "";
+      const found = ref.startsWith("refs/remotes/origin/")
+        ? remote.includes(ref.slice("refs/remotes/origin/".length))
+        : state.branches.has(ref.replace("refs/heads/", ""));
+      return found ? ok() : fail();
+    }
     if (command === "branch") return ok(`${state.branch}\n`);
     if (command === "status") return ok(dirty ? " M src/index.ts\n" : "");
     if (command === "switch") {
       if (failSwitch) return fail("error: Your local changes would be overwritten by checkout");
-      const name = rest.at(-1) ?? "";
+      const name = rest[0] === "-c" ? (rest[1] ?? "") : (rest[0] ?? "");
       if (rest[0] === "-c") state.branches.add(name);
       state.branch = name;
       return ok();
@@ -245,8 +255,17 @@ describe("spider start", () => {
     expect(result.code).toBe(0);
     expect(state.branch).toBe("st-1-write-the-cli");
     expect(calls).toContain("switch -c st-1-write-the-cli");
-    expect(result.stdout).toContain("Created and switched to branch st-1-write-the-cli");
+    expect(result.stdout).toContain("Git: switched /work from main to new branch st-1-write-the-cli (--no-branch leaves git alone)");
     expect(result.stderr).toBe("");
+  });
+
+  test("a branch only on origin is tracked, not created from HEAD", async () => {
+    const { git, calls, state } = fakeGit({ remote: ["st-1-write-the-cli"] });
+    const result = await start(["start", "ST-1"], git);
+    expect(result.code).toBe(0);
+    expect(calls).toContain("switch -c st-1-write-the-cli --track origin/st-1-write-the-cli");
+    expect(state.branch).toBe("st-1-write-the-cli");
+    expect(result.stdout).toContain("from main to new branch st-1-write-the-cli tracking origin/st-1-write-the-cli");
   });
 
   test("an existing branch is switched to, not created; --json has the branch", async () => {

@@ -70,14 +70,53 @@ describe("remoteRepo", () => {
 describe("branches", () => {
   test("createOrSwitchBranch creates a missing branch and switches to an existing one", () => {
     const missing = fakeGit({ "switch -c st-1-x": "" });
-    expect(createOrSwitchBranch("/work", "st-1-x", missing.git)).toEqual({ created: true });
-    expect(missing.calls).toEqual(["rev-parse --verify --quiet refs/heads/st-1-x", "switch -c st-1-x"]);
+    expect(createOrSwitchBranch("/work", "st-1-x", missing.git)).toEqual({ created: true, tracking: null });
+    expect(missing.calls).toEqual([
+      "rev-parse --verify --quiet refs/heads/st-1-x",
+      "rev-parse --verify --quiet refs/remotes/origin/st-1-x",
+      "switch -c st-1-x",
+    ]);
 
     const existing = fakeGit({ "rev-parse --verify --quiet refs/heads/st-1-x": "abc\n", "switch st-1-x": "" });
-    expect(createOrSwitchBranch("/work", "st-1-x", existing.git)).toEqual({ created: false });
-    expect(existing.calls.at(-1)).toBe("switch st-1-x");
+    expect(createOrSwitchBranch("/work", "st-1-x", existing.git)).toEqual({ created: false, tracking: null });
+    expect(existing.calls).toEqual(["rev-parse --verify --quiet refs/heads/st-1-x", "switch st-1-x"]);
 
     expect(() => createOrSwitchBranch("/work", "st-1-x", fakeGit({}).git)).toThrow("fatal");
+  });
+
+  test("createOrSwitchBranch tracks a branch that exists only on origin instead of branching from HEAD", () => {
+    const remote = fakeGit({
+      "rev-parse --verify --quiet refs/remotes/origin/st-1-x": "abc\n",
+      "switch -c st-1-x --track origin/st-1-x": "",
+    });
+    expect(createOrSwitchBranch("/work", "st-1-x", remote.git)).toEqual({ created: true, tracking: "origin/st-1-x" });
+    expect(remote.calls.at(-1)).toBe("switch -c st-1-x --track origin/st-1-x");
+  });
+
+  test("createOrSwitchBranch tracks origin in a real repository", () => {
+    const dir = mkdtempSync(join(tmpdir(), "spider-cli-"));
+    const sh = (cmd: string[], cwd = dir) => {
+      const result = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
+      if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+    try {
+      const origin = join(dir, "origin");
+      const clone = join(dir, "clone");
+      const id = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"];
+      sh(["git", "init", "-q", "-b", "main", origin]);
+      sh(["git", ...id, "commit", "-q", "--allow-empty", "-m", "first"], origin);
+      sh(["git", "branch", "st-1-x"], origin);
+      sh(["git", ...id, "commit", "-q", "--allow-empty", "-m", "main moves on"], origin);
+      sh(["git", "clone", "-q", origin, clone]);
+
+      expect(createOrSwitchBranch(clone, "st-1-x")).toEqual({ created: true, tracking: "origin/st-1-x" });
+      expect(currentBranch(clone)).toBe("st-1-x");
+      expect(sh(["git", "rev-parse", "--abbrev-ref", "st-1-x@{upstream}"], clone)).toBe("origin/st-1-x");
+      expect(sh(["git", "rev-parse", "HEAD"], clone)).toBe(sh(["git", "rev-parse", "origin/st-1-x"], clone));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("isDirty looks at tracked changes", () => {

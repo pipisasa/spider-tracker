@@ -1515,8 +1515,10 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const name = branchNameFor(key, title);
     if (isDirty(cwd, git)) stderr.write("Warning: the working tree has uncommitted changes; they move to the new branch.\n");
     try {
-      const { created } = createOrSwitchBranch(cwd, name, git);
-      return { branch: name, note: `${created ? "Created and switched to" : "Switched to"} branch ${name}` };
+      const { created, tracking } = createOrSwitchBranch(cwd, name, git);
+      const from = current ?? "a detached HEAD";
+      const what = tracking ? `new branch ${name} tracking ${tracking}` : created ? `new branch ${name}` : `existing branch ${name}`;
+      return { branch: name, note: `Git: switched ${cwd} from ${from} to ${what} (--no-branch leaves git alone)` };
     } catch (err) {
       stderr.write(`Warning: couldn't switch to branch ${name}: ${err instanceof Error ? err.message : String(err)}\n`);
       return { branch: null };
