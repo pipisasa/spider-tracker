@@ -34,7 +34,7 @@ import type {
 } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError, Option } from "commander";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import {
@@ -78,6 +78,7 @@ import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFr
 import { isCompiled } from "./self-update";
 import { checkSession, planLines, teamAgents, windowArgv } from "./claude-team";
 import { TMUX_MISSING, openWindows, runTmux, shellQuote, tmuxPlan, tmuxVersion, windowCommand, windowNames, type TmuxRunner } from "./tmux";
+import { parseSourceDoc, publishDocuments, publishLines, type SourceDoc } from "./publish";
 import { describePlan, runUninstall, uninstallPlan } from "./uninstall";
 import { checkForUpdates } from "./update-check";
 import {
@@ -1955,6 +1956,71 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const { sdk, org } = conn();
     const moved = await (await sdk()).documents.move(await org(), id, { project: opts.org ? null : (opts.project ?? "").toUpperCase() });
     output(opts, moved, () => `Moved ${moved.title} to ${moved.projectKey ?? "the organization"}`);
+  });
+
+  withJson(
+    doc
+      .command("publish")
+      .description(
+        "create or update documents from a folder's .md files (and its sub-folders'), with links between them as tracker links",
+      )
+      .argument("<dir>", "the folder")
+      .option("--project <key>", "project for new documents whose front matter names no project or task")
+      .option("--dry-run", "show what would be created and updated; change nothing")
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Front matter (optional) maps a file to its document:",
+          "  ---",
+          "  title: Plan         # default: the file name without .md",
+          "  project: ST         # or task: ST-12; only for a new document (default: --project, else organization-wide)",
+          "  id: <document id>   # written by publish after creating the document",
+          "  version: 3          # written by publish: the version the file was last published as",
+          "  ---",
+          "",
+          "Links to files of the folder, [[Title]] (or [[file name]]) and relative [text](other.md#heading) links,",
+          "are published as [[doc:<id>]] links, which survive renames; the files keep them as written.",
+          "A document saved in the tracker since the file's version is reported as a conflict and not overwritten:",
+          "merge the change into the file, set its version and publish again. Exit code 1 if any file is a conflict or failed.",
+        ].join("\n"),
+      ),
+  ).action(async (dir: string, opts: JsonOption & { project?: string; dryRun?: boolean }) => {
+    const root = resolvePath(cwd, dir);
+    const isDir = await stat(root).then((s) => s.isDirectory(), () => false);
+    if (!isDir) throw usageError(`${dir} isn't a folder`);
+    const paths = (await readdir(root, { recursive: true }))
+      .map((p) => p.split("\\").join("/"))
+      // Hidden files and folders (.git, .obsidian) and node_modules aren't documents.
+      .filter((p) => /\.md$/i.test(p) && !p.split("/").some((part) => part.startsWith(".") || part === "node_modules"))
+      .sort();
+    const docs: SourceDoc[] = [];
+    for (const path of paths) {
+      const raw = await readFile(join(root, path), "utf8");
+      try {
+        docs.push(parseSourceDoc(path, raw));
+      } catch (err) {
+        throw usageError(err instanceof Error ? err.message : String(err));
+      }
+    }
+    const seen = new Map<string, string>();
+    for (const d of docs) {
+      if (!d.id) continue;
+      const other = seen.get(d.id);
+      if (other) throw usageError(`${other} and ${d.path} have the same id ${d.id}`);
+      seen.set(d.id, d.path);
+    }
+    const { sdk, org } = conn();
+    const response = await publishDocuments({
+      client: await sdk(),
+      org: await org(),
+      docs,
+      project: opts.project?.toUpperCase(),
+      dryRun: opts.dryRun === true,
+      save: (d, raw) => writeFile(join(root, d.path), raw, "utf8"),
+    });
+    output(opts, response, () => publishLines(response));
+    if (response.summary.conflict + response.summary.failed > 0) result.exitCode = EXIT.unexpected;
   });
 
   program

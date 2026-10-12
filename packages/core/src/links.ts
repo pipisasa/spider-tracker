@@ -41,7 +41,7 @@ function withoutCode(text: string): string {
 }
 
 /** The same code blanked out with spaces instead, so offsets into the text still hold. */
-function maskCode(text: string): string {
+export function maskCode(text: string): string {
   return CODE.reduce((rest, code) => rest.replace(code, (match) => match.replace(/[^\n]/g, " ")), text);
 }
 

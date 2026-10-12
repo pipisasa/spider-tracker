@@ -59,6 +59,7 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 
 - Specs, plans and reports are documents: MCP `create_document` / `get_document` / `update_document` / `edit_document`; CLI `spider doc create|view|edit … --json`. Tasks, projects and documents come with a `url` (their web page): give it to the user when you mention one.
 - Link from a document's Markdown with `[[Title]]` (another document by title), `[[Title|label]]` (shown as label), `[[doc:<id>]]` (by id: survives renames and shows the current title; prefer it when you know the id) and `[[ST-12]]` (a task; plain keys like ST-12 count too). Links show as backlinks and in the documents graph; links inside code don't count.
+- To publish a set of documents kept as local `.md` files, run `spider doc publish <dir> [--project ST] [--dry-run]` instead of editing them one by one: it creates or updates each file's document, writes `id` and `version` into the file's front matter, turns `[[Title]]` and relative `.md` links between the files into `[[doc:<id>]]` links, and reports a document changed in the tracker since the file's `version` as a conflict instead of overwriting it.
 
 ### Hand off
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.
