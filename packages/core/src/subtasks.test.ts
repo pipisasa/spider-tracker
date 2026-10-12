@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
-import { createTask, getTask, listSubtasks, updateTask } from "./tasks";
+import { listTaskActivity } from "./activity-feed";
+import { createTask, deleteTask, getTask, listSubtasks, updateTask } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -52,5 +53,19 @@ run("sub-tasks", () => {
     const moved = await updateTask(db, ctx, "SPI-2", { parentId: (await getTask(db, ctx.orgId, "WEB-1")).id });
     expect(moved.parentKey).toBe("WEB-1");
     expect((await updateTask(db, ctx, "SPI-2", { parentId: null })).parentKey).toBeNull();
+  });
+  test("deleting a parent detaches its sub-tasks, which keep accepting sub-tasks", async () => {
+    const parent = await createTask(db, ctx, "SPI", { title: "Doomed parent" });
+    const child = await createTask(db, ctx, "WEB", { title: "Orphan-to-be", parentId: parent.id });
+    await deleteTask(db, ctx, parent.key);
+
+    const detached = await getTask(db, ctx.orgId, child.key);
+    expect(detached.parentId).toBeNull();
+    expect(detached.parentKey).toBeNull();
+    const log = await listTaskActivity(db, ctx.orgId, child.key);
+    expect(log.at(-1)).toMatchObject({ action: "task.updated", changes: { parentId: [parent.id, null] } });
+
+    const grandchild = await createTask(db, ctx, "SPI", { title: "Still works", parentId: child.id });
+    expect(grandchild.parentKey).toBe(child.key);
   });
 });
