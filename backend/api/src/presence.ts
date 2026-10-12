@@ -35,7 +35,12 @@ export function createPresence(db: Db, now: () => number = Date.now) {
       if (last !== undefined && at - last < TOUCH_EVENT_INTERVAL_MS) return;
       prune(at - PRESENCE_WINDOW_MS);
       lastEvent.set(eventId, at);
-      await publish(db, { type: "presence", orgId: ctx.orgId, taskKey: taskKey.toUpperCase() });
+      // Presence is best-effort: a failed event must not fail the read that triggered it.
+      try {
+        await publish(db, { type: "presence", orgId: ctx.orgId, taskKey: taskKey.toUpperCase() });
+      } catch (err) {
+        console.error("[presence] publishing a presence event failed:", err);
+      }
     },
 
     /** Activity-log presence plus recent reads of the project's tasks; the latest time per task and agent. */
