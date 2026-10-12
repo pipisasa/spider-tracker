@@ -19,6 +19,7 @@ import { join, resolve as resolvePath } from "node:path";
 import {
   defaultAgent,
   findAgent,
+  isServer,
   listAgents,
   putAgent,
   readStore,
@@ -200,6 +201,26 @@ async function credentialsFor(options: RunOptions, globals: Globals): Promise<Cr
   throw new CliError(EXIT.auth, message, "unauthorized");
 }
 
+/**
+ * The key credentialsFor would pick, only if it belongs to `nameOrUrl` (mcp-headers --server):
+ * undefined when it is another server's, so a key never goes to the wrong server.
+ */
+async function credentialsOn(options: RunOptions, globals: Globals, nameOrUrl: string): Promise<Credentials | undefined> {
+  const store = await readStore(options.env);
+  const target = resolveServer(store, nameOrUrl);
+  const on = (entry: AgentEntry | undefined) =>
+    entry && isServer(target, entry.server, entry.serverUrl) ? { token: entry.saved.token, baseUrl: entry.serverUrl, entry } : undefined;
+  if (globals.as) return on(findAgent(store, globals.as));
+  const token = options.env.SPIDER_TOKEN?.trim();
+  if (token) {
+    const baseUrl = apiUrlOf(options.env);
+    const { key, server } = resolveServer(store, baseUrl);
+    return isServer(target, key, server.url) ? { token, baseUrl } : undefined;
+  }
+  const named = options.env.SPIDER_AGENT?.trim();
+  return on(named ? findAgent(store, named) : defaultAgent(store));
+}
+
 const agentList = (store: Store) => listAgents(store).map((a) => a.ref).join(", ");
 
 /** The saved agent a local-only command (logout, claude) means: --as, SPIDER_AGENT, else the default. */
@@ -222,7 +243,7 @@ export function claudeMcpConfig(entry: AgentEntry, self: string[], channel: bool
       spider: {
         type: "http",
         url: `${entry.serverUrl}/mcp`,
-        headersHelper: [...self, "mcp-headers", "--as", entry.ref].map(shellQuote).join(" "),
+        headersHelper: [...self, "mcp-headers", "--as", entry.ref, "--server", entry.server].map(shellQuote).join(" "),
       },
       ...(channel
         ? { "spider-channel": { type: "stdio", command, args: [...args, "channel", "--as", entry.ref] } }
@@ -420,7 +441,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     .description("Spider Tracker from the terminal. Auth: SPIDER_TOKEN (agent API key)")
     .version(VERSION)
     .option("--as <agent>", "act as this saved agent: handle, org/handle or server/org/handle")
-    .option("--server <name|url>", "server for login and accept-invite: prod, local, a saved name or an API URL")
+    .option("--server <name|url>", "server for login, accept-invite and mcp-headers: prod, local, a saved name or an API URL")
     .exitOverride()
     .configureOutput({
       writeOut: (s) => stdout.write(s),
@@ -518,7 +539,14 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     ) => {
       const store = await readStore(options.env);
       // An invite link names its server; a bare code goes to --server / SPIDER_API_URL / prod.
-      const { key, server } = (!globals().server && serverForLink(store, code)) || serverFor(store);
+      const link = /^https?:\/\//i.test(code.trim());
+      const linked = !globals().server && link ? serverForLink(store, code) : undefined;
+      if (link && !globals().server && !linked) {
+        throw usageError(
+          `The invite link points at ${URL.parse(code.trim())?.origin ?? "a server"}, which spider doesn't know. Pass --server with its API URL (or prod, local, a saved server name)`,
+        );
+      }
+      const { key, server } = linked ?? serverFor(store);
       const client = createClient({ baseUrl: server.url, source: "cli", fetch: apiFetch });
       const accepted = await client.agentInvites.accept({
         code,
@@ -965,13 +993,20 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   });
 
   // For Claude Code's MCP `headersHelper`: prints {"Authorization": "Bearer …"} from the same
-  // credentials the CLI uses, so .mcp.json needs no exported variable.
+  // credentials the CLI uses, so .mcp.json needs no exported variable. With --server, only a key
+  // for that server: {} (no headers) when the key in use belongs to another one.
   program
     .command("mcp-headers")
-    .description("print MCP request headers as JSON (for Claude Code's headersHelper)")
+    .description("print MCP request headers as JSON (for Claude Code's headersHelper); --server: only a key for that server")
     .action(async () => {
-      const { token } = await credentialsFor(options, globals());
-      stdout.write(`${JSON.stringify({ Authorization: `Bearer ${token}` })}\n`);
+      const { server } = globals();
+      const credentials = server ? await credentialsOn(options, globals(), server) : await credentialsFor(options, globals());
+      if (!credentials) {
+        stderr.write(`spider mcp-headers: no key for server ${server} (the agent in use is on another server or none is saved)\n`);
+        stdout.write("{}\n");
+        return;
+      }
+      stdout.write(`${JSON.stringify({ Authorization: `Bearer ${credentials.token}` })}\n`);
     });
 
   const relationCommand = (name: "link" | "unlink", description: string) =>

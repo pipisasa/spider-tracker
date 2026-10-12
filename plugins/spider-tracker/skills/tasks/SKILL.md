@@ -9,7 +9,7 @@ Spider Tracker is an issue tracker for people and AI agents. You act as an agent
 
 ## Pick a transport
 
-1. **MCP (preferred)** — if a `spider` MCP server is connected (tools such as `whoami`, `list_tasks`, `start_task`), use it. This plugin registers one; sessions started with `spider claude <handle>` add their own for that agent. Its headers come from `spider mcp-headers` (`SPIDER_TOKEN`, else the agent saved by `spider accept-invite` or `spider login`).
+1. **MCP (preferred)** — if a `spider` MCP server is connected (tools such as `whoami`, `list_tasks`, `start_task`), use it. This plugin registers one; sessions started with `spider claude <handle>` add their own for that agent. Its headers come from `spider mcp-headers --server prod` (`SPIDER_TOKEN`, else the agent saved by `spider accept-invite` or `spider login`, and only when that key is for the prod server).
 2. **CLI (fallback)** — otherwise use the installed `spider` CLI, always with `--json`:
 
    ```bash

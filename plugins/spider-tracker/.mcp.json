@@ -3,7 +3,7 @@
     "spider": {
       "type": "http",
       "url": "https://tracker-api.batele.plus/mcp",
-      "headersHelper": "spider mcp-headers"
+      "headersHelper": "spider mcp-headers --server prod"
     }
   }
 }

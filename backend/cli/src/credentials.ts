@@ -8,7 +8,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { usageError } from "./resolve";
+import { z } from "zod";
+import { CliError, EXIT, usageError } from "./resolve";
 
 // Saved agents: <config dir>/credentials.json, readable only by the user, nested
 // server → organization → agent handle. SPIDER_TOKEN in the environment can still stand in
@@ -143,6 +144,17 @@ export function resolveServer(
   return { key: nameFromUrl(value), server: { url: trimUrl(value) } };
 }
 
+/** Whether the server saved as `key` with API `url` is `target` (same name or same API origin). */
+export function isServer(
+  target: { key: string; server: Server },
+  key: string,
+  url: string,
+): boolean {
+  if (key === target.key) return true;
+  const a = origin(url);
+  return a !== undefined && a === origin(target.server.url);
+}
+
 /** The server an invite link points at (its web or API origin), if the CLI knows it. */
 export function serverForLink(
   store: Store,
@@ -182,25 +194,105 @@ export function migrateV1(old: V1Credentials): Store {
   return store;
 }
 
+const savedAgentSchema = z.looseObject({
+  token: z.string(),
+  actor: z.looseObject({
+    id: z.string().optional(),
+    name: z.string(),
+    handle: z.string(),
+  }),
+  projects: z
+    .array(z.looseObject({ key: z.string(), name: z.string() }))
+    .nullable(),
+  source: z.enum(["invite", "login"]),
+  createdAt: z.string(),
+});
+
+const storeSchema = z.looseObject({
+  version: z.literal(2),
+  default: z
+    .looseObject({ server: z.string(), org: z.string(), agent: z.string() })
+    .optional(),
+  servers: z.record(
+    z.string(),
+    z.looseObject({
+      name: z.string().optional(),
+      url: z.string(),
+      webUrl: z.string().optional(),
+      orgs: z.record(
+        z.string(),
+        z.looseObject({
+          name: z.string(),
+          agents: z.record(z.string(), savedAgentSchema),
+        }),
+      ),
+    }),
+  ),
+});
+
+/** A credentials file the CLI can't use; never overwritten, so its keys aren't lost. */
+const unreadable = (path: string, reason: string) =>
+  new CliError(
+    EXIT.unexpected,
+    `Can't use the saved agents in ${path}: ${reason}. Fix the file or move it away (spider then starts a new one).`,
+    "credentials_unreadable",
+  );
+
 /** The saved agents (an empty store when there is no file); an old single-key file is migrated. */
 export async function readStore(
   env: Record<string, string | undefined>,
 ): Promise<Store> {
   const dir = configDir(env);
   if (!dir) return emptyStore();
+  const path = file(dir);
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return emptyStore();
+    const code =
+      error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "read failed";
+    throw unreadable(path, `it can't be read (${code})`);
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(file(dir), "utf8"));
+    parsed = JSON.parse(text);
   } catch {
-    return emptyStore();
+    // The parser's message can quote the file, keys included.
+    throw unreadable(path, "it isn't valid JSON");
   }
-  if (typeof parsed !== "object" || parsed === null) return emptyStore();
-  if ("version" in parsed && parsed.version === 2 && "servers" in parsed)
-    return parsed as Store;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw unreadable(path, "it isn't a JSON object");
+  if ("version" in parsed) {
+    if (parsed.version !== 2) {
+      const version =
+        typeof parsed.version === "number" ||
+        typeof parsed.version === "string"
+          ? ` ${parsed.version}`
+          : "";
+      throw unreadable(
+        path,
+        `unknown version${version} (written by a newer spider? Run: spider update)`,
+      );
+    }
+    const result = storeSchema.safeParse(parsed);
+    if (!result.success) {
+      const where = result.error.issues[0]?.path.join(".") || "top level";
+      throw unreadable(path, `unexpected content at ${where}`);
+    }
+    return result.data;
+  }
   const old = parsed as Partial<V1Credentials>;
   if (old.token && old.apiUrl && old.actor?.handle && old.organization?.slug)
     return migrateV1(old as V1Credentials);
-  return emptyStore();
+  throw unreadable(path, "it has no version and isn't a known older format");
 }
 
 /** Saves the store (temp file + rename, 0600 in a 0700 directory); removes the file once it holds no agents. */
