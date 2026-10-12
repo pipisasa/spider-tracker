@@ -87,6 +87,8 @@ import {
   updateRelease,
   getReleaseChangelog,
   writeReleaseChangelog,
+  listDeployments,
+  recordDeployment,
   type ReleaseDto,
   createMilestone,
   getMilestone,
@@ -388,6 +390,19 @@ export function orgRoutes(
 
   app.post("/releases/:taskKey/changelog", async (c) =>
     c.json(withChangelogUrls(c.get("urls"), await writeReleaseChangelog(db, c.get("actor"), c.req.param("taskKey"), (await body(c)) ?? {}))),
+  );
+
+  // Deployments (ST-94): POST records { app, repo?, environment, commitSha } (the first one moves a
+  // Planned release to On staging); GET lists them newest first, ?app=web&environment=prod.
+  app.post("/releases/:taskKey/deployments", async (c) => {
+    const recorded = await recordDeployment(db, c.get("actor"), c.req.param("taskKey"), await body(c));
+    return c.json({ ...recorded, release: release(c, recorded.release) }, 201);
+  });
+
+  app.get("/releases/:taskKey/deployments", async (c) =>
+    c.json(
+      list(await listDeployments(db, c.get("actor"), c.req.param("taskKey"), { app: c.req.query("app"), environment: c.req.query("environment") })),
+    ),
   );
 
   app.get("/release-candidates", async (c) =>

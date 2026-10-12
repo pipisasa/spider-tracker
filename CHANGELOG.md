@@ -25,6 +25,14 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 
 Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
+### Deployments (ST-94)
+
+- **API:** new `POST /v1/orgs/:org/releases/:key/deployments` (`{ app, repo?, environment, commitSha }`, 201 with `{ deployment, release, movedFrom }`) and `GET …/releases/:key/deployments[?app=&environment=]`. A deployment is one of the release's apps deployed to one of the app's environments at a commit, by whom, when (`DeploymentDto`, with `production` for the app's last environment). Releases carry `deployments` (newest first). The first deployment moves a Planned release to On staging as the `@spider` bot; nothing moves a release backwards. **Behavior change:** moving a release to Released is refused until every app with environments has a deployment to its last one (prod); apps without environments, like the CLI, are exempt. SDK: `releases.deploy`, `releases.deployments`.
+- **MCP:** new `record_deployment` and `list_deployments`; release output (`get_release`, …) gains `deployments`.
+- **CLI:** `spider release deploy ST-NN --app web --env staging [--commit <sha>]` (the commit defaults to HEAD) and `spider release deployments ST-NN [--app] [--env]`; `release view` lists the latest deployment per app and environment, and `--json` releases gain `deployments`.
+- **Deploy scripts:** `bun run deploy:web` and `bun run deploy:api` now run `scripts/deploy.ts`, which deploys as before and, only with `-- --release ST-NN`, records the deployment (`--env staging` deploys to staging; see docs/deployment.md).
+- **Plugin 0.3.13:** the tasks skill explains how the release owner records deployments and when Released is allowed.
+
 ### Milestones and the project Roadmap (ST-96)
 
 - **API:** tasks carry `milestoneId` (their own; a milestone of the same project) and `milestone { id, key, title, status, inherited }` (own, or inherited from the nearest ancestor). `POST …/tasks`, `PATCH /tasks/:key` and bulk `set` take `milestoneId` (`null` takes a task out). New `GET|POST /v1/orgs/:org/projects/:key/milestones[?status=]` (the roadmap, by target date) and `GET /v1/orgs/:org/milestones/:key`, each `MilestoneDto` with `progress { total, done, canceled, withCode, shipped, complete }`, `tasks` and `releases`. When every task of an open milestone is Done and all their code has shipped, the tracker moves it to Ready to close as the `@spider` bot (activity source `system`, now in the OpenAPI enum); `spider` is a reserved handle. SDK: `milestones.list|get|create`.

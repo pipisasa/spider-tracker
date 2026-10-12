@@ -11,6 +11,7 @@ import { createProject, getProject } from "./projects";
 import { addComment } from "./comments";
 import { getReleaseChangelog, writeReleaseChangelog } from "./release-changelog";
 import { addToRelease, createRelease, getRelease, listReleaseCandidates, listReleases, removeFromRelease, updateRelease } from "./releases";
+import { recordDeployment } from "./deployments";
 import { createApp, createRepo, getRepo } from "./repos";
 import { firstStatusOf } from "./statuses";
 import { createTask, deleteTask, getTask, listTasks, updateTask, updateTasks } from "./tasks";
@@ -101,6 +102,9 @@ run("releases (ST-93)", () => {
     expect(shippingLabel(onTheWay.shipping)).toBe("2026.10.13 · planned");
 
     await moveRelease(release.key, "On staging");
+    // Released waits for web in prod (ST-94); the cli has no environments, so it doesn't.
+    await expect(moveRelease(release.key, "Released")).rejects.toThrow("it isn't deployed web to prod yet");
+    await recordDeployment(db, owner, release.key, { app: "web", environment: "prod", commitSha: "3f2c1ab" });
     const shipped = await moveRelease(release.key, "Released");
     expect(shipped.shippedAt).not.toBeNull();
     for (const task of tasks) {

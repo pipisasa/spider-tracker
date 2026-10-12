@@ -42,3 +42,4 @@ yarn-error.log*
 
 # Public build-time config for the web app
 !web/app/.env.production
+!web/app/.env.staging

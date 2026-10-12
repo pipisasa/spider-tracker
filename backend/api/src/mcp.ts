@@ -83,6 +83,8 @@ import {
   updateRelease,
   getReleaseChangelog,
   writeReleaseChangelog,
+  listDeployments,
+  recordDeployment,
   withChangelogUrls,
   releaseView,
   milestoneView,
@@ -688,6 +690,40 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       run(async () =>
         withChangelogUrls(urls, write ? await writeReleaseChangelog(db, ctx, releaseKey, { force }) : await getReleaseChangelog(db, ctx, releaseKey)),
       ),
+  );
+
+  // Deployments (ST-94): as `spider release deploy … --json` and `spider release deployments … --json` print them.
+  server.registerTool(
+    "record_deployment",
+    {
+      description:
+        "Record that one of a release's apps was deployed to one of the app's environments (e.g. web to staging) at a commit, after a manual deploy; scripts/deploy.ts and spider release deploy do it from a clone. The first deployment moves a Planned release to On staging (as the @spider bot). Moving it to Released stays yours (update_task) and is refused until every app with environments is deployed to its last one (prod); apps without environments, like the CLI, are exempt. Nothing moves a release backwards. A canceled release takes no deployments.",
+      inputSchema: {
+        key: releaseKeyInput,
+        app: z.string().describe('The app\'s name, one the release ships, e.g. "web"'),
+        repo: z.string().optional().describe('The app\'s repo, "owner/name"; needed only when the release ships apps of that name from several repos'),
+        environment: z.string().describe('One of the app\'s environments, e.g. "staging" or "prod"'),
+        commitSha: z.string().describe("The deployed commit's SHA (7 to 64 hex digits; git rev-parse HEAD)"),
+      },
+    },
+    ({ key: releaseKey, app, repo, environment, commitSha }) =>
+      run(async () => {
+        const recorded = await recordDeployment(db, ctx, releaseKey, { app, repo, environment, commitSha });
+        return { ...recorded, release: await describeRelease(recorded.release) };
+      }),
+  );
+
+  server.registerTool(
+    "list_deployments",
+    {
+      description: "List a release's deployments, newest first: app, environment (production: its last one), commit, who and when.",
+      inputSchema: {
+        key: releaseKeyInput,
+        app: z.string().optional().describe('Only this app, e.g. "web"'),
+        environment: z.string().optional().describe('Only this environment, e.g. "prod"'),
+      },
+    },
+    ({ key: releaseKey, app, environment }) => run(async () => ({ items: await listDeployments(db, ctx, releaseKey, { app, environment }) })),
   );
 
   // Milestones (ST-96): MilestoneView, as `spider roadmap --json` and `spider milestone view --json` print it.

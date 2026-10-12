@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { boardColumns, milestoneProgressLabel, shippingLabel } from "./board";
-import type { StatusDto } from "./contracts";
+import { appsAwaitingProduction, boardColumns, deploymentCells, milestoneProgressLabel, shippingLabel } from "./board";
+import type { DeploymentDto, ReleaseAppDto, StatusDto } from "./contracts";
 
 const status = (id: string, kind: StatusDto["kind"], name: string, category: StatusDto["category"], position: number): StatusDto => ({
   id,
@@ -54,4 +54,45 @@ describe("milestoneProgressLabel (ST-96)", () => {
     [p(5, 3, 0, 0), "3/5 done"],
     [p(5, 3, 2, 1), "3/5 done · 1/2 shipped"],
   ])("%j → %s", (progress, label) => expect(milestoneProgressLabel(progress)).toBe(label));
+});
+
+describe("deployment cells (ST-94)", () => {
+  const app = (appId: string, name: string, environments: string[]): ReleaseAppDto => ({
+    appId,
+    repo: "pipisasa/spider-tracker",
+    name,
+    versioning: "date",
+    environments,
+    version: "2026.10.13",
+  });
+  const deployment = (appId: string, environment: string, commitSha: string): DeploymentDto => ({
+    id: commitSha,
+    releaseId: "r",
+    releaseKey: "ST-1",
+    appId,
+    app: appId,
+    repo: "pipisasa/spider-tracker",
+    environment,
+    production: environment === "prod",
+    commitSha,
+    deployedBy: null,
+    source: "cli",
+    createdAt: "2026-10-13T10:00:00.000Z",
+  });
+  const apps = [app("api", "api", ["staging", "prod"]), app("cli", "cli", []), app("web", "web", ["staging", "prod"])];
+
+  test("one cell per app and environment in deploy order, the newest deployment first; the cli has none", () => {
+    const release = { apps, deployments: [deployment("web", "staging", "bbbbbbb"), deployment("web", "staging", "aaaaaaa"), deployment("api", "prod", "ccccccc")] };
+    expect(deploymentCells(release).map((c) => [c.app, c.environment, c.production, c.latest?.commitSha ?? null, c.count])).toEqual([
+      ["api", "staging", false, null, 0],
+      ["api", "prod", true, "ccccccc", 1],
+      ["web", "staging", false, "bbbbbbb", 2],
+      ["web", "prod", true, null, 0],
+    ]);
+    expect(appsAwaitingProduction(release).map((c) => c.app)).toEqual(["web"]);
+  });
+
+  test("servers before deployments send none: every production is awaited", () => {
+    expect(appsAwaitingProduction({ apps }).map((c) => `${c.app}:${c.environment}`)).toEqual(["api:prod", "web:prod"]);
+  });
 });

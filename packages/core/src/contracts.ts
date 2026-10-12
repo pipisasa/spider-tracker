@@ -321,6 +321,40 @@ export interface ReleaseDto extends TaskDto {
   apps: ReleaseAppDto[];
   /** By project key, then number. */
   tasks: ReleaseTaskDto[];
+  /** Its deployments (ST-94), newest first. Servers before deployments send none. */
+  deployments?: DeploymentDto[];
+}
+
+/** A release's app deployed to one of the app's environments (ST-94). */
+export interface DeploymentDto {
+  id: string;
+  /** The release's task id and key. */
+  releaseId: string;
+  releaseKey: string;
+  appId: string;
+  /** The app's name, e.g. "web". */
+  app: string;
+  /** The app's repo, "owner/name". */
+  repo: string;
+  /** One of the app's environments when it was recorded, e.g. "staging". */
+  environment: string;
+  /** Whether `environment` is the app's last environment, its production ("prod"). */
+  production: boolean;
+  commitSha: string;
+  /** Who recorded it; null once that actor is gone. */
+  deployedBy: { id: string; handle: string; name: string } | null;
+  /** Where it was recorded from: cli, mcp, api or ui. */
+  source: string;
+  createdAt: string;
+}
+
+/** `POST /releases/:key/deployments`: the new deployment and the release after it. */
+export interface RecordDeploymentResponse {
+  deployment: DeploymentDto;
+  /** The release after the deployment, with its deployments. */
+  release: ReleaseDto;
+  /** The status the release left when the deployment moved it (Planned → On staging); null when it stayed. */
+  movedFrom: Pick<StatusDto, "id" | "name" | "category"> | null;
 }
 
 /**

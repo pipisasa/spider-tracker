@@ -1189,8 +1189,14 @@ withDb("spider CLI against the API", () => {
     expect((await spider("release", "create", "--project", "ST", "--title", "x", "--app", "web=1.0.0")).stderr).toContain("isn't a date version");
     expect((await spider("task", "view", keys[2] ?? "")).stdout).toContain(`Shipping: 2026.10.13 · planned (${release.key})`);
 
+    // The first deploy moves it to On staging (ST-94); Released waits for web in prod.
+    const staged = await spider("release", "deploy", release.key, "--app", "web", "--env", "staging", "--commit", "3F2C1AB");
+    expect(staged.stdout).toBe(`Recorded web → staging at 3f2c1ab for ${release.key} (2026.10.13)\n${release.key} moved Planned → On staging\n`);
+    expect((await spider("task", "done", release.key)).stderr).toContain("it isn't deployed web to prod yet");
+    expect((await spider("release", "view", release.key)).stdout).toContain("Deployments:\n  web  staging  3f2c1ab  ");
+    const prod = await spider("release", "deploy", release.key, "--app", "web", "--env", "prod", "--commit", "3f2c1ab", "--json");
+    expect(prod.json()).toMatchObject({ deployment: { app: "web", environment: "prod", production: true }, release: { status: { name: "On staging" } }, movedFrom: null });
     // Released through the ordinary status change; the tasks stay Done.
-    expect((await spider("task", "update", release.key, "--status", "On staging")).code).toBe(0);
     expect((await spider("task", "done", release.key, "--json")).json()).toMatchObject({ status: { name: "Released" } });
     for (const key of keys) {
       const view = await spider("task", "view", key, "--json");

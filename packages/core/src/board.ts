@@ -2,7 +2,7 @@
 // release columns are on, the default) one column per status of the release workflow holding
 // release cards. Shared by the web app and tests; browser-safe, no database imports.
 
-import type { MilestoneProgressDto, ProjectDetailDto, StatusDto, TaskShippingDto } from "./contracts";
+import type { DeploymentDto, MilestoneProgressDto, ProjectDetailDto, ReleaseDto, StatusDto, TaskShippingDto } from "./contracts";
 import { workflowOf } from "./statuses";
 
 /** Board settings (ST-93); release columns are on unless turned off. */
@@ -76,3 +76,39 @@ export function shippingLabel(shipping: TaskShippingDto | null | undefined): str
       return shipping.release ? `${shipping.release.title} · ${shipping.release.status.name.toLowerCase()}` : "in a release";
   }
 }
+
+/** One app × environment of a release (ST-94): its latest deployment, if any, and how many there were. */
+export interface DeploymentCell {
+  appId: string;
+  app: string;
+  environment: string;
+  /** The app's last environment, which Released waits for. */
+  production: boolean;
+  latest: DeploymentDto | null;
+  count: number;
+}
+
+/**
+ * A release's deployments per app and environment, apps in the release's order and environments in
+ * each app's deploy order. Apps without environments (a CLI) have no cells.
+ */
+export function deploymentCells(release: Pick<ReleaseDto, "apps" | "deployments">): DeploymentCell[] {
+  const deployments = release.deployments ?? [];
+  return release.apps.flatMap((app) =>
+    app.environments.map((environment, i): DeploymentCell => {
+      const here = deployments.filter((d) => d.appId === app.appId && d.environment === environment);
+      return {
+        appId: app.appId,
+        app: app.name,
+        environment,
+        production: i === app.environments.length - 1,
+        latest: here[0] ?? null,
+        count: here.length,
+      };
+    }),
+  );
+}
+
+/** The apps a release still has to deploy to production before it can be marked Released (ST-94). */
+export const appsAwaitingProduction = (release: Pick<ReleaseDto, "apps" | "deployments">): DeploymentCell[] =>
+  deploymentCells(release).filter((c) => c.production && !c.latest);

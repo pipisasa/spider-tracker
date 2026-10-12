@@ -102,3 +102,35 @@ export const releaseApps = pgTable(
   },
   (t) => [primaryKey({ columns: [t.releaseId, t.appId] }), index("release_apps_app_idx").on(t.appId)],
 );
+
+// Deployments (ST-94): one row per deploy of a release's app to one of the app's environments,
+// written by `spider release deploy` (which the manual deploy scripts call). The environment is
+// checked against the app's list when it is recorded; later edits to the list keep the history.
+export const deployments = pgTable(
+  "deployments",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    releaseId: uuid("release_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    appId: uuid("app_id")
+      .notNull()
+      .references(() => apps.id, { onDelete: "cascade" }),
+    // One of the app's environments, e.g. "staging" or "prod".
+    environment: text("environment").notNull(),
+    // The full (or abbreviated) commit SHA that was deployed, lower-case.
+    commitSha: text("commit_sha").notNull(),
+    // Who deployed it; null once that actor is gone.
+    actorId: uuid("actor_id").references(() => actors.id, { onDelete: "set null" }),
+    // Where it was recorded from: cli, mcp, api, ui (as activity sources).
+    source: text("source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("deployments_release_idx").on(t.releaseId, t.appId, t.environment, t.createdAt),
+    index("deployments_app_idx").on(t.appId),
+  ],
+);
