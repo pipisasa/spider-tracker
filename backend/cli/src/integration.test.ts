@@ -396,6 +396,15 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "view", key)).stdout).toContain("Tags: cli");
     expect((await spider("task", "update", key, "--tag", "nope")).stderr).toContain("Existing tags: cli");
     // An empty --tag clears the tags, like --description "".
+
+    await spider("task", "create", "--project", "SPI", "--title", "Tagged urgent", "--tag", "cli", "--priority", "1");
+    const listed = await spider("task", "list", "--project", "SPI", "--tag", "CLI", "--priority", "1,high", "--json");
+    expect((listed.json().items as { title: string }[]).map((t) => t.title)).toEqual(["Tagged urgent"]);
+    expect((await spider("task", "list", "--project", "SPI", "--tag", "cli", "--priority", "urgent")).stdout).toContain("Tagged urgent");
+    expect((await spider("task", "list", "--project", "SPI", "--tag", "cli", "--priority", "4")).stdout).toBe("No tasks\n");
+    const unknown = await spider("task", "list", "--project", "SPI", "--tag", "nope");
+    expect(unknown.code).toBe(2);
+    expect(unknown.stderr).toContain("Existing tags: cli");
     expect((await spider("task", "update", key, "--tag", "", "--json")).json()).toMatchObject({ tags: [] });
   });
 
@@ -415,6 +424,9 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "view", key, "--json")).json()).toMatchObject({ assignees: ["gone (deactivated)"] });
     expect((await spider("task", "list", "--project", "SPI")).stdout).toContain("@gone (deactivated)");
     expect((await spider("task", "update", key, "--assign", "gone")).code).not.toBe(0);
+    // Orphaned assignments can be found by the deactivated handle (ST-65).
+    const orphaned = await spider("task", "list", "--project", "SPI", "--assignee", "@gone", "--json");
+    expect((orphaned.json().items as { key: string }[]).map((t) => t.key)).toEqual([key]);
   });
 
   test("sub-tasks: --parent on create, shown by view, cleared with an empty --parent", async () => {
