@@ -16,6 +16,7 @@ import type {
   ListResponse,
   ProjectDetailDto,
   ProjectDto,
+  SavedViewDto,
   SubtaskDto,
   TaskDto,
 } from "@repo/core/contracts";
@@ -25,10 +26,12 @@ import type {
   CreateDocumentInput,
   CreateInvitationInput,
   CreateProjectInput,
+  CreateSavedViewInput,
   CreateTagInput,
   CreateTaskInput,
   UpdateAgentInput,
   UpdateProjectInput,
+  UpdateSavedViewInput,
   UpdateDocumentInput,
   MoveDocumentInput,
   UpdateTaskInput,
@@ -60,6 +63,8 @@ export const keys = {
     ["orgs", org, "projects", key] as const,
   tasks: (org: string, key: string) =>
     ["orgs", org, "projects", key, "tasks"] as const,
+  views: (org: string, key: string) =>
+    ["orgs", org, "projects", key, "views"] as const,
   task: (org: string, taskKey: string) =>
     ["orgs", org, "tasks", taskKey] as const,
   comments: (org: string, taskKey: string) =>
@@ -654,5 +659,55 @@ export function useDeleteDocument(org: string) {
       qc.removeQueries({ queryKey: keys.document(org, id) });
       void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
     },
+  });
+}
+
+export const viewsQuery = (org: string, projectKey: string) =>
+  queryOptions({
+    queryKey: keys.views(org, projectKey),
+    queryFn: async () =>
+      (
+        await api<ListResponse<SavedViewDto>>(
+          `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/views`,
+        )
+      ).items,
+  });
+
+export function useCreateView(org: string, projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateSavedViewInput) =>
+      api<SavedViewDto>(
+        `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/views`,
+        { method: "POST", body: JSON.stringify(input) },
+      ),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: keys.views(org, projectKey) }),
+  });
+}
+
+export function useUpdateView(org: string, projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: UpdateSavedViewInput & { id: string }) =>
+      api<SavedViewDto>(
+        `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/views/${id}`,
+        { method: "PATCH", body: JSON.stringify(input) },
+      ),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: keys.views(org, projectKey) }),
+  });
+}
+
+export function useDeleteView(org: string, projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<void>(
+        `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/views/${id}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: keys.views(org, projectKey) }),
   });
 }
