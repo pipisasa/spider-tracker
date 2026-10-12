@@ -38,6 +38,7 @@ import {
   createReleaseInput,
   updateReleaseInput,
   releaseTasksInput,
+  releaseChangelogInput,
 } from "@repo/core/schemas";
 import { z } from "zod";
 
@@ -251,6 +252,46 @@ const schemas: Record<string, JsonSchema> = {
   CreateReleaseInput: fromZod(createReleaseInput),
   UpdateReleaseInput: fromZod(updateReleaseInput),
   ReleaseTasksInput: fromZod(releaseTasksInput),
+  ReleaseChangelog: object({
+    release: object({ id: string({ format: "uuid" }), key: string(), title: string(), url: webUrl("task") }),
+    apps: {
+      type: "array",
+      items: object({
+        name: string({ examples: ["web"] }),
+        repo: string(),
+        version: string({ examples: ["2026.10.13"] }),
+        tag: string({ examples: ["web-2026.10.13", "cli-v0.1.8"] }),
+      }),
+    },
+    grouped: { type: "boolean", description: "Entries carry the apps they touch, so markdown has a section per app" },
+    entries: {
+      type: "array",
+      description: "The included tasks (a project-scoped agent: only its projects'), by project key and number",
+      items: object({
+        key: string(),
+        title: string(),
+        projectKey: string(),
+        whatChanged: nullable("string", {
+          description: 'The "What changed" section of the handoff note: the latest comment with one by an assignee, else by anyone',
+        }),
+        handoff: {
+          oneOf: [object({ commentId: string({ format: "uuid" }), authorId: string({ format: "uuid" }), createdAt: string({ format: "date-time" }) }), { type: "null" }],
+        },
+        apps: { type: "array", items: string(), description: "The release's apps the task touches; empty when unknown" },
+        url: webUrl("task"),
+      }),
+    },
+    markdown: string({ description: "The generated changelog: a ### section per app when grouped" }),
+    description: object({
+      state: string({
+        enum: ["missing", "current", "outdated", "edited"],
+        description: "The description's changelog block: none, the same as markdown, generated earlier, or edited by hand",
+      }),
+      content: nullable("string"),
+    }),
+    written: nullable("string", { enum: ["added", "replaced", "unchanged", null], description: "What a write did; null for a read" }),
+  }),
+  ReleaseChangelogInput: fromZod(releaseChangelogInput),
   Presence: object({
     taskKey: string(),
     actorId: string({ format: "uuid" }),
@@ -1430,6 +1471,22 @@ const paths = {
       operationId: "removeFromRelease",
       summary: "Take a task out of a release that hasn't shipped",
       responses: { "200": ok("The release", "Release"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/releases/{taskKey}/changelog": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "getReleaseChangelog",
+      summary:
+        "The release's changelog, generated from its included tasks (title plus the \"What changed\" part of each handoff note), grouped by app for a one-app release, and how the description's changelog block compares",
+      responses: { "200": ok("Changelog", "ReleaseChangelog"), ...errors },
+    },
+    post: {
+      operationId: "writeReleaseChangelog",
+      summary:
+        "Write the generated changelog into the release's description: replace its changelog block or append one, keeping the rest. taskApps (task key → app names) groups it by app; a block edited by hand is 409 unless force",
+      requestBody: body("ReleaseChangelogInput"),
+      responses: { "200": ok("Written changelog", "ReleaseChangelog"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/release-candidates": {

@@ -18,6 +18,8 @@
     "./urls": "./src/urls.ts",
     "./views": "./src/views.ts",
     "./board": "./src/board.ts",
+    "./release-notes": "./src/release-notes.ts",
+    "./release-check": "./src/release-check.ts",
     "./git-automation-rules": "./src/git-automation-rules.ts"
   },
   "scripts": {

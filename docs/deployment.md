@@ -52,7 +52,19 @@ bun run release:cli             # build, then gh release create cli-v<version> -
 
 The release (binaries plus `SHA256SUMS`, which `install.sh` and `spider update` verify) is tagged at HEAD, so the script refuses a dirty working tree or a HEAD that is on no remote branch; `--dry-run` skips both checks.
 
-**Release notes** live in [CHANGELOG.md](../CHANGELOG.md) (CLI, plugin, MCP server): add user-visible changes, especially breaking output changes, under **Unreleased**, and move them under the version when bumping it; paste the CLI's into the GitHub release.
+**Release notes** live in [CHANGELOG.md](../CHANGELOG.md) (CLI, plugin, MCP server): add user-visible changes, especially breaking output changes, under **Unreleased**, and move them under the version when bumping it.
+
+**With a tracker release** (ST-95), the release owner works from a clone of the repo on an up-to-date `main`:
+
+```sh
+bun run spider release check ST-120                 # commits since each app's last tag vs the release: left-out candidates, tasks without commits, apps changed but not in it (exit 1 on findings)
+bun run spider release changelog ST-120 --write     # changelog from the handoff notes, by app, into the release's description; edit it there
+bun run spider release notes ST-120 --append        # adds the release's section to CHANGELOG.md after Unreleased; commit and push it
+bun run release:cli --release ST-120                # cli-v<version> with the cli section of the changelog as its notes (the release's cli version must match package.json)
+bun run spider task done ST-120                     # Released: marks its tasks shipped
+```
+
+`release changelog --write` never overwrites a changelog block edited by hand (`--force` does). Apps deployed without a script that takes notes (web, api) get their GitHub release by hand if wanted: `gh release create web-2026.10.13 --notes "$(bun run spider release notes ST-120 --app web)"`. The server can't push tags or create GitHub releases (no GitHub write access), so these steps stay local.
 
 `spider update` and the passive "new spider available" notice look for the release marked latest with a `cli-v*` tag, so keep CLI releases `--latest` (or the CLI falls back to the newest `cli-v*` release in the list).
 

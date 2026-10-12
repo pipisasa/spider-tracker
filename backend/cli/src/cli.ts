@@ -10,6 +10,8 @@ import type {
   GitAutomationSettings,
   ProjectDetailDto,
   ProjectDto,
+  ReleaseChangelogDto,
+  ReleaseCheckDto,
   ReleaseDto,
   StatusDto,
   RepoDto,
@@ -25,6 +27,8 @@ import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/cor
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import { shippingLabel } from "@repo/core/board";
+import { appNotes, changelogBlock, changelogFileSection, insertReleaseSection, regroupChangelog, releaseTag } from "@repo/core/release-notes";
+import { checkRelease, taskAppsFrom } from "@repo/core/release-check";
 import {
   actorHandle,
   commentView,
@@ -105,6 +109,7 @@ import {
   type GitRunner,
 } from "./git";
 import { isCompiled } from "./self-update";
+import { releaseRepoHere, scanRepo, type RepoScan } from "./release-git";
 import { checkSession, planLines, teamAgents, windowArgv } from "./claude-team";
 import { TMUX_MISSING, openWindows, runTmux, shellQuote, tmuxPlan, tmuxVersion, windowCommand, windowNames, type TmuxRunner } from "./tmux";
 import { parseSourceDoc, publishDocuments, publishLines, type SourceDoc } from "./publish";
@@ -726,6 +731,49 @@ function reportLines(report: UpdateReport): string {
   for (const a of outdated) lines.push(`  ${a.path} (${a.version ? `v${a.version}` : "before version markers"})`);
   for (const a of unmanaged) lines.push(`  ${a.path} (no generated section; left as is)`);
   if (cli.outdated || plugin.outdated || outdated.length) lines.push("Run: spider update");
+  return lines.join("\n");
+}
+
+/** What `spider release changelog` says about the description, on stderr. */
+function changelogStatus(changelog: ReleaseChangelogDto, groupNote: string | null): string {
+  const key = changelog.release.key;
+  const lines = groupNote ? [groupNote] : [];
+  if (changelog.written === "added" || changelog.written === "replaced") lines.push(`Wrote the changelog to ${key}'s description (${changelog.written}).`);
+  else if (changelog.written === "unchanged") lines.push(`${key}'s description already has this changelog.`);
+  else if (changelog.description.state === "missing") lines.push(`Not in ${key}'s description yet: run with --write to add it.`);
+  else if (changelog.description.state === "outdated") lines.push(`${key}'s description has an older changelog: run with --write to replace it.`);
+  else if (changelog.description.state === "edited") lines.push(`${key}'s changelog was edited by hand; --write --force would replace the edits.`);
+  else lines.push(`${key}'s description has this changelog.`);
+  return lines.join("\n");
+}
+
+/** `spider release check` for people: each app's range, then the findings. */
+function checkLines(check: ReleaseCheckDto): string {
+  const lines = [`${check.release.key}  ${check.release.title}  ${check.repo}`];
+  const label = (a: ReleaseCheckDto["apps"][number]) => (a.inRelease ? `${a.name} ${a.version ?? ""}` : `${a.name} (not in the release)`);
+  const width = Math.max(0, ...check.apps.map((a) => label(a).length));
+  for (const app of check.apps) {
+    lines.push(
+      `  ${label(app).padEnd(width)}  ${app.since ?? "(never tagged)"}..${app.until}  ${app.commits} commit${app.commits === 1 ? "" : "s"}${app.tasks.length ? `  ${app.tasks.join(", ")}` : ""}`,
+    );
+  }
+  if (check.leftOut.length) {
+    lines.push("Left out (Done, in no release, with commits in the release's apps):");
+    for (const t of check.leftOut) lines.push(`  ${t.key}  ${t.title}  (${t.apps.join(", ")}: ${t.commits.join(", ")})`);
+  }
+  if (check.noCommits.length) {
+    lines.push("Included, but no commits mention them:");
+    for (const t of check.noCommits) lines.push(`  ${t.key}  ${t.title}`);
+  }
+  if (check.appsNotInRelease.length) {
+    lines.push("Changed, but not in the release:");
+    for (const a of check.appsNotInRelease) {
+      lines.push(`  ${a.name}  ${a.commits} commit${a.commits === 1 ? "" : "s"} since ${a.since ?? "the start (never tagged)"}${a.tasks.length ? `: ${a.tasks.join(", ")}` : ""}`);
+    }
+  }
+  for (const a of check.skippedApps) lines.push(`Not checked: ${a.name} (${a.repo}); run it in a clone of that repo`);
+  const findings = check.leftOut.length + check.noCommits.length + check.appsNotInRelease.length;
+  lines.push(check.ok ? "OK: the release matches the commits" : `${findings} finding${findings === 1 ? "" : "s"}`);
   return lines.join("\n");
 }
 
@@ -1990,6 +2038,142 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     });
     const views = await Promise.all(items.map(describe));
     output(opts, { items: views }, () => (views.length ? taskLines(views) : "No candidates: every Done task with code is in a release"));
+  });
+
+  // Changelog, notes and the git check (ST-95). Local git, through the injected runner, maps tasks to
+  // apps: commit messages and merged branch names give task keys, changed files give apps.
+  /** The release, the repo this folder is a clone of, and each app's range and commits. */
+  const scanHere = async (release: ReleaseDto, options: { ref?: string; since?: string } = {}): Promise<RepoScan> => {
+    const repo = releaseRepoHere(release, cwd, git);
+    const { sdk, org } = conn();
+    return scanRepo(release, await (await sdk()).repos.get(await org(), repo), cwd, git, options);
+  };
+  const projectKeys = async () => {
+    const { sdk, org } = conn();
+    return new Set((await (await sdk()).projects.list(await org())).items.map((p) => p.key));
+  };
+  /**
+   * The changelog grouped by app from local git when this folder is a clone of the release's repo;
+   * otherwise as the server groups it, with a note saying why.
+   */
+  const changelogFor = async (release: ReleaseDto, useGit: boolean) => {
+    const { sdk, org } = conn();
+    const changelog = await (await sdk()).releases.changelog(await org(), release.key);
+    if (!useGit || changelog.apps.length === 0) return { changelog, taskApps: undefined, note: null };
+    try {
+      const scan = await scanHere(release);
+      const touched = taskAppsFrom(scan.ranges.filter((r) => r.inRelease), await projectKeys());
+      const taskApps = Object.fromEntries(changelog.entries.map((e) => [e.key, touched[e.key] ?? []]));
+      return { changelog: regroupChangelog(changelog, taskApps), taskApps, note: null };
+    } catch (err) {
+      if (!(err instanceof CliError) || err.exitCode !== EXIT.usage) throw err;
+      return { changelog, taskApps: undefined, note: `Not grouped by app from git: ${err.message}` };
+    }
+  };
+
+  withJson(
+    releaseCommand
+      .command("changelog")
+      .description("the release's changelog from its tasks' handoff notes, by app (from local git); --write saves it into the description")
+      .argument("<key>", "the release")
+      .option("--write", "save it into the release's description (replaces its changelog block, keeps the rest)")
+      .option("--force", "with --write: replace a changelog block edited by hand")
+      .option("--no-git", "don't read local git: group by app only for a one-app release"),
+  ).action(async (key: string, opts: JsonOption & { write?: boolean; force?: boolean; git: boolean }) => {
+    if (opts.force && !opts.write) throw usageError("--force goes with --write");
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const release = await client.releases.get(await org(), taskKey(key, cwd, git));
+    const generated = await changelogFor(release, opts.git);
+    const changelog = opts.write
+      ? await client.releases.writeChangelog(await org(), release.key, { taskApps: generated.taskApps, force: opts.force })
+      : generated.changelog;
+    if (!opts.json) stderr.write(`${changelogStatus(changelog, generated.note)}\n`);
+    output(opts, changelog, () => changelog.markdown);
+  });
+
+  withJson(
+    releaseCommand
+      .command("notes")
+      .description("release notes: the changelog in the release's description (else generated), for one app's GitHub release or appended to CHANGELOG.md")
+      .argument("<key>", "the release")
+      .option("--app <name>", "only this app's section, e.g. for the GitHub release of its tag")
+      .option("--append [file]", "add the release's section to a changelog file (default: CHANGELOG.md at the repository root)"),
+  ).action(async (key: string, opts: JsonOption & { app?: string; append?: string | boolean }) => {
+    if (opts.app !== undefined && opts.append !== undefined) throw usageError("--append adds the whole release; leave out --app");
+    const { sdk, org } = conn();
+    const release = await (await sdk()).releases.get(await org(), taskKey(key, cwd, git));
+    const block = changelogBlock(release.description);
+    let markdown: string;
+    if (block) markdown = block.content;
+    else {
+      const generated = await changelogFor(release, true);
+      markdown = generated.changelog.markdown;
+      if (!opts.json) {
+        stderr.write(`${release.key}'s description has no changelog yet; generated it (save it with spider release changelog ${release.key} --write).\n`);
+        if (generated.note) stderr.write(`${generated.note}\n`);
+      }
+    }
+
+    let notes = markdown;
+    let tag: string | null = null;
+    const appName = opts.app?.trim().toLowerCase();
+    if (appName !== undefined) {
+      const app = release.apps.find((a) => a.name === appName);
+      if (!app) throw usageError(`${release.key} doesn't ship an app named ${appName}${release.apps.length ? ` (it ships ${release.apps.map((a) => a.name).join(", ")})` : ""}`);
+      tag = releaseTag(app, app.version);
+      const section = appNotes(markdown, appName);
+      if (section === null && !opts.json) stderr.write(`The changelog has no ${appName} section; these are the whole release's notes.\n`);
+      notes = section ?? markdown;
+    }
+
+    let appended: { path: string; inserted: boolean } | null = null;
+    if (opts.append !== undefined) {
+      const root = git(["rev-parse", "--show-toplevel"], cwd);
+      const path =
+        typeof opts.append === "string" ? resolvePath(cwd, opts.append) : join(root.exitCode === 0 && root.stdout.trim() ? root.stdout.trim() : cwd, "CHANGELOG.md");
+      const current = await readFile(path, "utf8").catch((err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") return "";
+        throw err;
+      });
+      const date = (release.shippedAt ?? new Date().toISOString()).slice(0, 10);
+      const result = insertReleaseSection(current, release, changelogFileSection(release, date, markdown));
+      if (result.inserted) await writeFile(path, result.text);
+      appended = { path, inserted: result.inserted };
+      if (!opts.json) stderr.write(result.inserted ? `Added ${release.key} to ${path}\n` : `${path} already has ${release.key}; left it as it is\n`);
+    }
+    output(
+      opts,
+      { release: { key: release.key, title: release.title, url: release.url ?? null }, app: appName ?? null, tag, source: block ? "description" : "generated", markdown: notes, appended },
+      () => notes,
+    );
+  });
+
+  withJson(
+    releaseCommand
+      .command("check")
+      .description("compare each app's commits since its previous tag with the release's tasks (local git); exit 1 on findings")
+      .argument("<key>", "the release")
+      .option("--ref <branch>", "check up to this branch or commit when a release tag doesn't exist yet (default: the repo's default branch)")
+      .option("--since <ref>", "start of the range for apps that were never tagged (default: their whole history)"),
+  ).action(async (key: string, opts: JsonOption & { ref?: string; since?: string }) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    const release = await client.releases.get(slug, taskKey(key, cwd, git));
+    const scan = await scanHere(release, { ref: opts.ref, since: opts.since });
+    const candidates = (await client.releases.candidates(slug, { release: release.key })).items;
+    const check = checkRelease({
+      release: { key: release.key, title: release.title },
+      repo: scan.repo,
+      ranges: scan.ranges,
+      included: release.tasks.map((t) => ({ key: t.key, title: t.title })),
+      candidates: candidates.map((t) => ({ key: t.key, title: t.title })),
+      projects: await projectKeys(),
+      skippedApps: scan.skippedApps,
+    });
+    output(opts, check, () => checkLines(check));
+    if (!check.ok) result.exitCode = EXIT.unexpected;
   });
 
   const task = program.command("task").description("work with tasks");

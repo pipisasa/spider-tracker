@@ -3,14 +3,23 @@
 // (`cli-v<version>`, marked latest, tagged at HEAD) with a SHA256SUMS file that
 // web/app/public/install.sh downloads and verifies.
 //
-//   bun run release:cli            build and upload (needs `gh auth login`)
-//   bun run release:cli --dry-run  build only (binaries and SHA256SUMS)
+//   bun run release:cli                     build and upload (needs `gh auth login`)
+//   bun run release:cli --dry-run           build only (binaries and SHA256SUMS)
+//   bun run release:cli --release ST-120    use the cli section of release ST-120's changelog as
+//                                           the release notes (`spider release notes ST-120 --app cli`;
+//                                           ST-95); its cli version must match package.json
 
 import { rmSync } from "node:fs";
 import { basename, join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 const dryRun = process.argv.includes("--dry-run");
+const releaseFlag = process.argv.indexOf("--release");
+const releaseKey = releaseFlag >= 0 ? process.argv[releaseFlag + 1] : undefined;
+if (releaseFlag >= 0 && (!releaseKey || releaseKey.startsWith("-"))) {
+  console.error("--release needs the release's task key, e.g. --release ST-120");
+  process.exit(2);
+}
 const targets = [
   "darwin-arm64",
   "darwin-x64",
@@ -45,6 +54,23 @@ async function output(cmd: string[]): Promise<string> {
 }
 
 const head = await output(["git", "rev-parse", "HEAD"]);
+
+// The notes of the tracker release (ST-95): the cli section of its changelog, as the spider CLI
+// prints it (signed in as SPIDER_AGENT / SPIDER_TOKEN / the default saved agent).
+let changes = "";
+if (releaseKey) {
+  const notes = JSON.parse(
+    await output(["bun", "backend/cli/src/index.ts", "release", "notes", releaseKey, "--app", "cli", "--json"]),
+  ) as { tag: string | null; markdown: string };
+  if (notes.tag !== tag) {
+    console.error(
+      `${releaseKey} ships the cli as ${notes.tag ?? "nothing"}, but backend/cli/package.json is ${version} (${tag}). Fix one of them first.`,
+    );
+    process.exit(1);
+  }
+  changes = notes.markdown.trim();
+  if (dryRun) console.log(`Release notes from ${releaseKey}:\n\n${changes}\n`);
+}
 
 if (!dryRun) {
   if ((await output(["git", "status", "--porcelain"])) !== "") {
@@ -114,6 +140,7 @@ if (dryRun) {
 const notes = [
   `spider CLI ${version}.`,
   "",
+  ...(changes ? [changes, ""] : []),
   "Install or update:",
   "",
   "```sh",
@@ -137,3 +164,8 @@ const code = await run([
 ]);
 if (code !== 0) process.exit(code);
 console.log(`Published ${tag}.`);
+if (releaseKey) {
+  console.log(
+    `Next: mark ${releaseKey} Released once every app it ships is out (bun run spider task done ${releaseKey}).`,
+  );
+}
