@@ -458,6 +458,17 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "view", "00000000-0000-7000-8000-000000000000")).code).toBe(3);
   });
 
+  test("docs: move to the organization and back to a project", async () => {
+    stdin = "# Movable";
+    const created = (await spider("doc", "create", "--title", "Movable", "--project", "SPI", "--file", "-", "--json")).json();
+    const id = created.id as string;
+    expect((await spider("doc", "move", id, "--org")).stdout).toBe("Moved Movable to the organization\n");
+    expect((await spider("doc", "move", id, "--project", "spi", "--json")).json()).toMatchObject({ id, projectKey: "SPI", version: 1 });
+    expect((await spider("doc", "move", id)).code).toBe(2);
+    expect((await spider("doc", "move", id, "--org", "--project", "SPI")).code).toBe(2);
+    expect((await spider("doc", "move", id, "--project", "NOPE")).code).toBe(3);
+  });
+
   test("projects: a member agent is refused; an admin creates, views, updates, archives and restores", async () => {
     const refused = await spider("project", "create", "--key", "OPS", "--name", "Ops", "--json");
     expect(refused.code).toBe(4);

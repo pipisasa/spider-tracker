@@ -35,6 +35,7 @@ import {
   getDocumentVersion,
   listDocuments,
   listDocumentVersions,
+  moveDocument,
   updateDocument,
   getProject,
   getTask,
@@ -250,6 +251,11 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.patch("/documents/:documentId", async (c) =>
     c.json(await updateDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
+  );
+
+  // POST { project: "KEY" | null }: move to a project, or make the document organization-wide.
+  app.post("/documents/:documentId/move", async (c) =>
+    c.json(await moveDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
   );
 
   app.delete("/documents/:documentId", async (c) => {

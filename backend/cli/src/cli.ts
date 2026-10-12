@@ -1408,6 +1408,22 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     );
   });
 
+  withJson(
+    doc
+      .command("move")
+      .description("move a document to another project, or make it organization-wide; keeps its id and versions")
+      .argument("<id>")
+      .option("--project <key>", "target project")
+      .option("--org", "make the document organization-wide"),
+  ).action(async (id: string, opts: JsonOption & { project?: string; org?: boolean }) => {
+    if ((opts.project !== undefined) === (opts.org === true)) {
+      throw usageError("Pass exactly one of --project <key> or --org");
+    }
+    const { sdk, org } = conn();
+    const moved = await (await sdk()).documents.move(await org(), id, { project: opts.org ? null : (opts.project ?? "").toUpperCase() });
+    output(opts, moved, () => `Moved ${moved.title} to ${moved.projectKey ?? "the organization"}`);
+  });
+
   program
     .command("channel")
     .description("run as a Claude Code channel (stdio MCP): pushes your inbox into the session")

@@ -22,6 +22,7 @@ import { publish } from "./events";
 import {
   createDocumentInput,
   documentListQuery,
+  moveDocumentInput,
   updateDocumentInput,
 } from "./schemas";
 import { findTask } from "./tasks";
@@ -60,7 +61,11 @@ const toDocumentDto = (row: DocumentRow, scope: Scope): DocumentDto => ({
 
 async function findProject(db: Db | Tx, viewer: Viewer, key: string) {
   const [project] = await db
-    .select({ id: projects.id, key: projects.key })
+    .select({
+      id: projects.id,
+      key: projects.key,
+      archivedAt: projects.archivedAt,
+    })
     .from(projects)
     .where(
       and(
@@ -72,6 +77,15 @@ async function findProject(db: Db | Tx, viewer: Viewer, key: string) {
   if (!project || !inScope(await projectScope(db, viewer), project.id))
     throw new DomainError("not_found", `Project ${key} not found`);
   return project;
+}
+
+function assertActive(project: { key: string; archivedAt: Date | null }) {
+  if (project.archivedAt)
+    throw new DomainError("validation", `Project ${project.key} is archived`);
+}
+
+async function assertNotArchived(db: Db | Tx, viewer: Viewer, key: string) {
+  assertActive(await findProject(db, viewer, key));
 }
 
 /** Documents with their scope keys; those on deleted tasks are hidden. */
@@ -162,11 +176,13 @@ export async function createDocument(
           `Task ${data.task} isn't in project ${data.project}`,
         );
       }
+      await assertNotArchived(tx, ctx, projectKey);
       projectId = task.projectId;
       taskId = task.id;
       scope = { projectKey, taskKey: `${projectKey}-${task.number}` };
     } else if (data.project) {
       const project = await findProject(tx, ctx, data.project);
+      assertActive(project);
       projectId = project.id;
       scope = { projectKey: project.key, taskKey: null };
     }
@@ -312,6 +328,63 @@ export async function updateDocument(
     });
     await announce(tx, ctx, "document.changed", updated.id, scope);
     return toDocumentDto(updated, scope);
+  });
+}
+
+/**
+ * Moves a document to another project, or to the whole organization (`project: null`).
+ * The id, versions and content stay; only the scope changes, and no version is added.
+ * A task document leaves its task (it becomes a plain document of the target); moving
+ * it to its own project just detaches it. Like every write, both the document's current
+ * project and the target must be in the actor's scope.
+ */
+export async function moveDocument(
+  db: Db,
+  ctx: ActorContext,
+  id: string,
+  input: unknown,
+): Promise<DocumentDto> {
+  assertCanWrite(ctx);
+  const data = parseInput(moveDocumentInput, input);
+
+  return db.transaction(async (tx) => {
+    const { document: current, scope: from } = await findDocument(
+      tx,
+      ctx,
+      id,
+      true,
+    );
+    const target = data.project
+      ? await findProject(tx, ctx, data.project)
+      : null;
+    // Moving out of an archived project is fine; moving into one is not.
+    if (target && target.id !== current.projectId) assertActive(target);
+    const projectId = target?.id ?? null;
+    if (projectId === current.projectId && current.taskId === null)
+      return toDocumentDto(current, from);
+
+    const [updated] = await tx
+      .update(documents)
+      .set({ projectId, taskId: null })
+      .where(eq(documents.id, current.id))
+      .returning();
+    if (!updated) throw new Error("Failed to move document");
+
+    const to: Scope = { projectKey: target?.key ?? null, taskKey: null };
+    await recordActivity(tx, ctx, {
+      entityType: "document",
+      entityId: updated.id,
+      action: "document.moved",
+      changes: {
+        title: updated.title,
+        project: [from.projectKey, to.projectKey],
+        ...(from.taskKey ? { task: [from.taskKey, null] } : {}),
+      },
+    });
+    // Viewers of the old scope need to refresh as well as those of the new one.
+    await announce(tx, ctx, "document.changed", updated.id, from);
+    await announce(tx, ctx, "document.changed", updated.id, to);
+    return toDocumentDto(updated, to);
   });
 }
 

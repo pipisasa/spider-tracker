@@ -28,6 +28,7 @@ import type {
   CreateTaskInput,
   UpdateAgentInput,
   UpdateDocumentInput,
+  MoveDocumentInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
 import {
@@ -542,6 +543,22 @@ export function useUpdateDocument(org: string, id: string) {
     onSuccess: (document) => {
       qc.setQueryData(keys.document(org, id), document);
       void qc.invalidateQueries({ queryKey: keys.documentVersions(org, id) });
+      void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
+    },
+  });
+}
+
+/** Moves a document to a project, or to the organization (`project: null`); id and versions stay. */
+export function useMoveDocument(org: string, id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MoveDocumentInput) =>
+      api<DocumentDto>(`${orgPath(org)}/documents/${id}/move`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (document) => {
+      qc.setQueryData(keys.document(org, id), document);
       void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
     },
   });

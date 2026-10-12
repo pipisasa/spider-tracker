@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,7 +20,9 @@ import {
 import {
   documentsQuery,
   membersQuery,
+  projectsQuery,
   useCreateDocument,
+  useMoveDocument,
   type DocumentScope,
 } from "@/lib/work";
 import type { DocumentFormat, DocumentSummaryDto } from "@repo/core/contracts";
@@ -28,6 +31,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { FileCodeIcon, FileTextIcon, PlusIcon } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { toast } from "sonner";
 
 // Documents (ST-21): lists, the "new document" dialog and the task page section.
 
@@ -82,10 +86,16 @@ export function DocumentList({
               <DocumentIcon format={d.format} />
               <span className="min-w-0 flex-1 truncate">{d.title}</span>
               {showScope && (
-                <span className="w-20 shrink-0 text-xs text-muted-foreground">
-                  {d.taskKey ?? d.projectKey ?? "Organization"}
+                <span className="flex w-28 shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                  {d.projectKey && (
+                    <Badge variant="secondary">{d.projectKey}</Badge>
+                  )}
+                  {d.taskKey ?? (d.projectKey ? "" : "Organization")}
                 </span>
               )}
+              <span className="shrink-0 text-xs text-muted-foreground">
+                v{d.version}
+              </span>
               <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
                 {author ? `${author.name} · ` : ""}
                 {formatDateTime(d.updatedAt)}
@@ -236,5 +246,78 @@ export function TaskDocuments({
         onOpenChange={setOpen}
       />
     </section>
+  );
+}
+
+const ORG_VALUE = "__org";
+
+/** Picks a project (or the whole organization) to move a document to. */
+export function MoveDocumentDialog({
+  orgSlug,
+  doc,
+  open,
+  onOpenChange,
+}: {
+  orgSlug: string;
+  doc: DocumentSummaryDto;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
+  const [target, setTarget] = useState(doc.projectKey ?? ORG_VALUE);
+  const move = useMoveDocument(orgSlug, doc.id);
+  const unchanged = target === (doc.projectKey ?? ORG_VALUE) && !doc.taskKey;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    move.mutate(
+      { project: target === ORG_VALUE ? null : target },
+      {
+        onSuccess: (moved) => {
+          onOpenChange(false);
+          toast.success(
+            `Moved ${moved.title} to ${moved.projectKey ?? "the organization"}`,
+          );
+        },
+        onError: (err) => toast.error(err.message),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <DialogHeader>
+            <DialogTitle>Move document</DialogTitle>
+            <DialogDescription>
+              Keeps the document&apos;s versions and history.
+              {doc.taskKey && ` It will no longer be attached to ${doc.taskKey}.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="move-document-target">Move to</Label>
+            <Select value={target} onValueChange={setTarget}>
+              <SelectTrigger id="move-document-target" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ORG_VALUE}>Organization-wide</SelectItem>
+                {projects.map((p) => (
+                  <SelectItem key={p.key} value={p.key}>
+                    {p.name} ({p.key})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={move.isPending || unchanged}>
+              {move.isPending ? "Moving…" : "Move"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
