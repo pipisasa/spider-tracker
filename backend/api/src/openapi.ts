@@ -8,6 +8,11 @@ import {
   createDocumentCommentInput,
   resolveDocumentCommentInput,
   createTagInput,
+  attachRepoInput,
+  createAppInput,
+  createRepoInput,
+  updateAppInput,
+  updateRepoInput,
   createSavedViewInput,
   updateSavedViewInput,
   viewFiltersSchema,
@@ -197,6 +202,34 @@ const schemas: Record<string, JsonSchema> = {
   Tag: object({ id: string({ format: "uuid" }), name: string(), color: nullable("string") }),
   TagList: listOf("Tag"),
   CreateTagInput: fromZod(createTagInput),
+  App: object({
+    id: string({ format: "uuid" }),
+    repoId: string({ format: "uuid" }),
+    repo: string({ examples: ["pipisasa/spider-tracker"], description: "The repo's owner/name" }),
+    name: string({ examples: ["web"] }),
+    path: string({ examples: ["web/app"], description: 'Its folder in the repo ("." for the whole repo)' }),
+    sharedPaths: { type: "array", items: string(), description: 'Shared packages it depends on, e.g. "packages/core"' },
+    versioning: string({ enum: ["date", "semver"] }),
+    environments: { type: "array", items: string(), description: 'Deploy order, e.g. ["staging", "prod"]; empty for a CLI' },
+    createdAt: string({ format: "date-time" }),
+  }),
+  Repo: object({
+    id: string({ format: "uuid" }),
+    owner: string(),
+    name: string(),
+    fullName: string({ examples: ["pipisasa/spider-tracker"] }),
+    defaultBranch: string(),
+    githubInstallationId: nullable("integer", { description: "Set once the GitHub App is installed on the repo; null for repos added by URL" }),
+    projects: { type: "array", items: string(), description: "Keys of the projects it is attached to (those the caller can see)" },
+    apps: { type: "array", items: ref("App") },
+    createdAt: string({ format: "date-time" }),
+  }),
+  RepoList: listOf("Repo"),
+  CreateRepoInput: fromZod(createRepoInput),
+  UpdateRepoInput: fromZod(updateRepoInput),
+  AttachRepoInput: fromZod(attachRepoInput),
+  CreateAppInput: fromZod(createAppInput),
+  UpdateAppInput: fromZod(updateAppInput),
   ViewFilters: fromZod(viewFiltersSchema),
   SavedView: object({
     id: string({ format: "uuid" }),
@@ -500,6 +533,8 @@ const pathParam = (name: string, description: string) => ({
 });
 const orgSlug = pathParam("orgSlug", "Organization slug");
 const projectKey = pathParam("projectKey", 'Project key, e.g. "SPI"');
+const repoOwner = pathParam("owner", 'GitHub owner of the repo, e.g. "pipisasa"');
+const repoName = pathParam("name", 'Repo name, e.g. "spider-tracker"');
 const taskKey = pathParam("taskKey", 'Task key, e.g. "SPI-12"');
 const userCode = pathParam("userCode", 'Code shown by spider login, e.g. "WDJB-MJHT"');
 const body = (schema: string) => ({ required: true, ...json(schema) });
@@ -1004,6 +1039,73 @@ const paths = {
       operationId: "deleteTag",
       summary: "Delete a tag (owners and admins); it is removed from every task",
       responses: { "204": { description: "Deleted" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listRepos",
+      summary: "The organization's repos with their apps and projects (a project-scoped agent: only its projects' repos)",
+      parameters: [{ name: "project", in: "query", schema: { type: "string" }, description: "Only the repos attached to this project key" }],
+      responses: { "200": ok("Repos", "RepoList"), ...errors },
+    },
+    post: {
+      operationId: "createRepo",
+      summary:
+        "Add a repo by its GitHub remote (URL or owner/name), optionally attached to projects (owners, admins and their agents; a project-scoped agent must attach it to one of its projects). 409 if it exists",
+      requestBody: body("CreateRepoInput"),
+      responses: { "201": ok("Created repo", "Repo"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos/{owner}/{name}": {
+    parameters: [orgSlug, repoOwner, repoName],
+    get: { operationId: "getRepo", summary: "A repo with its apps and projects", responses: { "200": ok("Repo", "Repo"), ...errors } },
+    patch: {
+      operationId: "updateRepo",
+      summary: "Change a repo's remote (after a rename) or default branch (owners, admins and their agents)",
+      requestBody: body("UpdateRepoInput"),
+      responses: { "200": ok("Updated repo", "Repo"), ...errors },
+    },
+    delete: {
+      operationId: "deleteRepo",
+      summary: "Remove a repo with its apps and project links (owners, admins and their agents)",
+      responses: { "204": { description: "Removed" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos/{owner}/{name}/apps": {
+    parameters: [orgSlug, repoOwner, repoName],
+    post: {
+      operationId: "createApp",
+      summary: "Add an app to a repo: folder, shared packages, versioning (default semver), environments in deploy order. 409 if the name is taken",
+      requestBody: body("CreateAppInput"),
+      responses: { "201": ok("Created app", "App"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos/{owner}/{name}/apps/{app}": {
+    parameters: [orgSlug, repoOwner, repoName, pathParam("app", 'App name, e.g. "web"')],
+    patch: {
+      operationId: "updateApp",
+      summary: "Rename an app or change its paths, versioning or environments",
+      requestBody: body("UpdateAppInput"),
+      responses: { "200": ok("Updated app", "App"), ...errors },
+    },
+    delete: { operationId: "deleteApp", summary: "Remove an app", responses: { "204": { description: "Removed" }, ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/repos": {
+    parameters: [orgSlug, projectKey],
+    post: {
+      operationId: "attachRepo",
+      summary: "Attach a repo to the project (owners, admins and their agents); attaching it again changes nothing",
+      requestBody: body("AttachRepoInput"),
+      responses: { "200": ok("The repo", "Repo"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/repos/{owner}/{name}": {
+    parameters: [orgSlug, projectKey, repoOwner, repoName],
+    delete: {
+      operationId: "detachRepo",
+      summary: "Detach a repo from the project; detaching one that isn't attached changes nothing",
+      responses: { "200": ok("The repo", "Repo"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/documents": {

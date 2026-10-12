@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseRepoRemote } from "./remotes";
 
 // Shared between backend validation and web forms.
 
@@ -477,3 +478,118 @@ export const updateSavedViewInput = z
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
 
 export type UpdateSavedViewInput = z.infer<typeof updateSavedViewInput>;
+
+// Repos and apps (ST-92).
+
+/** A GitHub remote: a URL as `git remote -v` prints it ("https://github.com/o/r.git", "git@github.com:o/r.git") or "o/r". */
+export const repoRemoteSchema = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(300, "At most 300 characters")
+  .transform((value, ctx) => {
+    const remote = parseRepoRemote(value);
+    if (!remote) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'A GitHub repo: "owner/name", https://github.com/owner/name or git@github.com:owner/name.git',
+      });
+      return z.NEVER;
+    }
+    return remote;
+  });
+
+/** A branch name as git allows it (simplified): letters, digits, ".", "_", "-" and "/" between parts. */
+export const branchNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(100, "At most 100 characters")
+  .regex(/^(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9_][A-Za-z0-9._/-]*(?<![/.])$/, "A git branch name, e.g. main");
+
+/** A folder in the repo, relative to its root ("web/app"; "." for the whole repo); "./" and a trailing "/" are dropped. */
+export const repoPathSchema = z
+  .string()
+  .trim()
+  .max(200, "At most 200 characters")
+  .transform((value) => value.replace(/^\.\/(?=.)/, "").replace(/(?<=.)\/+$/, ""))
+  .refine((value) => value !== "", "Required")
+  .refine(
+    (value) => value === "." || value.split("/").every((part) => /^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*$/.test(part)),
+    'A relative path in the repo, e.g. "web/app" ("." for the whole repo)',
+  );
+
+/** App and environment names: lower-case, part of release tags ("web-2026.10.12"). */
+const appSlug = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1, "Required")
+  .max(30, "At most 30 characters")
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes");
+
+export const appVersioningSchema = z.enum(["date", "semver"]);
+
+const uniqueList = <T extends z.ZodType<string>>(item: T, max: number, what: string) =>
+  z
+    .array(item)
+    .max(max, `At most ${max} ${what}`)
+    .refine((list) => new Set(list).size === list.length, `Each ${what.replace(/s$/, "")} only once`);
+
+/** Deploy order, e.g. ["staging", "prod"]; empty when a release is the only "deploy" (a CLI). */
+export const appEnvironmentsSchema = uniqueList(appSlug, 10, "environments");
+
+/** Shared packages an app depends on, e.g. ["packages/core"]. */
+export const sharedPathsSchema = uniqueList(repoPathSchema, 20, "shared paths");
+
+export const createRepoInput = z.object({
+  /** The remote: a GitHub URL or "owner/name". */
+  url: repoRemoteSchema,
+  /** Default "main". */
+  defaultBranch: branchNameSchema.optional(),
+  /** Project keys to attach it to. */
+  projects: z.array(projectKeySchema).max(50).optional(),
+});
+
+export type CreateRepoInput = z.input<typeof createRepoInput>;
+
+export const updateRepoInput = z
+  .object({
+    /** A new remote, e.g. after the repo was renamed or moved on GitHub. */
+    url: repoRemoteSchema.optional(),
+    defaultBranch: branchNameSchema.optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateRepoInput = z.input<typeof updateRepoInput>;
+
+export const attachRepoInput = z.object({
+  /** The repo: "owner/name" or its remote URL. */
+  repo: z.string().trim().min(1, "Required").max(300),
+});
+
+export type AttachRepoInput = z.input<typeof attachRepoInput>;
+
+export const createAppInput = z.object({
+  name: appSlug,
+  path: repoPathSchema,
+  sharedPaths: sharedPathsSchema.optional(),
+  /** Default "semver". */
+  versioning: appVersioningSchema.optional(),
+  environments: appEnvironmentsSchema.optional(),
+});
+
+export type CreateAppInput = z.input<typeof createAppInput>;
+
+export const updateAppInput = z
+  .object({
+    name: appSlug,
+    path: repoPathSchema,
+    sharedPaths: sharedPathsSchema,
+    versioning: appVersioningSchema,
+    environments: appEnvironmentsSchema,
+  })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateAppInput = z.input<typeof updateAppInput>;

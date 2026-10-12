@@ -5,3 +5,4 @@ export * from "./devices";
 export * from "./messaging";
 export * from "./documents";
 export * from "./views";
+export * from "./repos";

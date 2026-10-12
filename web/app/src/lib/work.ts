@@ -15,6 +15,8 @@ import type {
   InvitationDto,
   PresenceDto,
   RelationDto,
+  AppDto,
+  RepoDto,
   TagDto,
   CreatedApiKeyDto,
   ListResponse,
@@ -34,6 +36,10 @@ import type {
   CreateProjectInput,
   CreateSavedViewInput,
   CreateTagInput,
+  CreateAppInput,
+  CreateRepoInput,
+  UpdateAppInput,
+  UpdateRepoInput,
   CreateTaskInput,
   MarkDuplicateInput,
   UpdateAgentInput,
@@ -63,6 +69,7 @@ export const keys = {
   agentInvites: (org: string) => ["orgs", org, "agent-invites"] as const,
   invitations: (org: string) => ["orgs", org, "invitations"] as const,
   tags: (org: string) => ["orgs", org, "tags"] as const,
+  repos: (org: string) => ["orgs", org, "repos"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
   archivedProjects: (org: string) =>
     ["orgs", org, "archived-projects"] as const,
@@ -863,3 +870,99 @@ export function useDeleteView(org: string, projectKey: string) {
       qc.invalidateQueries({ queryKey: keys.views(org, projectKey) }),
   });
 }
+
+// Repos and apps (ST-92). A repo is addressed as /repos/:owner/:name.
+
+const repoPath = (org: string, repo: Pick<RepoDto, "owner" | "name">) =>
+  `${orgPath(org)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+
+export const reposQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.repos(org),
+    queryFn: async () =>
+      (await api<ListResponse<RepoDto>>(`${orgPath(org)}/repos`)).items,
+  });
+
+/** Any repo or app change: the API answers with the repo or app; the list is refetched. */
+function useRepoMutation<TInput, TResult>(
+  org: string,
+  mutationFn: (input: TInput) => Promise<TResult>,
+  success: string,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      toast.success(success);
+      void qc.invalidateQueries({ queryKey: keys.repos(org) });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+}
+
+export const useCreateRepo = (org: string) =>
+  useRepoMutation(
+    org,
+    (input: CreateRepoInput) =>
+      api<RepoDto>(`${orgPath(org)}/repos`, { method: "POST", body: JSON.stringify(input) }),
+    "Repo added",
+  );
+
+export const useUpdateRepo = (org: string) =>
+  useRepoMutation(
+    org,
+    ({ repo, input }: { repo: RepoDto; input: UpdateRepoInput }) =>
+      api<RepoDto>(repoPath(org, repo), { method: "PATCH", body: JSON.stringify(input) }),
+    "Repo updated",
+  );
+
+export const useDeleteRepo = (org: string) =>
+  useRepoMutation(
+    org,
+    (repo: RepoDto) => api<void>(repoPath(org, repo), { method: "DELETE" }),
+    "Repo removed",
+  );
+
+/** Attach (`attach: true`) a repo to a project, or detach it. */
+export const useAttachRepo = (org: string) =>
+  useRepoMutation(
+    org,
+    ({ repo, project, attach }: { repo: RepoDto; project: string; attach: boolean }) =>
+      attach
+        ? api<RepoDto>(`${orgPath(org)}/projects/${encodeURIComponent(project)}/repos`, {
+            method: "POST",
+            body: JSON.stringify({ repo: repo.fullName }),
+          })
+        : api<RepoDto>(
+            `${orgPath(org)}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`,
+            { method: "DELETE" },
+          ),
+    "Projects updated",
+  );
+
+export const useCreateApp = (org: string) =>
+  useRepoMutation(
+    org,
+    ({ repo, input }: { repo: RepoDto; input: CreateAppInput }) =>
+      api<AppDto>(`${repoPath(org, repo)}/apps`, { method: "POST", body: JSON.stringify(input) }),
+    "App added",
+  );
+
+export const useUpdateApp = (org: string) =>
+  useRepoMutation(
+    org,
+    ({ repo, app, input }: { repo: RepoDto; app: string; input: UpdateAppInput }) =>
+      api<AppDto>(`${repoPath(org, repo)}/apps/${encodeURIComponent(app)}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    "App updated",
+  );
+
+export const useDeleteApp = (org: string) =>
+  useRepoMutation(
+    org,
+    ({ repo, app }: { repo: RepoDto; app: string }) =>
+      api<void>(`${repoPath(org, repo)}/apps/${encodeURIComponent(app)}`, { method: "DELETE" }),
+    "App removed",
+  );

@@ -16,6 +16,7 @@ export type OrgEvent =
   | { type: "inbox.created"; orgId: string; recipientIds: string[] }
   | { type: "project.changed"; orgId: string; projectKey: string }
   | { type: "tags.changed"; orgId: string }
+  | { type: "repos.changed"; orgId: string }
   | {
       /** `document.commented`: a comment on the document was added, resolved or reopened (ST-118). */
       type: "document.changed" | "document.deleted" | "document.commented";

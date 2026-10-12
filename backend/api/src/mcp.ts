@@ -43,6 +43,14 @@ import {
   listMembers,
   listProjects,
   createTag,
+  attachRepo,
+  createApp,
+  createRepo,
+  detachRepo,
+  getRepo,
+  listRepos,
+  updateApp,
+  updateRepo,
   listComments,
   addRelation,
   markDuplicate,
@@ -324,6 +332,106 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       },
     },
     ({ projectKey, undo }) => run(async () => describeProject(await archiveProject(db, ctx, projectKey, !undo))),
+  );
+
+  // Repos and apps (ST-92): RepoDto and AppDto as the API returns them, as `spider repo … --json` prints them.
+  const repoInput = z.string().describe('The repo: "owner/name" (e.g. "pipisasa/spider-tracker") or its GitHub URL');
+  const repoPathInput = z.string().describe('A folder in the repo, e.g. "web/app" ("." for the whole repo)');
+  const appInput = {
+    sharedPaths: z.array(z.string()).max(20).optional().describe('Shared packages the app depends on, e.g. ["packages/core"]'),
+    versioning: z.enum(["date", "semver"]).optional().describe('"date" (2026.10.12) or "semver" (1.4.0)'),
+    environments: z
+      .array(z.string())
+      .max(10)
+      .optional()
+      .describe('Deploy order, e.g. ["staging", "prod"]; [] when a release is the only deploy (a CLI)'),
+  };
+
+  server.registerTool(
+    "list_repos",
+    {
+      description: "List the organization's git repos with their apps (path, versioning, environments) and the projects they're attached to.",
+      inputSchema: { project: z.string().optional().describe('Only the repos attached to this project key, e.g. "ST"') },
+    },
+    ({ project }) => run(async () => ({ items: await listRepos(db, ctx, { project }) })),
+  );
+
+  server.registerTool(
+    "get_repo",
+    { description: "Get a repo with its apps and projects.", inputSchema: { repo: repoInput } },
+    ({ repo }) => run(async () => getRepo(db, ctx, repo)),
+  );
+
+  server.registerTool(
+    "add_repo",
+    {
+      description:
+        "Add a git repo by its GitHub remote URL (https or ssh) or owner/name, optionally attached to projects. Owners, admins and their agents only.",
+      inputSchema: {
+        url: z.string().describe('"https://github.com/owner/name.git", "git@github.com:owner/name.git" or "owner/name"'),
+        defaultBranch: z.string().optional().describe('Default "main"'),
+        projects: z.array(z.string()).max(50).optional().describe("Project keys to attach it to"),
+      },
+    },
+    ({ url, defaultBranch, projects }) => run(async () => createRepo(db, ctx, { url, defaultBranch, projects })),
+  );
+
+  server.registerTool(
+    "update_repo",
+    {
+      description: "Change a repo's remote (after a rename on GitHub) or default branch. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        url: z.string().optional().describe("The new remote URL or owner/name"),
+        defaultBranch: z.string().optional(),
+      },
+    },
+    ({ repo, url, defaultBranch }) => run(async () => updateRepo(db, ctx, repo, { url, defaultBranch })),
+  );
+
+  server.registerTool(
+    "attach_repo",
+    {
+      description:
+        "Attach a repo to a project (detach: true removes it). Doing it twice changes nothing. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        detach: z.boolean().optional().describe("Detach the repo from the project instead"),
+      },
+    },
+    ({ repo, projectKey, detach }) =>
+      run(async () => (detach ? detachRepo(db, ctx, projectKey, repo) : attachRepo(db, ctx, projectKey, { repo }))),
+  );
+
+  server.registerTool(
+    "add_app",
+    {
+      description:
+        "Add an app (a deployable part, e.g. web, api, cli) to a repo: its folder, the shared packages it depends on, versioning (default semver) and environments in deploy order. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        name: z.string().describe('Lower-case, e.g. "web"'),
+        path: repoPathInput,
+        ...appInput,
+      },
+    },
+    ({ repo, ...input }) => run(async () => createApp(db, ctx, repo, input)),
+  );
+
+  server.registerTool(
+    "update_app",
+    {
+      description: "Rename an app or change its folder, shared packages, versioning or environments. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        app: z.string().describe('The app\'s current name, e.g. "web"'),
+        name: z.string().optional().describe("A new name"),
+        path: repoPathInput.optional(),
+        ...appInput,
+      },
+    },
+    ({ repo, app, ...input }) => run(async () => updateApp(db, ctx, repo, app, input)),
   );
 
   server.registerTool(

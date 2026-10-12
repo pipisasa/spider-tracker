@@ -55,8 +55,9 @@ See [git-integration.md](./git-integration.md).
 ## Organizations, repos and apps
 
 - Multi-tenant organizations with members, teams and roles (`owner`, `admin`, `member`, `guest`)
-- Repos are linked once per organization and attached to projects
-- Apps model deployable products and link to repos and projects, so you can see tasks per app
+- Repos are added once per organization by their GitHub remote URL (no GitHub App needed; ST-92) and attached to projects (a repo can serve several)
+- Apps are the deployable parts of a repo (e.g. web, api, cli): a folder, the shared packages they depend on, versioning (`date` or `semver`) and environments in deploy order (e.g. staging → prod, none for a CLI); releases (ST-93) version and ship them
+- Owners, admins and their agents manage repos and apps (API, MCP, `spider repo` / `spider app`, Settings → Repos); everyone reads them
 
 ## Tags and custom fields
 

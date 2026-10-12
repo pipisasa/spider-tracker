@@ -1,11 +1,14 @@
 import type {
   ActorDto,
+  AppDto,
+  AppVersioning,
   BulkTaskResultDto,
   BulkUpdateTasksResponse,
   DocumentFormat,
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectDto,
+  RepoDto,
   TagDto,
   TaskDto,
   WhoAmIResponse,
@@ -28,6 +31,8 @@ import {
 import type {
   BulkUpdateTasksInput,
   CreateTaskInput,
+  UpdateAppInput,
+  UpdateRepoInput,
   DocumentEdit,
   UpdateDocumentInput,
   UpdateProjectInput,
@@ -74,8 +79,18 @@ import {
   permissionModeFor,
   type PermissionMode,
 } from "./claude-launch";
-import { branchNameFor, taskKeysIn } from "@repo/core/git";
-import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
+import { branchNameFor, parseRepoRemote, repoFullName, taskKeysIn } from "@repo/core/git";
+import {
+  createOrSwitchBranch,
+  currentBranch,
+  isDirty,
+  isRepo,
+  originUrl,
+  remoteRepo,
+  runGit,
+  taskKeyFromBranch,
+  type GitRunner,
+} from "./git";
 import { isCompiled } from "./self-update";
 import { checkSession, planLines, teamAgents, windowArgv } from "./claude-team";
 import { TMUX_MISSING, openWindows, runTmux, shellQuote, tmuxPlan, tmuxVersion, windowCommand, windowNames, type TmuxRunner } from "./tmux";
@@ -494,6 +509,33 @@ function bulkLines(
 }
 
 const projectLine = (p: ProjectDto) => `${p.key}  ${p.name}${p.archivedAt ? "  (archived)" : ""}`;
+
+/** "web  web/app (+ packages/core)  date  staging → prod". */
+const appLine = (a: AppDto) =>
+  [
+    a.name,
+    `${a.path}${a.sharedPaths.length ? ` (+ ${a.sharedPaths.join(", ")})` : ""}`,
+    a.versioning,
+    a.environments.length ? a.environments.join(" → ") : "no environments",
+  ].join("  ");
+
+function repoLines(repos: RepoDto[]): string {
+  if (repos.length === 0) return "No repos";
+  return repos
+    .map((r) =>
+      [
+        `${r.fullName}  ${r.defaultBranch}  ${r.projects.length ? r.projects.join(", ") : "no projects"}`,
+        ...r.apps.map((a) => `  ${appLine(a)}`),
+      ].join("\n"),
+    )
+    .join("\n");
+}
+
+function parseVersioning(value: string): AppVersioning {
+  const v = value.trim().toLowerCase();
+  if (v === "date" || v === "semver") return v;
+  throw usageError(`Invalid versioning "${value}". Use date or semver`);
+}
 
 const documentScope = (d: DocumentSummaryDto) => d.taskKey ?? d.projectKey ?? "org";
 
@@ -1383,6 +1425,178 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const result = await (opts.undo ? client.projects.unarchive : client.projects.archive)(await org(), key);
     output(opts, result, () => `${opts.undo ? "Restored" : "Archived"} ${result.key}  ${result.name}`);
   });
+
+  // Repos and apps (ST-92). A repo is "owner/name" or a GitHub URL; without one, the origin remote of the current folder.
+  const repoArg = (given: string | undefined): string => {
+    if (given !== undefined) {
+      const remote = parseRepoRemote(given);
+      if (!remote) throw usageError(`Not a GitHub repo: "${given}". Use owner/name or a GitHub URL`);
+      return repoFullName(remote);
+    }
+    const origin = remoteRepo(cwd, git);
+    if (!origin) throw usageError("Name the repo (owner/name): this folder has no GitHub origin remote");
+    return origin;
+  };
+
+  const repoCommand = program
+    .command("repo")
+    .description("git repos of the organization, attached to projects (add, change, attach: owners, admins and their agents)");
+
+  withJson(
+    repoCommand.command("list").description("list repos with their apps and projects").option("--project <KEY>", "only repos attached to this project"),
+  ).action(async (opts: JsonOption & { project?: string }) => {
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).repos.list(await org(), { project: opts.project });
+    output(opts, { items }, () => repoLines(items));
+  });
+
+  withJson(repoCommand.command("view").description("show a repo, its apps and projects").argument("[repo]", "owner/name (default: origin)")).action(
+    async (repo: string | undefined, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const found = await (await sdk()).repos.get(await org(), repoArg(repo));
+      output(opts, found, () => repoLines([found]));
+    },
+  );
+
+  withJson(
+    repoCommand
+      .command("add")
+      .description("add a repo by its GitHub remote URL (default: this folder's origin)")
+      .argument("[url]", "https://github.com/owner/name, git@github.com:owner/name.git or owner/name")
+      .option("--default-branch <name>", "default: main")
+      .option("--project <KEY>", "attach it to this project; repeatable or comma-separated", collect),
+  ).action(async (url: string | undefined, opts: JsonOption & { defaultBranch?: string; project?: string[] }) => {
+    const remote = url ?? originUrl(cwd, git);
+    if (!remote) throw usageError("Pass the repo's URL: this folder has no origin remote");
+    const { sdk, org } = conn();
+    const created = await (await sdk()).repos.create(await org(), {
+      url: remote,
+      defaultBranch: opts.defaultBranch,
+      projects: opts.project,
+    });
+    output(opts, created, () => `Added ${repoLines([created])}`);
+  });
+
+  withJson(
+    repoCommand
+      .command("update")
+      .description("change a repo's remote (after a rename on GitHub) or default branch")
+      .argument("<repo>", "owner/name")
+      .option("--url <url>", "the new remote URL or owner/name")
+      .option("--default-branch <name>", "default branch"),
+  ).action(async (repo: string, opts: JsonOption & { url?: string; defaultBranch?: string }) => {
+    const input: UpdateRepoInput = {};
+    if (opts.url !== undefined) input.url = opts.url;
+    if (opts.defaultBranch !== undefined) input.defaultBranch = opts.defaultBranch;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --url or --default-branch");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).repos.update(await org(), repoArg(repo), input);
+    output(opts, updated, () => `Updated ${repoLines([updated])}`);
+  });
+
+  withJson(repoCommand.command("remove").description("remove a repo with its apps and project links").argument("<repo>", "owner/name")).action(
+    async (repo: string, opts: JsonOption) => {
+      const name = repoArg(repo);
+      const { sdk, org } = conn();
+      await (await sdk()).repos.delete(await org(), name);
+      output(opts, { repo: name, removed: true }, () => `Removed ${name}`);
+    },
+  );
+
+  const attachCommand = (name: "attach" | "detach", description: string) =>
+    withJson(
+      repoCommand.command(name).description(description).argument("<repo>", "owner/name").argument("<project>", "project key, e.g. ST"),
+    ).action(async (repo: string, project: string, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const client = await sdk();
+      const result = await (name === "attach" ? client.repos.attach : client.repos.detach)(await org(), project, repoArg(repo));
+      output(opts, result, () => `${name === "attach" ? "Attached" : "Detached"}: ${repoLines([result])}`);
+    });
+  attachCommand("attach", "attach a repo to a project (again changes nothing)");
+  attachCommand("detach", "detach a repo from a project");
+
+  const appCommand = program
+    .command("app")
+    .description("apps in a repo: folder, shared packages, versioning and environments (owners, admins and their agents change them)");
+  const repoOption = (cmd: Command) => cmd.option("--repo <owner/name>", "the repo (default: this folder's origin)");
+  const appFields = (cmd: Command) =>
+    cmd
+      .option("--shared <path>", 'a shared package it depends on, e.g. packages/core; repeatable or comma-separated ("" for none)', collect)
+      .option("--versioning <date|semver>", "how releases are numbered: 2026.10.12 or 1.4.0")
+      .option("--env <name>", 'environments in deploy order, e.g. staging,prod ("" for none)', collect);
+  interface AppOptions extends JsonOption {
+    repo?: string;
+    path?: string;
+    shared?: string[];
+    versioning?: string;
+    env?: string[];
+  }
+
+  withJson(repoOption(appCommand.command("list").description("list apps (of every repo, or one with --repo)"))).action(
+    async (opts: JsonOption & { repo?: string }) => {
+      const { sdk, org } = conn();
+      const client = await sdk();
+      const slug = await org();
+      const repos = opts.repo ? [await client.repos.get(slug, repoArg(opts.repo))] : (await client.repos.list(slug)).items;
+      const items = repos.flatMap((r) => r.apps);
+      output(opts, { items }, () => (items.length ? items.map((a) => `${a.repo}  ${appLine(a)}`).join("\n") : "No apps"));
+    },
+  );
+
+  withJson(
+    appFields(
+      repoOption(
+        appCommand
+          .command("add")
+          .description("add an app to a repo")
+          .argument("<name>", "lower-case, e.g. web")
+          .requiredOption("--path <path>", 'its folder in the repo, e.g. web/app ("." for the whole repo)'),
+      ),
+    ),
+  ).action(async (name: string, opts: AppOptions) => {
+    const { sdk, org } = conn();
+    const created = await (await sdk()).repos.apps.create(await org(), repoArg(opts.repo), {
+      name,
+      path: opts.path ?? "",
+      sharedPaths: opts.shared,
+      versioning: opts.versioning === undefined ? undefined : parseVersioning(opts.versioning),
+      environments: opts.env,
+    });
+    output(opts, created, () => `Added ${created.repo}  ${appLine(created)}`);
+  });
+
+  withJson(
+    appFields(
+      repoOption(
+        appCommand
+          .command("update")
+          .description("rename an app or change its folder, shared packages, versioning or environments")
+          .argument("<name>", "the app")
+          .option("--name <name>", "a new name")
+          .option("--path <path>", "its folder in the repo"),
+      ),
+    ),
+  ).action(async (name: string, opts: AppOptions & { name?: string }) => {
+    const input: UpdateAppInput = {};
+    if (opts.name !== undefined) input.name = opts.name;
+    if (opts.path !== undefined) input.path = opts.path;
+    if (opts.shared !== undefined) input.sharedPaths = opts.shared;
+    if (opts.versioning !== undefined) input.versioning = parseVersioning(opts.versioning);
+    if (opts.env !== undefined) input.environments = opts.env;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name, --path, --shared, --versioning or --env");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).repos.apps.update(await org(), repoArg(opts.repo), name, input);
+    output(opts, updated, () => `Updated ${updated.repo}  ${appLine(updated)}`);
+  });
+
+  withJson(repoOption(appCommand.command("remove").description("remove an app from its repo").argument("<name>", "the app"))).action(
+    async (name: string, opts: JsonOption & { repo?: string }) => {
+      const repo = repoArg(opts.repo);
+      const { sdk, org } = conn();
+      await (await sdk()).repos.apps.delete(await org(), repo, name);
+      output(opts, { repo, app: name.trim().toLowerCase(), removed: true }, () => `Removed ${name} from ${repo}`);
+    },
+  );
 
   const task = program.command("task").description("work with tasks");
 

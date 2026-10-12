@@ -27,6 +27,8 @@ import type {
   Priority,
   ProjectDto,
   RelationDto,
+  AppDto,
+  RepoDto,
   SavedViewDto,
   TagDto,
   SubtaskDto,
@@ -45,6 +47,10 @@ import type {
   CreateProjectInput,
   CreateSavedViewInput,
   CreateTagInput,
+  CreateAppInput,
+  CreateRepoInput,
+  UpdateAppInput,
+  UpdateRepoInput,
   CreateTaskInput,
   MarkDuplicateInput,
   RelationInput,
@@ -159,6 +165,8 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
 
   const org = (slug: string) => `/v1/orgs/${encodeURIComponent(slug)}`;
   const seg = encodeURIComponent;
+  /** "owner/name" as the two path segments /:owner/:name. */
+  const repoPath = (repo: string) => repo.trim().split("/").map(seg).join("/");
 
   return {
     /** The agent an API key acts as, and its organization. */
@@ -246,6 +254,40 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       list: (orgSlug: string) => request<ListResponse<TagDto>>("GET", `${org(orgSlug)}/tags`),
       create: (orgSlug: string, input: CreateTagInput) => request<TagDto>("POST", `${org(orgSlug)}/tags`, input),
       delete: (orgSlug: string, tagId: string) => request<void>("DELETE", `${org(orgSlug)}/tags/${seg(tagId)}`),
+    },
+
+    /**
+     * Git repos and their apps (ST-92). A repo is named by "owner/name" (`create` also takes a
+     * remote URL). Everyone reads them; owners, admins and their agents manage them.
+     */
+    repos: {
+      /** By name; only those attached to `project` when given. */
+      list: (orgSlug: string, query: { project?: string } = {}) =>
+        request<ListResponse<RepoDto>>(
+          "GET",
+          `${org(orgSlug)}/repos${query.project ? `?${new URLSearchParams({ project: query.project })}` : ""}`,
+        ),
+      get: (orgSlug: string, repo: string) => request<RepoDto>("GET", `${org(orgSlug)}/repos/${repoPath(repo)}`),
+      /** Added by its remote URL (or "owner/name"); 409 if it exists. */
+      create: (orgSlug: string, input: CreateRepoInput) => request<RepoDto>("POST", `${org(orgSlug)}/repos`, input),
+      update: (orgSlug: string, repo: string, input: UpdateRepoInput) =>
+        request<RepoDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}`, input),
+      /** With its apps and project links. */
+      delete: (orgSlug: string, repo: string) => request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}`),
+      /** Attaching again changes nothing. */
+      attach: (orgSlug: string, projectKey: string, repo: string) =>
+        request<RepoDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/repos`, { repo }),
+      /** Detaching one that isn't attached changes nothing. */
+      detach: (orgSlug: string, projectKey: string, repo: string) =>
+        request<RepoDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/repos/${repoPath(repo)}`),
+      apps: {
+        create: (orgSlug: string, repo: string, input: CreateAppInput) =>
+          request<AppDto>("POST", `${org(orgSlug)}/repos/${repoPath(repo)}/apps`, input),
+        update: (orgSlug: string, repo: string, app: string, input: UpdateAppInput) =>
+          request<AppDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`, input),
+        delete: (orgSlug: string, repo: string, app: string) =>
+          request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`),
+      },
     },
 
     comments: {

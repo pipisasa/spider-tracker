@@ -50,6 +50,7 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
     });
     on("project.changed", () => void qc.invalidateQueries({ queryKey: keys.projects(orgSlug) }));
+    on("repos.changed", () => void qc.invalidateQueries({ queryKey: keys.repos(orgSlug) }));
     on("tags.changed", () => {
       void qc.invalidateQueries({ queryKey: keys.tags(orgSlug) });
       // Deleting a tag removes it from tasks.

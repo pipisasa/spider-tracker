@@ -2,6 +2,8 @@
 import { toKebab } from "./handles";
 import { parseTaskKey } from "./schemas";
 
+export { parseRepoRemote, repoFullName, type RepoRemote } from "./remotes";
+
 /** The task-key shape of parseTaskKey: 2–10 letters or digits starting with a letter, a dash, 1–9 digits. */
 const KEY = String.raw`[A-Za-z][A-Za-z0-9]{1,9}-\d{1,9}`;
 
