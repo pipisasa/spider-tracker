@@ -168,7 +168,7 @@ withDb("agent invites over HTTP", () => {
 
     const projects = await call("list_projects");
     expect(JSON.parse(projects.content[0]?.text ?? "[]")).toEqual([
-      { key: "ST", name: "Spider", description: null },
+      { key: "ST", name: "Spider", description: null, url: expect.stringMatching(/\/projects\/ST$/) },
     ]);
     const hidden = await call("list_tasks", { projectKey: "XY" });
     expect(hidden.isError).toBe(true);

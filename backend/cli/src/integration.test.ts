@@ -469,6 +469,7 @@ withDb("spider CLI against the API", () => {
     expect(child.json()).toMatchObject({ parentKey: "SPI-1" });
     const key = child.json().key as string;
     const parent = await spider("task", "view", "SPI-1", "--json");
+    expect(parent.json().url).toBe(`${env.WEB_ORIGIN}/${slug}/tasks/SPI-1`);
     expect((parent.json().subtasks as { key: string }[]).map((t) => t.key)).toContain(key);
     expect((await spider("task", "view", "SPI-1")).stdout).toContain("Sub-tasks:");
     expect((await spider("task", "view", key)).stdout).toContain("Parent: SPI-1");
@@ -491,6 +492,9 @@ withDb("spider CLI against the API", () => {
     const spec = (await spider("doc", "create", "--title", "Spec", "--project", "spi", "--file", "spec.html", "--json")).json();
     expect(spec).toMatchObject({ projectKey: "SPI", taskKey: null, format: "html", content: "<h1>Spec</h1>", version: 1 });
     const id = spec.id as string;
+    // The web page's address (ST-115).
+    const url = `${env.WEB_ORIGIN}/${slug}/docs/${id}`;
+    expect(spec.url).toBe(url);
 
     stdin = "# Notes";
     const notes = (await spider("doc", "create", "--title", "Notes", "--task", "spi-1", "--file", "-", "--json")).json();
@@ -514,10 +518,12 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "edit", id, "--title", "Spec", "--base-version", "x")).code).toBe(2);
     expect((await spider("doc", "edit", id, "--title", "Spec", "--force")).stdout).toBe("No changes to Spec\n");
     expect((await spider("doc", "view", id)).stdout).toContain("<h1>Spec v2</h1>");
+    expect((await spider("doc", "view", id)).stdout).toContain(`\n${url}\n`);
     expect((await spider("doc", "view", id, "--rev", "1", "--json")).json()).toMatchObject({
       version: 1,
       currentVersion: 2,
       content: "<h1>Spec</h1>",
+      url,
     });
     expect((await spider("doc", "edit", id)).code).toBe(2);
     expect((await spider("doc", "view", "00000000-0000-7000-8000-000000000000")).code).toBe(3);

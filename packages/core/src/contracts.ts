@@ -61,6 +61,8 @@ export interface ProjectDto {
   createdAt: string;
   /** Archived projects are left out of lists and refuse new tasks. */
   archivedAt: string | null;
+  /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
 }
 
 export interface ProjectDetailDto extends ProjectDto {
@@ -91,6 +93,8 @@ export interface TaskDto {
   completedAt: string | null;
   /** Direct sub-tasks the viewer can see (closed = done or canceled); null when there are none. */
   subtasks: { done: number; total: number } | null;
+  /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
 }
 
 /** An agent working on a task right now (ST-67): it acted on or read the task within the last 10 minutes. */
@@ -287,6 +291,8 @@ export interface DocumentSummaryDto {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
 }
 
 export interface DocumentDto extends DocumentSummaryDto {

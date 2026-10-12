@@ -67,6 +67,7 @@ describe("public routes", () => {
     expect(doc.openapi).toStartWith("3.1");
     expect(doc.components.securitySchemes.bearerAuth).toMatchObject({ type: "http", scheme: "bearer" });
     expect(doc.components.schemas.CreateTaskInput?.required).toEqual(["title"]);
+    for (const name of ["Project", "Task", "DocumentSummary"]) expect(doc.components.schemas[name]?.required).toContain("url");
 
     // Every documented operation is a real route, and every route is documented.
     const routes = new Set(app.routes.map((r) => `${r.method} ${r.path}`));
@@ -454,6 +455,12 @@ withDb("SDK and client-declared source", () => {
 
     const created = await client.tasks.create(slug, "SPI", { title: "Via SDK", assigneeIds: [agentId] });
     expect(created).toMatchObject({ key: "SPI-1", title: "Via SDK", creatorId: agentId, assigneeIds: [agentId] });
+    // Web page addresses (ST-115), following the web app's routes.
+    const web = `${env.WEB_ORIGIN}/${slug}`;
+    expect(created.url).toBe(`${web}/tasks/SPI-1`);
+    expect(project.url).toBe(`${web}/projects/SPI`);
+    expect(projects.items[0]?.url).toBe(`${web}/projects/SPI`);
+    expect((await client.tasks.list(slug, "SPI")).items[0]?.url).toBe(`${web}/tasks/SPI-1`);
 
     const updated = await client.tasks.update(slug, created.key, { title: "Via SDK, done", statusId: done?.id });
     expect(updated.completedAt).not.toBeNull();
@@ -473,11 +480,12 @@ withDb("SDK and client-declared source", () => {
   test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
     const client = sdk();
     const doc = await client.documents.create(slug, { title: "Spec", project: "SPI", content: "v1" });
-    expect(doc).toMatchObject({ projectKey: "SPI", version: 1 });
+    expect(doc).toMatchObject({ projectKey: "SPI", version: 1, url: `${env.WEB_ORIGIN}/${slug}/docs/${doc.id}` });
     expect((await client.documents.list(slug, { project: "SPI" })).items.map((d) => d.id)).toEqual([doc.id]);
+    expect((await client.documents.get(slug, doc.id)).url).toBe(doc.url);
 
     const saved = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "v2" });
-    expect(saved.version).toBe(2);
+    expect(saved).toMatchObject({ version: 2, url: doc.url });
     const stale = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "lost" }).catch((e: unknown) => e);
     expect(stale).toMatchObject({ status: 409, code: "conflict" });
 
@@ -529,6 +537,14 @@ withDb("SDK and client-declared source", () => {
     expect(graph.links).toContainEqual({ from: source.id, to: { type: "document", id: target.id } });
     expect(graph.documents.map((d) => d.id)).toEqual(expect.arrayContaining([source.id, target.id]));
     expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id]);
+    expect(graph.documents.find((d) => d.id === target.id)?.url).toBe(`${env.WEB_ORIGIN}/${slug}/docs/${target.id}`);
+
+    // [[doc:<id>]] links by id (ST-115): they survive renames and count as backlinks.
+    const byId = await client.documents.create(slug, { title: "By id", content: `[[doc:${target.id}]]` });
+    await client.documents.update(slug, target.id, { baseVersion: 1, title: "Graph target renamed" });
+    expect((await client.documents.graph(slug)).links).toContainEqual({ from: byId.id, to: { type: "document", id: target.id } });
+    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([byId.id]);
+    await client.documents.delete(slug, byId.id);
     expect(await client.documents.backlinks(slug, crypto.randomUUID()).catch((e: unknown) => e)).toMatchObject({ status: 404 });
     await client.documents.delete(slug, source.id);
     await client.documents.delete(slug, target.id);

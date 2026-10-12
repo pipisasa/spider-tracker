@@ -1,6 +1,6 @@
 import type { DocumentSummaryDto } from "@repo/core/contracts";
 import { describe, expect, test } from "bun:test";
-import { wikiDestination, wikiSuggestions } from "./wiki-links";
+import { wikiDestination, wikiLabel, wikiSuggestions } from "./wiki-links";
 
 const doc = (id: string, title: string, projectKey: string | null, updatedAt = "2026-10-01"): DocumentSummaryDto => ({
   id,
@@ -30,6 +30,22 @@ describe("wikiDestination", () => {
     expect(wikiDestination(docs, "plan#Goals", "ST")).toEqual({ type: "document", id: "3" });
     expect(wikiDestination(docs, "Plan", "OPS")).toEqual({ type: "document", id: "2" });
     expect(wikiDestination(docs, "Nope", "ST")).toEqual({ type: "missing", title: "Nope" });
+  });
+
+  test("[[doc:<id>]] opens the document by id, shown with its title (ST-115)", () => {
+    const id = "01a13118-982f-7c2e-8a6e-932d744cc798";
+    const withId = [...docs, doc(id, "Architecture", "ST")];
+    expect(
+      wikiDestination(withId, `DOC:${id.toUpperCase()}#Goals`, "OPS"),
+    ).toEqual({ type: "document", id });
+    expect(wikiLabel(withId, `doc:${id}`)).toBe("Architecture");
+    const gone = "00000000-0000-7000-8000-000000000000";
+    expect(wikiDestination(withId, `doc:${gone}`, "ST")).toEqual({
+      type: "unknown",
+      id: gone,
+    });
+    expect(wikiLabel(withId, `doc:${gone}`)).toBeNull();
+    expect(wikiLabel(withId, "Plan")).toBeNull();
   });
 });
 

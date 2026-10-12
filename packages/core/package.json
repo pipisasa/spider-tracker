@@ -12,7 +12,8 @@
     "./statuses": "./src/statuses.ts",
     "./events": "./src/events.ts",
     "./version": "./src/version.ts",
-    "./links": "./src/links.ts"
+    "./links": "./src/links.ts",
+    "./urls": "./src/urls.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
