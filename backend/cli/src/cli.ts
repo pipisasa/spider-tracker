@@ -49,6 +49,16 @@ import {
   writeProjectSettings,
   type RunClaude,
 } from "./claude-setup";
+import {
+  DEFAULT_PERMISSION_MODE,
+  PERMISSION_MODES,
+  brokenHooks,
+  claudeCommand,
+  isPermissionMode,
+  permissionLine,
+  permissionModeFor,
+  type PermissionMode,
+} from "./claude-launch";
 import { branchNameFor, taskKeysIn } from "@repo/core/git";
 import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
 import { isCompiled } from "./self-update";
@@ -741,6 +751,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         projects: a.saved.projects,
         source: a.saved.source,
         createdAt: a.saved.createdAt,
+        permissionMode: a.saved.permissionMode ?? null,
         default: a.ref === current?.ref,
       }));
       output(opts, { default: current?.ref ?? null, items }, () => {
@@ -769,6 +780,34 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       output(opts, { default: entry.ref }, () => `Default agent: ${entry.ref}`);
     },
   );
+
+  withJson(
+    agents
+      .command("permission-mode")
+      .description("show or set the Claude Code permission mode spider claude starts a saved agent in")
+      .argument("<agent>")
+      .argument("[mode]", `one of ${PERMISSION_MODES.join(", ")}`)
+      .option("--clear", "go back to the spider default (auto)"),
+  ).action(async (ref: string, mode: string | undefined, opts: JsonOption & { clear?: boolean }) => {
+    if (mode !== undefined && !isPermissionMode(mode)) {
+      throw usageError(`Unknown permission mode ${mode}. Use one of ${PERMISSION_MODES.join(", ")}`);
+    }
+    if (mode !== undefined && opts.clear) throw usageError("Give a mode or --clear, not both");
+    const store = await readStore(options.env);
+    const entry = findAgent(store, ref);
+    if (mode !== undefined || opts.clear) {
+      const saved = store.servers[entry.server]?.orgs[entry.org]?.agents[entry.agent];
+      if (saved) {
+        if (mode === undefined) delete saved.permissionMode;
+        else saved.permissionMode = mode;
+      }
+      await writeStore(options.env, store);
+    }
+    const current = mode ?? (opts.clear ? undefined : entry.saved.permissionMode);
+    output(opts, { agent: entry.ref, permissionMode: current ?? null, effective: current ?? DEFAULT_PERMISSION_MODE }, () =>
+      current ? `${entry.ref} starts in ${current}` : `${entry.ref} starts in ${DEFAULT_PERMISSION_MODE} (the spider default)`,
+    );
+  });
 
   withJson(
     agents
@@ -804,7 +843,12 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     .argument("[agent]", "handle, org/handle or server/org/handle (default: pick one, or the default agent)")
     .argument("[claudeArgs...]", "arguments for claude, after --")
     .option("--no-channel", "don't push the agent's inbox into the session")
-    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean }) => {
+    .addOption(
+      new Option("--permission-mode <mode>", "the permission mode to start in (default: the agent's, see spider agents permission-mode, else auto)").choices(
+        PERMISSION_MODES,
+      ),
+    )
+    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean; permissionMode?: PermissionMode }) => {
       // Everything after "--" goes to claude; an agent is only an operand before it.
       const dash = argv.indexOf("--");
       const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
@@ -840,20 +884,27 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const config = join(dir, "mcp.json");
       await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
       const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env, entry);
-      const command = [
-        "claude",
-        ...extra,
-        ...(agentName ? ["--agent", agentName] : []),
-        // Both options take several values, so they come last.
-        "--mcp-config",
-        config,
-        ...(opts.channel ? ["--dangerously-load-development-channels", "server:spider-channel"] : []),
-      ];
+      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
+        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
+      }
+      const permission = permissionModeFor(opts.permissionMode, extra, entry.saved.permissionMode);
+      const command = claudeCommand({ claudeArgs: extra, agent: agentName, mcpConfig: config, channel: opts.channel, permission });
       // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
       const env: Record<string, string | undefined> = { ...options.env, SPIDER_AGENT: entry.ref };
       delete env.SPIDER_TOKEN;
       if (noticeAllowed(argv, options.env, options.isInteractive)) await startNotice(options.env, httpFetch, (l) => stderr.write(l))();
       stderr.write(`Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`);
+      stderr.write(`${permissionLine(permission)}\n`);
+      if (opts.channel) {
+        stderr.write(
+          "Inbox channel: Claude Code asks to confirm development channels at every start (no setting skips it); choose \"I am using this for local development\", or use --no-channel\n",
+        );
+      }
+      for (const hook of await brokenHooks(options.env, cwd)) {
+        stderr.write(
+          `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`,
+        );
+      }
       try {
         result.exitCode = await options.spawn(command, { env });
       } finally {

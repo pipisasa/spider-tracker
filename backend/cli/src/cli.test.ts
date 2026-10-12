@@ -472,11 +472,15 @@ describe("saved agents", () => {
         self,
       });
       expect(started.code).toBe(7);
+      expect(started.stderr).toContain("Permission mode: auto (spider default)\n");
+      expect(started.stderr).toContain("confirm development channels");
       const [first] = launched;
       expect(first?.argv).toEqual([
         "claude",
         "--model",
         "opus",
+        "--permission-mode",
+        "auto",
         "--agent",
         "code-reviewer",
         "--mcp-config",
@@ -528,6 +532,77 @@ describe("saved agents", () => {
       expect(launched[2]?.env.SPIDER_AGENT).toBe("local/acme/writer");
       expect(launched[2]?.argv).not.toContain("--agent");
       expect(JSON.parse(launched[2]?.config ?? "").mcpServers.spider.url).toBe("http://localhost:4000/mcp");
+    } finally {
+      cleanup();
+    }
+  });
+  test("claude starts in an explicit permission mode: the option, claude's own, the agent's, else auto", async () => {
+    const { env, cleanup } = savedAgents();
+    const launched: string[][] = [];
+    const spawn: RunOptions["spawn"] = async (argv) => (launched.push(argv), 0);
+    const self = ["spider"];
+    const modeOf = (argv: string[] | undefined) => argv?.[argv.indexOf("--permission-mode") + 1];
+    try {
+      const flag = await cli(["claude", "reviewer", "--permission-mode", "acceptEdits"], { env, spawn, self });
+      expect(modeOf(launched[0])).toBe("acceptEdits");
+      expect(flag.stderr).toContain("Permission mode: acceptEdits (--permission-mode)\n");
+
+      // Claude's own flag after -- is kept as given, not doubled.
+      const passed = await cli(["claude", "reviewer", "--", "--permission-mode", "plan"], { env, spawn, self });
+      expect(launched[1]?.filter((a) => a === "--permission-mode")).toHaveLength(1);
+      expect(modeOf(launched[1])).toBe("plan");
+      expect(passed.stderr).toContain("Permission mode: plan (claude arguments)\n");
+      await cli(["claude", "reviewer", "--", "--dangerously-skip-permissions"], { env, spawn, self });
+      expect(launched[2]).not.toContain("--permission-mode");
+
+      // Both: a usage error, nothing started.
+      const both = await cli(["claude", "reviewer", "--permission-mode", "auto", "--", "--permission-mode", "plan"], { env, spawn, self });
+      expect(both.code).toBe(2);
+      expect(launched).toHaveLength(3);
+      expect((await cli(["claude", "reviewer", "--permission-mode", "yolo"], { env, spawn, self })).code).toBe(2);
+
+      // Saved per agent.
+      const set = await cli(["agents", "permission-mode", "reviewer", "manual", "--json"], { env });
+      expect(JSON.parse(set.stdout)).toEqual({ agent: "prod/acme/reviewer", permissionMode: "manual", effective: "manual" });
+      const saved = await cli(["claude", "reviewer"], { env, spawn, self });
+      expect(modeOf(launched[3])).toBe("manual");
+      expect(saved.stderr).toContain("Permission mode: manual (saved for this agent)\n");
+      await cli(["claude", "prod/acme/writer"], { env, spawn, self });
+      expect(modeOf(launched[4])).toBe("auto");
+      const listed = JSON.parse((await cli(["agents", "--json"], { env })).stdout) as { items: { agent: string; permissionMode: string | null }[] };
+      expect(listed.items.find((a) => a.agent === "prod/acme/reviewer")?.permissionMode).toBe("manual");
+
+      const cleared = await cli(["agents", "permission-mode", "reviewer", "--clear"], { env });
+      expect(cleared.stdout).toContain("starts in auto (the spider default)");
+      await cli(["claude", "reviewer"], { env, spawn, self });
+      expect(modeOf(launched[5])).toBe("auto");
+      expect((await cli(["agents", "permission-mode", "reviewer", "yolo"], { env })).code).toBe(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("claude warns about a settings hook whose script is gone", async () => {
+    const { home, env, cleanup } = savedAgents();
+    mkdirSync(join(home, ".claude", "hooks"), { recursive: true });
+    writeFileSync(join(home, ".claude", "hooks", "present.js"), "");
+    writeFileSync(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { hooks: [{ type: "command", command: `node "${join(home, ".claude", "hooks", "gone.js")}"` }] },
+            { hooks: [{ type: "command", command: "node ~/.claude/hooks/present.js" }] },
+          ],
+        },
+      }),
+    );
+    try {
+      const started = await cli(["claude", "reviewer", "--no-channel"], { env, spawn: async () => 0, self: ["spider"], cwd: home });
+      expect(started.code).toBe(0);
+      expect(started.stderr).toContain(`Warning: a SessionStart hook in ${join(home, ".claude", "settings.json")} runs ${join(home, ".claude", "hooks", "gone.js")}, which doesn't exist`);
+      expect(started.stderr).not.toContain("present.js");
+      expect(started.stderr).not.toContain("development channels");
     } finally {
       cleanup();
     }
@@ -585,7 +660,7 @@ describe("Claude Code plugins", () => {
       // spider claude starts it as the plugin agent.
       let launched: string[] = [];
       await cli(["claude", "builder"], { env, self: ["spider"], spawn: async (argv) => ((launched = argv), 0) });
-      expect(launched.slice(0, 3)).toEqual(["claude", "--agent", "spider-agents:prod:acme:builder"]);
+      expect(launched.slice(0, 5)).toEqual(["claude", "--permission-mode", "auto", "--agent", "spider-agents:prod:acme:builder"]);
 
       // remove --claude deletes it.
       const removed = await cli(["agents", "remove", "builder", "--claude", "--json"], { env });

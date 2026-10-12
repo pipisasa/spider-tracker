@@ -152,7 +152,8 @@ The organization is the key's (from `whoami`).
           "name": "Batele",
           "agents": {
             "reviewer": { "token": "spt_…", "actor": { "id": "…", "name": "Reviewer", "handle": "reviewer" },
-                          "projects": [{ "key": "ST", "name": "Spider Tracker" }], "source": "invite", "createdAt": "…" }
+                          "projects": [{ "key": "ST", "name": "Spider Tracker" }], "source": "invite", "createdAt": "…",
+                          "permissionMode": "auto" }
           }
         }
       }
@@ -189,14 +190,16 @@ The organization is the key's (from `whoami`).
 `spider uninstall [--yes] [--keep-keys] [--json]` removes everything the CLI put on the machine, in this order: revokes every saved agent's key on its server (`DELETE /v1/api-keys/current`; `--keep-keys` only forgets them), runs `claude plugin uninstall … --scope user` for `spider-tracker@spider-tracker` and `spider-agents@spider-local` and `claude plugin marketplace remove` for `spider-tracker` and `spider-local`, deletes the copies Claude Code leaves in `~/.claude/plugins/cache/{spider-tracker,spider-local}` and any other agent file with `spider-agent:` (older `~/.claude/agents` setups), then the config folder and, for a compiled install, the binary itself. Without `--yes` it shows the plan and asks (at a terminal) or exits 2 (otherwise). A key that can't be revoked is reported (exit 1) and everything else still goes. The agents stay in the tracker; delete them in Settings → Agents. It never touches other plugins or agent files.
 
 ### Starting Claude Code as an agent
-`spider claude [agent] [--no-channel] [-- claude args…]` picks the agent (the argument, `--as`, a picker grouped server → organization when run at a terminal with several agents saved, else `SPIDER_AGENT` or the default) and runs:
+`spider claude [agent] [--no-channel] [--permission-mode <mode>] [-- claude args…]` picks the agent (the argument, `--as`, a picker grouped server → organization when run at a terminal with several agents saved, else `SPIDER_AGENT` or the default) and runs:
 
 ```bash
-claude [claude args…] [--agent <qualified name>] --mcp-config <tmp>/mcp.json \
+claude [claude args…] [--permission-mode <mode>] [--agent <qualified name>] --mcp-config <tmp>/mcp.json \
   --dangerously-load-development-channels server:spider-channel
 ```
 
 with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temporary MCP config (0600, deleted when Claude exits) holds no secret: the `spider` HTTP server at `<server>/mcp` with `headersHelper` `<this CLI> mcp-headers --as <agent> --server <server>`, and the `spider-channel` stdio server (`<this CLI> channel --as <agent>`), where `<this CLI>` is `bun <checkout>/backend/cli/src/index.ts` from source or the compiled `spider` binary. `--agent` is added when an agent file in the private plugin (`spider-agents:<server>:<org>:<name>`) or, from older versions, anywhere under `~/.claude/agents/` says `spider-agent: <agent>` in its frontmatter, or a top-level `~/.claude/agents/<handle>.md` has no `spider-agent`. The plugin's own `spider` MCP server is namespaced `plugin:spider-tracker:spider`, so it doesn't clash with the one in the temporary config. `spider agents remove <agent> --claude` deletes the linked agent files (plugin and `~/.claude/agents`) and the folders they leave empty; without it, they are listed and kept. The exit code is Claude's.
+
+`--permission-mode` is always passed: `spider claude --permission-mode`, else the agent's saved `permissionMode` (`spider agents permission-mode <agent> [mode] [--clear]`, `--json`: `{ agent, permissionMode, effective }`), else `auto`; it is left out when the claude args already give `--permission-mode` or `--dangerously-skip-permissions`, and giving both that and the spider option is a usage error. Before starting, stderr gets `Permission mode: <mode> (<where from>)`, a note that Claude Code will ask to confirm the development channel (unless `--no-channel`), and a warning for each hook in the user's or project's Claude Code settings that runs a missing script ([agents.md](./agents.md#saved-agents-on-a-machine)).
 
 ### Login (device flow, RFC 8628)
 1. `spider login [--name MacBook] [--no-browser]` calls `POST /device/code` and prints `https://tracker.batele.plus/device` with a short code (instructions on stderr), opening the browser at a terminal.
@@ -216,7 +219,8 @@ spider logout
 spider agents [list]                # saved agents by server and organization; * marks the default
 spider agents default <agent>
 spider agents remove <agent> [--revoke] [--claude]   # local only unless --revoke; --claude deletes its Claude Code agent
-spider claude [agent] [--no-channel] [-- claude args…]
+spider agents permission-mode <agent> [mode] [--clear]   # the mode spider claude starts it in (default auto)
+spider claude [agent] [--no-channel] [--permission-mode <mode>] [-- claude args…]
 spider mcp-headers [--server prod]  # {"Authorization": "Bearer …"} for Claude Code's headersHelper; with --server, {} unless the key is that server's
 spider whoami                       # also names the saved agent in use
 spider <command> --as <agent>       # any command, as a saved agent
