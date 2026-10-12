@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   documentIdLink,
   documentIdTarget,
+  isLinkableTitle,
   normalizeTitle,
   outgoingLinksIn,
   resolveDocumentLink,
   resolveTitle,
+  retargetTitleLinks,
   taskKeyTarget,
   wikiLinksIn,
 } from "./links";
@@ -93,5 +95,27 @@ describe("links by id (ST-115)", () => {
     expect(resolveDocumentLink(docs, `doc:${ID}`, null)?.title).toBe("Spec");
     expect(resolveDocumentLink(docs, "plan", "ST")?.id).toBe("other");
     expect(resolveDocumentLink(docs, "doc:00000000-0000-7000-8000-000000000000", null)).toBeNull();
+  });
+});
+
+describe("retargetTitleLinks (ST-101)", () => {
+  test("rewrites the title in any case or spacing, keeping headings and labels", () => {
+    const text = "[[Old]] [[ old  #Intro]] [[OLD|label]] [[Old#A|b]] [[Older]] [[doc:x]]";
+    expect(retargetTitleLinks(text, "Old", "New")).toBe("[[New]] [[New#Intro]] [[New|label]] [[New#A|b]] [[Older]] [[doc:x]]");
+  });
+
+  test("leaves code alone and returns the same text without matches", () => {
+    const text = "`[[Old]]`\n```\n[[Old]]\n```\n<code>[[Old]]</code> [[Old]]";
+    expect(retargetTitleLinks(text, "Old", "doc:1")).toBe("`[[Old]]`\n```\n[[Old]]\n```\n<code>[[Old]]</code> [[doc:1]]");
+    expect(retargetTitleLinks("[[Other]]", "Old", "New")).toBe("[[Other]]");
+  });
+});
+
+describe("isLinkableTitle", () => {
+  test("rejects titles a [[link]] can't name", () => {
+    expect(["Plan", "Plan v2 (draft)"].map(isLinkableTitle)).toEqual([true, true]);
+    expect(["", "  ", "A | B", "C#", "[x]", "ST-12", "doc:01a1217e-7dd6-7d02-9d7c-45929504ed9f"].map(isLinkableTitle)).toEqual(
+      Array(7).fill(false),
+    );
   });
 });

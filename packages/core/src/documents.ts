@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import {
   assertCanManageProjects,
   assertCanWrite,
@@ -8,6 +8,7 @@ import {
   orgIdOf,
   projectScope,
   type ActorContext,
+  type ProjectScope,
   type Viewer,
 } from "./access";
 import { recordActivity } from "./activity";
@@ -20,13 +21,24 @@ import type {
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
+  RelinkedDocumentsDto,
+  UpdatedDocumentDto,
 } from "./contracts";
 import { diffHunks, diffLines } from "./diff";
 import { applyDocumentEdits } from "./document-edits";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
-import { documentIdLink, normalizeTitle, outgoingLinksIn, resolveDocumentLink, resolveTitle } from "./links";
+import {
+  documentIdLink,
+  isLinkableTitle,
+  normalizeTitle,
+  outgoingLinksIn,
+  resolveDocumentLink,
+  resolveTitle,
+  retargetTitleLinks,
+  type LinkCandidate,
+} from "./links";
 import { announceRulesChange, rulesProjectOf } from "./project-rules";
 import {
   createDocumentInput,
@@ -96,6 +108,11 @@ function assertActive(project: { key: string; archivedAt: Date | null }) {
 
 async function assertNotArchived(db: Db | Tx, viewer: Viewer, key: string) {
   assertActive(await findProject(db, viewer, key));
+}
+
+/** Organization-wide documents, and those of the projects in `scope`. */
+function visibleIn(scope: ProjectScope): SQL | undefined {
+  return scope ? or(isNull(documents.projectId), inArray(documents.projectId, [...scope])) : undefined;
 }
 
 /** Documents with their scope keys; those on deleted tasks are hidden. */
@@ -298,12 +315,7 @@ export async function listDocuments(
     const project = await findProject(db, viewer, filter.project);
     where.push(eq(documents.projectId, project.id));
   }
-  const scope = await projectScope(db, viewer);
-  if (scope) {
-    where.push(
-      or(isNull(documents.projectId), inArray(documents.projectId, [...scope])),
-    );
-  }
+  where.push(visibleIn(await projectScope(db, viewer)));
   const rows = await selectDocuments(db, and(...where)).orderBy(
     desc(documents.updatedAt),
     desc(documents.id),
@@ -322,28 +334,124 @@ export async function getDocument(
 
 /**
  * Saves a new version. Fails with "conflict" when the document was saved since
- * `baseVersion`; returns the document unchanged when nothing differs.
+ * `baseVersion`; returns the document unchanged when nothing differs. A rename rewrites the
+ * `[[Old title]]` links leading here (see relinkRenamed) and says what it did in `relinked`.
  */
 export async function updateDocument(
   db: Db,
   ctx: ActorContext,
   id: string,
   input: unknown,
-): Promise<DocumentDto> {
+): Promise<UpdatedDocumentDto> {
   assertCanWrite(ctx);
   const data = parseInput(updateDocumentInput, input);
 
   return db.transaction(async (tx) => {
     const { document: current, scope } = await findDocument(tx, ctx, id, true);
     assertBaseVersion(current, data.baseVersion);
-    return saveGuarded(tx, ctx, current, () =>
+    const saved = await saveGuarded(tx, ctx, current, () =>
       saveVersion(tx, ctx, current, scope, {
         title: data.title ?? current.title,
         format: data.format ?? current.format,
         content: data.content ?? current.content,
       }),
     );
+    if (saved.title === current.title) return saved;
+    return { ...saved, relinked: await relinkRenamed(tx, ctx, current, saved.title) };
   });
+}
+
+/**
+ * After `renamed` got `newTitle` (ST-101), rewrites the `[[Old title]]` links that opened it, as
+ * Obsidian does: each linking document gets one new version, saved by the renamer like any of
+ * their saves. It runs with the renamer's rights, never past them: documents they can't see stay
+ * as they are (their links go unresolved, as before this existed), and a project's rules document
+ * is skipped unless they may change rules. A link keeps its `#heading` and `|label`; it becomes
+ * `[[doc:<id>]]` instead when the new title can't be linked to or another document has it too.
+ * `[[doc:<id>]]` links need nothing, and a document's links to itself are left alone.
+ */
+async function relinkRenamed(
+  tx: Tx,
+  ctx: ActorContext,
+  renamed: DocumentRow,
+  newTitle: string,
+): Promise<RelinkedDocumentsDto> {
+  const result: RelinkedDocumentsDto = { rewritten: [], skipped: [] };
+  const oldTitle = renamed.title;
+  if (normalizeTitle(oldTitle) === normalizeTitle(newTitle)) return result;
+
+  const sources = await tx
+    .selectDistinct({ id: documentLinks.documentId })
+    .from(documentLinks)
+    .where(
+      and(
+        eq(documentLinks.kind, "document"),
+        sql`lower(${documentLinks.target}) = ${normalizeTitle(oldTitle)}`,
+        sql`${documentLinks.documentId} <> ${renamed.id}`,
+      ),
+    )
+    .orderBy(asc(documentLinks.documentId));
+  if (!sources.length) return result;
+
+  // Which document a title opens depends on every live document of the organization, not on
+  // what the renamer sees.
+  const rows = await selectDocuments(tx, eq(documents.orgId, ctx.orgId));
+  const after: (LinkCandidate & { projectId: string | null })[] = rows.map((r) => ({
+    id: r.document.id,
+    title: r.document.title,
+    projectId: r.document.projectId,
+    projectKey: r.projectKey,
+    updatedAt: r.document.updatedAt.toISOString(),
+  }));
+  const before = after.map((d) => (d.id === renamed.id ? { ...d, title: oldTitle } : d));
+  // A title another document has too could open that one, now or after its next save.
+  const titleIsFree =
+    isLinkableTitle(newTitle) &&
+    !after.some((d) => d.id !== renamed.id && normalizeTitle(d.title) === normalizeTitle(newTitle));
+  const byId = new Map(after.map((d) => [d.id, d]));
+  const scope = await projectScope(tx, ctx);
+  let canChangeRules: boolean | undefined;
+
+  for (const { id } of sources) {
+    const source = byId.get(id);
+    if (!source || !inScope(scope, source.projectId)) continue;
+    if (resolveTitle(before, oldTitle, source.projectKey)?.id !== renamed.id) continue;
+
+    const { document: current, scope: at } = await findDocument(tx, ctx, id, true);
+    const rulesOf = await rulesProjectOf(tx, id);
+    if (rulesOf) {
+      canChangeRules ??= await assertCanManageProjects(tx, ctx, "change rules").then(
+        () => true,
+        () => false,
+      );
+      if (!canChangeRules) {
+        result.skipped.push({ id, title: current.title, reason: "rules" });
+        continue;
+      }
+    }
+    const byTitle =
+      titleIsFree &&
+      // Raw `<`, `&` or `>` would turn into markup in an HTML document.
+      !(current.format === "html" && /[<&>]/.test(newTitle));
+    const target = byTitle ? newTitle.trim().replace(/\s+/g, " ") : documentIdLink(renamed.id);
+    const content = retargetTitleLinks(current.content, oldTitle, target);
+    if (content === current.content) continue;
+    if (new TextEncoder().encode(content).length > MAX_DOCUMENT_BYTES) {
+      result.skipped.push({ id, title: current.title, reason: "too_large" });
+      continue;
+    }
+    await saveVersion(
+      tx,
+      ctx,
+      current,
+      at,
+      { title: current.title, format: current.format, content },
+      { relinked: { documentId: renamed.id, title: [oldTitle, newTitle] } },
+    );
+    if (rulesOf) await announceRulesChange(tx, ctx, rulesOf.id, id);
+    result.rewritten.push({ id, title: current.title });
+  }
+  return result;
 }
 
 /**
@@ -638,6 +746,29 @@ export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise
 }
 
 /**
+ * The documents mentioning a task (ST-101): `[[ST-12]]` or a plain ST-12 in their content, most
+ * recently updated first. The task's own documents are left out.
+ */
+export async function listTaskBacklinks(db: Db, viewer: Viewer, taskKey: string): Promise<DocumentSummaryDto[]> {
+  const { task, projectKey } = await findTask(db, viewer, taskKey);
+  const mentioning = db
+    .select({ id: documentLinks.documentId })
+    .from(documentLinks)
+    // Served by the (kind, lower(target)) index; task targets are stored as "ST-12".
+    .where(and(eq(documentLinks.kind, "task"), sql`lower(${documentLinks.target}) = ${`${projectKey}-${task.number}`.toLowerCase()}`));
+  const rows = await selectDocuments(
+    db,
+    and(
+      eq(documents.orgId, orgIdOf(viewer)),
+      inArray(documents.id, mentioning),
+      or(isNull(documents.taskId), ne(documents.taskId, task.id)),
+      visibleIn(await projectScope(db, viewer)),
+    ),
+  ).orderBy(desc(documents.updatedAt), desc(documents.id));
+  return rows.map((r) => toSummary(r.document, scopeOf(r)));
+}
+
+/**
  * The organization's documents as a graph (ST-100): what the viewer can see, the tasks and
  * projects those documents sit in or link to, and every link. Links to tasks that don't exist
  * or are out of scope are dropped; `[[titles]]` no document has stay as unresolved targets.
@@ -645,14 +776,20 @@ export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise
 export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<DocumentGraphDto> {
   const docs = await listDocuments(db, viewer);
   const byId = new Map(docs.map((d) => [d.id, d]));
-  // The organization's live documents' links; scope applies through `byId` (a join, not an id
-  // list, so a large organization stays under Postgres' parameter limit).
+  // The visible documents' links, through a join rather than a list of their ids, so a large
+  // organization stays under Postgres' parameter limit; `byId` drops those on deleted tasks.
   const rows = docs.length
     ? await db
         .select({ documentId: documentLinks.documentId, kind: documentLinks.kind, target: documentLinks.target })
         .from(documentLinks)
         .innerJoin(documents, eq(documentLinks.documentId, documents.id))
-        .where(and(eq(documents.orgId, orgIdOf(viewer)), isNull(documents.deletedAt)))
+        .where(
+          and(
+            eq(documents.orgId, orgIdOf(viewer)),
+            isNull(documents.deletedAt),
+            visibleIn(await projectScope(db, viewer)),
+          ),
+        )
         .orderBy(asc(documentLinks.documentId), asc(documentLinks.kind), asc(documentLinks.target))
     : [];
 

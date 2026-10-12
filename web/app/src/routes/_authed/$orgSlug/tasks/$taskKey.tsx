@@ -1,4 +1,4 @@
-import { TaskDocuments } from "@/components/documents";
+import { TaskDocuments, TaskMentions } from "@/components/documents";
 import { Relations } from "@/components/relations";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
@@ -170,6 +170,7 @@ function TaskPage() {
         />
         <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
         <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
+        <TaskMentions orgSlug={orgSlug} taskKey={task.key} />
         <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
       </main>
 

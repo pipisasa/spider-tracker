@@ -339,6 +339,22 @@ export interface DocumentDto extends DocumentSummaryDto {
   content: string;
 }
 
+/**
+ * What a rename did to the `[[Old title]]` links leading to the document (ST-101): the documents
+ * rewritten (one new version each, by the renamer) and those left as they were. `rules`: a project's
+ * rules document, which only owners, admins and their agents may save; `too_large`: the rewrite would
+ * take it over 1 MB. Documents the renamer can't see are neither rewritten nor listed.
+ */
+export interface RelinkedDocumentsDto {
+  rewritten: { id: string; title: string }[];
+  skipped: { id: string; title: string; reason: "rules" | "too_large" }[];
+}
+
+/** A saved document; `relinked` is set when the save renamed it. */
+export interface UpdatedDocumentDto extends DocumentDto {
+  relinked?: RelinkedDocumentsDto;
+}
+
 /** Where a document link leads: a document, a task, or a title no document has (yet). */
 export type DocumentLinkTarget =
   | { type: "document"; id: string }
@@ -357,6 +373,8 @@ export interface DocumentGraphTaskDto {
   title: string;
   projectKey: string;
   statusCategory: StatusCategory;
+  /** The task's web page (ST-115); set in API responses. */
+  url?: string;
 }
 
 /**

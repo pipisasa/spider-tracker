@@ -22,6 +22,7 @@ import type {
   SavedViewDto,
   SubtaskDto,
   TaskDto,
+  UpdatedDocumentDto,
 } from "@repo/core/contracts";
 import type {
   CreateAgentInput,
@@ -90,6 +91,8 @@ export const keys = {
     ["orgs", org, "documents", "list", "graph"] as const,
   documentBacklinks: (org: string, id: string) =>
     ["orgs", org, "documents", "list", "backlinks", id] as const,
+  taskBacklinks: (org: string, taskKey: string) =>
+    ["orgs", org, "documents", "list", "task-backlinks", taskKey] as const,
   documentVersions: (org: string, id: string) =>
     ["orgs", org, "documents", id, "versions"] as const,
   documentVersion: (org: string, id: string, version: number) =>
@@ -620,6 +623,18 @@ export const documentBacklinksQuery = (org: string, id: string) =>
       ).items,
   });
 
+/** Documents mentioning a task: `[[ST-12]]` or a plain ST-12; not its own (ST-101). */
+export const taskBacklinksQuery = (org: string, taskKey: string) =>
+  queryOptions({
+    queryKey: keys.taskBacklinks(org, taskKey),
+    queryFn: async () =>
+      (
+        await api<ListResponse<DocumentSummaryDto>>(
+          `${orgPath(org)}/tasks/${taskKey}/backlinks`,
+        )
+      ).items,
+  });
+
 export const documentVersionsQuery = (org: string, id: string) =>
   queryOptions({
     queryKey: keys.documentVersions(org, id),
@@ -683,14 +698,17 @@ export function useUpdateDocument(org: string, id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateDocumentInput) =>
-      api<DocumentDto>(`${orgPath(org)}/documents/${id}`, {
+      api<UpdatedDocumentDto>(`${orgPath(org)}/documents/${id}`, {
         method: "PATCH",
         body: JSON.stringify(input),
       }),
-    onSuccess: (document) => {
+    onSuccess: ({ relinked, ...document }) => {
       qc.setQueryData(keys.document(org, id), document);
       void qc.invalidateQueries({ queryKey: keys.documentVersions(org, id) });
       void qc.invalidateQueries({ queryKey: keys.documentLists(org) });
+      // A rename rewrote [[links]] in these (ST-101).
+      for (const d of relinked?.rewritten ?? [])
+        void qc.invalidateQueries({ queryKey: keys.document(org, d.id) });
     },
   });
 }

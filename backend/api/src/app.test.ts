@@ -600,9 +600,32 @@ withDb("SDK and client-declared source", () => {
     const byId = await client.documents.create(slug, { title: "By id", content: `[[doc:${target.id}]]` });
     await client.documents.update(slug, target.id, { baseVersion: 1, title: "Graph target renamed" });
     expect((await client.documents.graph(slug)).links).toContainEqual({ from: byId.id, to: { type: "document", id: target.id } });
-    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([byId.id]);
+    // The rename rewrote the source's [[graph target|it]] too (ST-101): saved last, it comes first.
+    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id, byId.id]);
     await client.documents.delete(slug, byId.id);
     expect(await client.documents.backlinks(slug, crypto.randomUUID()).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    await client.documents.delete(slug, source.id);
+    await client.documents.delete(slug, target.id);
+  });
+
+  test("a rename rewrites [[links]]; GET /tasks/:key/backlinks lists mentioning documents (ST-101)", async () => {
+    const client = sdk();
+    const task = await client.tasks.create(slug, "SPI", { title: "Mentioned task" });
+    const target = await client.documents.create(slug, { title: "Relink target", project: "SPI" });
+    const source = await client.documents.create(slug, {
+      title: "Relink source",
+      content: `[[Relink target|there]] and ${task.key}`,
+    });
+    const renamed = await client.documents.update(slug, target.id, { baseVersion: 1, title: "Relinked" });
+    expect(renamed.relinked).toEqual({ rewritten: [{ id: source.id, title: "Relink source" }], skipped: [] });
+    expect((await client.documents.get(slug, source.id)).content).toBe(`[[Relinked|there]] and ${task.key}`);
+
+    const backlinks = (await client.tasks.backlinks(slug, task.key)).items;
+    expect(backlinks.map((d) => [d.id, d.url])).toEqual([[source.id, `${env.WEB_ORIGIN}/${slug}/docs/${source.id}`]]);
+    expect((await client.documents.graph(slug)).tasks.find((t) => t.key === task.key)?.url).toBe(
+      `${env.WEB_ORIGIN}/${slug}/tasks/${task.key}`,
+    );
+    expect(await client.tasks.backlinks(slug, "SPI-99999").catch((e: unknown) => e)).toMatchObject({ status: 404 });
     await client.documents.delete(slug, source.id);
     await client.documents.delete(slug, target.id);
   });
