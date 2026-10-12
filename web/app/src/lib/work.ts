@@ -27,6 +27,7 @@ import type {
   CreateTagInput,
   CreateTaskInput,
   UpdateAgentInput,
+  UpdateProjectInput,
   UpdateDocumentInput,
   MoveDocumentInput,
   UpdateTaskInput,
@@ -50,6 +51,8 @@ export const keys = {
   invitations: (org: string) => ["orgs", org, "invitations"] as const,
   tags: (org: string) => ["orgs", org, "tags"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
+  archivedProjects: (org: string) =>
+    ["orgs", org, "archived-projects"] as const,
   project: (org: string, key: string) =>
     ["orgs", org, "projects", key] as const,
   tasks: (org: string, key: string) =>
@@ -93,6 +96,17 @@ export const projectsQuery = (org: string) =>
       (await api<ListResponse<ProjectDto>>(`${orgPath(org)}/projects`)).items,
   });
 
+export const archivedProjectsQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.archivedProjects(org),
+    queryFn: async () =>
+      (
+        await api<ListResponse<ProjectDto>>(
+          `${orgPath(org)}/projects?archived=true`,
+        )
+      ).items.filter((p) => p.archivedAt !== null),
+  });
+
 export const projectQuery = (org: string, key: string) =>
   queryOptions({
     queryKey: keys.project(org, key),
@@ -131,6 +145,45 @@ export function useCreateProject(org: string) {
       qc.setQueryData(keys.project(org, project.key), project);
       void qc.invalidateQueries({ queryKey: keys.projects(org) });
     },
+  });
+}
+
+function refreshProjects(qc: ReturnType<typeof useQueryClient>, org: string) {
+  void qc.invalidateQueries({ queryKey: keys.projects(org) });
+  void qc.invalidateQueries({ queryKey: keys.archivedProjects(org) });
+}
+
+export function useUpdateProject(org: string, projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateProjectInput) =>
+      api<ProjectDto>(`${orgPath(org)}/projects/${projectKey}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      toast.success("Project updated");
+      refreshProjects(qc, org);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+}
+
+/** Archive (`archive: true`) or restore (`false`) a project. */
+export function useArchiveProject(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, archive }: { key: string; archive: boolean }) =>
+      api<ProjectDto>(`${orgPath(org)}/projects/${key}/archive`, {
+        method: archive ? "POST" : "DELETE",
+      }),
+    onSuccess: (project, { archive }) => {
+      toast.success(
+        archive ? `Archived ${project.name}` : `Restored ${project.name}`,
+      );
+      refreshProjects(qc, org);
+    },
+    onError: (error) => toast.error(error.message),
   });
 }
 
