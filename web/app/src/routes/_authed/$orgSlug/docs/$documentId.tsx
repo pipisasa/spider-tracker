@@ -117,8 +117,8 @@ function DocumentPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
+    <div className="flex flex-1 flex-col md:flex-row">
+      <main className="flex min-w-0 flex-1 flex-col gap-4 px-4 py-4 md:px-8 md:py-6">
         <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
           <Link
             to="/$orgSlug/docs"
@@ -236,7 +236,7 @@ function DocumentPage() {
       )}
 
       {showHistory && !edit && (
-        <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto border-t p-4 md:w-72 md:border-t-0 md:border-l">
+        <aside className="flex w-full shrink-0 flex-col gap-3 border-t p-4 md:w-72 md:border-t-0 md:border-l">
           <VersionHistory
             orgSlug={orgSlug}
             doc={doc}
