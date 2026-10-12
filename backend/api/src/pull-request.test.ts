@@ -16,8 +16,8 @@ import {
 } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { SpiderApiError, createClient } from "@repo/sdk";
-import { and, eq } from "drizzle-orm";
-import { generateKeyPairSync } from "node:crypto";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { createHmac, generateKeyPairSync } from "node:crypto";
 import { createApp } from "./app";
 import { createAuth } from "./auth";
 import { loadEnv } from "./env";
@@ -82,6 +82,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
   const repoName = `app-${stamp}`;
   let owner: ActorContext;
   let token = "";
+  const deliveries: string[] = [];
 
   const sdk = (target = app) => createClient({ baseUrl: env.API_ORIGIN, token, source: "cli", fetch: (input, init) => target.request(input, init) });
   const statusOf = async (key: string) => {
@@ -136,6 +137,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
   });
 
   afterAll(async () => {
+    await db.delete(schema.githubDeliveries).where(inArray(schema.githubDeliveries.id, deliveries));
     await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.id, userId));
     await db.delete(schema.githubInstallations).where(eq(schema.githubInstallations.id, installationId));
@@ -305,5 +307,53 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
     } finally {
       await client.close();
     }
+  });
+
+  test("GitHub's own events for a PR it opened pass the automation guards: its merge into main moves the task to Done", async () => {
+    // As GitHub sends them for the App's PR: a branch of the repo, the App's bot as author (NONE).
+    const merged = (number: number, head: string, base: string) =>
+      JSON.stringify({
+        action: "closed",
+        number,
+        installation: { id: installationId },
+        repository: { name: repoName, owner: { login: "acme" }, default_branch: "main" },
+        sender: { login: "ann", type: "User" },
+        pull_request: {
+          number,
+          title: "Open the pull request (SPI-1)",
+          body: "Closes SPI-1",
+          state: "closed",
+          draft: false,
+          merged: true,
+          merged_at: "2026-10-12T12:00:00Z",
+          closed_at: "2026-10-12T12:00:00Z",
+          updated_at: "2026-10-12T12:00:00Z",
+          head: { ref: head, repo: { full_name: `acme/${repoName}` } },
+          base: { ref: base },
+          user: { login: "spider-tracker-test[bot]", type: "Bot" },
+          author_association: "NONE",
+        },
+      });
+    const post = async (body: string) => {
+      const delivery = crypto.randomUUID();
+      deliveries.push(delivery);
+      const signature = `sha256=${createHmac("sha256", githubVars.GITHUB_APP_WEBHOOK_SECRET).update(body).digest("hex")}`;
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-GitHub-Event": "pull_request", "X-GitHub-Delivery": delivery, "X-Hub-Signature-256": signature },
+        body,
+      });
+      return ((await res.json()) as { status: string }).status;
+    };
+    expect(await statusOf("SPI-1")).toBe("in_review");
+    expect(await post(merged(1, "spi-1-open-the-pull-request", "main"))).toBe("processed");
+    expect(await statusOf("SPI-1")).toBe("done");
+    const [move] = await db
+      .select({ changes: schema.activity.changes })
+      .from(schema.activity)
+      .where(and(eq(schema.activity.orgId, owner.orgId), eq(schema.activity.action, "task.updated")))
+      .orderBy(desc(schema.activity.createdAt))
+      .limit(1);
+    expect(move?.changes).toMatchObject({ pullRequest: { number: 1, event: "merged", sender: "ann" } });
   });
 });

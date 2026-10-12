@@ -23,9 +23,45 @@ export function gitAutomationOf(stored: unknown): GitAutomationSettings {
 /** Links that move tasks; a mention in the body ("body") or a commit message ("message") doesn't. */
 export const AUTOMATING_VIA: readonly GitLinkVia[] = ["closing", "branch", "title"];
 
-/** The automation event of a pull_request action, given the PR as saved; null for actions that move nothing (edited, synchronize, …). */
-export function pullRequestEvent(action: string, pr: { state: PullRequestState; draft: boolean }): GitAutomationEvent | null {
-  if (pr.state === "merged") return action === "closed" ? "merged" : null;
+/** GitHub's `author_association` values whose pull requests may move tasks. */
+export const TRUSTED_AUTHOR_ASSOCIATIONS: readonly string[] = ["OWNER", "MEMBER", "COLLABORATOR"];
+
+/** Who opened a pull request, as a webhook says (only what the trust check needs). */
+export interface PullRequestSource {
+  /** The base repo, "owner/name". */
+  baseRepo: string;
+  /** The head branch's repo, "owner/name"; null when GitHub no longer has it (a deleted fork). */
+  headRepo: string | null;
+  /** The PR author's `author_association` (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE, …). */
+  authorAssociation: string | null;
+  /** The PR author's account type ("User", "Bot", …). */
+  authorType: string | null;
+}
+
+/**
+ * Whether a pull request from a webhook may move tasks: its head branch is in the base repo (not
+ * a fork), and its author is an owner, member or collaborator of the repo, or a bot (a GitHub App
+ * installed on the repo, such as Spider Tracker's own App opening PRs for `spider pr`, ST-87; its
+ * association is often NONE). Others still link to tasks, but never move them.
+ */
+export function trustedPullRequest({ baseRepo, headRepo, authorAssociation, authorType }: PullRequestSource): boolean {
+  if (headRepo === null || headRepo.toLowerCase() !== baseRepo.toLowerCase()) return false;
+  return authorType === "Bot" || (authorAssociation !== null && TRUSTED_AUTHOR_ASSOCIATIONS.includes(authorAssociation));
+}
+
+/**
+ * The automation event of a pull_request action, given the PR as saved and the repo's default
+ * branch; null for actions that move nothing (edited, synchronize, …). A merge counts only into
+ * the default branch: one into another branch (a stacked PR, a release or feature branch) hasn't
+ * shipped the work yet. Opened, ready and draft events count whatever the base: the work is in
+ * review either way.
+ */
+export function pullRequestEvent(
+  action: string,
+  pr: { state: PullRequestState; draft: boolean; baseBranch: string },
+  defaultBranch: string,
+): GitAutomationEvent | null {
+  if (pr.state === "merged") return action === "closed" && pr.baseBranch === defaultBranch ? "merged" : null;
   if (pr.state === "closed") return action === "closed" ? "closed" : null;
   switch (action) {
     case "opened":

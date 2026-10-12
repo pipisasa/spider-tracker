@@ -62,9 +62,12 @@ export function describeActivity(
   }
   if (entry.action !== "task.updated" || !entry.changes) return null;
   const parts: string[] = [];
+  let cause: string | null = null;
   for (const [field, value] of Object.entries(entry.changes)) {
     const [from, to] = Array.isArray(value) ? value : [undefined, value];
-    if (field === "statusId")
+    // Not a field: the pull request event that moved the task (ST-85).
+    if (field === "pullRequest") cause = describePullRequestCause(value);
+    else if (field === "statusId")
       parts.push(`moved ${statusName(from)} → ${statusName(to)}`);
     else if (field === "assigneeIds") parts.push(`assigned ${names(to)}`);
     else if (field === "priority")
@@ -86,7 +89,24 @@ export function describeActivity(
     }
     else parts.push(`changed ${field}`);
   }
-  return parts.join(", ") || null;
+  const line = parts.join(", ");
+  return (line && cause ? `${line} ${cause}` : line) || null;
+}
+
+const PULL_REQUEST_EVENTS: Record<string, string> = {
+  opened: "opened",
+  draft: "marked as a draft",
+  merged: "merged",
+  closed: "closed",
+};
+
+/** "(pull request #12 merged by bob)", from status automation's activity context. */
+function describePullRequestCause(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { number, event, sender } = value as Record<string, unknown>;
+  if (typeof number !== "number" || typeof event !== "string") return null;
+  const by = typeof sender === "string" && sender ? ` by ${sender}` : "";
+  return `(pull request #${number} ${PULL_REQUEST_EVENTS[event] ?? event}${by})`;
 }
 
 /** "added tag bug", "added tags bug, ui and removed 1 deleted tag". */
