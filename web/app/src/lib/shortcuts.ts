@@ -61,7 +61,8 @@ export function shortcutKey(event: KeyEventLike): string | null {
 
 /** Cmd+K (macOS) or Ctrl+K. */
 export const isPaletteKey = (event: KeyEventLike & { shiftKey?: boolean }): boolean =>
-  (event.key.toLowerCase() === "k" || event.code === "KeyK") &&
+  // The physical K key counts only when the layout isn't Latin (on Dvorak, physical K is "t").
+  (event.key.toLowerCase() === "k" || (!/^[a-z]$/i.test(event.key) && event.code === "KeyK")) &&
   (event.metaKey === true || event.ctrlKey === true) &&
   !event.altKey &&
   !event.shiftKey;

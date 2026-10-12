@@ -123,4 +123,5 @@ test("non-Latin layouts fall back to the physical key", () => {
   expect(shortcutKey({ key: "?", code: "Slash" })).toBe("?");
   expect(shortcutKey({ key: "c", code: "KeyC" })).toBe("c");
   expect(isPaletteKey({ key: "л", code: "KeyK", metaKey: true })).toBe(true);
+  expect(isPaletteKey({ key: "t", code: "KeyK", metaKey: true })).toBe(false); // Dvorak ⌘T
 });
