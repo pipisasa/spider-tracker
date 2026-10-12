@@ -293,6 +293,37 @@ export interface DocumentDto extends DocumentSummaryDto {
   content: string;
 }
 
+/** Where a document link leads: a document, a task, or a title no document has (yet). */
+export type DocumentLinkTarget =
+  | { type: "document"; id: string }
+  | { type: "task"; key: string }
+  /** The title as written; no visible document has it. */
+  | { type: "unresolved"; title: string };
+
+/** A link from a document's content: `[[…]]` (wiki) or a plain task key (mention). */
+export interface DocumentLinkDto {
+  from: string;
+  to: DocumentLinkTarget;
+}
+
+export interface DocumentGraphTaskDto {
+  key: string;
+  title: string;
+  projectKey: string;
+  statusCategory: StatusCategory;
+}
+
+/**
+ * Every document the viewer can see, the tasks and projects they belong to or link to, and the
+ * links between them. Containment (a task's document, a project's task) follows from the keys.
+ */
+export interface DocumentGraphDto {
+  documents: DocumentSummaryDto[];
+  tasks: DocumentGraphTaskDto[];
+  projects: { key: string; name: string }[];
+  links: DocumentLinkDto[];
+}
+
 export interface DocumentVersionSummaryDto {
   version: number;
   title: string;

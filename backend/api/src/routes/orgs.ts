@@ -36,7 +36,9 @@ import {
   createDocument,
   deleteDocument,
   getDocument,
+  getDocumentGraph,
   getDocumentVersion,
+  listBacklinks,
   listDocuments,
   listDocumentVersions,
   moveDocument,
@@ -297,6 +299,13 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   app.get("/documents", async (c) => c.json(list(await listDocuments(db, c.get("actor"), c.req.query()))));
 
   app.post("/documents", async (c) => c.json(await createDocument(db, c.get("actor"), await body(c)), 201));
+
+  // Registered before /documents/:documentId, which would take "graph" for an id.
+  app.get("/documents/graph", async (c) => c.json(await getDocumentGraph(db, c.get("actor"))));
+
+  app.get("/documents/:documentId/backlinks", async (c) =>
+    c.json(list(await listBacklinks(db, c.get("actor"), c.req.param("documentId")))),
+  );
 
   app.get("/documents/:documentId", async (c) =>
     c.json(await getDocument(db, c.get("actor"), c.req.param("documentId"))),

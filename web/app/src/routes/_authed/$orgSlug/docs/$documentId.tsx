@@ -15,9 +15,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { WikiLinkHost } from "@/components/editor/wiki-link";
 import { ApiError } from "@/lib/api";
 import { nameOf } from "@/lib/assignees";
+import { useWikiLinks } from "@/lib/use-wiki-links";
 import {
+  documentBacklinksQuery,
   documentQuery,
   documentVersionQuery,
   documentVersionsQuery,
@@ -36,6 +39,7 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
   CodeIcon,
+  LinkIcon,
   EyeIcon,
   FolderInputIcon,
   HistoryIcon,
@@ -82,6 +86,7 @@ function DocumentPage() {
   const remove = useDeleteDocument(orgSlug);
   const canWrite = membership.actor.role !== "guest";
   const project = projects.find((p) => p.key === doc.projectKey);
+  const wikiLinks = useWikiLinks({ orgSlug, from: doc, canWrite });
 
   const viewingOld = version !== undefined && version !== doc.version;
   const setSearch = (search: Search) => navigate({ search, replace: true });
@@ -163,6 +168,7 @@ function DocumentPage() {
             doc={doc}
             onDone={() => setSearch({})}
             onReload={reload}
+            wikiLinks={wikiLinks}
           />
         ) : (
           <>
@@ -219,7 +225,14 @@ function DocumentPage() {
                 onClose={() => setSearch({})}
               />
             ) : (
-              <DocumentContent format={doc.format} content={doc.content} />
+              <>
+                <DocumentContent
+                  format={doc.format}
+                  content={doc.content}
+                  wikiLinks={wikiLinks}
+                />
+                <Backlinks orgSlug={orgSlug} doc={doc} />
+              </>
             )}
           </>
         )}
@@ -246,6 +259,46 @@ function DocumentPage() {
         </aside>
       )}
     </div>
+  );
+}
+
+/** Documents linking here with `[[this title]]` (ST-100). */
+function Backlinks({ orgSlug, doc }: { orgSlug: string; doc: DocumentDto }) {
+  const { data: backlinks = [] } = useQuery(
+    documentBacklinksQuery(orgSlug, doc.id),
+  );
+  if (!backlinks.length) return null;
+  return (
+    <section
+      aria-labelledby="backlinks-heading"
+      className="mt-6 flex flex-col gap-2 border-t pt-4"
+    >
+      <h2
+        id="backlinks-heading"
+        className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground"
+      >
+        <LinkIcon className="size-4" />
+        Linked from {backlinks.length}{" "}
+        {backlinks.length === 1 ? "document" : "documents"}
+      </h2>
+      <ul className="flex flex-col gap-0.5">
+        {backlinks.map((b) => (
+          <li key={b.id}>
+            <Link
+              to="/$orgSlug/docs/$documentId"
+              params={{ orgSlug, documentId: b.id }}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+            >
+              <DocumentIcon format={b.format} />
+              <span className="min-w-0 flex-1 truncate">{b.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {b.taskKey ?? b.projectKey ?? "Organization"}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -380,11 +433,13 @@ function DocumentEditor({
   doc,
   onDone,
   onReload,
+  wikiLinks,
 }: {
   orgSlug: string;
   doc: DocumentDto;
   onDone: () => void;
   onReload: () => Promise<void>;
+  wikiLinks: WikiLinkHost;
 }) {
   const [baseVersion] = useState(doc.version);
   const [title, setTitle] = useState(doc.title);
@@ -531,7 +586,11 @@ function DocumentEditor({
             </p>
           }
         >
-          <RichEditor value={content} onChange={setContent} />
+          <RichEditor
+            value={content}
+            onChange={setContent}
+            wikiLinks={wikiLinks}
+          />
         </Suspense>
       ) : format === "html" && preview ? (
         <DocumentContent format={format} content={content} />

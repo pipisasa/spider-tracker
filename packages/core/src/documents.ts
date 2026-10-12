@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, desc, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import {
   assertCanWrite,
   inScope,
@@ -12,6 +12,9 @@ import {
 import { recordActivity } from "./activity";
 import type {
   DocumentDto,
+  DocumentGraphDto,
+  DocumentGraphTaskDto,
+  DocumentLinkDto,
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
@@ -19,6 +22,7 @@ import type {
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
+import { normalizeTitle, outgoingLinksIn, resolveTitle } from "./links";
 import {
   createDocumentInput,
   documentListQuery,
@@ -32,7 +36,7 @@ import { parseInput } from "./validate";
 // version row for every save. Edits name the version they started from (`baseVersion`),
 // so two people saving over each other get a conflict instead of a silent overwrite.
 
-const { documents, documentVersions, projects, tasks } = schema;
+const { documentLinks, documents, documentVersions, projects, statuses, tasks } = schema;
 
 type DocumentRow = typeof documents.$inferSelect;
 type Scope = { projectKey: string | null; taskKey: string | null };
@@ -144,6 +148,17 @@ async function findDocument(
   return { document: row.document, scope: scopeOf(row) };
 }
 
+/** Rewrites what a document links to from its current content (ST-100). */
+async function writeLinks(tx: Tx, documentId: string, content: string) {
+  await tx.delete(documentLinks).where(eq(documentLinks.documentId, documentId));
+  const links = outgoingLinksIn(content);
+  const rows = [
+    ...links.documents.map((target) => ({ documentId, kind: "document" as const, target })),
+    ...links.tasks.map((target) => ({ documentId, kind: "task" as const, target })),
+  ];
+  if (rows.length) await tx.insert(documentLinks).values(rows);
+}
+
 async function announce(
   tx: Tx,
   ctx: ActorContext,
@@ -199,6 +214,7 @@ export async function createDocument(
       })
       .returning();
     if (!document) throw new Error("Failed to create document");
+    await writeLinks(tx, document.id, document.content);
 
     await tx.insert(documentVersions).values({
       documentId: document.id,
@@ -300,6 +316,7 @@ export async function updateDocument(
       .where(eq(documents.id, current.id))
       .returning();
     if (!updated) throw new Error("Failed to update document");
+    if (changed.includes("content")) await writeLinks(tx, updated.id, updated.content);
 
     await tx.insert(documentVersions).values({
       documentId: updated.id,
@@ -455,4 +472,117 @@ export async function getDocumentVersion(
     authorId: row.authorId,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/**
+ * The documents linking to this one with `[[its title]]`, most recently updated first. A link
+ * counts when it resolves here: with several documents of the same title, a link opens one
+ * of them (see resolveTitle), and only that one lists it.
+ */
+export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise<DocumentSummaryDto[]> {
+  const { document } = await findDocument(db, viewer, id);
+  const visible = await listDocuments(db, viewer);
+  const rows = await db
+    .select({ documentId: documentLinks.documentId })
+    .from(documentLinks)
+    .where(
+      and(
+        eq(documentLinks.kind, "document"),
+        // Served by the (kind, lower(target)) index.
+        sql`lower(${documentLinks.target}) = ${normalizeTitle(document.title)}`,
+      ),
+    );
+  const linking = new Set(rows.map((r) => r.documentId));
+  return visible.filter(
+    (source) =>
+      source.id !== document.id &&
+      linking.has(source.id) &&
+      resolveTitle(visible, document.title, source.projectKey)?.id === document.id,
+  );
+}
+
+/**
+ * The organization's documents as a graph (ST-100): what the viewer can see, the tasks and
+ * projects those documents sit in or link to, and every link. Links to tasks that don't exist
+ * or are out of scope are dropped; `[[titles]]` no document has stay as unresolved targets.
+ */
+export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<DocumentGraphDto> {
+  const docs = await listDocuments(db, viewer);
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  const rows = docs.length
+    ? await db
+        .select()
+        .from(documentLinks)
+        .where(inArray(documentLinks.documentId, [...byId.keys()]))
+        .orderBy(asc(documentLinks.documentId), asc(documentLinks.kind), asc(documentLinks.target))
+    : [];
+
+  const taskKeys = new Set<string>();
+  for (const d of docs) if (d.taskKey) taskKeys.add(d.taskKey);
+  for (const r of rows) if (r.kind === "task") taskKeys.add(r.target);
+  const graphTasks = await findGraphTasks(db, viewer, [...taskKeys]);
+  const knownTasks = new Set(graphTasks.map((t) => t.key));
+
+  const links: DocumentLinkDto[] = [];
+  for (const r of rows) {
+    const source = byId.get(r.documentId);
+    if (!source) continue;
+    if (r.kind === "task") {
+      if (knownTasks.has(r.target) && r.target !== source.taskKey)
+        links.push({ from: source.id, to: { type: "task", key: r.target } });
+      continue;
+    }
+    const target = resolveTitle(docs, r.target, source.projectKey);
+    if (target?.id === source.id) continue;
+    links.push({
+      from: source.id,
+      to: target ? { type: "document", id: target.id } : { type: "unresolved", title: r.target },
+    });
+  }
+
+  const projectKeys = new Set<string>();
+  for (const d of docs) if (d.projectKey) projectKeys.add(d.projectKey);
+  for (const t of graphTasks) projectKeys.add(t.projectKey);
+  const scope = await projectScope(db, viewer);
+  const projectRows = projectKeys.size
+    ? await db
+        .select({ id: projects.id, key: projects.key, name: projects.name })
+        .from(projects)
+        .where(and(eq(projects.orgId, orgIdOf(viewer)), inArray(projects.key, [...projectKeys])))
+        .orderBy(asc(projects.createdAt))
+    : [];
+  return {
+    documents: docs,
+    tasks: graphTasks,
+    projects: projectRows.filter((p) => inScope(scope, p.id)).map(({ key, name }) => ({ key, name })),
+    links,
+  };
+}
+
+/** The tasks with these keys that exist, aren't deleted and are in the viewer's scope. */
+async function findGraphTasks(db: Db, viewer: Viewer, keys: string[]): Promise<DocumentGraphTaskDto[]> {
+  if (!keys.length) return [];
+  const taskKey = sql<string>`${projects.key} || '-' || ${tasks.number}`;
+  const rows = await db
+    .select({
+      projectId: projects.id,
+      projectKey: projects.key,
+      number: tasks.number,
+      title: tasks.title,
+      statusCategory: statuses.category,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .innerJoin(statuses, eq(tasks.statusId, statuses.id))
+    .where(and(eq(tasks.orgId, orgIdOf(viewer)), isNull(tasks.deletedAt), inArray(taskKey, keys)))
+    .orderBy(asc(projects.key), asc(tasks.number));
+  const scope = await projectScope(db, viewer);
+  return rows
+    .filter((r) => inScope(scope, r.projectId))
+    .map((r) => ({
+      key: `${r.projectKey}-${r.number}`,
+      title: r.title,
+      projectKey: r.projectKey,
+      statusCategory: r.statusCategory,
+    }));
 }

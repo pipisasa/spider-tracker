@@ -10,6 +10,7 @@ import type {
   CreatedAgentInviteDto,
   CreatedApiKeyDto,
   DocumentDto,
+  DocumentGraphDto,
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
@@ -256,6 +257,11 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         return request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/documents${qs}`);
       },
       get: (orgSlug: string, id: string) => request<DocumentDto>("GET", `${org(orgSlug)}/documents/${seg(id)}`),
+      /** Every visible document, the tasks and projects around them, and their links. */
+      graph: (orgSlug: string) => request<DocumentGraphDto>("GET", `${org(orgSlug)}/documents/graph`),
+      /** Documents linking here with `[[its title]]`, most recently updated first. */
+      backlinks: (orgSlug: string, id: string) =>
+        request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/backlinks`),
       create: (orgSlug: string, input: CreateDocumentInput) =>
         request<DocumentDto>("POST", `${org(orgSlug)}/documents`, input),
       /** Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. */

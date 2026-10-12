@@ -514,7 +514,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "create_document",
     {
       description:
-        "Create a document: organization-wide, in a project, or on a task (the task's project is implied). Markdown by default.",
+        "Create a document: organization-wide, in a project, or on a task (the task's project is implied). Markdown by default. Link other documents with [[Title]] or [[Title|label]] and tasks with [[ST-12]]; they show as backlinks and in the documents graph.",
       inputSchema: {
         title: z.string(),
         content: z.string().optional().describe("Markdown (or HTML with format html); at most 1 MB"),

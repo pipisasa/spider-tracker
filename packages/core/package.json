@@ -11,7 +11,8 @@
     "./git": "./src/git.ts",
     "./statuses": "./src/statuses.ts",
     "./events": "./src/events.ts",
-    "./version": "./src/version.ts"
+    "./version": "./src/version.ts",
+    "./links": "./src/links.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

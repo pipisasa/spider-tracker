@@ -148,3 +148,24 @@
     padding-right: max(1rem, env(safe-area-inset-right));
   }
 }
+
+/* [[Wiki links]] (ST-100): an existing target reads like a link, a missing one dimmed and dashed. */
+a.wiki-link {
+  cursor: pointer;
+  color: var(--primary);
+  text-decoration: none;
+  border-radius: 0.25rem;
+  padding: 0 0.125rem;
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+}
+a.wiki-link:hover {
+  text-decoration: underline;
+}
+a.wiki-link.wiki-link-missing {
+  color: var(--muted-foreground);
+  background: transparent;
+  text-decoration: underline dashed;
+}
+a.wiki-link.ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+}

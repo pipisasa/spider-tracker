@@ -10,13 +10,16 @@ import {
 import { Markdown } from "@tiptap/markdown";
 import StarterKit from "@tiptap/starter-kit";
 import { MarkdownFidelity } from "./fidelity";
+import { WikiLink, type WikiLinkHost } from "./wiki-link";
 
 /**
  * The document schema shared by the rich editor and the Markdown round-trip test.
  * Only nodes and marks that serialize to GitHub-flavoured Markdown are enabled,
  * since documents are stored as Markdown.
  */
-export function markdownExtensions(): AnyExtension[] {
+export function markdownExtensions(
+  wikiLinkHost: () => WikiLinkHost | null = () => null,
+): AnyExtension[] {
   return [
     StarterKit.configure({
       underline: false,
@@ -34,6 +37,7 @@ export function markdownExtensions(): AnyExtension[] {
     TableRow,
     TableHeader,
     TableCell,
+    WikiLink.configure({ host: wikiLinkHost }),
     Markdown.configure({ markedOptions: { gfm: true } }),
     MarkdownFidelity,
   ];

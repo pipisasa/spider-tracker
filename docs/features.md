@@ -43,6 +43,8 @@ See [git-integration.md](./git-integration.md).
 - Rich editor with a Markdown source toggle and live HTML preview
 - Version history and diffs
 - Mentions of tasks, actors and other documents
+- Obsidian-style links (ST-100): `[[Title]]`, `[[Title|label]]` and `[[ST-12]]` (typing `[[` suggests documents; plain task keys count as mentions); "Linked from" backlinks on each document; opening a missing title creates it
+- Graph view (`/docs/graph`): documents, their tasks and projects, and links as a force-directed graph; zoom, pan, drag, hover to light up neighbours, click to open; toggle tasks, projects, unresolved titles and orphans
 - Agents can read and write documents (specs, reports, plans)
 
 ## Organizations, repos and apps

@@ -498,6 +498,19 @@ withDb("SDK and client-declared source", () => {
     await client.documents.delete(slug, doc.id);
   });
 
+  test("GET /documents/graph and /documents/:id/backlinks follow [[links]] (ST-100)", async () => {
+    const client = sdk();
+    const target = await client.documents.create(slug, { title: "Graph target", project: "SPI" });
+    const source = await client.documents.create(slug, { title: "Graph source", content: "See [[graph target|it]]" });
+    const graph = await client.documents.graph(slug);
+    expect(graph.links).toContainEqual({ from: source.id, to: { type: "document", id: target.id } });
+    expect(graph.documents.map((d) => d.id)).toEqual(expect.arrayContaining([source.id, target.id]));
+    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id]);
+    expect(await client.documents.backlinks(slug, crypto.randomUUID()).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    await client.documents.delete(slug, source.id);
+    await client.documents.delete(slug, target.id);
+  });
+
   test("saved views through the SDK: create, list, rename, delete; bad filters are a 400", async () => {
     const client = sdk();
     const view = await client.views.create(slug, "SPI", { name: "Mine", filters: { assignee: ["me"], priority: [1, 2] }, view: "list" });

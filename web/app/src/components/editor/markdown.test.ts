@@ -105,3 +105,25 @@ describe("first-save fidelity", () => {
     }
   });
 });
+
+describe("wiki links (ST-100)", () => {
+  test("survive load and save untouched", () => {
+    for (const markdown of [
+      "See [[Release plan]] and [[ST-12]].",
+      "[[A]] [[B|the b]] [[Spec#Goals]]",
+      "- [ ] read [[Guide|the guide]]",
+    ])
+      expect(roundTrip(markdown)).toBe(markdown);
+    // Tables are re-padded, but the link inside stays.
+    expect(roundTrip("| Doc |\n| --- |\n| [[Guide]] |")).toContain("| [[Guide]] |");
+  });
+
+  test("stay text in code and when broken", () => {
+    for (const markdown of ["Use `[[Title]]` here.", "Not a [[link] or [[]]."]) {
+      const first = roundTrip(markdown);
+      expect(first).not.toContain("wikiLink");
+      expect(roundTrip(first)).toBe(first);
+    }
+    expect(roundTrip("Use `[[Title]]` here.")).toBe("Use `[[Title]]` here.");
+  });
+});
