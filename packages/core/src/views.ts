@@ -14,6 +14,7 @@ import type {
   ProjectDto,
   ProjectRulesDto,
   RelationKind,
+  ReleaseDto,
   StatusDto,
   TagDto,
   TaskDto,
@@ -148,4 +149,15 @@ export const projectRulesView = (
   updatedAt: document.updatedAt,
   content: document.content,
   ...(document.url ? { url: document.url } : {}),
+});
+
+/** A release (ST-93) as the CLI and MCP print it: the API release plus assignee handles and tag names. */
+export interface ReleaseView extends Omit<ReleaseDto, "status">, Pick<TaskView, "status" | "assignees" | "tags"> {}
+
+export const releaseView = (release: ReleaseDto, { actors, tags }: Omit<TaskViewLookups, "statuses">): ReleaseView => ({
+  ...release,
+  ...taskView(release, { statuses: [release.status], actors, tags }),
+  repos: release.repos,
+  apps: release.apps,
+  tasks: release.tasks,
 });

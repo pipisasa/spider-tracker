@@ -8,6 +8,7 @@ import type {
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectDto,
+  ReleaseDto,
   StatusDto,
   RepoDto,
   TagDto,
@@ -20,6 +21,7 @@ import { allStatuses, workflowOf } from "@repo/core/statuses";
 import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
+import { shippingLabel } from "@repo/core/board";
 import {
   actorHandle,
   commentView,
@@ -28,13 +30,16 @@ import {
   documentVersionView,
   projectRulesView,
   relationView,
+  releaseView,
   taskView,
   type RelationView,
+  type ReleaseView,
   type TaskView,
 } from "@repo/core/views";
 import type {
   BulkUpdateTasksInput,
   CreateTaskInput,
+  ReleaseAppInput,
   UpdateAppInput,
   UpdateRepoInput,
   DocumentEdit,
@@ -256,6 +261,8 @@ interface TaskChanges {
   parent?: string;
   start?: string;
   target?: string;
+  /** Marks the task as having no code to ship (ST-93); false undoes it. */
+  noCode?: boolean;
 }
 
 /**
@@ -275,6 +282,8 @@ interface TaskUpdateOptions extends TaskFields {
   assignee?: string[];
   anyTag?: boolean;
   yes?: boolean;
+  /** --code / --no-code (ST-93): undefined unless one is given. */
+  code?: boolean;
   dryRun?: boolean;
 }
 
@@ -470,6 +479,8 @@ function taskLines(tasks: CliTask[]): string {
         t.priority ? `P${t.priority}` : "  ",
         t.title,
         t.targetDate ? `due ${t.targetDate}${isOverdue(t, t.status?.category) ? " (overdue)" : ""}` : "",
+        // Done means finished; where its code is (ST-93). Servers before releases send no shipping.
+        shippingLabel(t.shipping) ? `[${shippingLabel(t.shipping)}]` : "",
         t.tags.map((name) => `#${name}`).join(" "),
         assigneeList(t),
       ]
@@ -490,8 +501,47 @@ function taskDetail(task: CliTask): string {
     lines.push([task.startDate && `Start: ${task.startDate}`, task.targetDate && `Target: ${task.targetDate}${overdue}`].filter(Boolean).join(" · "));
   }
   if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
+  const shipping = shippingLabel(task.shipping);
+  if (shipping) lines.push(`Shipping: ${shipping}${task.shipping?.release ? ` (${task.shipping.release.key})` : ""}`);
   if (task.description) lines.push("", task.description);
   return lines.join("\n");
+}
+
+/** A release (ST-93): its key, name and status, apps with versions, repos and included tasks. */
+function releaseDetail(release: ReleaseView): string {
+  const lines = [
+    `${release.key}  ${release.title}  ${release.status?.name ?? "?"}${release.shippedAt ? `  (shipped ${release.shippedAt.slice(0, 10)})` : ""}`,
+    `Apps: ${release.apps.length ? release.apps.map((a) => `${a.name} ${a.version}`).join(", ") : "none"} · Repos: ${release.repos.map((r) => r.fullName).join(", ") || "none"}${release.assignees.length ? ` · Owner: ${assigneeList(release)}` : ""}`,
+  ];
+  if (release.tasks.length === 0) lines.push("No tasks");
+  else {
+    const keyWidth = Math.max(...release.tasks.map((t) => t.key.length));
+    lines.push(
+      `Tasks (${release.tasks.length}):`,
+      ...release.tasks.map((t) => `  ${t.key.padEnd(keyWidth)}  ${t.status.name}  ${t.title}${t.shippedAt ? `  [shipped ${release.title}]` : ""}`),
+    );
+  }
+  return lines.join("\n");
+}
+
+/** One line per release: key, name, status, apps and task count. */
+function releaseLines(releases: ReleaseView[]): string {
+  if (releases.length === 0) return "No releases";
+  const keyWidth = Math.max(...releases.map((r) => r.key.length));
+  const titleWidth = Math.max(...releases.map((r) => r.title.length));
+  return releases
+    .map((r) =>
+      [
+        r.key.padEnd(keyWidth),
+        r.title.padEnd(titleWidth),
+        r.status?.name ?? "?",
+        r.apps.map((a) => `${a.name} ${a.version}`).join(", "),
+        `${r.tasks.length} task${r.tasks.length === 1 ? "" : "s"}`,
+      ]
+        .filter(Boolean)
+        .join("  "),
+    )
+    .join("\n");
 }
 
 /** One line per task of a bulk update, then the counts (and how to apply, after a preview). */
@@ -1719,6 +1769,148 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     },
   );
 
+  // Releases (ST-93). A release is a task of kind "release"; change its status with `spider task update KEY --status …`
+  // (or `spider task done KEY` for Released), which ships its tasks.
+  const releaseCommand = program
+    .command("release")
+    .description("releases: link repos and apps with versions, include Done tasks from any project, ship them when Released");
+  const describeRelease = async (release: ReleaseDto): Promise<ReleaseView> => {
+    const [actors, tags] = await Promise.all([conn().actors(), release.tagIds.length ? conn().tags() : []]);
+    return releaseView(release, { actors, tags });
+  };
+  /**
+   * `--app web=2026.10.13` or `--app owner/name:web=2026.10.13`; without a repo, the only --repo given,
+   * else this folder's origin remote.
+   */
+  const parseApps = (values: string[] | undefined, repos: string[] | undefined): ReleaseAppInput[] | undefined =>
+    values?.map((value) => {
+      const match = /^(?:(.+):)?([^:=]+)=(.+)$/.exec(value.trim());
+      if (!match?.[2] || !match[3]) throw usageError(`Invalid --app "${value}". Expected app=version, e.g. web=2026.10.13 (or owner/name:web=2026.10.13)`);
+      const repo = match[1] ? repoArg(match[1]) : repos?.length === 1 ? repoArg(repos[0]) : repos?.length ? undefined : repoArg(undefined);
+      if (!repo) throw usageError(`Name the repo of app ${match[2]} (owner/name:${match[2]}=${match[3]}): several --repo were given`);
+      return { repo, app: match[2], version: match[3] };
+    });
+  const releaseLinkOptions = (cmd: Command) =>
+    cmd
+      .option("--app <app=version>", "an app it ships and its version, e.g. web=2026.10.13 or owner/name:cli=0.1.8; repeatable or comma-separated", collect)
+      .option("--repo <owner/name>", "a repo it ships from (default for --app: this folder's origin); repeatable or comma-separated", collect);
+  interface ReleaseLinkOptions extends JsonOption {
+    app?: string[];
+    repo?: string[];
+  }
+  const taskKeys = (keys: string[]) => keys.map((k) => taskKey(k, cwd, git));
+
+  withJson(
+    releaseCommand
+      .command("list")
+      .description("list a project's releases in board order")
+      .requiredOption("--project <key>", "project key, e.g. ST")
+      .option("--status <name>", "status name or category of the release workflow")
+      .option("--app <name>", "only releases shipping this app"),
+  ).action(async (opts: JsonOption & { project: string; status?: string; app?: string }) => {
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).releases.list(await org(), opts.project.toUpperCase(), {
+      status: opts.status === undefined ? undefined : [opts.status],
+      app: opts.app,
+    });
+    const views = await Promise.all(items.map(describeRelease));
+    output(opts, { items: views }, () => releaseLines(views));
+  });
+
+  withJson(releaseCommand.command("view").description("show a release, its apps and versions, and its tasks").argument("<key>")).action(
+    async (key: string, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const release = await describeRelease(await (await sdk()).releases.get(await org(), taskKey(key, cwd, git)));
+      output(opts, release, () => releaseDetail(release));
+    },
+  );
+
+  withJson(
+    releaseLinkOptions(
+      releaseCommand
+        .command("create")
+        .description("create a release (Planned unless --status) with apps, repos and Done tasks")
+        .requiredOption("--project <key>", "project key, e.g. ST")
+        .requiredOption("--title <version>", "its name, usually the version, e.g. 2026.10.13")
+        .option("--description <text>", "description, e.g. release notes (Markdown)")
+        .option("--status <name>", "status of the release workflow")
+        .option("--assign <handle>", 'release owner handle or "me"; repeatable or comma-separated', collect)
+        .option("--target <date>", "target date, YYYY-MM-DD")
+        .option("--task <key>", "a Done task to include; repeatable or comma-separated", collect),
+    ),
+  ).action(
+    async (
+      opts: ReleaseLinkOptions & { project: string; title: string; description?: string; status?: string; assign?: string[]; target?: string; task?: string[] },
+    ) => {
+      const projectKey = opts.project.toUpperCase();
+      const { sdk, org, project, members, whoami } = conn();
+      const created = await (await sdk()).releases.create(await org(), projectKey, {
+        title: opts.title,
+        description: opts.description,
+        statusId: opts.status === undefined ? undefined : resolveStatus(await project(projectKey), opts.status, "release").id,
+        assigneeIds: opts.assign === undefined ? undefined : resolveAssignees(await members(), (await whoami()).actor.id, opts.assign),
+        targetDate: opts.target === undefined ? undefined : (parseDate(opts.target, "--target") ?? undefined),
+        repos: opts.repo?.map((r) => repoArg(r)),
+        apps: parseApps(opts.app, opts.repo),
+        tasks: opts.task === undefined ? undefined : taskKeys(opts.task),
+      });
+      const release = await describeRelease(created);
+      output(opts, release, () => `Created ${releaseDetail(release)}`);
+    },
+  );
+
+  withJson(
+    releaseLinkOptions(
+      releaseCommand.command("update").description("replace a release's apps (with versions) or repos").argument("<key>"),
+    ),
+  ).action(async (key: string, opts: ReleaseLinkOptions) => {
+    if (opts.app === undefined && opts.repo === undefined) throw usageError("Nothing to update. Pass --app or --repo (status: spider task update KEY --status …)");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).releases.update(await org(), taskKey(key, cwd, git), {
+      repos: opts.repo?.map((r) => repoArg(r)),
+      apps: parseApps(opts.app, opts.repo),
+    });
+    const release = await describeRelease(updated);
+    output(opts, release, () => `Updated ${releaseDetail(release)}`);
+  });
+
+  withJson(
+    releaseCommand.command("add").description("add Done tasks (any project) to a release; all or nothing").argument("<key>", "the release").argument("<tasks...>", "task keys"),
+  ).action(async (key: string, keys: string[], opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const release = await describeRelease(await (await sdk()).releases.add(await org(), taskKey(key, cwd, git), taskKeys(keys)));
+    output(opts, release, () => releaseDetail(release));
+  });
+
+  withJson(
+    releaseCommand.command("remove").description("take tasks out of a release that hasn't shipped").argument("<key>", "the release").argument("<tasks...>", "task keys"),
+  ).action(async (key: string, keys: string[], opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    let last: ReleaseDto | undefined;
+    for (const k of taskKeys(keys)) last = await client.releases.remove(slug, taskKey(key, cwd, git), k);
+    if (!last) throw usageError("Name the tasks to remove");
+    const release = await describeRelease(last);
+    output(opts, release, () => releaseDetail(release));
+  });
+
+  withJson(
+    releaseCommand
+      .command("candidates")
+      .description("Done tasks with code that are in no release yet, most recently finished first")
+      .option("--project <key>", "only this project's tasks")
+      .option("--release <key>", "for this release"),
+  ).action(async (opts: JsonOption & { project?: string; release?: string }) => {
+    const { sdk, org, describe } = conn();
+    const { items } = await (await sdk()).releases.candidates(await org(), {
+      project: opts.project?.toUpperCase(),
+      release: opts.release === undefined ? undefined : taskKey(opts.release, cwd, git),
+    });
+    const views = await Promise.all(items.map(describe));
+    output(opts, { items: views }, () => (views.length ? taskLines(views) : "No candidates: every Done task with code is in a release"));
+  });
+
   const task = program.command("task").description("work with tasks");
 
   withJson(
@@ -1859,6 +2051,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     }
     if (changes.start !== undefined) set.startDate = parseDate(changes.start, "--start");
     if (changes.target !== undefined) set.targetDate = parseDate(changes.target, "--target");
+    if (changes.noCode !== undefined) set.noCode = changes.noCode;
     if (Object.keys(set).length === 0) throw usageError(hints.nothing);
 
     const response = await (await sdk()).tasks.bulkUpdate(await org(), { ...target, set, dryRun });
@@ -1888,6 +2081,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--overdue", "with --project: only tasks past their target date that aren't done or canceled")
       .option("--assignee <handle>", 'with --project: assigned to any of these, "me", "mine" or "none"; repeatable or comma-separated', collect)
       .option("--any-tag", "with --project and --tag: any of the tags instead of all")
+      .option("--no-code", "mark as having no code to ship: Done needs no release (ST-93)")
+      .option("--code", "undo --no-code: the task has code that a release ships")
       .option("--yes", "with --project: apply the changes (without it, only list what would change)")
       .option("--dry-run", "list what would change without changing anything"),
   ).action(async (keys: string[], opts: TaskUpdateOptions) => {
@@ -1928,6 +2123,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         parent: opts.setParent,
         start: opts.setStart,
         target: opts.setTarget,
+        noCode: opts.code === undefined ? undefined : !opts.code,
       };
       await bulkUpdate({ filter }, changes, opts.dryRun === true || !opts.yes, {
         nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start or --set-target",
@@ -1956,6 +2152,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       parent: pick("parent", opts.parent, opts.setParent),
       start: pick("start", opts.start, opts.setStart),
       target: pick("target", opts.target, opts.setTarget),
+      noCode: opts.code === undefined ? undefined : !opts.code,
     };
 
     if (keys.length <= 1 && !opts.dryRun) {
@@ -1965,6 +2162,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       if (changes.status !== undefined) await conn().project(projectKeyOf(resolved));
       const kind = changes.status === undefined ? "task" : kindOf(await (await conn().sdk()).tasks.get(await conn().org(), resolved));
       const input = await taskInput(projectKeyOf(resolved), { ...opts, ...changes }, kind);
+      if (changes.noCode !== undefined) input.noCode = changes.noCode;
       if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --title, --status, --assign, …");
       await update(resolved, input, opts);
       return;

@@ -15,6 +15,7 @@ import type {
   InvitationDto,
   PresenceDto,
   RelationDto,
+  ReleaseDto,
   AppDto,
   GithubInstallationDto,
   GithubInstallUrlDto,
@@ -54,6 +55,8 @@ import type {
   UpdateDocumentInput,
   MoveDocumentInput,
   UpdateTaskInput,
+  CreateReleaseInput,
+  UpdateReleaseInput,
 } from "@repo/core/schemas";
 import {
   queryOptions,
@@ -119,6 +122,14 @@ export const keys = {
     ["orgs", org, "documents", id, "versions", version] as const,
   documentDiff: (org: string, id: string, from: number, to: number) =>
     ["orgs", org, "documents", id, "diff", from, to] as const,
+  // Releases (ST-93): every task change can change them, so all live under one prefix.
+  releaseLists: (org: string) => ["orgs", org, "releases"] as const,
+  releases: (org: string, projectKey: string) =>
+    ["orgs", org, "releases", "project", projectKey] as const,
+  release: (org: string, releaseKey: string) =>
+    ["orgs", org, "releases", "one", releaseKey] as const,
+  releaseCandidates: (org: string, projectKey?: string) =>
+    ["orgs", org, "releases", "candidates", projectKey ?? null] as const,
 };
 
 /** Which documents to list: a task's, a project's (with its tasks'), or all. */
@@ -366,6 +377,12 @@ export function useUpdateTask(org: string) {
       qc.setQueryData(keys.task(org, task.key), task);
       if (task.parentId || input.parentId !== undefined) {
         refreshProgress(qc, org);
+      }
+      // A release's status ships (or unships) its tasks; a task's status or no-code mark moves it among candidates (ST-93).
+      void qc.invalidateQueries({ queryKey: keys.releaseLists(org) });
+      if (task.kind === "release" && input.statusId !== undefined) {
+        void qc.invalidateQueries({ queryKey: ["orgs", org, "projects"] });
+        void qc.invalidateQueries({ queryKey: ["orgs", org, "tasks"] });
       }
     },
   });
@@ -1007,6 +1024,49 @@ export const useDeleteApp = (org: string) =>
     "App removed",
   );
 
+// Releases (ST-93): tasks of kind "release" with repos, apps and versions, and included Done tasks.
+
+export const releasesQuery = (org: string, projectKey: string) =>
+  queryOptions({
+    queryKey: keys.releases(org, projectKey),
+    queryFn: async () =>
+      (await api<ListResponse<ReleaseDto>>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/releases`)).items,
+  });
+
+export const releaseQuery = (org: string, releaseKey: string) =>
+  queryOptions({
+    queryKey: keys.release(org, releaseKey),
+    queryFn: () => api<ReleaseDto>(`${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}`),
+  });
+
+/** Done tasks with code in no release; of one project, or every project the viewer can see. */
+export const releaseCandidatesQuery = (org: string, projectKey?: string) =>
+  queryOptions({
+    queryKey: keys.releaseCandidates(org, projectKey),
+    queryFn: async () =>
+      (
+        await api<ListResponse<TaskDto>>(
+          `${orgPath(org)}/release-candidates${projectKey ? `?${new URLSearchParams({ project: projectKey })}` : ""}`,
+        )
+      ).items,
+  });
+
+/** A release change: releases and the changed tasks are refetched (shipping states move). */
+function useReleaseMutation<TInput>(org: string, mutationFn: (input: TInput) => Promise<ReleaseDto>, success?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (release) => {
+      if (success) toast.success(success);
+      qc.setQueryData(keys.release(org, release.key), release);
+      void qc.invalidateQueries({ queryKey: keys.releaseLists(org) });
+      void qc.invalidateQueries({ queryKey: ["orgs", org, "projects"] });
+      void qc.invalidateQueries({ queryKey: ["orgs", org, "tasks"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+}
+
 // The GitHub App (ST-82): Settings → GitHub. Connecting leaves the app for GitHub, which returns
 // through the API's /github/setup to the settings page.
 
@@ -1041,6 +1101,41 @@ function useGithubMutation<TInput, TResult>(
     onError: (error) => toast.error(error.message),
   });
 }
+
+export const useCreateRelease = (org: string, projectKey: string) =>
+  useReleaseMutation(
+    org,
+    (input: CreateReleaseInput) =>
+      api<ReleaseDto>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/releases`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    "Release created",
+  );
+
+export const useUpdateRelease = (org: string) =>
+  useReleaseMutation(org, ({ releaseKey, input }: { releaseKey: string; input: UpdateReleaseInput }) =>
+    api<ReleaseDto>(`${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  );
+
+export const useAddToRelease = (org: string) =>
+  useReleaseMutation(org, ({ releaseKey, taskKeys }: { releaseKey: string; taskKeys: string[] }) =>
+    api<ReleaseDto>(`${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({ tasks: taskKeys }),
+    }),
+  );
+
+export const useRemoveFromRelease = (org: string) =>
+  useReleaseMutation(org, ({ releaseKey, taskKey }: { releaseKey: string; taskKey: string }) =>
+    api<ReleaseDto>(
+      `${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}/tasks/${encodeURIComponent(taskKey)}`,
+      { method: "DELETE" },
+    ),
+  );
 
 export const useSyncGithubInstallation = (org: string) =>
   useGithubMutation(

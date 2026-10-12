@@ -35,6 +35,7 @@ activity (append-only log for everything)
 | **GitHub delivery** | A webhook delivery GitHub sent (ST-83), by its `X-GitHub-Delivery` id: what makes each one handled once |
 | **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
+| **Release** | A task of kind `release` (ST-93): links repos (`release_repos`) and apps with a version each (`release_apps`), includes Done tasks of any project (`tasks.release_id`); marking it Released sets `shipped_at` on it and its tasks |
 | **Git link** | A branch, commit or pull request linked to a task |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
@@ -193,6 +194,10 @@ create table tasks (
   estimate numeric,
   -- Plan dates (ST-91): calendar dates with no time zone, both optional; start ≤ target.
   start_date date, target_date date,
+  -- Shipping (ST-93): Done means finished; a task ships in one release (a task of kind 'release').
+  release_id uuid references tasks on delete set null,
+  shipped_at timestamptz,                              -- when its release was marked Released (a release: when it was)
+  no_code boolean not null default false,              -- nothing to ship: a Done task that needs no release
   sort_key text not null,
   custom_fields jsonb not null default '{}',
   creator_id uuid not null references actors,
@@ -204,8 +209,10 @@ create table tasks (
   unique (project_id, number),
   -- The status is one of the workflow of the task's project and kind (ST-90).
   constraint tasks_status_fk foreign key (project_id, kind, status_id) references statuses (project_id, kind, id),
-  constraint tasks_dates_ordered check (start_date is null or target_date is null or start_date <= target_date)
+  constraint tasks_dates_ordered check (start_date is null or target_date is null or start_date <= target_date),
+  constraint tasks_release_not_self check (release_id <> id)
 );
+create index tasks_release_idx on tasks (release_id);
 create index on tasks (project_id, status_id, sort_key) where deleted_at is null;
 create index on tasks using gin (custom_fields jsonb_path_ops);
 create index on tasks using gin (search);
@@ -322,6 +329,18 @@ create table apps (
   environments text[] not null default '{}',           -- deploy order, e.g. {staging,prod}; {} for a CLI
   created_at timestamptz not null default now(),
   unique (repo_id, name)
+);
+-- What a release ships (ST-93): its repos, and a version per app in the app's versioning.
+create table release_repos (
+  release_id uuid not null references tasks on delete cascade,
+  repo_id uuid not null references repos on delete cascade,
+  primary key (release_id, repo_id)
+);
+create table release_apps (
+  release_id uuid not null references tasks on delete cascade,
+  app_id uuid not null references apps on delete cascade,
+  version text not null,                               -- 2026.10.13 (date) or 0.1.8 (semver)
+  primary key (release_id, app_id)
 );
 
 create table git_links (

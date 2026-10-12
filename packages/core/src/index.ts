@@ -36,5 +36,7 @@ export * from "./saved-views";
 export * from "./workflows";
 export * from "./repos";
 export * from "./remotes";
+export * from "./releases";
+export * from "./board";
 export * from "./github";
 export * from "./github-webhooks";

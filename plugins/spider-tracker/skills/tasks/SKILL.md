@@ -64,8 +64,13 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 
 ### Hand off
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.
-- Only mark a task **Done** (`spider task done`) when the user asks or the work is merged and released; review is a person's call.
+- Only mark a task **Done** (`spider task done`) when the user asks or the work is approved and merged; review is a person's call. Done means **finished, not shipped**: shipping to production is tracked by releases (below).
 - If you are blocked, say so to the user and leave the task In Progress with a note in its description rather than moving it backwards silently.
+
+### Releases and shipping
+- A Done task's `shipping` (MCP `get_task`, `spider task view ST-12 --json`; `Shipping:` in `spider task view`) says where its code is: `not_in_release` (finished, not shipped yet), `in_release` (in a release on its way; `release` names it and its status, e.g. "2026.10.14 · on staging"), `shipped` (its release is Released; `shippedAt` is when) or `no_code` (nothing to ship). Don't tell the user a task is live in production unless its state is `shipped`.
+- A Done task with nothing to ship (a decision, docs outside the apps, research) can be marked so: MCP `update_task` with `noCode: true`; CLI `spider task update ST-12 --no-code`.
+- Releases are tasks of kind `release`, named by their version. Only work on them when the user asks (a release owner puts Done tasks into a release, deploys and marks it Released): MCP `list_release_candidates`, `create_release`, `add_to_release`, `remove_from_release`, `get_release`; CLI `spider release candidates|create|add|remove|view|list`. Moving a release to Released (MCP `update_task` with `status: "Released"`; CLI `spider task done ST-120`) marks every included task shipped; their status stays Done.
 
 ## Never put secrets in task text
 Titles and descriptions are visible to everyone in the organization and kept in history. Never paste tokens, API keys (`spt_…`), passwords, connection strings, `.env` contents or private customer data into them. Describe *where* a secret lives instead.
@@ -81,7 +86,7 @@ Titles and descriptions are visible to everyone in the organization and kept in 
 
 With `--json`, errors go to stderr as `{"error":{"code","message"}}`; read stderr, don't discard it. MCP tools return errors as tool results (`isError`) with the same messages.
 
-MCP results and CLI `--json` output have the same shapes: a task has `key`, `title`, `status: { name, category }`, `priority` (0–4), `assignees` (handles), `tags`, `parentKey` and `url`; documents have `projectKey` and `taskKey`; comments have `author` (handle); lists are `{ "items": [...] }`. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
+MCP results and CLI `--json` output have the same shapes: a task has `key`, `title`, `status: { name, category }`, `priority` (0–4), `assignees` (handles), `tags`, `parentKey`, `shipping` and `url`; documents have `projectKey` and `taskKey`; comments have `author` (handle); lists are `{ "items": [...] }`. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
 
 ## Reference
 - `spider --help` and `spider <command> --help` list every CLI command and option.

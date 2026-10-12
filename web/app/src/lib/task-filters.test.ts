@@ -36,6 +36,10 @@ function task(n: number, extra: Partial<TaskDto> = {}): TaskDto {
     updatedAt: "",
     completedAt: null,
     subtasks: null,
+    releaseId: null,
+    shippedAt: null,
+    noCode: false,
+    shipping: null,
     ...extra,
   };
 }
