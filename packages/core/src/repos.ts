@@ -22,7 +22,8 @@ import { parseInput } from "./validate";
 // Repos and apps (ST-92). A repo belongs to the organization and is attached to projects; its apps
 // are what releases (ST-93) version and deploy. Owners, admins and their agents manage them;
 // everyone in the organization reads them, except that a project-scoped agent sees only the repos
-// attached to its projects (and only those projects in a repo's `projects`).
+// attached to its projects (and only those projects in a repo's `projects`), and changes a repo or
+// its apps only when every project the repo is attached to is one of its own (assertRepoInScope).
 
 const { apps, projectRepos, projects, repos } = schema;
 
@@ -127,6 +128,48 @@ const conflictOnRemote = (fullName: string) => (err: unknown) => {
   throw err;
 };
 
+/**
+ * A project-scoped agent changes a repo (its remote, default branch or apps) or removes it only
+ * when the repo is attached to none but its projects: other projects' releases depend on it too.
+ */
+async function assertRepoInScope(tx: Tx, ctx: ActorContext, repo: RepoRow): Promise<void> {
+  const scope = await projectScope(tx, ctx);
+  if (!scope) return;
+  const links = await tx.select({ projectId: projectRepos.projectId }).from(projectRepos).where(eq(projectRepos.repoId, repo.id));
+  if (links.some((l) => !scope.has(l.projectId))) {
+    throw new DomainError("forbidden", `Repo ${repoFullName(repo)} is also used by projects you can't see; ask an owner or admin to change it`);
+  }
+}
+
+/**
+ * The conflict for adding a remote the organization already has. A project-scoped agent that
+ * can't see that repo (it isn't attached to its projects) is told to ask an owner or admin to
+ * attach it: still 409, since the add conflicts with an existing repo, but with a next step and
+ * nothing about the repo beyond the name the agent typed.
+ */
+async function repoExistsError(tx: Tx, ctx: ActorContext, owner: string, name: string, projectKeys: string[]): Promise<DomainError> {
+  const fullName = repoFullName({ owner, name });
+  const scope = await projectScope(tx, ctx);
+  if (scope) {
+    const [visible] = await tx
+      .select({ id: repos.id })
+      .from(repos)
+      .where(
+        and(
+          eq(repos.orgId, ctx.orgId),
+          sql`lower(${repos.owner}) = ${owner.toLowerCase()}`,
+          sql`lower(${repos.name}) = ${name.toLowerCase()}`,
+          repoVisibleIn(tx, scope),
+        ),
+      )
+      .limit(1);
+    if (!visible) {
+      return new DomainError("conflict", `Repo ${fullName} is already in the organization; ask an owner or admin to attach it to ${projectKeys.join(", ")}`);
+    }
+  }
+  return new DomainError("conflict", `Repo ${fullName} already exists`);
+}
+
 /** The organization's repos the viewer can see, by name; only those attached to `project` when given. */
 export async function listRepos(db: Db, viewer: Viewer, { project }: { project?: string } = {}): Promise<RepoDto[]> {
   const scope = await projectScope(db, viewer);
@@ -180,7 +223,7 @@ export async function createRepo(db: Db, ctx: ActorContext, input: unknown): Pro
         defaultBranch: data.defaultBranch ?? "main",
         projects: attached,
       });
-      if (!row) throw new DomainError("conflict", `Repo ${fullName} already exists`);
+      if (!row) throw await repoExistsError(tx, ctx, data.url.owner, data.url.name, attached.map((p) => p.key));
       await publish(tx, { type: "repos.changed", orgId: ctx.orgId });
       return repoDto(tx, ctx, row);
     })
@@ -232,7 +275,7 @@ export async function insertRepo(
   return row;
 }
 
-/** Changes a repo's remote (after a rename on GitHub) or default branch. */
+/** Changes a repo's remote (after a rename on GitHub) or default branch. A project-scoped agent can't change a shared repo. */
 export async function updateRepo(db: Db, ctx: ActorContext, ref: string, input: unknown): Promise<RepoDto> {
   await assertCanManageProjects(db, ctx, "change repos");
   const data = parseInput(updateRepoInput, input);
@@ -241,6 +284,7 @@ export async function updateRepo(db: Db, ctx: ActorContext, ref: string, input: 
   return db
     .transaction(async (tx) => {
       const current = await findRepo(tx, ctx, ref, true);
+      await assertRepoInScope(tx, ctx, current);
       const next = {
         owner: data.url?.owner ?? current.owner,
         name: data.url?.name ?? current.name,
@@ -268,13 +312,7 @@ export async function deleteRepo(db: Db, ctx: ActorContext, ref: string): Promis
   await assertCanManageProjects(db, ctx, "remove repos");
   await db.transaction(async (tx) => {
     const repo = await findRepo(tx, ctx, ref, true);
-    const scope = await projectScope(tx, ctx);
-    if (scope) {
-      const links = await tx.select({ projectId: projectRepos.projectId }).from(projectRepos).where(eq(projectRepos.repoId, repo.id));
-      if (links.some((l) => !scope.has(l.projectId))) {
-        throw new DomainError("forbidden", `Repo ${repoFullName(repo)} is also used by projects you can't see`);
-      }
-    }
+    await assertRepoInScope(tx, ctx, repo);
     await tx.delete(repos).where(eq(repos.id, repo.id));
     await recordActivity(tx, ctx, {
       entityType: "repo",
@@ -344,17 +382,21 @@ export async function findApp(tx: Tx, repo: RepoRow, name: string): Promise<AppR
   return row;
 }
 
-const conflictOnAppName = (name: string, repo: string) => (err: unknown) => {
-  if (isUniqueViolation(err, "apps_repo_name_key")) throw new DomainError("conflict", `App ${name} already exists in ${repo}`);
+const conflictOnAppName = (name: string, repo: RepoRow) => (err: unknown) => {
+  if (isUniqueViolation(err, "apps_repo_name_key")) throw new DomainError("conflict", `App ${name} already exists in ${repoFullName(repo)}`);
   throw err;
 };
 
-/** Adds an app to a repo: its folder, shared packages, versioning (default semver) and environments in deploy order. */
+/**
+ * Adds an app to a repo: its folder, shared packages, versioning (default semver) and environments
+ * in deploy order. A project-scoped agent can't add apps to a shared repo.
+ */
 export async function createApp(db: Db, ctx: ActorContext, repoRef: string, input: unknown): Promise<AppDto> {
   await assertCanManageProjects(db, ctx, "add apps");
   const data = parseInput(createAppInput, input);
   return db.transaction(async (tx) => {
     const repo = await findRepo(tx, ctx, repoRef, true);
+    await assertRepoInScope(tx, ctx, repo);
     const [row] = await tx
       .insert(apps)
       .values({
@@ -387,48 +429,49 @@ export async function createApp(db: Db, ctx: ActorContext, repoRef: string, inpu
   });
 }
 
-/** Renames an app or changes its paths, versioning or environments. */
+/** Renames an app or changes its paths, versioning or environments. A project-scoped agent can't change a shared repo's apps. */
 export async function updateApp(db: Db, ctx: ActorContext, repoRef: string, appName: string, input: unknown): Promise<AppDto> {
   await assertCanManageProjects(db, ctx, "change apps");
   const data = parseInput(updateAppInput, input);
-  return db
-    .transaction(async (tx) => {
-      const repo = await findRepo(tx, ctx, repoRef, true);
-      const current = await findApp(tx, repo, appName);
-      const next = {
-        name: data.name ?? current.name,
-        path: data.path ?? current.path,
-        sharedPaths: data.sharedPaths ?? current.sharedPaths,
-        versioning: data.versioning ?? current.versioning,
-        environments: data.environments ?? current.environments,
-      };
-      const changes: Record<string, [unknown, unknown]> = {};
-      for (const field of ["name", "path", "versioning"] as const) {
-        if (next[field] !== current[field]) changes[field] = [current[field], next[field]];
-      }
-      for (const field of ["sharedPaths", "environments"] as const) {
-        if (next[field].join("\n") !== current[field].join("\n")) changes[field] = [current[field], next[field]];
-      }
-      if (Object.keys(changes).length === 0) return toAppDto(current, repo);
+  return db.transaction(async (tx) => {
+    const repo = await findRepo(tx, ctx, repoRef, true);
+    await assertRepoInScope(tx, ctx, repo);
+    const current = await findApp(tx, repo, appName);
+    const next = {
+      name: data.name ?? current.name,
+      path: data.path ?? current.path,
+      sharedPaths: data.sharedPaths ?? current.sharedPaths,
+      versioning: data.versioning ?? current.versioning,
+      environments: data.environments ?? current.environments,
+    };
+    const changes: Record<string, [unknown, unknown]> = {};
+    for (const field of ["name", "path", "versioning"] as const) {
+      if (next[field] !== current[field]) changes[field] = [current[field], next[field]];
+    }
+    for (const field of ["sharedPaths", "environments"] as const) {
+      if (next[field].join("\n") !== current[field].join("\n")) changes[field] = [current[field], next[field]];
+    }
+    if (Object.keys(changes).length === 0) return toAppDto(current, repo);
 
-      const [row] = await tx.update(apps).set(next).where(eq(apps.id, current.id)).returning();
-      if (!row) throw new Error("Failed to update app");
-      await recordActivity(tx, ctx, {
-        entityType: "app",
-        entityId: row.id,
-        action: "app.updated",
-        changes: { repo: repoFullName(repo), ...changes },
-      });
-      await publish(tx, { type: "repos.changed", orgId: ctx.orgId });
-      return toAppDto(row, repo);
-    })
-    .catch(conflictOnAppName(data.name ?? appName, repoRef));
+    const [row] = await tx.update(apps).set(next).where(eq(apps.id, current.id)).returning().catch(conflictOnAppName(next.name, repo));
+    if (!row) throw new Error("Failed to update app");
+    await recordActivity(tx, ctx, {
+      entityType: "app",
+      entityId: row.id,
+      action: "app.updated",
+      changes: { repo: repoFullName(repo), ...changes },
+    });
+    await publish(tx, { type: "repos.changed", orgId: ctx.orgId });
+    return toAppDto(row, repo);
+  });
 }
 
+/** Removes an app. A project-scoped agent can't remove a shared repo's apps. */
 export async function deleteApp(db: Db, ctx: ActorContext, repoRef: string, appName: string): Promise<void> {
   await assertCanManageProjects(db, ctx, "remove apps");
   await db.transaction(async (tx) => {
     const repo = await findRepo(tx, ctx, repoRef, true);
+    await assertRepoInScope(tx, ctx, repo);
     const app = await findApp(tx, repo, appName);
     await tx.delete(apps).where(eq(apps.id, app.id));
     await recordActivity(tx, ctx, {
