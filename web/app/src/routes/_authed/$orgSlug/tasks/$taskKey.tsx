@@ -6,13 +6,14 @@ import { TaskComments } from "@/components/task-comments";
 import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { descriptionToSave, remoteChange } from "@/components/editor/description-sync";
 import { membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import type { UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 const projectKeyOf = (taskKey: string) => taskKey.slice(0, taskKey.lastIndexOf("-")).toUpperCase();
@@ -83,7 +84,7 @@ function TaskPage() {
           <span>{task.key}</span>
         </nav>
         {/* Keyed by task so local edits reset when navigating between tasks. */}
-        <TaskText key={task.id} task={task} onSave={save} />
+        <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"} />
         <Subtasks
           key={`subtasks-${task.id}`}
           orgSlug={orgSlug}
@@ -141,19 +142,90 @@ function TaskPage() {
 
 const RichEditor = lazy(() => import("@/components/editor/rich-editor"));
 
-function TaskText({ task, onSave }: { task: TaskDto; onSave: (input: UpdateTaskInput) => void }) {
+function TaskText({
+  task,
+  onSave,
+  canEdit,
+}: {
+  task: TaskDto;
+  onSave: (input: UpdateTaskInput) => void;
+  canEdit: boolean;
+}) {
   const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description ?? "");
+  // What the editor was mounted with; a new key remounts it with `value`.
+  const [loaded, setLoaded] = useState({ value: task.description ?? "", key: 0 });
+  // Description sync (see description-sync.ts): the server value the current edit
+  // started from, whether the user really edited, and their latest text.
+  const baseline = useRef(task.description);
+  const dirty = useRef(false);
+  const draft = useRef(task.description ?? "");
+  const conflictToast = useRef<string | number | undefined>(undefined);
+
+  function load(server: string | null) {
+    baseline.current = server;
+    dirty.current = false;
+    draft.current = server ?? "";
+    setLoaded((l) => ({ value: server ?? "", key: l.key + 1 }));
+  }
+
+  function resolveConflict() {
+    if (conflictToast.current !== undefined) toast.dismiss(conflictToast.current);
+    conflictToast.current = undefined;
+  }
+
+  useEffect(() => {
+    const change = remoteChange({
+      server: task.description,
+      baseline: baseline.current,
+      draft: draft.current,
+      dirty: dirty.current,
+    });
+    if (change === "none") return;
+    if (change === "remount") load(task.description);
+    else if (change === "adopt") {
+      baseline.current = task.description;
+      dirty.current = false;
+      resolveConflict();
+    } else if (conflictToast.current === undefined) {
+      // Keep the user's text, but never save over theirs without asking.
+      conflictToast.current = toast.warning("Someone else changed this description", {
+        description: "Your edits are kept here but not saved yet.",
+        duration: Infinity,
+        action: {
+          label: "Overwrite theirs",
+          onClick: () => {
+            conflictToast.current = undefined;
+            const next = descriptionToSave({ dirty: true, draft: draft.current, server: null });
+            // After this lands the server value equals the draft and the baseline follows.
+            onSave({ description: next ?? null });
+          },
+        },
+        cancel: {
+          label: "Use theirs",
+          onClick: () => {
+            conflictToast.current = undefined;
+            load(task.description);
+          },
+        },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to the server value
+  }, [task.description]);
+
+  useEffect(() => resolveConflict, []);
 
   function saveTitle() {
+    if (!canEdit) return;
     const next = title.trim();
     if (!next) return setTitle(task.title);
     if (next !== task.title) onSave({ title: next });
   }
 
   function saveDescription() {
-    const next = description.trim() ? description : null;
-    if (next !== task.description) onSave({ description: next });
+    // A pending conflict is resolved through its toast, never by a stray blur.
+    if (!canEdit || conflictToast.current !== undefined) return;
+    const next = descriptionToSave({ dirty: dirty.current, draft: draft.current, server: task.description });
+    if (next !== undefined) onSave({ description: next });
   }
 
   return (
@@ -162,6 +234,7 @@ function TaskText({ task, onSave }: { task: TaskDto; onSave: (input: UpdateTaskI
         aria-label="Title"
         className="h-auto border-none px-0 text-2xl font-semibold shadow-none focus-visible:ring-0 md:text-2xl"
         value={title}
+        readOnly={!canEdit}
         onChange={(e) => setTitle(e.target.value)}
         onBlur={saveTitle}
         onKeyDown={(e) => {
@@ -175,8 +248,14 @@ function TaskText({ task, onSave }: { task: TaskDto; onSave: (input: UpdateTaskI
       {/* -ml-7 lines the text up with the title; the gutter holds the drag handle. */}
       <Suspense fallback={<div className="min-h-32" />}>
         <RichEditor
-          value={description}
-          onChange={setDescription}
+          key={loaded.key}
+          value={loaded.value}
+          editable={canEdit}
+          onChange={(markdown) => {
+            // Only fires for real document changes, never for focus, blur or mount.
+            dirty.current = true;
+            draft.current = markdown;
+          }}
           onBlur={saveDescription}
           label="Description"
           placeholder="Add a description… type '/' for commands"

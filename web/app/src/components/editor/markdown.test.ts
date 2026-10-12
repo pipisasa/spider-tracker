@@ -62,3 +62,46 @@ describe("markdown round-trip", () => {
       expect(out).toContain(fragment);
   });
 });
+
+describe("first-save fidelity", () => {
+  // Markdown written by agents must survive load -> save untouched.
+  const untouched: Record<string, string> = {
+    "inline html": "Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy.",
+    "generic types": "Returns `Array<string>`, or Array<string> and Map<K, V>.",
+    "html block": "<div>\nblock\n</div>\n\nAfter.",
+    "html comment": "Before <!-- note --> after.",
+    "escaped ordered marker": "1\\. not a list",
+    "escaped bullet marker": "\\- not a list",
+    "escaped heading marker": "\\# not a heading",
+    "escaped quote marker": "\\> not a quote",
+    "escaped emphasis": "2 \\* 3 \\* 4 and \\`ticks\\`",
+    ampersand: "Fish & chips, 1 < 2 > 0, a && b",
+    underscores: "Use snake_case and __dunder__ names, MAX_VALUE.",
+    brackets: "See [1] and array[0].",
+    "code span": "Use `a<b>&c` here.",
+    "code block": "```html\n<div class=\"a\">&amp; < > &</div>\n```",
+  };
+  for (const [name, markdown] of Object.entries(untouched)) {
+    test(name, () => {
+      // __dunder__ is real bold in Markdown, so it is the one normalised case.
+      const expected = markdown.replace("__dunder__", "**dunder**");
+      expect(roundTrip(markdown)).toBe(expected);
+    });
+  }
+
+  test("keeps an entity-looking literal as an entity", () => {
+    expect(roundTrip("Write \\&amp; for an ampersand.")).toBe(
+      "Write &amp;amp; for an ampersand.",
+    );
+    expect(roundTrip(roundTrip("Write &amp;amp; here"))).toBe(
+      "Write &amp;amp; here",
+    );
+  });
+
+  test("stays stable once normalised", () => {
+    for (const markdown of Object.values(untouched)) {
+      const first = roundTrip(markdown);
+      expect(roundTrip(first)).toBe(first);
+    }
+  });
+});
