@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -120,6 +121,42 @@ describe("credentials", () => {
     expect(Object.keys((await readStore(env)).servers)).toEqual([
       "spider.example.com-8443",
     ]);
+  });
+
+  test("no file is an empty store; a corrupt, unknown or unreadable file is an error", async () => {
+    const dir = tempDir();
+    const env = { SPIDER_CONFIG_DIR: dir };
+    expect(await readStore(env)).toEqual({ version: 2, servers: {} });
+    const path = join(dir, "credentials.json");
+    writeFileSync(path, '{"version": 2, "servers": {"prod": "spt_leak');
+    await expect(readStore(env)).rejects.toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("isn't valid JSON"),
+    });
+    await expect(readStore(env)).rejects.not.toMatchObject({
+      message: expect.stringContaining("spt_leak"),
+    });
+    writeFileSync(path, '{"version": 9, "servers": {}}');
+    await expect(readStore(env)).rejects.toThrow("unknown version 9");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        servers: { prod: { url: "u", orgs: { a: { name: "A", agents: { b: { token: 1 } } } } } },
+      }),
+    );
+    await expect(readStore(env)).rejects.toThrow(
+      "unexpected content at servers.prod.orgs.a.agents.b",
+    );
+    writeFileSync(path, JSON.stringify({ hello: "world" }));
+    await expect(readStore(env)).rejects.toThrow("isn't a known older format");
+    rmSync(path);
+    mkdirSync(path);
+    await expect(readStore(env)).rejects.toThrow("can't be read (EISDIR)");
+    const valid = twoServers();
+    rmSync(path, { recursive: true });
+    await writeStore(env, valid);
+    expect(await readStore(env)).toEqual(valid);
   });
 
   test("refs: unique handle, org/handle, server/org/handle; ambiguous and unknown refs are usage errors", () => {

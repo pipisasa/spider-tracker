@@ -536,7 +536,14 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     ) => {
       const store = await readStore(options.env);
       // An invite link names its server; a bare code goes to --server / SPIDER_API_URL / prod.
-      const { key, server } = (!globals().server && serverForLink(store, code)) || serverFor(store);
+      const link = /^https?:\/\//i.test(code.trim());
+      const linked = !globals().server && link ? serverForLink(store, code) : undefined;
+      if (link && !globals().server && !linked) {
+        throw usageError(
+          `The invite link points at ${URL.parse(code.trim())?.origin ?? "a server"}, which spider doesn't know. Pass --server with its API URL (or prod, local, a saved server name)`,
+        );
+      }
+      const { key, server } = linked ?? serverFor(store);
       const client = createClient({ baseUrl: server.url, source: "cli", fetch: apiFetch });
       const accepted = await client.agentInvites.accept({
         code,

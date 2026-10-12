@@ -272,6 +272,45 @@ describe("saved agents", () => {
     }
   });
 
+  test("an unusable credentials file is an error and is left as it is", async () => {
+    const { env, cleanup } = savedAgents();
+    const path = join(env.SPIDER_CONFIG_DIR, "credentials.json");
+    try {
+      for (const content of ['{"version": 2, "servers": {"prod": {"url": "x", "orgs": {"acme": {"name": "A", "agents": {"bot": {"token": "spt_corrupt"', '{"version": 3, "servers": {}}', '{"version": 2, "servers": {"prod": {"orgs": {}}}}', "[]"]) {
+        writeFileSync(path, content);
+        const result = await cli(["agents", "default", "prod/acme/reviewer"], { env });
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain(path);
+        expect(result.stderr).toContain("Fix the file or move it away");
+        expect(result.stderr).not.toContain("spt_");
+        const login = await cli(["accept-invite", "ABCD-EFGH", "--server", "prod", "--no-claude"], { env });
+        expect(login.code).toBe(1);
+        expect(readFileSync(path, "utf8")).toBe(content);
+      }
+      writeFileSync(path, '{"version": 3}');
+      expect((await cli(["mcp-headers"], { env })).stderr).toContain("unknown version 3");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("accept-invite with a link to an unknown server asks for --server", async () => {
+    const { env, cleanup } = savedAgents();
+    const api = fakeApi();
+    try {
+      const result = await cli(["accept-invite", "https://tracker.example.com/agent-invite/ABCD-EFGH", "--no-claude"], {
+        env,
+        fetch: api.fetch,
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("https://tracker.example.com");
+      expect(result.stderr).toContain("--server");
+      expect(api.requests).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("whoami names the saved agent and talks to its server", async () => {
     const { env, cleanup } = savedAgents();
     try {
