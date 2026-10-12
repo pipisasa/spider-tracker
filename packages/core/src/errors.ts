@@ -23,3 +23,12 @@ export function isUniqueViolation(err: unknown, constraint?: string): boolean {
   }
   return false;
 }
+
+/** Whether `err` is Postgres aborting the transaction over a deadlock (40P01) or a serialization failure (40001). */
+export function isLockConflict(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e instanceof Error && depth < 3; e = e.cause, depth++) {
+    const { code } = e as Error & { code?: unknown };
+    if (code === "40P01" || code === "40001") return true;
+  }
+  return false;
+}

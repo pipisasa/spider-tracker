@@ -107,6 +107,8 @@ run("renames rewrite [[links]]; task backlinks (ST-101)", () => {
     await updateProject(db, owner, "WEB", { rulesDocumentId: rules.id });
     const hidden = await createDocument(db, owner, { project: "OPS", title: "Ops notes", content: "[[Glossary]]" });
     const open = await createDocument(db, owner, { project: "WEB", title: "Web notes", content: "[[Glossary]]" });
+    // Organization-wide: a scoped agent sees and edits it, so its link is rewritten too.
+    const orgWide = await createDocument(db, owner, { title: "Org notes", content: "[[Glossary]]" });
 
     // An agent scoped to WEB: OPS is out of sight and stays as written.
     const { invite } = await createAgentInvite(db, member, { projectKeys: ["WEB"] });
@@ -114,21 +116,58 @@ run("renames rewrite [[links]]; task backlinks (ST-101)", () => {
     const agent: ActorContext = { orgId: owner.orgId, actorId: actor.id, role: "member", source: "mcp" };
 
     const renamed = await updateDocument(db, agent, target.id, { baseVersion: 1, title: "Terms" });
-    expect(renamed.relinked).toEqual({
-      rewritten: [{ id: open.id, title: "Web notes" }],
-      skipped: [{ id: rules.id, title: "Rules", reason: "rules" }],
-    });
+    expect(renamed.relinked?.rewritten.map((d) => d.id).sort()).toEqual([open.id, orgWide.id].sort());
+    expect(renamed.relinked?.skipped).toEqual([{ id: rules.id, title: "Rules", reason: "rules" }]);
     expect((await getDocument(db, owner, open.id)).content).toBe("[[Terms]]");
+    expect((await getDocument(db, owner, orgWide.id)).content).toBe("[[Terms]]");
     expect((await getDocument(db, owner, rules.id)).content).toBe("Read [[Glossary]].");
     expect((await getDocument(db, owner, hidden.id)).content).toBe("[[Glossary]]");
 
     // Renamed back, every link opens it again; the owner may change rules, so all are rewritten.
     const back = await updateDocument(db, owner, target.id, { baseVersion: renamed.version, title: "Glossary" });
-    expect(back.relinked?.rewritten).toEqual([{ id: open.id, title: "Web notes" }]);
+    expect(back.relinked?.rewritten.map((d) => d.id).sort()).toEqual([open.id, orgWide.id].sort());
     const words = await updateDocument(db, owner, target.id, { baseVersion: back.version, title: "Words" });
-    expect(words.relinked?.rewritten.map((d) => d.id).sort()).toEqual([rules.id, hidden.id, open.id].sort());
+    expect(words.relinked?.rewritten.map((d) => d.id).sort()).toEqual(
+      [rules.id, hidden.id, open.id, orgWide.id].sort(),
+    );
     expect(words.relinked?.skipped).toEqual([]);
     expect((await getDocument(db, owner, rules.id)).content).toBe("Read [[Words]].");
+  });
+
+  test("renaming the older of two same-titled documents leaves links that opened the newer one", async () => {
+    const older = await createDocument(db, owner, { title: "Charter" });
+    const newer = await createDocument(db, owner, { title: "Charter" });
+    await db
+      .update(schema.documents)
+      .set({ updatedAt: new Date(Date.now() - 60_000) })
+      .where(eq(schema.documents.id, older.id));
+    // Both organization-wide, the same rank from WEB: [[Charter]] opens the most recently updated.
+    const linking = await createDocument(db, owner, { project: "WEB", title: "Charter links", content: "[[Charter]]" });
+
+    const renamed = await updateDocument(db, owner, older.id, { baseVersion: 1, title: "Old charter" });
+    expect(renamed.relinked).toEqual({ rewritten: [], skipped: [] });
+    expect((await getDocument(db, owner, linking.id)).content).toBe("[[Charter]]");
+
+    // Renaming the one it opens rewrites it; the other "Charter" is gone, so by title.
+    const second = await updateDocument(db, owner, newer.id, { baseVersion: 1, title: "New charter" });
+    expect(second.relinked?.rewritten).toEqual([{ id: linking.id, title: "Charter links" }]);
+    expect((await getDocument(db, owner, linking.id)).content).toBe("[[New charter]]");
+  });
+
+  test("two renames of documents linking each other don't deadlock", async () => {
+    for (let round = 0; round < 5; round++) {
+      const a = await createDocument(db, owner, { title: `Alpha ${round}`, content: `[[Beta ${round}]]` });
+      const b = await createDocument(db, owner, { title: `Beta ${round}`, content: `[[Alpha ${round}]]` });
+      const results = await Promise.allSettled([
+        updateDocument(db, owner, a.id, { baseVersion: 1, title: `Alpha ${round} renamed` }),
+        updateDocument(db, owner, b.id, { baseVersion: 1, title: `Beta ${round} renamed` }),
+      ]);
+      // One may find its document rewritten by the other ("conflict"); nothing else fails.
+      expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+      for (const r of results) {
+        if (r.status === "rejected") expect(r.reason).toMatchObject({ code: "conflict" });
+      }
+    }
   });
 
   test("task backlinks list the documents mentioning a task, not its own", async () => {
