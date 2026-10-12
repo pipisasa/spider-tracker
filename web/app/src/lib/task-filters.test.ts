@@ -53,6 +53,13 @@ describe("parseFilters", () => {
     expect(normalizeFilters("x")).toEqual({});
     expect(normalizeFilters({ tag: [id(3)] })).toEqual({ tag: [id(3)] });
   });
+
+  test("tagMatch: only any is kept in the URL; junk is dropped", () => {
+    expect(parseFilters({ tag: id(3), tagMatch: "any" })).toEqual({ tag: [id(3)], tagMatch: "any" });
+    expect(parseFilters({ tagMatch: "all" })).toEqual({});
+    expect(parseFilters({ tagMatch: "some" })).toEqual({});
+    expect(normalizeFilters({ tag: [id(3)], tagMatch: "any" })).toEqual({ tag: [id(3)], tagMatch: "any" });
+  });
 });
 
 describe("helpers", () => {
@@ -60,6 +67,9 @@ describe("helpers", () => {
     expect(activeFilterCount({ status: [id(1), id(2)], q: "x" })).toBe(3);
     expect(sameFilters({ status: [id(1), id(2)], q: "Bug" }, { q: "bug ", status: [id(2), id(1)] })).toBe(true);
     expect(sameFilters({ status: [id(1)] }, {})).toBe(false);
+    expect(sameFilters({ tag: [id(1), id(2)], tagMatch: "all" }, { tag: [id(2), id(1)] })).toBe(true);
+    expect(sameFilters({ tag: [id(1), id(2)], tagMatch: "any" }, { tag: [id(1), id(2)] })).toBe(false);
+    expect(sameFilters({ tag: [id(1)], tagMatch: "any" }, { tag: [id(1)] })).toBe(true);
     expect(toggleValue(undefined, 1)).toEqual([1]);
     expect(toggleValue([1, 2], 1)).toEqual([2]);
   });
@@ -89,9 +99,11 @@ describe("applyFilters", () => {
     expect(keys({ assignee: ["none", id(101)] })).toEqual(["SPI-2", "SPI-3", "SPI-4"]);
   });
 
-  test("tag matches any chosen tag", () => {
+  test("tag matches all chosen tags by default, any with tagMatch any", () => {
     expect(keys({ tag: [id(51)] })).toEqual(["SPI-2", "SPI-3"]);
-    expect(keys({ tag: [id(50), id(51)] })).toEqual(["SPI-1", "SPI-2", "SPI-3"]);
+    expect(keys({ tag: [id(50), id(51)] })).toEqual(["SPI-3"]);
+    expect(keys({ tag: [id(50), id(51)], tagMatch: "all" })).toEqual(["SPI-3"]);
+    expect(keys({ tag: [id(50), id(51)], tagMatch: "any" })).toEqual(["SPI-1", "SPI-2", "SPI-3"]);
   });
 
   test("text matches title or key, case-insensitively; keys are AND-ed", () => {

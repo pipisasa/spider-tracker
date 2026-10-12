@@ -343,7 +343,9 @@ run("agent invites and project scope", () => {
     await expect(getProject(db, ctx(), "XY")).rejects.toMatchObject({
       code: "not_found",
     });
-    expect(await listTasks(db, ctx(), "XY")).toEqual([]);
+    await expect(listTasks(db, ctx(), "XY")).rejects.toMatchObject({
+      code: "not_found",
+    });
     expect((await listTasks(db, ctx(), "ST")).map((t) => t.key)).toContain(
       st.key,
     );
@@ -430,7 +432,9 @@ run("agent invites and project scope", () => {
       );
 
     expect(await listProjects(db, ctx())).toEqual([]);
-    expect(await listTasks(db, ctx(), "ST")).toEqual([]);
+    await expect(listTasks(db, ctx(), "ST")).rejects.toMatchObject({
+      code: "not_found",
+    });
     await expect(getProject(db, ctx(), "ST")).rejects.toMatchObject({
       code: "not_found",
     });

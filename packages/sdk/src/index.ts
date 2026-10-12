@@ -56,8 +56,10 @@ export interface TaskListQuery {
   status?: string[];
   /** Actor ids or handles (deactivated ones too), "me" or "none". */
   assignee?: string[];
-  /** Tag names, case-insensitive; a task must carry all of them. */
+  /** Tag names, case-insensitive; a task must carry all of them (or any, see `tagMatch`). */
   tags?: string[];
+  /** "all" (the server's default) or "any" of `tags`. */
+  tagMatch?: "all" | "any";
   priority?: Priority[];
   /** Text in the title. */
   q?: string;
@@ -273,13 +275,14 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     tasks: {
       /**
        * In board order. Statuses, assignees and priorities match any of their values; a task must
-       * carry every tag; filters combine with AND.
+       * carry every tag (any with `tagMatch: "any"`); filters combine with AND.
        */
       list: (orgSlug: string, projectKey: string, query: TaskListQuery = {}) => {
         const params = new URLSearchParams();
         for (const value of query.status ?? []) params.append("status", value);
         for (const value of query.assignee ?? []) params.append("assignee", value);
         for (const value of query.tags ?? []) params.append("tag", value);
+        if (query.tagMatch) params.set("tagMatch", query.tagMatch);
         for (const value of query.priority ?? []) params.append("priority", String(value));
         if (query.q) params.set("q", query.q);
         const qs = params.size ? `?${params}` : "";

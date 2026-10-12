@@ -48,12 +48,14 @@ withDb("spider CLI against the API", () => {
     await db.$client.end();
   });
 
-  async function spider(...argv: string[]) {
+  const spider = (...argv: string[]) => spiderVia((input, init) => app.request(input, init), argv);
+
+  async function spiderVia(fetch: (input: string, init: RequestInit) => Response | Promise<Response>, argv: string[]) {
     let stdout = "";
     let stderr = "";
     const code = await run(argv, {
       env: { SPIDER_TOKEN: token, SPIDER_API_URL: env.API_ORIGIN },
-      fetch: (input, init) => app.request(input, init),
+      fetch,
       stdout: { write: (s: string) => (stdout += s) },
       stderr: { write: (s: string) => (stderr += s) },
       cwd: repo,
@@ -427,6 +429,35 @@ withDb("spider CLI against the API", () => {
     // Orphaned assignments can be found by the deactivated handle (ST-65).
     const orphaned = await spider("task", "list", "--project", "SPI", "--assignee", "@gone", "--json");
     expect((orphaned.json().items as { key: string }[]).map((t) => t.key)).toEqual([key]);
+  });
+
+  test("--any-tag, and the filters still hold against a server that ignores them", async () => {
+    await app.request(`/v1/orgs/${slug}/tags`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "ops" }),
+    });
+    for (const [title, tags] of [["Has cli", "cli"], ["Has ops", "ops"], ["Has both", "cli,ops"]] as const) {
+      await spider("task", "create", "--project", "SPI", "--title", title, "--tag", tags, "--priority", "3");
+    }
+    const titles = async (via: typeof spider, ...args: string[]) => {
+      const result = await via("task", "list", "--project", "SPI", "--limit", "500", "--json", ...args);
+      expect(result.code).toBe(0);
+      return (result.json().items as { title: string }[]).map((t) => t.title).sort();
+    };
+    // An API from before ST-50 knows no filters: it drops the query and returns every task.
+    const old = (...argv: string[]) => spiderVia((input, init) => app.request(input.split("?")[0] ?? input, init), argv);
+    const everything = await titles(spider);
+    expect(everything.length).toBeGreaterThan(3);
+
+    for (const via of [spider, old]) {
+      expect(await titles(via, "--tag", "cli,ops")).toEqual(["Has both"]);
+      expect(await titles(via, "--tag", "cli,ops", "--any-tag", "--priority", "3")).toEqual(["Has both", "Has cli", "Has ops"]);
+      expect(await titles(via, "--tag", "ops", "--any-tag")).toEqual(["Has both", "Has ops"]);
+      expect(await titles(via, "--assignee", "@none", "--priority", "medium", "--status", "todo")).toEqual(["Has both", "Has cli", "Has ops"]);
+      expect(await titles(via, "--mine", "--priority", "3")).toEqual([]);
+      expect(await titles(via)).toEqual(everything);
+    }
   });
 
   test("sub-tasks: --parent on create, shown by view, cleared with an empty --parent", async () => {

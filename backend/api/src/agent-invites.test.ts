@@ -135,7 +135,13 @@ withDb("agent invites over HTTP", () => {
     expect((await sdk.projects.list(slug)).items.map((p) => p.key)).toEqual([
       "ST",
     ]);
-    expect((await sdk.tasks.list(slug, "XY")).items).toEqual([]);
+    // Out of scope is not found, filtered or not; in scope, filters work.
+    for (const query of [{}, { status: ["todo"] }, { tags: ["nope"] }]) {
+      expect(await sdk.tasks.list(slug, "XY", query).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    }
+    expect((await sdk.tasks.list(slug, "ST", { q: "visible", assignee: ["none"] })).items.map((t) => t.title)).toEqual([
+      "Visible",
+    ]);
     const missing = await sdk.tasks.get(slug, "XY-1").catch((e: unknown) => e);
     expect(missing).toBeInstanceOf(SpiderApiError);
     expect(missing).toMatchObject({ status: 404 });

@@ -52,6 +52,8 @@ run("agents and API keys", () => {
     const { actor: agent } = await createAgent(db, ctx, { name: "Claude Code" });
     expect(agent).toMatchObject({ type: "agent", handle: "claude-code", role: "member" });
     await expect(createAgent(db, ctx, { name: "Claude Code" })).rejects.toMatchObject({ code: "conflict" });
+    await expect(createAgent(db, ctx, { name: "Me", handle: "me" })).rejects.toMatchObject({ code: "validation" });
+    expect((await createAgent(db, ctx, { name: "None" })).actor.handle).toBe("none-1");
     await expect(createAgent(db, { ...ctx, role: "guest" }, { name: "Nope" })).rejects.toMatchObject({
       code: "forbidden",
     });
@@ -111,6 +113,10 @@ run("agents and API keys", () => {
     await expect(updateAgent(db, alice, agentId, { handle: "Not Valid!" })).rejects.toMatchObject({
       code: "validation",
     });
+    // Reserved for assignee filters.
+    for (const handle of ["me", "NONE"]) {
+      await expect(updateAgent(db, alice, agentId, { handle })).rejects.toMatchObject({ code: "validation" });
+    }
 
     await deleteAgent(db, alice, agentId);
     expect(await authenticateApiKey(db, key.secret)).toBeNull();

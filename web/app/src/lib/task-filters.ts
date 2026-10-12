@@ -2,11 +2,12 @@ import type { TaskDto } from "@repo/core/contracts";
 import { viewFiltersSchema, type ViewFilters } from "@repo/core/schemas";
 
 // Filters of the project page (ST-15): they live in the URL search params, so links can be
-// shared, and are the same shape as saved views. Values within a key are OR-ed, keys AND-ed.
+// shared, and are the same shape as saved views. Values within a key are OR-ed, keys AND-ed;
+// tags follow `tagMatch` (all of them by default, like the API; `?tagMatch=any` for any).
 
 export type TaskFilters = ViewFilters;
 
-export const FILTER_KEYS = ["status", "assignee", "priority", "tag", "q"] as const;
+export const FILTER_KEYS = ["status", "assignee", "priority", "tag", "tagMatch", "q"] as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -32,6 +33,8 @@ export function parseFilters(search: Record<string, unknown>): TaskFilters {
   if (priority.length) filters.priority = priority;
   const tag = unique(list(search.tag).filter((v): v is string => typeof v === "string" && UUID.test(v)));
   if (tag.length) filters.tag = tag;
+  // "all" is the default, so only "any" is kept.
+  if (search.tagMatch === "any") filters.tagMatch = "any";
   // The router JSON-parses search values, so `?q=123` arrives as a number.
   const raw = typeof search.q === "number" ? String(search.q) : search.q;
   const q = typeof raw === "string" ? raw.trim().slice(0, 200) : "";
@@ -67,6 +70,8 @@ export function sameFilters(a: TaskFilters, b: TaskFilters): boolean {
       [...(f.assignee ?? [])].sort(),
       [...(f.priority ?? [])].sort(),
       [...(f.tag ?? [])].sort(),
+      // With fewer than two tags, all and any select the same tasks.
+      (f.tag?.length ?? 0) > 1 ? (f.tagMatch ?? "all") : "",
       (f.q ?? "").trim().toLowerCase(),
     ]);
   return norm(a) === norm(b);
@@ -85,7 +90,10 @@ export function applyFilters(tasks: TaskDto[], filters: TaskFilters, meId: strin
   return tasks.filter((task) => {
     if (filters.status?.length && !filters.status.includes(task.statusId)) return false;
     if (filters.priority?.length && !filters.priority.includes(task.priority)) return false;
-    if (filters.tag?.length && !task.tagIds.some((id) => filters.tag?.includes(id))) return false;
+    if (filters.tag?.length) {
+      const has = (id: string) => task.tagIds.includes(id);
+      if (!(filters.tagMatch === "any" ? filters.tag.some(has) : filters.tag.every(has))) return false;
+    }
     if (filters.assignee?.length) {
       const wanted = filters.assignee.map((a) => (a === "me" ? meId : a));
       const matches = task.assigneeIds.length === 0 ? wanted.includes("none") : task.assigneeIds.some((id) => wanted.includes(id));

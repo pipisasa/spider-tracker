@@ -114,7 +114,12 @@ describe("client-side task filter (older servers ignore the query)", () => {
     expect(matchesTaskFilter(task, { statusIds: ["s-done"] })).toBe(false);
     expect(matchesTaskFilter(task, { priority: [1] })).toBe(false);
     expect(matchesTaskFilter(task, { tagIds: ["t-bug", "t-api"] })).toBe(false);
+    expect(matchesTaskFilter(task, { tagIds: ["t-bug", "t-api"], tagMatch: "all" })).toBe(false);
     expect(matchesTaskFilter(task, { assignee: ["a2"] })).toBe(false);
+  });
+  test("tagMatch any keeps tasks with at least one of the tags", () => {
+    expect(matchesTaskFilter(task, { tagIds: ["t-bug", "t-api"], tagMatch: "any" })).toBe(true);
+    expect(matchesTaskFilter(task, { tagIds: ["t-api"], tagMatch: "any" })).toBe(false);
   });
   test("none matches unassigned tasks", () => {
     expect(matchesTaskFilter({ ...task, assigneeIds: [] }, { assignee: ["none"] })).toBe(true);

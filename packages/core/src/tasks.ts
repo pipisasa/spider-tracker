@@ -6,12 +6,13 @@ import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import { notify } from "./inbox";
-import type { Priority, SubtaskDto, TaskDto } from "./contracts";
+import type { Priority, ProjectDetailDto, SubtaskDto, TaskDto } from "./contracts";
 import { DomainError } from "./errors";
 import { listMembers } from "./organizations";
 import { getProject } from "./projects";
 import {
   createTaskInput,
+  normalizeHandle,
   parseTaskKey,
   taskListFilters,
   updateTaskInput,
@@ -283,13 +284,12 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
   });
 }
 
-/** SQL conditions for the list filters; unknown statuses, members and tags are validation errors. */
-async function filterConditions(db: Db, viewer: Viewer, projectKey: string, filters: unknown): Promise<SQL[]> {
+/** SQL conditions for the list filters of `project`; unknown statuses, members and tags are validation errors. */
+async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDto, filters: unknown): Promise<SQL[]> {
   const data = parseInput(taskListFilters, filters);
   const where: SQL[] = [];
 
   if (data.status?.length) {
-    const project = await getProject(db, viewer, projectKey);
     const ids = new Set<string>();
     for (const value of data.status) {
       const byId = project.statuses.filter((s) => s.id === value);
@@ -311,7 +311,7 @@ async function filterConditions(db: Db, viewer: Viewer, projectKey: string, filt
     const ids = new Set<string>();
     let none = false;
     for (const raw of data.assignee) {
-      const handle = raw.replace(/^@/, "").toLowerCase();
+      const handle = normalizeHandle(raw);
       if (handle === "none") {
         none = true;
       } else if (handle === "me") {
@@ -342,25 +342,22 @@ async function filterConditions(db: Db, viewer: Viewer, projectKey: string, filt
 
   const names = [...new Set((data.tags ?? []).map((n) => n.replace(/^#/, "").trim().toLowerCase()))].filter(Boolean);
   if (names.length) {
-    const rows = await db.select({ id: tags.id, name: tags.name }).from(tags).where(eq(tags.orgId, orgIdOf(viewer)));
-    const ids = names.map((name) => {
-      const tag = rows.find((t) => t.name.toLowerCase() === name);
-      if (!tag) {
-        throw new DomainError("validation", `Unknown tag "${name}". Existing tags: ${rows.map((t) => t.name).join(", ") || "none"}`);
-      }
-      return tag.id;
-    });
-    // Every listed tag: the task's rows among them must number as many as the tags.
+    const orgId = orgIdOf(viewer);
+    // Names are unique per organization regardless of case (the lower(name) index).
+    const rows = await db
+      .select({ id: tags.id, name: tags.name })
+      .from(tags)
+      .where(and(eq(tags.orgId, orgId), inArray(sql`lower(${tags.name})`, names)));
+    const missing = names.find((name) => !rows.some((t) => t.name.toLowerCase() === name));
+    if (missing !== undefined) {
+      const existing = await db.select({ name: tags.name }).from(tags).where(eq(tags.orgId, orgId)).orderBy(asc(tags.name));
+      throw new DomainError("validation", `Unknown tag "${missing}". Existing tags: ${existing.map((t) => t.name).join(", ") || "none"}`);
+    }
+    const ids = rows.map((t) => t.id);
+    const tagged = db.select({ id: taskTags.taskId }).from(taskTags).where(inArray(taskTags.tagId, ids));
+    // "all": the task's rows among the tags must number as many as the tags.
     where.push(
-      inArray(
-        tasks.id,
-        db
-          .select({ id: taskTags.taskId })
-          .from(taskTags)
-          .where(inArray(taskTags.tagId, ids))
-          .groupBy(taskTags.taskId)
-          .having(sql`count(*) = ${ids.length}`),
-      ),
+      inArray(tasks.id, data.tagMatch === "any" ? tagged : tagged.groupBy(taskTags.taskId).having(sql`count(*) = ${ids.length}`)),
     );
   }
 
@@ -371,34 +368,27 @@ async function filterConditions(db: Db, viewer: Viewer, projectKey: string, filt
 
 /**
  * A project's tasks in board order, optionally filtered (see `taskListFilters`): any of the
- * statuses, assignees and priorities, all of the tags, and title text.
+ * statuses, assignees and priorities, all (or any, with `tagMatch: "any"`) of the tags, and
+ * title text. A missing or out-of-scope project is not_found, filtered or not.
  */
 export async function listTasks(db: Db, viewer: Viewer, projectKey: string, filters: unknown = {}): Promise<TaskDto[]> {
-  const conditions = await filterConditions(db, viewer, projectKey, filters);
+  const project = await getProject(db, viewer, projectKey);
+  const conditions = await filterConditions(db, viewer, project, filters);
   const scope = await projectScope(db, viewer);
   const rows = await db
-    .select({ task: tasks, projectKey: projects.key })
+    .select()
     .from(tasks)
-    .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(
-      and(
-        eq(projects.orgId, orgIdOf(viewer)),
-        eq(projects.key, projectKey.toUpperCase()),
-        isNull(tasks.deletedAt),
-        scope ? inArray(projects.id, [...scope]) : undefined,
-        ...conditions,
-      ),
-    )
+    .where(and(eq(tasks.projectId, project.id), isNull(tasks.deletedAt), ...conditions))
     .orderBy(asc(tasks.sortKey), asc(tasks.id));
   const links = await linksByTask(
     db,
     scope,
-    rows.map((r) => r.task.id),
+    rows.map((r) => r.id),
   );
   return withProgress(
     db,
     scope,
-    rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks)),
+    rows.map((r) => toTaskDto(r, project.key, links.get(r.id) ?? noLinks)),
   );
 }
 

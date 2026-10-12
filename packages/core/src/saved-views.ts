@@ -5,7 +5,7 @@ import { assertCanWrite, inScope, projectScope, type ActorContext } from "./acce
 import type { SavedViewDto } from "./contracts";
 import { DomainError } from "./errors";
 import { isUuid } from "./ids";
-import { createSavedViewInput, updateSavedViewInput, viewFiltersSchema } from "./schemas";
+import { createSavedViewInput, updateSavedViewInput, viewFiltersSchema, type ViewFilters } from "./schemas";
 import { parseInput } from "./validate";
 
 // Saved views (ST-15): named filter sets per project. A view is personal unless shared; shared
@@ -17,15 +17,27 @@ const { projects, savedViews } = schema;
 
 type Row = typeof savedViews.$inferSelect;
 
-function toDto(row: Row, projectKey: string): SavedViewDto {
+/**
+ * Stored filters with an explicit `tagMatch`. Views saved before it existed (ST-73) were applied
+ * by the web, which matched any of their tags, so a missing `tagMatch` reads as "any" there.
+ */
+function readFilters(stored: unknown): ViewFilters {
   // Stored filters are validated on write; fall back to none rather than failing a list.
-  const filters = viewFiltersSchema.safeParse(row.filters);
+  const parsed = viewFiltersSchema.safeParse(stored);
+  if (!parsed.success) return {};
+  return { ...parsed.data, tagMatch: parsed.data.tagMatch ?? (parsed.data.tag?.length ? "any" : "all") };
+}
+
+/** New and changed views store `tagMatch` explicitly, "all" when left out. */
+const writeFilters = (filters: ViewFilters): ViewFilters => ({ ...filters, tagMatch: filters.tagMatch ?? "all" });
+
+function toDto(row: Row, projectKey: string): SavedViewDto {
   return {
     id: row.id,
     projectKey,
     ownerActorId: row.ownerActorId,
     name: row.name,
-    filters: filters.success ? filters.data : {},
+    filters: readFilters(row.filters),
     shared: row.shared,
     view: row.view,
     createdAt: row.createdAt.toISOString(),
@@ -67,7 +79,7 @@ export async function createSavedView(db: Db, ctx: ActorContext, projectKey: str
       projectId: project.id,
       ownerActorId: ctx.actorId,
       name: data.name,
-      filters: data.filters,
+      filters: writeFilters(data.filters),
       shared: data.shared,
       view: data.view,
     })
@@ -98,7 +110,7 @@ export async function updateSavedView(db: Db, ctx: ActorContext, projectKey: str
   const { row, project } = await findEditable(db, ctx, projectKey, viewId);
   const [updated] = await db
     .update(savedViews)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...data, ...(data.filters ? { filters: writeFilters(data.filters) } : {}), updatedAt: new Date() })
     .where(eq(savedViews.id, row.id))
     .returning();
   if (!updated) throw new DomainError("not_found", "View not found");

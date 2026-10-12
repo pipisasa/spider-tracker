@@ -203,10 +203,17 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     c.json(await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false)),
   );
 
-  // ?status=&assignee=&tag=&priority= repeat for several values; see taskListFilters.
+  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any; see taskListFilters.
   app.get("/projects/:projectKey/tasks", async (c) => {
     const query = c.req.queries();
-    const filters = { status: query.status, assignee: query.assignee, tags: query.tag, priority: query.priority, q: c.req.query("q") };
+    const filters = {
+      status: query.status,
+      assignee: query.assignee,
+      tags: query.tag,
+      tagMatch: c.req.query("tagMatch"),
+      priority: query.priority,
+      q: c.req.query("q"),
+    };
     return c.json(list(await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)));
   });
 
