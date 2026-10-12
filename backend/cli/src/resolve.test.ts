@@ -157,10 +157,12 @@ describe("client-side task filter (older servers ignore the query)", () => {
   });
 });
 
-test("mine: against a server without ownerId, the re-check keeps a superset (me and every agent)", () => {
+test("mine: against a server without ownerId, the re-check doesn't narrow (every actor)", () => {
   const legacy = (id: string, type: "human" | "agent") =>
     ({ id, type, name: id, handle: id, avatarUrl: null, role: "member", deactivated: false }) as unknown as ActorDto;
   const me = legacy("p1", "human");
   const ids = mineActorIds(me, [me, legacy("a1", "agent"), legacy("p2", "human"), legacy("a2", "agent")]);
-  expect(ids.sort()).toEqual(["a1", "a2", "p1"]);
+  expect(ids.sort()).toEqual(["a1", "a2", "p1", "p2"]);
+  // An agent caller keeps its (active, human) owner's tasks too.
+  expect(mineActorIds(legacy("a1", "agent"), [me, legacy("a1", "agent")]).sort()).toEqual(["a1", "p1"]);
 });

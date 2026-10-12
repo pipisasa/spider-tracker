@@ -95,10 +95,9 @@ export function resolveAssignees(members: ActorDto[], meId: string, handles: str
  */
 export function mineActorIds(me: ActorDto, actors: ActorDto[]): string[] {
   // Servers before ST-78 don't send ownerId. The server has already applied `mine` (ST-76), so
-  // this client-side re-check only needs a superset: me, every agent, and every deactivated actor.
-  if (!actors.some((a) => "ownerId" in a)) {
-    return [...new Set([me.id, ...actors.filter((a) => a.type === "agent" || a.deactivated).map((a) => a.id)])];
-  }
+  // the client-side re-check must not narrow further: every actor counts (an agent's owner is an
+  // active person, so "agents and deactivated actors" alone would drop the owner's tasks).
+  if (!actors.some((a) => "ownerId" in a)) return [...new Set([me.id, ...actors.map((a) => a.id)])];
   const person = me.type === "agent" ? (me.ownerId ?? actors.find((a) => a.id === me.id)?.ownerId ?? me.id) : me.id;
   return [...new Set([person, me.id, ...actors.filter((a) => a.ownerId === person).map((a) => a.id)])];
 }
