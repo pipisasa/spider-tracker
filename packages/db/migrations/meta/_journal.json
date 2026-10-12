@@ -127,6 +127,55 @@
       "when": 1791835876350,
       "tag": "0017_project_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791837471529,
+      "tag": "0018_task_dates",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791838616863,
+      "tag": "0019_document_comments",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791838829098,
+      "tag": "0020_repos_and_apps",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791839376349,
+      "tag": "0021_task_kinds",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791839991495,
+      "tag": "0022_github_installations",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791840696987,
+      "tag": "0023_github_deliveries",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791840901527,
+      "tag": "0024_releases",
+      "breakpoints": true
     }
   ]
 }

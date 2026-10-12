@@ -6,8 +6,10 @@
 
 - Create, edit and delete tasks with readable keys (`SPI-123`)
 - Statuses that each project can customise, mapped to fixed categories: backlog, todo, in progress, in review, done, canceled
+- Task kinds (ST-90): `task`, `release` and `milestone`, each with its own workflow per project (defaults: Backlog → Todo → In Progress → In Review → Done / Canceled; Planned → On staging → Release review → Released / Canceled; Planned → Active → Ready to close → Done). Owners, admins and their agents add, rename, recolor, reorder and delete statuses on Settings → Projects → Workflows, through the API, MCP (`create_status`, `update_status`, `delete_status`) and `spider project status`. Deleting a status moves its tasks to another status of the same workflow first; every workflow keeps an open and a done status. The board and list show tasks of kind `task`; releases appear in their own board columns and view (ST-93), milestones get theirs later (ST-96)
+- Releases (ST-93): Done means finished, not shipped. A release (a task of kind `release`, named by its version) links repos and apps with a version each and includes Done tasks from any project, one release per task. Marking it Released ships them: each gets "shipped in <version>" and a ship time, its status stays Done. The board shows release columns after the task columns (one per release status, on by default, "Release columns" toggle), release cards with their apps and tasks, and on every Done card its shipping state (not in a release / `<version> · on staging` / `shipped <version>` / no code); drag a Done task onto a release card to add it. The Releases view lists releases in flight and, below, the shipped ones as the changelog, filterable by app. A Done task with nothing to ship is marked "no code". API, MCP (`create_release`, `add_to_release`, `list_release_candidates`, …) and `spider release …`
 - Priority, estimate, due date, sub-tasks
-- Relations: blocks / blocked by, relates to, duplicates
+- Relations: blocks / blocked by, relates to, duplicates; marking a duplicate (link, cancel, comment) is one action in the web, CLI and MCP
 - Several assignees per task, which can be people or agents
 - Views: list, board (kanban), timeline, calendar
 - Filters (status, assignee, priority, tag, title text) on the board and list, kept in the page URL so links are shareable; saved views per project, personal or shared with everyone who sees the project; the same filters (tags by name, all required) on the API, MCP `list_tasks` and `spider task list`, where the assignee filter also finds tasks still assigned to deactivated members; "Me and my agents" (`assignee=mine`) shows the tasks of a person and every agent they own (from an agent: its owner and the owner's agents), savable in views
@@ -31,7 +33,7 @@ See [agents.md](./agents.md).
 
 See [git-integration.md](./git-integration.md).
 
-- GitHub App per organization
+- GitHub App per organization (ST-82): owners and admins connect it in Settings → GitHub; the repos it grants are linked to the organization's repos or added, and git-driven changes are attributed to a GitHub bot
 - Branches, commits and pull requests link to tasks automatically
 - Status changes driven by pull request events
 - Agents can open pull requests
@@ -43,16 +45,21 @@ See [git-integration.md](./git-integration.md).
 - Rich editor with a Markdown source toggle and live HTML preview
 - Version history and diffs (ST-117): line-by-line comparison of any two versions in the history panel (compare icon per version, "Compare with current" on an older one, pickers for both ends), `spider doc diff`, MCP `diff_document` and `GET …/documents/:id/diff`, so you can check what an agent changed
 - Mentions of tasks, actors and other documents
-- Obsidian-style links (ST-100): `[[Title]]`, `[[Title|label]]`, `[[doc:<id>]]` (by id: survives renames and shows the document's current title, ST-115) and `[[ST-12]]` (typing `[[` suggests documents; plain task keys count as mentions); "Linked from" backlinks on each document; opening a missing title creates it. A title containing `[`, `]`, `|` or `#` can't be linked to (the suggestions leave it out)
+- Obsidian-style links (ST-100): `[[Title]]`, `[[Title|label]]`, `[[doc:<id>]]` (by id: survives renames and shows the document's current title, ST-115) and `[[ST-12]]` (typing `[[` suggests documents; plain task keys count as mentions); "Linked from" backlinks on each document; opening a missing title creates it. A title containing `[`, `]`, `|` or `#` (or one that reads as a task key) can't be linked to by title: the `[[` suggestions leave it out; link it with `[[doc:<id>]]`
+- Renaming a document rewrites `[[Old title]]` and `[[Old title|label]]` in the documents linking to it, as Obsidian does (ST-101): one new version each, saved by the renamer, and only in documents the renamer can edit (others are listed as skipped); the save toast, `spider doc edit` and MCP `update_document` say what was updated
+- "Mentioned in documents" on task pages: documents linking with `[[ST-12]]` or mentioning a plain ST-12 (ST-101)
+- `spider doc backlinks <id | ST-12>`, `spider doc graph --json`, MCP `list_backlinks` and `get_document_graph`, so agents can follow the knowledge base (ST-101)
 - Graph view (`/docs/graph`): documents, their tasks and projects, and links as a force-directed graph; zoom, pan, drag, hover to light up neighbours, click to open; toggle tasks, projects, unresolved titles and orphans
 - Agents can read and write documents (specs, reports, plans)
+- Comments on documents (ST-118): on the whole document or on a fragment (select text in a Markdown document and press Comment; the quote is highlighted in the text), with replies, @-mentions and a "Resolve" mark per thread. If the quoted text changes, the comment stays and is marked "Outdated". The document's author, mentioned people and the thread get inbox (and channel) notifications. Agents use MCP `add_document_comment` / `list_document_comments` / `resolve_document_comment` or `spider doc comment|comments|resolve`
 - Partial edits (ST-116; API, MCP `edit_document`, `spider doc edit --old/--new | --append | --section`): replace a fragment, append, or replace a Markdown section by its heading, sending only the change. Each saves a new version; without a base version an edit applies to the current one and fails if its fragment or section is gone, so it never overwrites someone else's save
 
 ## Organizations, repos and apps
 
 - Multi-tenant organizations with members, teams and roles (`owner`, `admin`, `member`, `guest`)
-- Repos are linked once per organization and attached to projects
-- Apps model deployable products and link to repos and projects, so you can see tasks per app
+- Repos are added once per organization by their GitHub remote URL (no GitHub App needed; ST-92) and attached to projects (a repo can serve several)
+- Apps are the deployable parts of a repo (e.g. web, api, cli): a folder, the shared packages they depend on, versioning (`date` or `semver`) and environments in deploy order (e.g. staging → prod, none for a CLI); releases (ST-93) version and ship them
+- Owners, admins and their agents manage repos and apps (API, MCP, `spider repo` / `spider app`, Settings → Repos); everyone reads them
 
 ## Tags and custom fields
 

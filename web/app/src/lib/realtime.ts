@@ -38,9 +38,12 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
       void qc.invalidateQueries({ queryKey: keys.relations(orgSlug, e.taskKey) });
+      // A task's change can move releases and shipping states (ST-93).
+      void qc.invalidateQueries({ queryKey: keys.releaseLists(orgSlug) });
     });
     on("task.deleted", (e) => {
       refreshSubtasks();
+      void qc.invalidateQueries({ queryKey: keys.releaseLists(orgSlug) });
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       qc.removeQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
     });
@@ -50,6 +53,11 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
     });
     on("project.changed", () => void qc.invalidateQueries({ queryKey: keys.projects(orgSlug) }));
+    on("repos.changed", () => {
+      void qc.invalidateQueries({ queryKey: keys.repos(orgSlug) });
+      // GitHub installations (ST-82) announce their changes as repo changes.
+      void qc.invalidateQueries({ queryKey: keys.github(orgSlug) });
+    });
     on("tags.changed", () => {
       void qc.invalidateQueries({ queryKey: keys.tags(orgSlug) });
       // Deleting a tag removes it from tasks.
@@ -62,6 +70,9 @@ export function useOrgEvents(orgSlug: string) {
       // Also refreshes its version history.
       void qc.invalidateQueries({ queryKey: keys.document(orgSlug, e.documentId) });
     });
+    on("document.commented", (e) =>
+      void qc.invalidateQueries({ queryKey: keys.documentComments(orgSlug, e.documentId) }),
+    );
     on("document.deleted", (e) => {
       void qc.invalidateQueries({ queryKey: keys.documentLists(orgSlug) });
       qc.removeQueries({ queryKey: keys.document(orgSlug, e.documentId) });

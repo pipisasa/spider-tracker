@@ -52,6 +52,8 @@ bun run release:cli             # build, then gh release create cli-v<version> -
 
 The release (binaries plus `SHA256SUMS`, which `install.sh` and `spider update` verify) is tagged at HEAD, so the script refuses a dirty working tree or a HEAD that is on no remote branch; `--dry-run` skips both checks.
 
+**Release notes** live in [CHANGELOG.md](../CHANGELOG.md) (CLI, plugin, MCP server): add user-visible changes, especially breaking output changes, under **Unreleased**, and move them under the version when bumping it; paste the CLI's into the GitHub release.
+
 `spider update` and the passive "new spider available" notice look for the release marked latest with a `cli-v*` tag, so keep CLI releases `--latest` (or the CLI falls back to the newest `cli-v*` release in the list).
 
 **Minimum CLI version.** The API sends `X-Spider-Min-Cli` (`MIN_CLI_VERSION` in `packages/core/src/version.ts`). When an API change drops support for older CLIs, first release a CLI that works with it, then raise `MIN_CLI_VERSION` to that version and deploy the API; older CLIs then warn and suggest `spider update`. Bump the shared plugin's `version` (`plugins/spider-tracker/.claude-plugin/plugin.json`) whenever it changes so `claude plugin update` and the update check see it.
@@ -117,6 +119,8 @@ Production uses `railway` because `tracker-api` is a DNS-only (grey cloud) recor
 | TXT | `_railway-verify.tracker-api` | `railway-verify=591212fea1d43b8a127e9cfa3e14bf312d375d29ba3114fdeaec3e3f2effcfb1` | — |
 
 Check progress with `railway domain status 85cd76b1-5729-478c-9941-b52346e5840e`.
+
+**GitHub App:** the six `GITHUB_APP_*` variables (all or none) turn on Settings → GitHub; how to create the App and set them is in [git-integration.md](./git-integration.md#manual-checklist-a-person).
 
 **Email:** magic links are sent with [Resend](https://resend.com) when `RESEND_API_KEY` is set (`railway variable set RESEND_API_KEY --stdin -s api`), from `MAIL_FROM` (default `Spider Tracker <noreply@batele.plus>`; the `batele.plus` domain must be verified in Resend). Without the key the API logs a warning at startup and magic links only appear in `railway logs -s api`.
 

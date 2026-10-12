@@ -23,9 +23,12 @@ import { Route as AuthedOrgSlugDocsDocumentIdRouteImport } from './routes/_authe
 import { Route as AuthedOrgSlugDocsGraphRouteImport } from './routes/_authed/$orgSlug/docs/graph'
 import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from './routes/_authed/$orgSlug/projects/$projectKey'
 import { Route as AuthedOrgSlugSettingsAgentsRouteImport } from './routes/_authed/$orgSlug/settings/agents'
+import { Route as AuthedOrgSlugSettingsGithubRouteImport } from './routes/_authed/$orgSlug/settings/github'
 import { Route as AuthedOrgSlugSettingsMembersRouteImport } from './routes/_authed/$orgSlug/settings/members'
 import { Route as AuthedOrgSlugSettingsProjectsRouteImport } from './routes/_authed/$orgSlug/settings/projects'
+import { Route as AuthedOrgSlugSettingsReposRouteImport } from './routes/_authed/$orgSlug/settings/repos'
 import { Route as AuthedOrgSlugTasksTaskKeyRouteImport } from './routes/_authed/$orgSlug/tasks/$taskKey'
+import { Route as AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport } from './routes/_authed/$orgSlug/settings/workflows.$projectKey'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -99,6 +102,12 @@ const AuthedOrgSlugSettingsAgentsRoute =
     path: '/settings/agents',
     getParentRoute: () => AuthedOrgSlugRoute,
   } as any)
+const AuthedOrgSlugSettingsGithubRoute =
+  AuthedOrgSlugSettingsGithubRouteImport.update({
+    id: '/settings/github',
+    path: '/settings/github',
+    getParentRoute: () => AuthedOrgSlugRoute,
+  } as any)
 const AuthedOrgSlugSettingsMembersRoute =
   AuthedOrgSlugSettingsMembersRouteImport.update({
     id: '/settings/members',
@@ -111,10 +120,22 @@ const AuthedOrgSlugSettingsProjectsRoute =
     path: '/settings/projects',
     getParentRoute: () => AuthedOrgSlugRoute,
   } as any)
+const AuthedOrgSlugSettingsReposRoute =
+  AuthedOrgSlugSettingsReposRouteImport.update({
+    id: '/settings/repos',
+    path: '/settings/repos',
+    getParentRoute: () => AuthedOrgSlugRoute,
+  } as any)
 const AuthedOrgSlugTasksTaskKeyRoute =
   AuthedOrgSlugTasksTaskKeyRouteImport.update({
     id: '/tasks/$taskKey',
     path: '/tasks/$taskKey',
+    getParentRoute: () => AuthedOrgSlugRoute,
+  } as any)
+const AuthedOrgSlugSettingsWorkflowsProjectKeyRoute =
+  AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport.update({
+    id: '/settings/workflows/$projectKey',
+    path: '/settings/workflows/$projectKey',
     getParentRoute: () => AuthedOrgSlugRoute,
   } as any)
 
@@ -131,10 +152,13 @@ export interface FileRoutesByFullPath {
   '/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
+  '/$orgSlug/settings/github': typeof AuthedOrgSlugSettingsGithubRoute
   '/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
   '/$orgSlug/settings/projects': typeof AuthedOrgSlugSettingsProjectsRoute
+  '/$orgSlug/settings/repos': typeof AuthedOrgSlugSettingsReposRoute
   '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
   '/$orgSlug/docs/': typeof AuthedOrgSlugDocsIndexRoute
+  '/$orgSlug/settings/workflows/$projectKey': typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -148,10 +172,13 @@ export interface FileRoutesByTo {
   '/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
+  '/$orgSlug/settings/github': typeof AuthedOrgSlugSettingsGithubRoute
   '/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
   '/$orgSlug/settings/projects': typeof AuthedOrgSlugSettingsProjectsRoute
+  '/$orgSlug/settings/repos': typeof AuthedOrgSlugSettingsReposRoute
   '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
   '/$orgSlug/docs': typeof AuthedOrgSlugDocsIndexRoute
+  '/$orgSlug/settings/workflows/$projectKey': typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -168,10 +195,13 @@ export interface FileRoutesById {
   '/_authed/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
   '/_authed/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/_authed/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
+  '/_authed/$orgSlug/settings/github': typeof AuthedOrgSlugSettingsGithubRoute
   '/_authed/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
   '/_authed/$orgSlug/settings/projects': typeof AuthedOrgSlugSettingsProjectsRoute
+  '/_authed/$orgSlug/settings/repos': typeof AuthedOrgSlugSettingsReposRoute
   '/_authed/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
   '/_authed/$orgSlug/docs/': typeof AuthedOrgSlugDocsIndexRoute
+  '/_authed/$orgSlug/settings/workflows/$projectKey': typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -188,10 +218,13 @@ export interface FileRouteTypes {
     | '/$orgSlug/docs/graph'
     | '/$orgSlug/projects/$projectKey'
     | '/$orgSlug/settings/agents'
+    | '/$orgSlug/settings/github'
     | '/$orgSlug/settings/members'
     | '/$orgSlug/settings/projects'
+    | '/$orgSlug/settings/repos'
     | '/$orgSlug/tasks/$taskKey'
     | '/$orgSlug/docs/'
+    | '/$orgSlug/settings/workflows/$projectKey'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -205,10 +238,13 @@ export interface FileRouteTypes {
     | '/$orgSlug/docs/graph'
     | '/$orgSlug/projects/$projectKey'
     | '/$orgSlug/settings/agents'
+    | '/$orgSlug/settings/github'
     | '/$orgSlug/settings/members'
     | '/$orgSlug/settings/projects'
+    | '/$orgSlug/settings/repos'
     | '/$orgSlug/tasks/$taskKey'
     | '/$orgSlug/docs'
+    | '/$orgSlug/settings/workflows/$projectKey'
   id:
     | '__root__'
     | '/_authed'
@@ -224,10 +260,13 @@ export interface FileRouteTypes {
     | '/_authed/$orgSlug/docs/graph'
     | '/_authed/$orgSlug/projects/$projectKey'
     | '/_authed/$orgSlug/settings/agents'
+    | '/_authed/$orgSlug/settings/github'
     | '/_authed/$orgSlug/settings/members'
     | '/_authed/$orgSlug/settings/projects'
+    | '/_authed/$orgSlug/settings/repos'
     | '/_authed/$orgSlug/tasks/$taskKey'
     | '/_authed/$orgSlug/docs/'
+    | '/_authed/$orgSlug/settings/workflows/$projectKey'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -336,6 +375,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedOrgSlugSettingsAgentsRouteImport
       parentRoute: typeof AuthedOrgSlugRoute
     }
+    '/_authed/$orgSlug/settings/github': {
+      id: '/_authed/$orgSlug/settings/github'
+      path: '/settings/github'
+      fullPath: '/$orgSlug/settings/github'
+      preLoaderRoute: typeof AuthedOrgSlugSettingsGithubRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
     '/_authed/$orgSlug/settings/members': {
       id: '/_authed/$orgSlug/settings/members'
       path: '/settings/members'
@@ -350,11 +396,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedOrgSlugSettingsProjectsRouteImport
       parentRoute: typeof AuthedOrgSlugRoute
     }
+    '/_authed/$orgSlug/settings/repos': {
+      id: '/_authed/$orgSlug/settings/repos'
+      path: '/settings/repos'
+      fullPath: '/$orgSlug/settings/repos'
+      preLoaderRoute: typeof AuthedOrgSlugSettingsReposRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
     '/_authed/$orgSlug/tasks/$taskKey': {
       id: '/_authed/$orgSlug/tasks/$taskKey'
       path: '/tasks/$taskKey'
       fullPath: '/$orgSlug/tasks/$taskKey'
       preLoaderRoute: typeof AuthedOrgSlugTasksTaskKeyRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
+    '/_authed/$orgSlug/settings/workflows/$projectKey': {
+      id: '/_authed/$orgSlug/settings/workflows/$projectKey'
+      path: '/settings/workflows/$projectKey'
+      fullPath: '/$orgSlug/settings/workflows/$projectKey'
+      preLoaderRoute: typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport
       parentRoute: typeof AuthedOrgSlugRoute
     }
   }
@@ -366,10 +426,13 @@ interface AuthedOrgSlugRouteChildren {
   AuthedOrgSlugDocsGraphRoute: typeof AuthedOrgSlugDocsGraphRoute
   AuthedOrgSlugProjectsProjectKeyRoute: typeof AuthedOrgSlugProjectsProjectKeyRoute
   AuthedOrgSlugSettingsAgentsRoute: typeof AuthedOrgSlugSettingsAgentsRoute
+  AuthedOrgSlugSettingsGithubRoute: typeof AuthedOrgSlugSettingsGithubRoute
   AuthedOrgSlugSettingsMembersRoute: typeof AuthedOrgSlugSettingsMembersRoute
   AuthedOrgSlugSettingsProjectsRoute: typeof AuthedOrgSlugSettingsProjectsRoute
+  AuthedOrgSlugSettingsReposRoute: typeof AuthedOrgSlugSettingsReposRoute
   AuthedOrgSlugTasksTaskKeyRoute: typeof AuthedOrgSlugTasksTaskKeyRoute
   AuthedOrgSlugDocsIndexRoute: typeof AuthedOrgSlugDocsIndexRoute
+  AuthedOrgSlugSettingsWorkflowsProjectKeyRoute: typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
 }
 
 const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
@@ -378,10 +441,14 @@ const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
   AuthedOrgSlugDocsGraphRoute: AuthedOrgSlugDocsGraphRoute,
   AuthedOrgSlugProjectsProjectKeyRoute: AuthedOrgSlugProjectsProjectKeyRoute,
   AuthedOrgSlugSettingsAgentsRoute: AuthedOrgSlugSettingsAgentsRoute,
+  AuthedOrgSlugSettingsGithubRoute: AuthedOrgSlugSettingsGithubRoute,
   AuthedOrgSlugSettingsMembersRoute: AuthedOrgSlugSettingsMembersRoute,
   AuthedOrgSlugSettingsProjectsRoute: AuthedOrgSlugSettingsProjectsRoute,
+  AuthedOrgSlugSettingsReposRoute: AuthedOrgSlugSettingsReposRoute,
   AuthedOrgSlugTasksTaskKeyRoute: AuthedOrgSlugTasksTaskKeyRoute,
   AuthedOrgSlugDocsIndexRoute: AuthedOrgSlugDocsIndexRoute,
+  AuthedOrgSlugSettingsWorkflowsProjectKeyRoute:
+    AuthedOrgSlugSettingsWorkflowsProjectKeyRoute,
 }
 
 const AuthedOrgSlugRouteWithChildren = AuthedOrgSlugRoute._addFileChildren(

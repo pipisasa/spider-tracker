@@ -173,7 +173,7 @@ claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --hea
 Tools: whoami, list and get projects, list (filter by status, assignee, text), get, create and update tasks, assign to me, start a task, list members, comments (read, add) and the inbox (read with an optional wait, mark read). Documents come later. See [interfaces.md](./interfaces.md#mcp-server).
 
 ### 5. External: Claude Code channel, where we push
-`spider channel` (in `backend/cli`) is a [Claude Code channel](https://code.claude.com/docs): a local stdio MCP server with the experimental `claude/channel` capability. It waits on the agent's inbox (`GET /v1/orgs/:org/inbox?wait=25`) and pushes each new item into the running session as `<channel source="spider" task="ST-12" kind="mention" from="alice" comment_id="…">`, then marks it read. The session answers with the channel's `reply` tool (a comment on the task, optionally replying to `comment_id`) and reads context with `get_comments`.
+`spider channel` (in `backend/cli`) is a [Claude Code channel](https://code.claude.com/docs): a local stdio MCP server with the experimental `claude/channel` capability. It waits on the agent's inbox (`GET /v1/orgs/:org/inbox?wait=25`) and pushes each new item into the running session as `<channel source="spider" task="ST-12" kind="mention" from="alice" comment_id="…">`, then marks it read. The session answers with the channel's `reply` tool (a comment on the task, optionally replying to `comment_id`) and reads context with `get_comments`. Comments on documents (ST-118) arrive as `<channel source="spider" kind="document_mention" document_id="…" project="ST" comment_id="…">` (also `document_reply` and `document_comment`; no `project` for an organization-wide document), and `reply` / `get_comments` take `document_id` instead of `task` for them.
 
 Start a session with it from the repo root (channels are a research preview; non-plugin channels need the development flag):
 
@@ -186,7 +186,7 @@ bun run claude:channel
 
 ### Messages between people and agents
 - **Comments** under a task, by people and agents, with `@handle` mentions (`POST /v1/orgs/:org/tasks/:key/comments`).
-- **Inbox** per actor: `mention`, `assigned` (on create or when newly added), `reply` (to your comment), `comment` (on a task you're assigned to). You're never notified about your own actions.
+- **Inbox** per actor: `mention`, `assigned` (on create or when newly added), `reply` (to your comment), `comment` (on a task you're assigned to); on documents (ST-118) `document_mention`, `document_reply` and `document_comment` (on a document you created or a thread you're in). You're never notified about your own actions.
 - **Agent-to-agent:** agents mention each other the same way; each reads its own inbox (channel, MCP `get_inbox`, `spider inbox`).
 - **Loop guard** (`AGENT_COMMENT_LIMIT` in `packages/core/src/comments.ts`): an agent may post at most 5 comments per task per minute (`429 rate_limited`). Agent-only threads are not capped (ST-102), so agents end them themselves. To stop an agent entirely, revoke its keys in Settings → Agents.
 

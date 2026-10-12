@@ -1,3 +1,9 @@
+import {
+  DocumentComments,
+  SelectionCommentButton,
+  threadsOf,
+  useQuoteHighlights,
+} from "@/components/document-comments";
 import { DocumentContent } from "@/components/document-content";
 import {
   DocumentIcon,
@@ -21,6 +27,7 @@ import { nameOf } from "@/lib/assignees";
 import { useWikiLinks } from "@/lib/use-wiki-links";
 import {
   documentBacklinksQuery,
+  documentCommentsQuery,
   documentDiffQuery,
   documentQuery,
   documentVersionQuery,
@@ -35,6 +42,7 @@ import type {
   DiffLineDto,
   DocumentDto,
   DocumentFormat,
+  RelinkedDocumentsDto,
 } from "@repo/core/contracts";
 import {
   useQuery,
@@ -47,6 +55,7 @@ import {
   CodeIcon,
   LinkIcon,
   EyeIcon,
+  MessageSquareIcon,
   FolderInputIcon,
   GitCompareIcon,
   HistoryIcon,
@@ -55,7 +64,7 @@ import {
   SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 /** `compare` shows what changed from that version to `version` (or the current one), ST-117. */
@@ -93,9 +102,28 @@ function DocumentPage() {
   const { data: doc } = useSuspenseQuery(documentQuery(orgSlug, documentId));
   const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
   const [moving, setMoving] = useState(false);
-  const [showHistory, setShowHistory] = useState(
-    version !== undefined || compare !== undefined,
+  // The side panel: version history or comments (ST-118).
+  const [panel, setPanel] = useState<"history" | "comments" | null>(
+    version !== undefined || compare !== undefined ? "history" : "comments",
   );
+  const showHistory = panel === "history";
+  const togglePanel = (which: "history" | "comments") =>
+    setPanel((p) => (p === which ? null : which));
+  // A fragment picked for a new comment, and the thread in focus.
+  const [quote, setQuote] = useState<string | null>(null);
+  const [activeThread, setActiveThread] = useState<string | null>(null);
+  const activate = useCallback((id: string | null) => {
+    setActiveThread(id);
+    if (id) setPanel("comments");
+  }, []);
+  // State, not a ref: the content isn't rendered while an old version or a diff shows.
+  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
+  const { data: comments = [] } = useQuery(
+    documentCommentsQuery(orgSlug, documentId),
+  );
+  const threads = useMemo(() => threadsOf(comments), [comments]);
+  const openThreads = threads.filter((t) => !t.root.resolvedAt).length;
+  useQuoteHighlights(contentEl, threads, activeThread, activate);
   // Bumped to restart the editor from the latest saved version.
   const [session, setSession] = useState(0);
   const navigate = useNavigate({ from: Route.fullPath });
@@ -203,9 +231,20 @@ function DocumentPage() {
                 {doc.title}
               </h1>
               <Button
+                variant={panel === "comments" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => togglePanel("comments")}
+              >
+                <MessageSquareIcon />
+                Comments
+                {openThreads > 0 && (
+                  <span className="text-muted-foreground">{openThreads}</span>
+                )}
+              </Button>
+              <Button
                 variant={showHistory ? "secondary" : "ghost"}
                 size="sm"
-                onClick={() => setShowHistory((v) => !v)}
+                onClick={() => togglePanel("history")}
               >
                 <HistoryIcon />
                 History
@@ -261,11 +300,24 @@ function DocumentPage() {
               />
             ) : (
               <>
-                <DocumentContent
-                  format={doc.format}
-                  content={doc.content}
-                  wikiLinks={wikiLinks}
-                />
+                {/* Markdown is rendered in the page, so its text can be selected and quotes highlighted; HTML runs in a sandboxed frame. */}
+                <div ref={setContentEl}>
+                  <DocumentContent
+                    format={doc.format}
+                    content={doc.content}
+                    wikiLinks={wikiLinks}
+                  />
+                </div>
+                {canWrite && doc.format === "md" && (
+                  <SelectionCommentButton
+                    container={contentEl}
+                    onComment={(text) => {
+                      setQuote(text);
+                      setActiveThread(null);
+                      setPanel("comments");
+                    }}
+                  />
+                )}
                 <Backlinks orgSlug={orgSlug} doc={doc} />
               </>
             )}
@@ -283,6 +335,20 @@ function DocumentPage() {
         />
       )}
 
+      {panel === "comments" && !edit && (
+        <aside className="flex w-full shrink-0 flex-col gap-3 border-t p-4 md:w-80 md:border-t-0 md:border-l">
+          <DocumentComments
+            orgSlug={orgSlug}
+            documentId={doc.id}
+            canWrite={canWrite}
+            quote={quote}
+            onClearQuote={() => setQuote(null)}
+            active={activeThread}
+            onActivate={activate}
+          />
+        </aside>
+      )}
+
       {showHistory && !edit && (
         <aside className="flex w-full shrink-0 flex-col gap-3 border-t p-4 md:w-72 md:border-t-0 md:border-l">
           <VersionHistory
@@ -296,6 +362,22 @@ function DocumentPage() {
       )}
     </div>
   );
+}
+
+/** What a rename did to the links leading here (ST-101), for the save toast. */
+function relinkedSummary(relinked: RelinkedDocumentsDto | undefined) {
+  if (!relinked) return undefined;
+  const parts: string[] = [];
+  const { rewritten, skipped } = relinked;
+  if (rewritten.length)
+    parts.push(
+      `Updated links in ${rewritten.length} ${rewritten.length === 1 ? "document" : "documents"}.`,
+    );
+  if (skipped.length)
+    parts.push(
+      `Not in ${skipped.map((d) => d.title).join(", ")} (${skipped.some((d) => d.reason === "rules") ? "project rules: only owners and admins can change them" : "too large"}).`,
+    );
+  return parts.join(" ") || undefined;
 }
 
 /** Documents linking here with `[[this title]]` (ST-100). */
@@ -651,7 +733,9 @@ function DocumentEditor({
       {
         onSuccess: (saved) => {
           if (saved.version !== baseVersion)
-            toast.success(`Saved version ${saved.version}`);
+            toast.success(`Saved version ${saved.version}`, {
+              description: relinkedSummary(saved.relinked),
+            });
           onDone();
         },
         onError: (err) => {

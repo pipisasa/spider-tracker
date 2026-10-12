@@ -7,8 +7,8 @@
 Identity tables (users, sessions, OAuth clients and tokens) belong to Better Auth; see [auth.md](./auth.md#what-owns-what). The tables below are ours.
 
 ```
-organizations ─┬─ actors (human | agent) ── agents (1:1 config), api_tokens
-               ├─ tags, custom_field_defs, repos, apps, documents
+organizations ─┬─ actors (human | agent | integration) ── agents (1:1 config), api_tokens
+               ├─ tags, custom_field_defs, github_installations, github_deliveries, repos, apps, documents
                └─ projects ─┬─ statuses, cycles, custom_field_defs (project-scoped)
                             └─ tasks ─┬─ task_assignees → actors
                                       ├─ task_tags, task_relations, sub-tasks (parent_id)
@@ -22,22 +22,25 @@ activity (append-only log for everything)
 | Entity | Purpose |
 |---|---|
 | **Organization** | The tenant boundary; owns everything else |
-| **Actor** | A member: a person or an agent |
+| **Actor** | A member: a person or an agent; or an integration bot (the GitHub one, ST-82) that git-driven changes are attributed to |
 | **Agent** | Extra configuration for agent actors (model, prompt, tools, limits) |
 | **API token** | Hashed API keys for external agents and CI |
 | **Project** | A unit of work with a key (`SPI`), workflow and settings |
-| **Status** | A per-project workflow state, mapped to a fixed category |
+| **Status** | A workflow state of one project and task kind (ST-90), mapped to a fixed category |
 | **Cycle** | A sprint or milestone |
-| **Task** | A unit of work; supports sub-tasks, relations, assignees, tags and custom fields |
+| **Task** | A unit of work of a kind (`task`, `release` or `milestone`, ST-90); supports sub-tasks, relations, assignees, tags and custom fields |
 | **Tag** | An organization-wide label |
 | **Custom field definition** | A user-defined field at organization or project scope |
-| **Repo** | A linked Git/GitHub repository |
-| **App** | A deployable product, linked to repos and projects |
+| **GitHub installation** | The GitHub App installed on a GitHub account and connected to one organization (ST-82); keyed by GitHub's installation id |
+| **GitHub delivery** | A webhook delivery GitHub sent (ST-83), by its `X-GitHub-Delivery` id: what makes each one handled once |
+| **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
+| **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
+| **Release** | A task of kind `release` (ST-93): links repos (`release_repos`) and apps with a version each (`release_apps`), includes Done tasks of any project (`tasks.release_id`); marking it Released sets `shipped_at` on it and its tasks |
 | **Git link** | A branch, commit or pull request linked to a task |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
-| **Comment** | A threaded Markdown comment on a task |
-| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task, or (`rules`, about a document instead of a task) changed rules of their project; its id is a cursor for waiting clients |
+| **Comment** | A threaded Markdown comment on a task or (ST-118) a document; a document comment may quote the fragment it is about and its thread can be resolved |
+| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task; or, about a document instead of a task, changed rules of their project (`rules`) or a comment on a document (`document_mention`, `document_reply`, `document_comment`); its id is a cursor for waiting clients |
 | **Device code** | A pending `spider login` (RFC 8628): hashed device code, user code, approver, expiry |
 | **Activity** | Append-only audit log of every change |
 | **Agent run** | One execution of an agent on a task |
@@ -51,11 +54,13 @@ activity (append-only log for everything)
 | `org_id` on every main table | Access control is one rule: the row's `org_id` must be in the user's organizations. It also makes per-organization filters fast. |
 | UUIDv7 primary keys + per-project numbers | UUIDv7 IDs sort by creation time and keep indexes efficient. `SPI-123` comes from `projects.task_seq`, incremented in the same transaction that inserts the task. |
 | Statuses belong to projects, each mapped to a fixed category | Projects name their columns freely; automation and reports use the categories. |
+| Statuses are per project **and** task kind (ST-90) | Releases and milestones move through their own workflows (Planned → On staging → Release review → Released; Planned → Active → Ready to close → Done), so `statuses.kind` splits a project's statuses into one workflow per kind; `position` orders a workflow. A task's kind is fixed at creation, and the composite foreign key `tasks (project_id, kind, status_id) → statuses (project_id, kind, id)` makes the database refuse a status of another project or kind. Names are unique per workflow regardless of case (status lookups by name are case-insensitive). Every new project gets the three default workflows (`DEFAULT_WORKFLOWS` in core); the migration gave existing projects the release and milestone ones. A status's category never changes; deleting one moves its tasks to another status of the same workflow first, and each workflow keeps an open and a done status. |
 | Custom field values as JSON, keyed by field definition ID | Renaming a field touches no data. A GIN index keeps filtering fast. The app's `core` package validates values against the definitions. |
 | `sort_key` holds a fractional index | Dragging a card changes one row instead of renumbering the column. |
 | Explicit columns on `documents` (not a generic "attached to" pair) | Foreign keys and cascading deletes keep working. |
 | Run events kept separate from comments | `agent_run_events` holds the full trace and chat; comments hold the clean result people read. |
 | Soft delete (`deleted_at`) on tasks, documents and comments | Supports undo and keeps the audit history intact. |
+| Task dates are `date` columns, "overdue" uses the server's UTC date | Start and target dates (ST-91) are calendar days, `YYYY-MM-DD` everywhere, with no time zone to convert. A task is overdue when its target date is before today in UTC and its status isn't done or canceled (`isOverdue` in `@repo/core/schemas`); a team far from UTC may see a task turn overdue a few hours early or late. `start ≤ target` is checked in core (with the stored date when an update changes only one) and by the `tasks_dates_ordered` constraint. |
 
 ## Schema
 
@@ -86,8 +91,11 @@ create table actors (
   role member_role not null default 'member',
   deactivated_at timestamptz,
   unique (org_id, handle),
-  check ((type = 'human') = (user_id is not null))
+  check (type <> 'human' or user_id is not null)
 );
+-- actor_type: human | agent | integration. An integration (ST-82) is a per-org bot (the GitHub one,
+-- handle "github", reserved for it): no user, no agents row, no API keys; left out of GET /members
+-- (pickers) unless ?all=true, never assigned or mentioned.
 
 create table invitations (                     -- join codes; anyone signed in with one joins with its role
   id uuid primary key default uuidv7(),
@@ -153,13 +161,17 @@ create table projects (
   unique (org_id, key)
 );
 
+create type task_kind as enum ('task','release','milestone');  -- ST-90
+
 create table statuses (
   id uuid primary key default uuidv7(),
   project_id uuid not null references projects on delete cascade,
+  kind task_kind not null default 'task',              -- one workflow per project and kind (ST-90)
   name text not null, category status_category not null,
-  color text, position int not null,
-  unique (project_id, name)
+  color text, position int not null,                   -- order within the kind's workflow
+  unique (project_id, kind, id)                        -- target of tasks_status_fk
 );
+create unique index on statuses (project_id, kind, lower(name));
 
 create table cycles (
   id uuid primary key default uuidv7(),
@@ -174,11 +186,18 @@ create table tasks (
   project_id uuid not null references projects,
   number int not null,
   title text not null, description text,
-  status_id uuid not null references statuses,
+  kind task_kind not null default 'task',              -- fixed at creation (ST-90)
+  status_id uuid not null,
   priority smallint not null default 0 check (priority between 0 and 4),
   parent_id uuid references tasks,
   cycle_id uuid references cycles,
-  estimate numeric, due_on date,
+  estimate numeric,
+  -- Plan dates (ST-91): calendar dates with no time zone, both optional; start ≤ target.
+  start_date date, target_date date,
+  -- Shipping (ST-93): Done means finished; a task ships in one release (a task of kind 'release').
+  release_id uuid references tasks on delete set null,
+  shipped_at timestamptz,                              -- when its release was marked Released (a release: when it was)
+  no_code boolean not null default false,              -- nothing to ship: a Done task that needs no release
   sort_key text not null,
   custom_fields jsonb not null default '{}',
   creator_id uuid not null references actors,
@@ -187,8 +206,13 @@ create table tasks (
   completed_at timestamptz, deleted_at timestamptz,
   search tsvector generated always as
     (to_tsvector('simple', title || ' ' || coalesce(description, ''))) stored,
-  unique (project_id, number)
+  unique (project_id, number),
+  -- The status is one of the workflow of the task's project and kind (ST-90).
+  constraint tasks_status_fk foreign key (project_id, kind, status_id) references statuses (project_id, kind, id),
+  constraint tasks_dates_ordered check (start_date is null or target_date is null or start_date <= target_date),
+  constraint tasks_release_not_self check (release_id <> id)
 );
+create index tasks_release_idx on tasks (release_id);
 create index on tasks (project_id, status_id, sort_key) where deleted_at is null;
 create index on tasks using gin (custom_fields jsonb_path_ops);
 create index on tasks using gin (search);
@@ -220,7 +244,7 @@ create table task_tags (
 );
 
 -- Saved filter sets per project (ST-15). Personal unless shared; `filters` is validated by
--- viewFiltersSchema in core: { status?: id[], assignee?: (id|'me'|'none')[], priority?: 0-4[], tag?: id[], q?: text }.
+-- viewFiltersSchema in core: { status?: id[], assignee?: (id|'me'|'none')[], priority?: 0-4[], tag?: id[], q?: text, overdue?: boolean }.
 create table saved_views (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations on delete cascade,
@@ -247,21 +271,77 @@ create table custom_field_defs (
 );
 
 -- ── repos, apps, git ─────────────────────────────────
+-- ST-82: a GitHub App installation connected to one organization (another org connecting it is refused).
+create table github_installations (
+  id bigint primary key,                               -- GitHub's installation id
+  org_id uuid not null references organizations on delete cascade,
+  account_login text not null,                         -- the GitHub user or organization it is installed on
+  account_type text not null check (account_type in ('User', 'Organization')),
+  repository_selection text not null check (repository_selection in ('all', 'selected')),
+  suspended_at timestamptz,
+  connected_by uuid references actors on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index github_installations_org_idx on github_installations (org_id);
+
+-- ST-83: GitHub webhook deliveries, by X-GitHub-Delivery. Inserted first (on conflict do nothing) in the
+-- transaction that handles the event, so each delivery is handled once, even when copies arrive together.
+-- Deliveries of installations no organization has connected are kept too (org_id null).
+create table github_deliveries (
+  id text primary key,                                 -- X-GitHub-Delivery (a GUID)
+  event text not null,                                 -- X-GitHub-Event, e.g. 'installation'
+  action text,                                         -- the payload's action, when it has one
+  installation_id bigint,                              -- no foreign key: unknown here, or deleted since
+  org_id uuid references organizations on delete set null,
+  result text not null default 'ignored' check (result in ('processed', 'ignored')),
+  received_at timestamptz not null default now()
+);
+create index github_deliveries_received_at_idx on github_deliveries (received_at);
+
+-- Built in ST-92: repos added by remote URL. ST-82: connecting an installation sets
+-- github_installation_id on the existing rows (matched by owner/name, any case) and adds the others.
 create table repos (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations on delete cascade,
-  provider text not null default 'github', installation_id bigint,
-  full_name text not null, default_branch text not null default 'main',
-  unique (org_id, provider, full_name)
+  owner text not null, name text not null,             -- the GitHub remote owner/name, casing as given
+  default_branch text not null default 'main',
+  github_installation_id bigint references github_installations on delete set null,  -- null when added by URL only, or no longer granted
+  created_by uuid references actors on delete set null,
+  created_at timestamptz not null default now()
 );
+create unique index repos_org_remote_key on repos (org_id, lower(owner), lower(name));
+create index repos_github_installation_idx on repos (github_installation_id);
+create table project_repos (
+  project_id uuid not null references projects on delete cascade,
+  repo_id uuid not null references repos on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (project_id, repo_id)
+);
+-- An app belongs to one repo; which tasks touch it comes from their commits' paths (ST-93/95).
 create table apps (
   id uuid primary key default uuidv7(),
-  org_id uuid not null references organizations on delete cascade,
-  name text not null, description text, links jsonb not null default '{}'
+  repo_id uuid not null references repos on delete cascade,
+  name text not null,                                  -- lower-case, part of release tags (web-2026.10.12)
+  path text not null,                                  -- e.g. web/app; '.' for the whole repo
+  shared_paths text[] not null default '{}',           -- shared packages it depends on, e.g. {packages/core}
+  versioning text not null check (versioning in ('date', 'semver')),
+  environments text[] not null default '{}',           -- deploy order, e.g. {staging,prod}; {} for a CLI
+  created_at timestamptz not null default now(),
+  unique (repo_id, name)
 );
-create table app_repos     (app_id uuid references apps on delete cascade,         repo_id uuid references repos on delete cascade, primary key (app_id, repo_id));
-create table project_repos (project_id uuid references projects on delete cascade, repo_id uuid references repos on delete cascade, primary key (project_id, repo_id));
-create table project_apps  (project_id uuid references projects on delete cascade, app_id uuid references apps on delete cascade,   primary key (project_id, app_id));
+-- What a release ships (ST-93): its repos, and a version per app in the app's versioning.
+create table release_repos (
+  release_id uuid not null references tasks on delete cascade,
+  repo_id uuid not null references repos on delete cascade,
+  primary key (release_id, repo_id)
+);
+create table release_apps (
+  release_id uuid not null references tasks on delete cascade,
+  app_id uuid not null references apps on delete cascade,
+  version text not null,                               -- 2026.10.13 (date) or 0.1.8 (semver)
+  primary key (release_id, app_id)
+);
 
 create table git_links (
   id uuid primary key default uuidv7(),
@@ -322,12 +402,18 @@ create table files (
 create table comments (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations,
-  task_id uuid not null references tasks on delete cascade,
+  task_id uuid references tasks on delete cascade,          -- exactly one of task_id
+  document_id uuid references documents on delete cascade,  -- and document_id (ST-118)
   parent_id uuid references comments,
   author_id uuid not null references actors,
   body text not null,
+  quote text,                    -- document comments: the fragment it is about (top-level only)
+  document_version int,          -- document comments: the version it was posted on
+  resolved_at timestamptz, resolved_by uuid references actors,   -- a resolved thread
   run_id uuid,
-  created_at timestamptz not null default now(), edited_at timestamptz, deleted_at timestamptz
+  created_at timestamptz not null default now(), edited_at timestamptz, deleted_at timestamptz,
+  check ((task_id is null) <> (document_id is null)),
+  check (quote is null or document_id is not null)
 );
 
 create table activity (

@@ -27,6 +27,8 @@ function task(n: number, extra: Partial<TaskDto> = {}): TaskDto {
     parentId: null,
     parentKey: null,
     sortKey: "a",
+    startDate: null,
+    targetDate: null,
     assigneeIds: [],
     tagIds: [],
     creatorId: ME,
@@ -34,6 +36,10 @@ function task(n: number, extra: Partial<TaskDto> = {}): TaskDto {
     updatedAt: "",
     completedAt: null,
     subtasks: null,
+    releaseId: null,
+    shippedAt: null,
+    noCode: false,
+    shipping: null,
     ...extra,
   };
 }
@@ -147,6 +153,29 @@ describe("applyFilters", () => {
     ]);
     // Without the agents (not loaded yet), mine is just the viewer.
     expect(applyFilters(all, { assignee: ["mine"] }, ME).map((t) => t.key)).toEqual(["SPI-1", "SPI-4"]);
+  });
+
+  test("overdue: open tasks whose target date is before today; parsed from the URL and counted", () => {
+    const statuses = [
+      { id: id(1), category: "todo" as const },
+      { id: id(2), category: "done" as const },
+      { id: id(3), category: "canceled" as const },
+    ];
+    const dated = [
+      task(1, { targetDate: "2026-10-12" }),
+      task(2, { targetDate: "2026-10-13" }),
+      task(3, { targetDate: "2026-10-01", statusId: id(2) }),
+      task(4, { targetDate: "2026-10-01", statusId: id(3) }),
+      task(5),
+    ];
+    expect(applyFilters(dated, { overdue: true }, ME, [ME], statuses, "2026-10-13").map((t) => t.key)).toEqual(["SPI-1"]);
+    expect(applyFilters(dated, { overdue: true, q: "nope" }, ME, [ME], statuses, "2026-10-13")).toEqual([]);
+    expect(parseFilters({ overdue: true })).toEqual({ overdue: true });
+    expect(parseFilters({ overdue: "true" })).toEqual({ overdue: true });
+    expect(parseFilters({ overdue: false })).toEqual({});
+    expect(activeFilterCount({ overdue: true })).toBe(1);
+    expect(sameFilters({ overdue: true }, {})).toBe(false);
+    expect(normalizeFilters({ overdue: true, q: "x" })).toEqual({ overdue: true, q: "x" });
   });
 
   test("tag matches all chosen tags by default, any with tagMatch any", () => {

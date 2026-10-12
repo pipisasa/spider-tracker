@@ -7,7 +7,20 @@ import {
   revokeAgentInvite,
   scopedProjectKeys,
   addComment,
+  addDocumentComment,
+  listDocumentComments,
+  resolveDocumentComment,
   createTag,
+  attachRepo,
+  createApp,
+  createRepo,
+  deleteApp,
+  deleteRepo,
+  detachRepo,
+  getRepo,
+  listRepos,
+  updateApp,
+  updateRepo,
   createSavedView,
   deleteSavedView,
   listSavedViews,
@@ -15,6 +28,7 @@ import {
   deleteTag,
   listTags,
   addRelation,
+  markDuplicate,
   listRelations,
   listSubtasks,
   removeRelation,
@@ -33,6 +47,9 @@ import {
   createProject,
   createTask,
   deleteTask,
+  createStatus,
+  updateStatus,
+  deleteStatus,
   createDocument,
   deleteDocument,
   editDocument,
@@ -41,6 +58,7 @@ import {
   diffDocumentVersions,
   getDocumentVersion,
   listBacklinks,
+  listTaskBacklinks,
   listDocuments,
   listDocumentVersions,
   moveDocument,
@@ -58,6 +76,14 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  addToRelease,
+  createRelease,
+  getRelease,
+  listReleaseCandidates,
+  listReleases,
+  removeFromRelease,
+  updateRelease,
+  type ReleaseDto,
   webUrls,
   withDocumentUrl,
   withProjectUrl,
@@ -67,6 +93,8 @@ import type { Db } from "@repo/db";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { toActorDto } from "../dto";
+import type { GithubApp } from "../github";
+import { githubOrgRoutes } from "./github";
 import type { Realtime } from "../realtime";
 import type { AppEnv } from "../types";
 
@@ -83,8 +111,16 @@ const MAX_INBOX_WAIT_SECONDS = 25;
 const INBOX_RECHECK_MS = 5000;
 const SSE_HEARTBEAT_MS = 20_000;
 
-/** Organization-scoped routes, mounted at /v1/orgs/:orgSlug; `webOrigin` builds the `url` fields. */
-export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
+/**
+ * Organization-scoped routes, mounted at /v1/orgs/:orgSlug; `webOrigin` builds the `url` fields.
+ * `github` is the GitHub App (null when not configured) and the secret that signs its install state.
+ */
+export function orgRoutes(
+  db: Db,
+  realtime: Realtime,
+  webOrigin: string,
+  github: { app: GithubApp | null; stateSecret: string },
+) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -119,6 +155,8 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   const project = <T extends { key: string }>(c: C, p: T) => withProjectUrl(c.get("urls"), p);
   const task = <T extends { key: string }>(c: C, t: T) => withTaskUrl(c.get("urls"), t);
   const document = <T extends { id: string }>(c: C, d: T) => withDocumentUrl(c.get("urls"), d);
+  /** A release and its included tasks carry their web pages (ST-93). */
+  const release = (c: C, r: ReleaseDto) => ({ ...task(c, r), tasks: r.tasks.map((t) => task(c, t)) });
 
   // GET /members?all=true includes deactivated actors, to name the ones still assigned to tasks.
   app.get("/members", async (c) => {
@@ -195,6 +233,46 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     return c.body(null, 204);
   });
 
+  // The GitHub App (ST-82): Settings → GitHub.
+  app.route("/github", githubOrgRoutes(db, github.app, github.stateSecret));
+
+  // Repos and their apps (ST-92); a repo is addressed as /repos/:owner/:name.
+  const repoRef = (c: C) => `${c.req.param("owner")}/${c.req.param("name")}`;
+
+  // GET /repos?project=ST: only the repos attached to ST.
+  app.get("/repos", async (c) => c.json(list(await listRepos(db, c.get("actor"), { project: c.req.query("project") }))));
+
+  app.post("/repos", async (c) => c.json(await createRepo(db, c.get("actor"), await body(c)), 201));
+
+  app.get("/repos/:owner/:name", async (c) => c.json(await getRepo(db, c.get("actor"), repoRef(c))));
+
+  app.patch("/repos/:owner/:name", async (c) => c.json(await updateRepo(db, c.get("actor"), repoRef(c), await body(c))));
+
+  app.delete("/repos/:owner/:name", async (c) => {
+    await deleteRepo(db, c.get("actor"), repoRef(c));
+    return c.body(null, 204);
+  });
+
+  app.post("/repos/:owner/:name/apps", async (c) => c.json(await createApp(db, c.get("actor"), repoRef(c), await body(c)), 201));
+
+  app.patch("/repos/:owner/:name/apps/:app", async (c) =>
+    c.json(await updateApp(db, c.get("actor"), repoRef(c), c.req.param("app"), await body(c))),
+  );
+
+  app.delete("/repos/:owner/:name/apps/:app", async (c) => {
+    await deleteApp(db, c.get("actor"), repoRef(c), c.req.param("app"));
+    return c.body(null, 204);
+  });
+
+  // POST { repo: "owner/name" }: attach a repo to the project; again changes nothing.
+  app.post("/projects/:projectKey/repos", async (c) =>
+    c.json(await attachRepo(db, c.get("actor"), c.req.param("projectKey"), await body(c))),
+  );
+
+  app.delete("/projects/:projectKey/repos/:owner/:name", async (c) =>
+    c.json(await detachRepo(db, c.get("actor"), c.req.param("projectKey"), repoRef(c))),
+  );
+
   // GET /projects?archived=true includes archived projects.
   app.get("/projects", async (c) =>
     c.json(
@@ -224,10 +302,28 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     c.json(project(c, await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false))),
   );
 
-  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any; see taskListFilters.
+  // Workflow editing (ST-90): each answers with the project and all its workflows.
+  app.post("/projects/:projectKey/statuses", async (c) =>
+    c.json(project(c, await createStatus(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  app.patch("/projects/:projectKey/statuses/:statusId", async (c) =>
+    c.json(project(c, await updateStatus(db, c.get("actor"), c.req.param("projectKey"), c.req.param("statusId"), await body(c)))),
+  );
+
+  // DELETE …/statuses/<id>?moveTo=<status id>: its tasks move there first.
+  app.delete("/projects/:projectKey/statuses/:statusId", async (c) => {
+    const result = await deleteStatus(db, c.get("actor"), c.req.param("projectKey"), c.req.param("statusId"), {
+      moveTo: c.req.query("moveTo"),
+    });
+    return c.json({ ...result, project: project(c, result.project) });
+  });
+
+  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any, ?overdue=true, ?kind=; see taskListFilters.
   app.get("/projects/:projectKey/tasks", async (c) => {
     const query = c.req.queries();
     const filters = {
+      kind: c.req.query("kind"),
       status: query.status,
       assignee: query.assignee,
       tags: query.tag,
@@ -235,12 +331,52 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
       priority: query.priority,
       q: c.req.query("q"),
       parent: c.req.query("parent"),
+      overdue: c.req.query("overdue"),
     };
     return c.json(list((await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)).map((t) => task(c, t))));
   });
 
   app.post("/projects/:projectKey/tasks", async (c) =>
     c.json(task(c, await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  // Releases (ST-93): tasks of kind release with repos, apps and included Done tasks. ?status= repeats, ?app=web.
+  app.get("/projects/:projectKey/releases", async (c) =>
+    c.json(
+      list(
+        (await listReleases(db, c.get("actor"), c.req.param("projectKey"), { status: c.req.queries().status, app: c.req.query("app") })).map((r) =>
+          release(c, r),
+        ),
+      ),
+    ),
+  );
+
+  app.post("/projects/:projectKey/releases", async (c) =>
+    c.json(release(c, await createRelease(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  app.get("/releases/:taskKey", async (c) => c.json(release(c, await getRelease(db, c.get("actor"), c.req.param("taskKey")))));
+
+  app.patch("/releases/:taskKey", async (c) =>
+    c.json(release(c, await updateRelease(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
+  );
+
+  app.post("/releases/:taskKey/tasks", async (c) =>
+    c.json(release(c, await addToRelease(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
+  );
+
+  app.delete("/releases/:taskKey/tasks/:includedKey", async (c) =>
+    c.json(release(c, await removeFromRelease(db, c.get("actor"), c.req.param("taskKey"), { tasks: [c.req.param("includedKey")] }))),
+  );
+
+  app.get("/release-candidates", async (c) =>
+    c.json(
+      list(
+        (await listReleaseCandidates(db, c.get("actor"), { project: c.req.query("project"), release: c.req.query("release") })).map((t) =>
+          task(c, t),
+        ),
+      ),
+    ),
   );
 
   app.get("/projects/:projectKey/views", async (c) =>
@@ -278,7 +414,10 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   });
 
   // Several tasks at once, by keys or a filter; per-task outcomes, 200 even when some fail (ST-106).
-  app.post("/tasks/bulk-update", async (c) => c.json(await updateTasks(db, c.get("actor"), await body(c))));
+  app.post("/tasks/bulk-update", async (c) => {
+    const result = await updateTasks(db, c.get("actor"), await body(c));
+    return c.json({ ...result, results: result.results.map((r) => ({ ...r, task: r.task && task(c, r.task) })) });
+  });
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(task(c, await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
@@ -296,6 +435,11 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     c.json(await addRelation(db, c.get("actor"), c.req.param("taskKey"), await body(c)), 201),
   );
 
+  // Link as a duplicate, cancel and comment in one step; a repeat changes nothing (ST-114).
+  app.post("/tasks/:taskKey/duplicate", async (c) =>
+    c.json(task(c, await markDuplicate(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
+  );
+
   // DELETE /tasks/ST-1/relations?kind=blocks&task=ST-2
   app.delete("/tasks/:taskKey/relations", async (c) => {
     await removeRelation(db, c.get("actor"), c.req.param("taskKey"), c.req.query());
@@ -304,6 +448,11 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
 
   app.get("/tasks/:taskKey/activity", async (c) =>
     c.json(list(await listTaskActivity(db, c.get("actor"), c.req.param("taskKey")))),
+  );
+
+  // Documents mentioning the task: [[ST-12]] or a plain ST-12 (ST-101).
+  app.get("/tasks/:taskKey/backlinks", async (c) =>
+    c.json(list((await listTaskBacklinks(db, c.get("actor"), c.req.param("taskKey"))).map((d) => document(c, d)))),
   );
 
   app.get("/tasks/:taskKey/comments", async (c) => {
@@ -328,7 +477,7 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   // Registered before /documents/:documentId, which would take "graph" for an id.
   app.get("/documents/graph", async (c) => {
     const graph = await getDocumentGraph(db, c.get("actor"));
-    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)) });
+    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)), tasks: graph.tasks.map((t) => task(c, t)), projects: graph.projects.map((p) => project(c, p)) });
   });
 
   app.get("/documents/:documentId/backlinks", async (c) =>
@@ -364,6 +513,22 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
 
   app.get("/documents/:documentId/versions/:version", async (c) =>
     c.json(await getDocumentVersion(db, c.get("actor"), c.req.param("documentId"), c.req.param("version"))),
+  );
+
+  // Comments on a document (ST-118): on the whole document, or on a fragment ({ quote }).
+  app.get("/documents/:documentId/comments", async (c) =>
+    c.json(list(await listDocumentComments(db, c.get("actor"), c.req.param("documentId")))),
+  );
+
+  app.post("/documents/:documentId/comments", async (c) =>
+    c.json(await addDocumentComment(db, c.get("actor"), c.req.param("documentId"), await body(c)), 201),
+  );
+
+  // PATCH { resolved: true | false }: resolve or reopen a thread (a top-level comment).
+  app.patch("/documents/:documentId/comments/:commentId", async (c) =>
+    c.json(
+      await resolveDocumentComment(db, c.get("actor"), c.req.param("documentId"), c.req.param("commentId"), await body(c)),
+    ),
   );
 
   // GET ?from=3&to=5: a line diff of two versions; without `to`, against the current one (ST-117).

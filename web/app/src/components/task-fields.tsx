@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AvatarStack } from "@/components/avatar-stack";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Command,
   CommandEmpty,
@@ -14,9 +15,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { actorLabel, assigneeOptions, toggleAssignee } from "@/lib/assignees";
 import { actorAvatarSrc } from "@/lib/generated-avatar";
 import { cn } from "@/lib/utils";
-import type { ActorDto, Priority, StatusCategory, StatusDto } from "@repo/core/contracts";
+import type { ActorDto, Priority, StatusCategory, StatusDto, TaskDto } from "@repo/core/contracts";
+import { isOverdue } from "@repo/core/schemas";
+import { useEffect, useState } from "react";
 import {
   BotIcon,
+  CalendarIcon,
   CheckIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -32,7 +36,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-// Shared controls for task fields: status, priority, assignees.
+// Shared controls for task fields: status, priority, assignees, dates.
 
 const categoryIcons: Record<StatusCategory, LucideIcon> = {
   backlog: CircleDashedIcon,
@@ -89,7 +93,7 @@ export function ActorAvatar({
     <Avatar className={cn(className ?? "size-6", actor.deactivated && "opacity-50 grayscale")} title={title === false ? undefined : (title ?? actorLabel(actor))}>
       <AvatarImage src={actorAvatarSrc(actor)} alt="" />
       <AvatarFallback className="text-[10px]">
-        {actor.type === "agent" ? <BotIcon className="size-3" /> : initials || "?"}
+        {actor.type === "human" ? initials || "?" : <BotIcon className="size-3" />}
       </AvatarFallback>
     </Avatar>
   );
@@ -136,6 +140,87 @@ export function PrioritySelect({ value, onChange }: { value: Priority; onChange:
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+// Task dates are plain "YYYY-MM-DD" (ST-91): read as UTC midnight so no time zone shifts the day.
+const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+const dayYearFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+/** "Oct 31", or "Oct 31, 2027" outside the current year. */
+export function formatDay(date: string, now: Date = new Date()): string {
+  const day = new Date(`${date}T00:00:00Z`);
+  return (day.getUTCFullYear() === now.getUTCFullYear() ? dayFormat : dayYearFormat).format(day);
+}
+
+/** A task's target date for list rows and cards; red when overdue. Nothing when there is none. */
+export function TargetDate({
+  task,
+  category,
+  className,
+}: {
+  task: Pick<TaskDto, "targetDate">;
+  category: StatusCategory | undefined;
+  className?: string;
+}) {
+  if (!task.targetDate) return null;
+  const overdue = isOverdue(task, category);
+  return (
+    <span
+      className={cn("flex shrink-0 items-center gap-1 text-xs", overdue ? "text-destructive" : "text-muted-foreground", className)}
+      title={`${overdue ? "Overdue · target" : "Target"} ${task.targetDate}`}
+    >
+      <CalendarIcon className="size-3.5" aria-hidden />
+      {formatDay(task.targetDate)}
+      {overdue && <span className="sr-only">(overdue)</span>}
+    </span>
+  );
+}
+
+/**
+ * A date field that saves on blur or Enter: `onChange` gets "YYYY-MM-DD", or null when cleared.
+ * A half-typed date is dropped, not saved as a clear.
+ */
+export function DateInput({
+  label,
+  value,
+  min,
+  max,
+  invalid,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  min?: string | null;
+  max?: string | null;
+  invalid?: boolean;
+  onChange: (date: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+  useEffect(() => setDraft(value ?? ""), [value]);
+  return (
+    <Input
+      type="date"
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      className={cn("w-full", invalid && "text-destructive")}
+      value={draft}
+      min={min ?? undefined}
+      max={max ?? undefined}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={(e) => {
+        if (e.currentTarget.validity.badInput) return setDraft(value ?? "");
+        const next = draft || null;
+        if (next !== value) onChange(next);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setDraft(value ?? "");
+          e.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 

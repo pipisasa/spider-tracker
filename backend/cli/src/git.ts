@@ -1,3 +1,5 @@
+import { parseRepoRemote, repoFullName } from "@repo/core/git";
+
 export { taskKeyFromBranch } from "@repo/core/git";
 
 export interface GitResult {
@@ -56,14 +58,20 @@ export function createOrSwitchBranch(
   return { created: !local, tracking };
 }
 
-/** "owner/name" from a GitHub-style remote URL (https, ssh or scp-like), or null. */
+/** "owner/name" from a GitHub remote URL (https, ssh or scp-like), or null. */
 export function repoFromRemoteUrl(url: string): string | null {
-  const match = /^(?:[a-z+]+:\/\/(?:[^@/]+@)?[^/]+\/|[^@:/]+@[^:]+:)([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim());
-  return match?.[1] && match[2] ? `${match[1]}/${match[2]}` : null;
+  const remote = parseRepoRemote(url);
+  return remote ? repoFullName(remote) : null;
+}
+
+/** The `origin` remote's URL in `cwd`, or null. */
+export function originUrl(cwd: string, git: GitRunner = runGit): string | null {
+  const result = git(["remote", "get-url", "origin"], cwd);
+  return result.exitCode === 0 && result.stdout.trim() ? result.stdout.trim() : null;
 }
 
 /** The "owner/name" of the `origin` remote in `cwd`, or null. */
 export function remoteRepo(cwd: string, git: GitRunner = runGit): string | null {
-  const result = git(["remote", "get-url", "origin"], cwd);
-  return result.exitCode === 0 ? repoFromRemoteUrl(result.stdout) : null;
+  const url = originUrl(cwd, git);
+  return url ? repoFromRemoteUrl(url) : null;
 }

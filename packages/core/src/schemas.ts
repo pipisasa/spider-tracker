@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseRepoRemote } from "./remotes";
 
 // Shared between backend validation and web forms.
 
@@ -45,20 +46,81 @@ export const updateProjectInput = z
 
 export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
 
+/** Task kinds (ST-90); each has its own workflow of statuses in every project. */
+export const taskKindSchema = z.enum(["task", "release", "milestone"]);
+
+export const TASK_KINDS = taskKindSchema.options;
+
+export const statusCategorySchema = z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]);
+
+const statusName = z.string().trim().min(1, "Required").max(40, "At most 40 characters");
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "A hex colour like #22c55e");
+/** Index in the kind's workflow, from 0; past the end means last. */
+const statusPosition = z.number().int().min(0).max(1000);
+
+/** A new status in one kind's workflow (ST-90); appended unless `position` is given. Its category can't change later. */
+export const createStatusInput = z.object({
+  kind: taskKindSchema.default("task"),
+  name: statusName,
+  category: statusCategorySchema,
+  color: hexColor.nullable().optional(),
+  position: statusPosition.optional(),
+});
+
+export type CreateStatusInput = z.input<typeof createStatusInput>;
+
+/** Rename, recolor (null clears) or move a status within its workflow (ST-90). */
+export const updateStatusInput = z
+  .object({ name: statusName, color: hexColor.nullable(), position: statusPosition })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateStatusInput = z.infer<typeof updateStatusInput>;
+
+/** Deleting a status first moves its tasks to `moveTo`, another status of the same workflow (ST-90). */
+export const deleteStatusInput = z.object({ moveTo: z.uuid("The id of the status to move its tasks to") });
+
+export type DeleteStatusInput = z.infer<typeof deleteStatusInput>;
+
 export const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
 
 const taskTitle = z.string().trim().min(1, "Required").max(255, "At most 255 characters");
 const taskDescription = z.string().max(50_000).nullable();
 
-export const createTaskInput = z.object({
-  title: taskTitle,
-  description: taskDescription.optional(),
-  statusId: z.uuid().optional(),
-  priority: prioritySchema.optional(),
-  assigneeIds: z.array(z.uuid()).max(20).optional(),
-  tagIds: z.array(z.uuid()).max(20).optional(),
-  parentId: z.uuid().nullable().optional(),
-});
+/** A calendar date, "YYYY-MM-DD", with no time or time zone (ST-91); null clears it. */
+export const taskDateSchema = z.iso.date("A date as YYYY-MM-DD").nullable();
+
+export const DATES_OUT_OF_ORDER = "The start date must be on or before the target date";
+
+/** Start ≤ target when both are set; ISO dates compare as strings. */
+export const datesInOrder = (start: string | null | undefined, target: string | null | undefined) =>
+  !start || !target || start <= target;
+
+/** Today's date in UTC, "YYYY-MM-DD": what "overdue" compares target dates with. */
+export const todayUtc = (now: Date = new Date()) => now.toISOString().slice(0, 10);
+
+/** The target date has passed (before `today`, UTC) and the task isn't closed (done or canceled). */
+export const isOverdue = (
+  task: { targetDate: string | null },
+  category: string | null | undefined,
+  today: string = todayUtc(),
+) => task.targetDate !== null && task.targetDate < today && category !== "done" && category !== "canceled";
+
+export const createTaskInput = z
+  .object({
+    /** Default "task"; it can't change later (ST-90). */
+    kind: taskKindSchema.optional(),
+    title: taskTitle,
+    description: taskDescription.optional(),
+    statusId: z.uuid().optional(),
+    priority: prioritySchema.optional(),
+    assigneeIds: z.array(z.uuid()).max(20).optional(),
+    tagIds: z.array(z.uuid()).max(20).optional(),
+    parentId: z.uuid().nullable().optional(),
+    startDate: taskDateSchema.optional(),
+    targetDate: taskDateSchema.optional(),
+  })
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
 
 export type CreateTaskInput = z.infer<typeof createTaskInput>;
 
@@ -79,6 +141,10 @@ export const updateTaskInput = z
     tagIds: z.array(z.uuid()).max(20),
     parentId: z.uuid().nullable(),
     position: taskPositionInput,
+    startDate: taskDateSchema,
+    targetDate: taskDateSchema,
+    /** Marks a task as having no code to ship (ST-93), so it needs no release. */
+    noCode: z.boolean(),
   })
   .partial();
 
@@ -96,6 +162,8 @@ export type TagMatch = z.infer<typeof tagMatchSchema>;
  * `assignee` and `priority` are OR-ed; `tags` per `tagMatch` (default every one); keys are AND-ed.
  */
 export const taskListFilters = z.object({
+  /** Only tasks of this kind (ST-90); status names and categories then match its workflow only. */
+  kind: taskKindSchema.optional(),
   /** Status ids, names or categories ("In Progress", "in_progress"), case-insensitive. */
   status: z.array(filterValue).max(50).optional(),
   /** Actor ids, handles (with or without "@", deactivated ones too), "me", "mine" or "none". */
@@ -113,6 +181,8 @@ export const taskListFilters = z.object({
   q: z.string().trim().max(200).optional(),
   /** Direct sub-tasks of this task key ("ST-3"). */
   parent: z.string().trim().min(1).max(30).optional(),
+  /** true: only overdue tasks (see `isOverdue`); "true"/"false" too, as they arrive in a query string. */
+  overdue: z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional(),
 });
 
 export type TaskListFilters = z.input<typeof taskListFilters>;
@@ -122,7 +192,7 @@ export const MAX_BULK_TASKS = 100;
 
 /**
  * What a bulk update changes on every task. `status` is a status id, name or category, matched in
- * each task's own project (keys may span projects); assignees and tags replace the lists.
+ * each task's own project and kind's workflow (keys may span projects); assignees and tags replace the lists.
  */
 export const bulkTaskChanges = z
   .object({
@@ -131,6 +201,9 @@ export const bulkTaskChanges = z
     assigneeIds: z.array(z.uuid()).max(20),
     tagIds: z.array(z.uuid()).max(20),
     parentId: z.uuid().nullable(),
+    startDate: taskDateSchema,
+    targetDate: taskDateSchema,
+    noCode: z.boolean(),
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
@@ -163,9 +236,9 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
 
 /**
  * Words with a meaning in assignee filters ("me" the viewer, "mine" the viewer's person and their
- * agents, "none" unassigned); no actor may take them.
+ * agents, "none" unassigned), and "github", the GitHub bot's handle (ST-82); no other actor may take them.
  */
-export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none"];
+export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none", "github"];
 
 /** A handle as typed in a filter or a command: trimmed, without a leading "@", lowercase. */
 export const normalizeHandle = (value: string) => value.trim().replace(/^@/, "").toLowerCase();
@@ -177,7 +250,7 @@ const agentHandle = z
   .toLowerCase()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
   .max(32)
-  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine" and "none" are reserved`);
+  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine", "none" and "github" are reserved`);
 
 export const createAgentInput = z.object({
   name: agentName,
@@ -232,7 +305,31 @@ export const createCommentInput = z.object({
 
 export type CreateCommentInput = z.infer<typeof createCommentInput>;
 
-export const INBOX_KINDS = ["mention", "assigned", "comment", "reply", "rules"] as const;
+/**
+ * A comment on a document (ST-118); `quote` is the fragment it is about (top-level comments only),
+ * which must occur in the document's current text.
+ */
+export const createDocumentCommentInput = createCommentInput.extend({
+  quote: z.string().trim().min(1, "Required").max(2_000, "At most 2,000 characters").nullable().optional(),
+});
+
+export type CreateDocumentCommentInput = z.infer<typeof createDocumentCommentInput>;
+
+/** Marks a document comment thread resolved, or reopens it. */
+export const resolveDocumentCommentInput = z.object({ resolved: z.boolean() });
+
+export type ResolveDocumentCommentInput = z.infer<typeof resolveDocumentCommentInput>;
+
+export const INBOX_KINDS = [
+  "mention",
+  "assigned",
+  "comment",
+  "reply",
+  "rules",
+  "document_mention",
+  "document_comment",
+  "document_reply",
+] as const;
 
 /** Task notifications: what the inbox returns when `kinds` isn't given (clients from before ST-111 expect a task). */
 export const TASK_INBOX_KINDS = ["mention", "assigned", "comment", "reply"] as const;
@@ -244,7 +341,7 @@ export const inboxQuery = z.object({
     .union([z.boolean(), z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1")])
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  /** Which kinds to return, as a list or comma-separated; default: the task kinds (no `rules`). */
+  /** Which kinds to return, as a list or comma-separated; default: the task kinds (no `rules` or `document_*`). */
   kinds: z
     .preprocess(
       (v) => (typeof v === "string" ? v.split(",").map((k) => k.trim()).filter(Boolean) : v),
@@ -279,6 +376,15 @@ export const relationInput = z.object({
 });
 
 export type RelationInput = z.infer<typeof relationInput>;
+
+/** Marks a task as a duplicate of `of` (ST-114); `comment` is appended to the automatic one. */
+export const markDuplicateInput = z.object({
+  /** The original task's key, e.g. "ST-12". */
+  of: z.string().trim().min(1),
+  comment: z.string().trim().max(10_000, "At most 10,000 characters").optional(),
+});
+
+export type MarkDuplicateInput = z.infer<typeof markDuplicateInput>;
 
 export const documentFormatSchema = z.enum(["md", "html"]);
 
@@ -378,7 +484,7 @@ export const invitationCodeInput = z.object({
  * OR-ed, except `tag`, which follows `tagMatch`; keys are AND-ed. `assignee` takes actor ids plus
  * `me` (the viewer), `mine` (the viewer's person and their agents) and `none` (unassigned).
  * Views store `tagMatch` explicitly ("all" when left out); views saved before it existed have
- * none and are read as "any", the web's match back then.
+ * none and are read as "any", the web's match back then. `overdue` (ST-91): only open tasks past their target date.
  */
 export const viewFiltersSchema = z.object({
   status: z.array(z.uuid()).max(50).optional(),
@@ -387,6 +493,7 @@ export const viewFiltersSchema = z.object({
   tag: z.array(z.uuid()).max(50).optional(),
   tagMatch: tagMatchSchema.optional(),
   q: z.string().trim().max(200).optional(),
+  overdue: z.boolean().optional(),
 });
 
 export type ViewFilters = z.infer<typeof viewFiltersSchema>;
@@ -414,3 +521,211 @@ export const updateSavedViewInput = z
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
 
 export type UpdateSavedViewInput = z.infer<typeof updateSavedViewInput>;
+
+// Repos and apps (ST-92).
+
+/** A GitHub remote: a URL as `git remote -v` prints it ("https://github.com/o/r.git", "git@github.com:o/r.git") or "o/r". */
+export const repoRemoteSchema = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(300, "At most 300 characters")
+  .transform((value, ctx) => {
+    const remote = parseRepoRemote(value);
+    if (!remote) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'A GitHub repo: "owner/name", https://github.com/owner/name or git@github.com:owner/name.git',
+      });
+      return z.NEVER;
+    }
+    return remote;
+  });
+
+/** A branch name as git allows it (simplified): letters, digits, ".", "_", "-" and "/" between parts. */
+export const branchNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(100, "At most 100 characters")
+  .regex(/^(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9_][A-Za-z0-9._/-]*(?<![/.])$/, "A git branch name, e.g. main");
+
+/** A folder in the repo, relative to its root ("web/app"; "." for the whole repo); "./" and a trailing "/" are dropped. */
+export const repoPathSchema = z
+  .string()
+  .trim()
+  .max(200, "At most 200 characters")
+  .transform((value) => value.replace(/^\.\/(?=.)/, "").replace(/(?<=.)\/+$/, ""))
+  .refine((value) => value !== "", "Required")
+  .refine(
+    (value) => value === "." || value.split("/").every((part) => /^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*$/.test(part)),
+    'A relative path in the repo, e.g. "web/app" ("." for the whole repo)',
+  );
+
+/** App and environment names: lower-case, part of release tags ("web-2026.10.12"). */
+const appSlug = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1, "Required")
+  .max(30, "At most 30 characters")
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes");
+
+export const appVersioningSchema = z.enum(["date", "semver"]);
+
+const uniqueList = <T extends z.ZodType<string>>(item: T, max: number, what: string) =>
+  z
+    .array(item)
+    .max(max, `At most ${max} ${what}`)
+    .refine((list) => new Set(list).size === list.length, `Each ${what.replace(/s$/, "")} only once`);
+
+/** Deploy order, e.g. ["staging", "prod"]; empty when a release is the only "deploy" (a CLI). */
+export const appEnvironmentsSchema = uniqueList(appSlug, 10, "environments");
+
+/** Shared packages an app depends on, e.g. ["packages/core"]. */
+export const sharedPathsSchema = uniqueList(repoPathSchema, 20, "shared paths");
+
+export const createRepoInput = z.object({
+  /** The remote: a GitHub URL or "owner/name". */
+  url: repoRemoteSchema,
+  /** Default "main". */
+  defaultBranch: branchNameSchema.optional(),
+  /** Project keys to attach it to. */
+  projects: z.array(projectKeySchema).max(50).optional(),
+});
+
+export type CreateRepoInput = z.input<typeof createRepoInput>;
+
+export const updateRepoInput = z
+  .object({
+    /** A new remote, e.g. after the repo was renamed or moved on GitHub. */
+    url: repoRemoteSchema.optional(),
+    defaultBranch: branchNameSchema.optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateRepoInput = z.input<typeof updateRepoInput>;
+
+export const attachRepoInput = z.object({
+  /** The repo: "owner/name" or its remote URL. */
+  repo: z.string().trim().min(1, "Required").max(300),
+});
+
+export type AttachRepoInput = z.input<typeof attachRepoInput>;
+
+export const createAppInput = z.object({
+  name: appSlug,
+  path: repoPathSchema,
+  sharedPaths: sharedPathsSchema.optional(),
+  /** Default "semver". */
+  versioning: appVersioningSchema.optional(),
+  environments: appEnvironmentsSchema.optional(),
+});
+
+export type CreateAppInput = z.input<typeof createAppInput>;
+
+export const updateAppInput = z
+  .object({
+    name: appSlug,
+    path: repoPathSchema,
+    sharedPaths: sharedPathsSchema,
+    versioning: appVersioningSchema,
+    environments: appEnvironmentsSchema,
+  })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateAppInput = z.input<typeof updateAppInput>;
+
+// Releases (ST-93): tasks of kind "release" that link repos and apps and include Done tasks.
+
+const DATE_VERSION = /^\d{4}\.(0?[1-9]|1[0-2])\.(0?[1-9]|[12]\d|3[01])(\.\d+)?$/;
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+
+/** A version as stored: trimmed, a semver without its leading "v". */
+export const normalizeAppVersion = (versioning: "date" | "semver", version: string) =>
+  versioning === "semver" ? version.trim().replace(/^v(?=\d)/, "") : version.trim();
+
+/** Why `version` doesn't fit the app's versioning, or null when it does ("2026.10.13", or "1.4.0"). */
+export function appVersionProblem(versioning: "date" | "semver", version: string): string | null {
+  const value = normalizeAppVersion(versioning, version);
+  if (versioning === "date") return DATE_VERSION.test(value) ? null : `"${version}" isn't a date version like 2026.10.13`;
+  return SEMVER.test(value) ? null : `"${version}" isn't a semver version like 1.4.0`;
+}
+
+const taskKeyRef = z.string().trim().min(1).max(30);
+
+/** An app a release ships and its version, in the app's versioning; its repo is linked too. */
+export const releaseAppInput = z.object({
+  /** The app's repo, "owner/name". */
+  repo: z.string().trim().min(1, "Required").max(300),
+  /** The app's name, e.g. "web". */
+  app: appSlug,
+  version: z.string().trim().min(1, "Required").max(50, "At most 50 characters"),
+});
+
+export type ReleaseAppInput = z.input<typeof releaseAppInput>;
+
+const releaseRepos = z.array(z.string().trim().min(1).max(300)).max(20, "At most 20 repos");
+const releaseApps = z
+  .array(releaseAppInput)
+  .max(50, "At most 50 apps")
+  .refine(
+    (list) => new Set(list.map((a) => `${a.repo.toLowerCase()}:${a.app}`)).size === list.length,
+    "Each app only once",
+  );
+const releaseTaskKeys = z.array(taskKeyRef).max(MAX_BULK_TASKS, `At most ${MAX_BULK_TASKS} tasks at once`);
+
+/**
+ * A new release: a task of kind "release" whose title is its name, usually the version
+ * ("2026.10.13"). It links `repos` ("owner/name") and `apps` with a version each, and may
+ * include Done `tasks` (keys, any project) from the start.
+ */
+export const createReleaseInput = z
+  .object({
+    title: taskTitle,
+    description: taskDescription.optional(),
+    statusId: z.uuid().optional(),
+    assigneeIds: z.array(z.uuid()).max(20).optional(),
+    startDate: taskDateSchema.optional(),
+    targetDate: taskDateSchema.optional(),
+    repos: releaseRepos.optional(),
+    apps: releaseApps.optional(),
+    tasks: releaseTaskKeys.optional(),
+  })
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
+
+export type CreateReleaseInput = z.input<typeof createReleaseInput>;
+
+/** Replaces a release's repos or apps (with their versions); apps' repos stay linked. */
+export const updateReleaseInput = z
+  .object({ repos: releaseRepos, apps: releaseApps })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateReleaseInput = z.input<typeof updateReleaseInput>;
+
+/** Task keys to add to (or remove from) a release. */
+export const releaseTasksInput = z.object({ tasks: releaseTaskKeys.min(1, "At least one task") });
+
+export type ReleaseTasksInput = z.input<typeof releaseTasksInput>;
+
+/** Releases of a project: by status (id, name or category of the release workflow) or app name. */
+export const releaseListFilters = z.object({
+  status: z.array(filterValue).max(20).optional(),
+  app: z.string().trim().toLowerCase().min(1).max(30).optional(),
+});
+
+export type ReleaseListFilters = z.input<typeof releaseListFilters>;
+
+/**
+ * Done tasks that could go into a release: with code, in no release, not shipped. `project` narrows
+ * to one project; `release` checks the release exists (and, once commits are linked, step 6 of
+ * ST-89, will narrow to the release's repos).
+ */
+export const releaseCandidatesQuery = z.object({
+  project: z.string().trim().min(1).max(10).optional(),
+  release: taskKeyRef.optional(),
+});
+
+export type ReleaseCandidatesQuery = z.input<typeof releaseCandidatesQuery>;

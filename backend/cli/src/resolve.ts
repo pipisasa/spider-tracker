@@ -1,6 +1,6 @@
-import { normalizeHandle } from "@repo/core/schemas";
-import { matchStatuses } from "@repo/core/statuses";
-import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto } from "@repo/core/contracts";
+import { TASK_KINDS, isOverdue, normalizeHandle, statusCategorySchema, taskDateSchema } from "@repo/core/schemas";
+import { firstStatusOf, kindOf, matchStatuses, unknownStatusMessage, workflowOf } from "@repo/core/statuses";
+import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto, TaskKind } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 
 export const EXIT = { ok: 0, unexpected: 1, usage: 2, notFound: 3, auth: 4 } as const;
@@ -20,14 +20,15 @@ export class CliError extends Error {
 
 export const usageError = (message: string) => new CliError(EXIT.usage, message, "validation");
 
-/** Maps an API error to the CLI's exit codes. */
-export function fromApiError(err: SpiderApiError): CliError {
-  if (err.status === 401 || err.status === 403) return new CliError(EXIT.auth, err.message, err.code);
-  if (err.status === 404) return new CliError(EXIT.notFound, err.message, err.code);
+/** Maps an API error to the CLI's exit codes; `hint` is appended to the message. Never an empty message. */
+export function fromApiError(err: SpiderApiError, hint = ""): CliError {
+  const message = `${err.message.trim() || `The server answered ${err.status}${err.code !== "unknown" ? ` (${err.code})` : ""}`}${hint}`;
+  if (err.status === 401 || err.status === 403) return new CliError(EXIT.auth, message, err.code);
+  if (err.status === 404) return new CliError(EXIT.notFound, message, err.code);
   if (err.status === 400 || err.status === 409 || err.status === 422) {
-    return new CliError(EXIT.usage, err.message, err.code);
+    return new CliError(EXIT.usage, message, err.code);
   }
-  return new CliError(EXIT.unexpected, err.message, err.code);
+  return new CliError(EXIT.unexpected, message, err.code);
 }
 
 export const PRIORITY_NAMES = ["none", "urgent", "high", "medium", "low"] as const;
@@ -38,6 +39,14 @@ export function parsePriority(value: string): Priority {
   const index = /^[0-4]$/.test(v) ? Number(v) : PRIORITY_NAMES.findIndex((n) => n === v);
   if (index < 0) throw usageError(`Invalid priority "${value}". Use 0-4 or ${PRIORITY_NAMES.join(", ")}`);
   return index as Priority;
+}
+
+/** A date option ("--start", "--target"): "YYYY-MM-DD", or "" for null (clears it). */
+export function parseDate(value: string, flag: string): string | null {
+  const v = value.trim();
+  if (v === "") return null;
+  if (!taskDateSchema.safeParse(v).success) throw usageError(`Invalid date "${value}" in ${flag}. Expected YYYY-MM-DD, or "" to clear it`);
+  return v;
 }
 
 export function parseLimit(value: string): number {
@@ -52,26 +61,48 @@ export function parseVersion(value: string): number {
   return n;
 }
 
-export { matchStatuses };
+export { kindOf, matchStatuses };
 
-const byPosition = (a: StatusDto, b: StatusDto) => a.position - b.position;
-
-/** The status a name refers to; a category picks its first status in board order. */
-export function resolveStatus(project: ProjectDetailDto, name: string): StatusDto {
-  const status = matchStatuses(project, name)[0];
-  if (!status) {
-    throw usageError(
-      `Unknown status "${name}" in ${project.key}. Valid statuses: ${project.statuses.map((s) => s.name).join(", ")}`,
-    );
-  }
+/** The status a name refers to in the workflow of `kind` (ST-90); a category picks its first status in board order. */
+export function resolveStatus(project: ProjectDetailDto, name: string, kind: TaskKind = "task"): StatusDto {
+  const status = matchStatuses(project, name, kind)[0];
+  if (!status) throw usageError(unknownStatusMessage(project, name, kind));
   return status;
 }
 
-/** The project's first status in a category, in board order. */
-export function firstStatus(project: ProjectDetailDto, category: StatusCategory): StatusDto {
-  const status = project.statuses.filter((s) => s.category === category).sort(byPosition)[0];
-  if (!status) throw usageError(`${project.key} has no "${category}" status`);
+/** The first status of a category in the workflow of `kind`, in board order. */
+export function firstStatus(project: ProjectDetailDto, category: StatusCategory, kind: TaskKind = "task"): StatusDto {
+  const status = firstStatusOf(project, category, kind);
+  if (!status) throw usageError(`${project.key}${kind === "task" ? "" : `'s ${kind} workflow`} has no "${category}" status`);
   return status;
+}
+
+/** A status to edit (`project status …`): its id or its exact name (any case) in the workflow of `kind`. */
+export function findWorkflowStatus(project: ProjectDetailDto, ref: string, kind: TaskKind): StatusDto {
+  const statuses = workflowOf(project, kind);
+  const status = statuses.find((s) => s.id === ref) ?? statuses.find((s) => s.name.toLowerCase() === ref.trim().toLowerCase());
+  if (!status) throw usageError(unknownStatusMessage(project, ref, kind));
+  return status;
+}
+
+/** "task", "release" or "milestone", any case. */
+export function parseKind(value: string): TaskKind {
+  const kind = TASK_KINDS.find((k) => k === value.trim().toLowerCase());
+  if (!kind) throw usageError(`Unknown kind "${value}". Use one of: ${TASK_KINDS.join(", ")}`);
+  return kind;
+}
+
+/** A status category: "in_progress", "in progress" or "in-progress". */
+export function parseCategory(value: string): StatusCategory {
+  const parsed = statusCategorySchema.safeParse(value.trim().toLowerCase().replace(/[\s-]+/g, "_"));
+  if (!parsed.success) throw usageError(`Unknown category "${value}". Use one of: ${statusCategorySchema.options.join(", ")}`);
+  return parsed.data;
+}
+
+/** A position in a workflow, from 0. */
+export function parsePosition(value: string): number {
+  if (!/^\d+$/.test(value.trim())) throw usageError(`Invalid position "${value}". Use 0 for first, 1 for second, …`);
+  return Number(value);
 }
 
 /** Member ids for handles ("alice", "@alice", or "me"), without duplicates. */
@@ -114,6 +145,8 @@ export function resolveTags(tags: TagDto[], names: string[]): string[] {
 }
 
 export interface TaskListFilter {
+  /** Only this kind; tasks from servers before kinds (ST-90) are ordinary tasks. */
+  kind?: TaskKind;
   statusIds?: string[];
   /** Actor ids, or "none" for unassigned. */
   assignee?: string[];
@@ -121,6 +154,8 @@ export interface TaskListFilter {
   tagIds?: string[];
   tagMatch?: "all" | "any";
   priority?: number[];
+  /** Only overdue tasks (see isOverdue): the categories of the project's statuses tell which are closed. */
+  overdue?: { statuses: Pick<StatusDto, "id" | "category">[]; today?: string };
 }
 
 /**
@@ -128,10 +163,16 @@ export interface TaskListFilter {
  * query parameters and returns every task, which must not reach an agent picking up work.
  */
 export function matchesTaskFilter(
-  task: { statusId: string; assigneeIds: string[]; tagIds?: string[]; priority: number },
+  task: { kind?: TaskKind; statusId: string; assigneeIds: string[]; tagIds?: string[]; priority: number; targetDate?: string | null },
   filter: TaskListFilter,
 ): boolean {
+  if (filter.kind && kindOf(task) !== filter.kind) return false;
   if (filter.statusIds && !filter.statusIds.includes(task.statusId)) return false;
+  if (filter.overdue) {
+    const category = filter.overdue.statuses.find((s) => s.id === task.statusId)?.category;
+    // Servers from before dates (ST-91) send no targetDate: nothing is overdue.
+    if (!isOverdue({ targetDate: task.targetDate ?? null }, category, filter.overdue.today)) return false;
+  }
   if (filter.priority && !filter.priority.includes(task.priority)) return false;
   if (filter.tagIds) {
     const has = (id: string) => (task.tagIds ?? []).includes(id);

@@ -171,3 +171,44 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - Changes are inbox items of a new kind `rules` about a document (`inbox_items.task_id` became nullable, with a `document_id`). Clients from before it expect a task on every item, so the API returns `rules` items only when `kinds` asks for them.
 
 **Trade-off:** rules belong to one project; organization-wide rules shared by several projects would need a different shape.
+
+---
+
+## 13. Document comments share the comments table with task comments
+
+**Decision:** comments on documents (ST-118) are rows of the existing `comments` table: `task_id` became nullable next to a new `document_id`, with a check that exactly one is set (as ST-111 did for `inbox_items`). Document-only columns are `quote` (the fragment a top-level comment is about), `document_version` and `resolved_at` / `resolved_by`. Their notifications are new inbox kinds `document_mention`, `document_reply` and `document_comment` about a document.
+
+**Why:**
+- One pipeline: mentions, the agent loop guard, soft delete and `inbox_items.comment_id` (which shows the comment's body in the inbox and the channel) work for both without a second table or a second foreign key on inbox items.
+- Task comment queries filter on `task_id` already, so they are unaffected; only the inbox joins learned that a document may have no project.
+- New inbox kinds instead of reusing `mention` / `reply` / `comment`: clients from before ST-111 expect a task on every item of those kinds, and the API returns the new kinds only when `kinds` asks for them.
+- Anchors are the quoted text, not offsets: a quote survives edits elsewhere in the document, and `outdated` is computed when read (the quote no longer occurs in the current content, compared on letters and digits only so Markdown or HTML markup doesn't matter). Nothing has to be rewritten on save.
+
+**Trade-off:** a quote that occurs twice anchors to its first occurrence, and a fragment that is changed and later changed back is no longer outdated. HTML documents render in a sandboxed frame (decision 11), so the web app can't highlight or select fragments in them; their fragment comments come through the API, CLI or MCP.
+
+---
+
+## 14. Workflows per project and task kind; `statuses` stays the task workflow
+
+**Decision:** statuses get a `kind` (ST-90), so each project has one workflow per task kind (task, release, milestone), and a task's kind is fixed at creation. The database enforces that a task's status is of its project and kind with a composite foreign key. In API responses, `ProjectDetailDto.statuses` keeps meaning the task workflow, and the new `workflows` field holds every kind's.
+
+**Why:**
+- Releases and milestones need their own steps (On staging, Release review; Active, Ready to close) while code, agents and skills keep using only the fixed categories.
+- Keeping `statuses` as the task workflow means CLIs and scripts from before kinds still resolve "Done" or `in_progress` to the task statuses; mixing every kind into it would make them pick a milestone's Done (its position is lower).
+- A fixed kind means no status remapping when a task changes kind; a composite foreign key makes a wrong-kind status impossible even for writes that bypass core.
+- Deleting a status moves its tasks first (the caller picks the target) instead of refusing while tasks use it, and every workflow keeps an open and a done status so tasks can always start and finish. Categories can't change, so `completedAt` only moves when tasks move.
+
+**Trade-off:** `statuses` and `workflows.task` repeat the same list in every project response. Status names in list filters without a kind match in every workflow (names before categories), so `--status Done` finds done tasks and done milestones.
+
+## 15. A release is a task; shipping is a property of Done tasks, not a status
+
+**Decision:** releases (ST-93) are tasks of kind `release`, with their own workflow, and included tasks point at their release with `tasks.release_id` (one release per task). Shipping is stored on the task (`shipped_at`, set when its release enters the done category) and shown as a derived `shipping` state (`not_in_release`, `in_release`, `shipped`, `no_code`), never as a status: Done means finished, and an included task's status never changes when it ships. A Done task with nothing to ship is marked with an explicit `no_code` flag.
+
+**Why:**
+- A release needs what tasks have (status, owner, dates, comments, documents, activity, the board), so it reuses them instead of a parallel entity.
+- A status per shipping step would mix two questions (is the work finished? is it in production?) in one workflow and force every project's task workflow to grow release steps.
+- `shipped_at` on each task keeps "when did this reach users" readable without a join, and lets a release's status move back (Released → Release review) by clearing it.
+- "No code" can't be derived yet: commits are linked to tasks only in a later step (ST-84). An explicit flag is the conservative choice; once commits are linked, "no commits and no apps" can be its default.
+- Releasing refuses while an included task isn't Done, and canceling or deleting a release takes its tasks out, so `release_id` always points at a release that can still ship them.
+
+**Trade-off:** `release_id` is a self-reference on `tasks`, so the database can't check that it points at a release or that the task is Done; core enforces both. A task reopened after it was added stays in the release and blocks Released until it is Done again.

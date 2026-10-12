@@ -24,6 +24,8 @@ import {
   FileTextIcon,
   FolderIcon,
   FolderCogIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
   LayoutGridIcon,
   LogInIcon,
   LogOutIcon,
@@ -191,6 +193,24 @@ function OrgLayout() {
               Projects
             </Link>
           )}
+          <Link
+            to="/$orgSlug/settings/repos"
+            params={{ orgSlug }}
+            className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
+            activeProps={{ className: "bg-muted font-medium" }}
+          >
+            <GitBranchIcon className="size-4 text-muted-foreground" />
+            Repos
+          </Link>
+          <Link
+            to="/$orgSlug/settings/github"
+            params={{ orgSlug }}
+            className="flex items-center gap-2 rounded-md px-2 py-2.5 text-sm hover:bg-muted md:py-1.5"
+            activeProps={{ className: "bg-muted font-medium" }}
+          >
+            <GitPullRequestIcon className="size-4 text-muted-foreground" />
+            GitHub
+          </Link>
           {canCreateAgents && (
             <Link
               to="/$orgSlug/settings/agents"

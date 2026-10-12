@@ -10,9 +10,12 @@ export interface OrganizationDto {
   name: string;
 }
 
+/** "integration": a per-organization bot, e.g. the GitHub one (ST-82); listed only with `?all=true`. */
+export type ActorType = "human" | "agent" | "integration";
+
 export interface ActorDto {
   id: string;
-  type: "human" | "agent";
+  type: ActorType;
   name: string;
   handle: string;
   avatarUrl: string | null;
@@ -45,11 +48,17 @@ export interface AuthProvidersResponse {
 
 export type StatusCategory = "backlog" | "todo" | "in_progress" | "in_review" | "done" | "canceled";
 
+/** What a task is (ST-90): ordinary work, a release (ST-93) or a milestone (ST-96); each kind has its own workflow. */
+export type TaskKind = "task" | "release" | "milestone";
+
 export interface StatusDto {
   id: string;
+  /** The workflow it belongs to (ST-90); servers from before it send none (read it as "task"). */
+  kind: TaskKind;
   name: string;
   category: StatusCategory;
   color: string | null;
+  /** Board order within its kind's workflow, from 0. */
   position: number;
 }
 
@@ -68,7 +77,16 @@ export interface ProjectDto {
 }
 
 export interface ProjectDetailDto extends ProjectDto {
+  /** The workflow of ordinary tasks (kind "task"), in board order, as before kinds (ST-90). */
   statuses: StatusDto[];
+  /** Every kind's workflow, in board order (ST-90); servers from before it send none (see workflowOf). */
+  workflows: Record<TaskKind, StatusDto[]>;
+}
+
+/** A deleted status (ST-90): the project afterwards and how many tasks moved to the target status. */
+export interface DeleteStatusResponse {
+  project: ProjectDetailDto;
+  movedTasks: number;
 }
 
 /** A project's rules for agents (ST-111): its rules document, with content. */
@@ -91,6 +109,8 @@ export interface TaskDto {
   key: string;
   number: number;
   projectId: string;
+  /** Fixed at creation (ST-90); its status is one of its project's statuses of this kind. */
+  kind: TaskKind;
   title: string;
   description: string | null;
   statusId: string;
@@ -99,6 +119,9 @@ export interface TaskDto {
   /** The parent's key, e.g. "ST-3", when parentId is set. */
   parentKey: string | null;
   sortKey: string;
+  /** Plan dates (ST-91), "YYYY-MM-DD" or null; start ≤ target. */
+  startDate: string | null;
+  targetDate: string | null;
   assigneeIds: string[];
   tagIds: string[];
   creatorId: string;
@@ -107,8 +130,44 @@ export interface TaskDto {
   completedAt: string | null;
   /** Direct sub-tasks the viewer can see (closed = done or canceled); null when there are none. */
   subtasks: { done: number; total: number } | null;
+  /**
+   * The release (a task of kind "release") this task ships in (ST-93); null when in none, or when
+   * the release is in a project the viewer can't see.
+   */
+  releaseId: string | null;
+  /** When its release was marked Released (for a release: when it was); null until then. */
+  shippedAt: string | null;
+  /** Marked as having no code to ship: a Done task that never needs a release. */
+  noCode: boolean;
+  /**
+   * Where a task's code is (ST-93; Done means finished, not shipped). Null for releases and
+   * milestones, and for tasks that aren't Done and are in no release.
+   */
+  shipping: TaskShippingDto | null;
   /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
   url?: string;
+}
+
+/**
+ * A Done task's shipping state (ST-93): `not_in_release` (it has code that no release ships yet),
+ * `in_release` (in a release on its way: Planned, On staging, Release review), `shipped` (its
+ * release is Released) or `no_code` (marked as having nothing to ship).
+ */
+export type ShippingState = "not_in_release" | "in_release" | "shipped" | "no_code";
+
+/** A release as a task's shipping state names it. */
+export interface ReleaseRefDto {
+  id: string;
+  key: string;
+  /** The release's name, usually its version ("2026.10.13"). */
+  title: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+}
+
+export interface TaskShippingDto {
+  state: ShippingState;
+  /** The release it is in; null when in none, or in one the viewer can't see. */
+  release: ReleaseRefDto | null;
 }
 
 /** What a bulk update did to one task (ST-106); in a dry run, "changed" means it would change. */
@@ -148,6 +207,118 @@ export interface TagDto {
   id: string;
   name: string;
   color: string | null;
+}
+
+/** How an app's releases are numbered (ST-92): "2026.10.12" or "1.4.0". */
+export type AppVersioning = "date" | "semver";
+
+/** A deployable part of a repo (ST-92). */
+export interface AppDto {
+  id: string;
+  repoId: string;
+  /** The repo's "owner/name". */
+  repo: string;
+  /** Lower-case, e.g. "web". */
+  name: string;
+  /** Its folder in the repo, e.g. "web/app" ("." for the whole repo). */
+  path: string;
+  /** Shared packages it depends on, e.g. ["packages/core"]. */
+  sharedPaths: string[];
+  versioning: AppVersioning;
+  /** Deploy order, e.g. ["staging", "prod"]; empty when there is nothing to deploy (a CLI). */
+  environments: string[];
+  createdAt: string;
+}
+
+/** A git repo of the organization (ST-92), attached to projects, with its apps. */
+export interface RepoDto {
+  id: string;
+  owner: string;
+  name: string;
+  /** "owner/name". */
+  fullName: string;
+  defaultBranch: string;
+  /** Set once the GitHub App is installed on the repo (ST-82); null for repos added by URL. */
+  githubInstallationId: number | null;
+  /** Keys of the projects it is attached to (those the caller can see), sorted. */
+  projects: string[];
+  /** By name. */
+  apps: AppDto[];
+  createdAt: string;
+}
+
+/** An app a release ships (ST-93), with the version it ships. */
+export interface ReleaseAppDto {
+  appId: string;
+  /** The repo's "owner/name". */
+  repo: string;
+  /** The app's name, e.g. "web". */
+  name: string;
+  versioning: AppVersioning;
+  environments: string[];
+  /** "2026.10.13" (date) or "0.1.8" (semver). */
+  version: string;
+}
+
+/** A task a release includes (ST-93). */
+export interface ReleaseTaskDto {
+  id: string;
+  key: string;
+  title: string;
+  projectKey: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  completedAt: string | null;
+  shippedAt: string | null;
+  /** The web page's address; set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
+}
+
+/**
+ * A release (ST-93): a task of kind "release" with its status, the repos and apps (a version each)
+ * it ships, and the Done tasks it includes, from any project. A project-scoped agent sees only the
+ * included tasks of its own projects.
+ */
+export interface ReleaseDto extends TaskDto {
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  repos: { id: string; fullName: string }[];
+  /** By repo, then name. */
+  apps: ReleaseAppDto[];
+  /** By project key, then number. */
+  tasks: ReleaseTaskDto[];
+}
+
+/** A GitHub App installation connected to the organization (ST-82). */
+export interface GithubInstallationDto {
+  /** GitHub's installation id. */
+  id: number;
+  /** The GitHub user or organization the App is installed on. */
+  account: string;
+  accountType: "User" | "Organization";
+  /** Whether it grants every repository of the account or only selected ones. */
+  repositorySelection: "all" | "selected";
+  suspended: boolean;
+  /** "owner/name" of the organization's repos it grants, sorted. */
+  repos: string[];
+  /** Where the installation is configured on GitHub (repository access, uninstall). */
+  settingsUrl: string;
+  /** Actor id of who connected it; null once they're gone. */
+  connectedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `GET /github`: whether the server has a GitHub App, and the organization's installations. */
+export interface GithubStatusDto {
+  /** False when the server has no `GITHUB_APP_*` settings: connecting and syncing are unavailable. */
+  configured: boolean;
+  /** The App's slug (github.com/apps/<slug>); null when not configured. */
+  appSlug: string | null;
+  installations: GithubInstallationDto[];
+}
+
+/** `POST /github/install`: the GitHub page that installs the App; it returns to `/github/setup`. */
+export interface GithubInstallUrlDto {
+  url: string;
 }
 
 /** A saved filter set of a project's board or list (ST-15). */
@@ -273,10 +444,45 @@ export interface CommentDto {
   editedAt: string | null;
 }
 
-/** `rules`: the rules of one of your projects were set or changed (ST-111); it has a document, not a task. */
-export type InboxKind = "mention" | "assigned" | "comment" | "reply" | "rules";
+/** A comment on a document (ST-118): on the whole document, or on a fragment of it (`quote`). */
+export interface DocumentCommentDto {
+  id: string;
+  documentId: string;
+  /** The comment this one replies to; replies sit in their top-level comment's thread. */
+  parentId: string | null;
+  authorId: string;
+  body: string;
+  /** The text the comment is about (top-level comments only); null when it is about the whole document. */
+  quote: string | null;
+  /** The quote no longer occurs in the document's current content (the fragment changed). */
+  outdated: boolean;
+  /** The document's version when the comment was posted. */
+  documentVersion: number;
+  /** Set when the thread (a top-level comment) was marked resolved. */
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  editedAt: string | null;
+}
+
+/**
+ * `rules`: the rules of one of your projects were set or changed (ST-111). `document_mention`,
+ * `document_reply`, `document_comment`: a comment on a document mentions you, replies to you, or
+ * is on a document you wrote or a thread you're in (ST-118). These have a document, not a task.
+ */
+export type InboxKind =
+  | "mention"
+  | "assigned"
+  | "comment"
+  | "reply"
+  | "rules"
+  | "document_mention"
+  | "document_comment"
+  | "document_reply";
 /** The kinds about a task. */
-export type TaskInboxKind = Exclude<InboxKind, "rules">;
+export type TaskInboxKind = "mention" | "assigned" | "comment" | "reply";
+/** The kinds about a comment on a document. */
+export type DocumentInboxKind = "document_mention" | "document_comment" | "document_reply";
 
 export interface InboxItemDto {
   /** Increasing; pass the last one seen as `after` to get only newer items. */
@@ -284,12 +490,12 @@ export interface InboxItemDto {
   kind: InboxKind;
   createdAt: string;
   readAt: string | null;
-  /** Null for `rules` items. */
+  /** Null for `rules` and `document_*` items. */
   task: { key: string; title: string } | null;
-  /** Set for `rules` items: the project's rules document. */
-  document: { id: string; title: string; projectKey: string } | null;
+  /** Set for `rules` items (the project's rules document) and `document_*` items (the commented document; projectKey is null for an organization-wide one). */
+  document: { id: string; title: string; projectKey: string | null } | null;
   comment: { id: string; body: string } | null;
-  from: { id: string; handle: string; name: string; type: "human" | "agent" };
+  from: { id: string; handle: string; name: string; type: ActorType };
 }
 
 /** One entry of a task's history, from the activity log. */
@@ -339,6 +545,22 @@ export interface DocumentDto extends DocumentSummaryDto {
   content: string;
 }
 
+/**
+ * What a rename did to the `[[Old title]]` links leading to the document (ST-101): the documents
+ * rewritten (one new version each, by the renamer) and those left as they were. `rules`: a project's
+ * rules document, which only owners, admins and their agents may save; `too_large`: the rewrite would
+ * take it over 1 MB. Documents the renamer can't see are neither rewritten nor listed.
+ */
+export interface RelinkedDocumentsDto {
+  rewritten: { id: string; title: string }[];
+  skipped: { id: string; title: string; reason: "rules" | "too_large" }[];
+}
+
+/** A saved document; `relinked` is set when the save renamed it. */
+export interface UpdatedDocumentDto extends DocumentDto {
+  relinked?: RelinkedDocumentsDto;
+}
+
 /** Where a document link leads: a document, a task, or a title no document has (yet). */
 export type DocumentLinkTarget =
   | { type: "document"; id: string }
@@ -357,6 +579,8 @@ export interface DocumentGraphTaskDto {
   title: string;
   projectKey: string;
   statusCategory: StatusCategory;
+  /** The task's web page (ST-115); set in API responses. */
+  url?: string;
 }
 
 /**
@@ -366,7 +590,7 @@ export interface DocumentGraphTaskDto {
 export interface DocumentGraphDto {
   documents: DocumentSummaryDto[];
   tasks: DocumentGraphTaskDto[];
-  projects: { key: string; name: string }[];
+  projects: { key: string; name: string; /** The web page's address (ST-107); set by the API and MCP. */ url?: string }[];
   links: DocumentLinkDto[];
 }
 

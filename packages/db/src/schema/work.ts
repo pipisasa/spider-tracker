@@ -1,8 +1,11 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   customType,
   check,
+  date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -32,6 +35,9 @@ export const statusCategory = pgEnum("status_category", [
   "canceled",
 ]);
 
+// What a task is (ST-90): ordinary work, a release (ST-93) or a milestone (ST-96). Each kind has its own workflow.
+export const taskKind = pgEnum("task_kind", ["task", "release", "milestone"]);
+
 export const projects = pgTable(
   "projects",
   {
@@ -54,6 +60,7 @@ export const projects = pgTable(
   (t) => [unique("projects_org_key_key").on(t.orgId, t.key)],
 );
 
+// A project's workflows (ST-90): statuses per project and task kind, ordered by position within the kind.
 export const statuses = pgTable(
   "statuses",
   {
@@ -61,12 +68,18 @@ export const statuses = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    kind: taskKind("kind").notNull().default("task"),
     name: text("name").notNull(),
     category: statusCategory("category").notNull(),
     color: text("color"),
     position: integer("position").notNull(),
   },
-  (t) => [unique("statuses_project_name_key").on(t.projectId, t.name)],
+  (t) => [
+    // Names are matched case-insensitively (matchStatuses), so they are unique that way within a workflow.
+    uniqueIndex("statuses_project_kind_lower_name_key").on(t.projectId, t.kind, sql`lower(${t.name})`),
+    // Target of tasks_status_fk: a task's status belongs to its project and kind.
+    unique("statuses_project_kind_id_key").on(t.projectId, t.kind, t.id),
+  ],
 );
 
 export const tasks = pgTable(
@@ -82,14 +95,23 @@ export const tasks = pgTable(
     number: integer("number").notNull(),
     title: text("title").notNull(),
     description: text("description"),
-    statusId: uuid("status_id")
-      .notNull()
-      .references(() => statuses.id),
+    // Fixed at creation; the status must be one of the workflow of the task's project and kind (tasks_status_fk).
+    kind: taskKind("kind").notNull().default("task"),
+    statusId: uuid("status_id").notNull(),
     // 0 none, 1 urgent, 2 high, 3 medium, 4 low (Linear's order).
     priority: smallint("priority").notNull().default(0),
     parentId: uuid("parent_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
     // Fractional index: ordering within a status column.
     sortKey: sortKeyText("sort_key").notNull(),
+    // Optional plan dates (ST-91), plain YYYY-MM-DD with no time zone; start ≤ target.
+    startDate: date("start_date"),
+    targetDate: date("target_date"),
+    // The release (a task of kind "release", ST-93) this Done task ships in; one release per task.
+    releaseId: uuid("release_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
+    // When its release was marked Released (for a release: when it was). Done means finished; this means in production.
+    shippedAt: timestamp("shipped_at", { withTimezone: true }),
+    // Marked as having no code to ship (ST-93): a Done task that never needs a release.
+    noCode: boolean("no_code").notNull().default(false),
     creatorId: uuid("creator_id")
       .notNull()
       .references(() => actors.id),
@@ -100,8 +122,16 @@ export const tasks = pgTable(
   },
   (t) => [
     unique("tasks_project_number_key").on(t.projectId, t.number),
+    foreignKey({
+      name: "tasks_status_fk",
+      columns: [t.projectId, t.kind, t.statusId],
+      foreignColumns: [statuses.projectId, statuses.kind, statuses.id],
+    }),
     index("tasks_board_idx").on(t.projectId, t.statusId, t.sortKey),
+    index("tasks_release_idx").on(t.releaseId),
+    check("tasks_release_not_self", sql`${t.releaseId} <> ${t.id}`),
     check("tasks_priority_range", sql`${t.priority} between 0 and 4`),
+    check("tasks_dates_ordered", sql`${t.startDate} is null or ${t.targetDate} is null or ${t.startDate} <= ${t.targetDate}`),
   ],
 );
 

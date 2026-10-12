@@ -1,9 +1,10 @@
+import { ReleaseCardBody, ShippingChip } from "@/components/releases";
 import { TagChips } from "@/components/tags";
 import { WorkingAvatars } from "@/components/working-avatars";
 import { PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { assigneesOf } from "@/lib/assignees";
-import { useUpdateTask } from "@/lib/work";
+import { useAddToRelease, useUpdateTask } from "@/lib/work";
 import {
   DndContext,
   DragOverlay,
@@ -18,13 +19,16 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
+import { boardColumns } from "@repo/core/board";
+import type { ActorDto, ReleaseDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
 import { Link } from "@tanstack/react-router";
 import { generateKeyBetween } from "fractional-indexing";
 import { ListChecksIcon, PlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 const columnId = (statusId: string) => `column:${statusId}`;
+const releaseDropId = (releaseId: string) => `release:${releaseId}`;
 
 function TaskCard({
   task,
@@ -59,6 +63,8 @@ function TaskCard({
         {task.title}
       </Link>
       <TagChips tagIds={task.tagIds} tags={tags} />
+      {/* Done means finished: where the task's code is (ST-93). */}
+      <ShippingChip shipping={task.shipping} />
       {sub && (
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           <ListChecksIcon className="size-3.5" />
@@ -139,6 +145,67 @@ function Column({
   );
 }
 
+/** A release card: a drop target for Done tasks while the release is on its way (ST-93). */
+function ReleaseCard({ release, orgSlug, accepts }: { release: ReleaseDto; orgSlug: string; accepts: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: releaseDropId(release.id), data: { releaseKey: release.key }, disabled: !accepts });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`relative rounded-lg border bg-card p-3 text-sm shadow-xs transition-colors hover:border-ring ${isOver ? "ring-2 ring-ring/60" : ""}`}
+    >
+      <Link
+        to="/$orgSlug/tasks/$taskKey"
+        params={{ orgSlug, taskKey: release.key }}
+        className="after:absolute after:inset-0"
+        aria-label={`Release ${release.title} (${release.key})`}
+        draggable={false}
+      />
+      <ReleaseCardBody release={release} />
+    </div>
+  );
+}
+
+function ReleaseColumn({
+  status,
+  releases,
+  orgSlug,
+  dragging,
+  onAdd,
+}: {
+  status: StatusDto;
+  releases: ReleaseDto[];
+  orgSlug: string;
+  /** A Done task is being dragged: open releases show they take it. */
+  dragging: boolean;
+  onAdd?: () => void;
+}) {
+  const open = status.category !== "done" && status.category !== "canceled";
+  return (
+    <section className="flex min-h-0 w-[85vw] max-w-80 shrink-0 snap-center flex-col gap-2 md:w-72 md:snap-align-none">
+      <header className="flex shrink-0 items-center gap-2 px-1 text-sm font-medium">
+        <StatusIcon status={status} />
+        {status.name}
+        <span className="text-muted-foreground">{releases.length}</span>
+        {onAdd && (
+          <Button variant="ghost" size="icon" className="ml-auto size-9 md:size-6" aria-label={`New release in ${status.name}`} onClick={onAdd}>
+            <PlusIcon className="size-4" />
+          </Button>
+        )}
+      </header>
+      <div
+        className={`flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-lg border border-dashed p-1 ${dragging && open ? "bg-muted" : "bg-muted/20"}`}
+      >
+        {releases.map((release) => (
+          <ReleaseCard key={release.id} release={release} orgSlug={orgSlug} accepts={open} />
+        ))}
+        {dragging && open && releases.length > 0 && (
+          <p className="px-2 py-1 text-center text-xs text-muted-foreground">Drop a Done task on a release to add it</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function Board({
   orgSlug,
   statuses,
@@ -146,6 +213,9 @@ export function Board({
   members,
   tags,
   onAdd,
+  releaseStatuses = [],
+  releases = [],
+  onAddRelease,
 }: {
   orgSlug: string;
   statuses: StatusDto[];
@@ -153,8 +223,20 @@ export function Board({
   members: ActorDto[];
   tags: TagDto[];
   onAdd?: (statusId: string) => void;
+  /** The release workflow, when release columns are on (ST-93); empty hides them. */
+  releaseStatuses?: StatusDto[];
+  releases?: ReleaseDto[];
+  onAddRelease?: (statusId: string) => void;
 }) {
   const update = useUpdateTask(orgSlug);
+  const addToRelease = useAddToRelease(orgSlug);
+  const releaseColumns = useMemo(
+    () =>
+      boardColumns({ statuses: [], workflows: { task: [], release: releaseStatuses } }, [], releases).flatMap((c) =>
+        c.type === "releases" ? [c] : [],
+      ),
+    [releaseStatuses, releases],
+  );
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
@@ -179,6 +261,20 @@ export function Board({
     setActiveId(null);
     const task = tasks.find((t) => t.id === dragged.id);
     if (!task || !over) return;
+
+    // Onto a release card: add the Done task to the release (ST-93).
+    const releaseKey = over.data.current?.releaseKey as string | undefined;
+    if (releaseKey) {
+      if (statuses.find((s) => s.id === task.statusId)?.category !== "done") {
+        toast.error("Only Done tasks go into a release");
+        return;
+      }
+      addToRelease.mutate(
+        { releaseKey, taskKeys: [task.key] },
+        { onSuccess: (release) => toast.success(`${task.key} is in release ${release.title}`) },
+      );
+      return;
+    }
 
     const overTask = tasks.find((t) => t.id === over.id);
     const targetStatusId = overTask?.statusId ?? (over.data.current?.statusId as string | undefined);
@@ -231,6 +327,21 @@ export function Board({
             tags={tags}
            
             onAdd={onAdd && (() => onAdd(status.id))}
+          />
+        ))}
+        {releaseColumns.length > 0 && (
+          <div className="flex w-5 shrink-0 justify-center pt-1" aria-hidden>
+            <span className="text-[11px] tracking-widest text-muted-foreground uppercase [writing-mode:vertical-rl] rotate-180">Releases</span>
+          </div>
+        )}
+        {releaseColumns.map((column) => (
+          <ReleaseColumn
+            key={column.status.id}
+            status={column.status}
+            releases={column.releases}
+            orgSlug={orgSlug}
+            dragging={active !== undefined && statuses.find((s) => s.id === active.statusId)?.category === "done"}
+            onAdd={onAddRelease && column.status.category !== "done" && column.status.category !== "canceled" ? () => onAddRelease(column.status.id) : undefined}
           />
         ))}
       </div>

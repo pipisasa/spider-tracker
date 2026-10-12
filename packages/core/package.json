@@ -14,7 +14,10 @@
     "./events": "./src/events.ts",
     "./version": "./src/version.ts",
     "./links": "./src/links.ts",
-    "./urls": "./src/urls.ts"
+    "./anchors": "./src/anchors.ts",
+    "./urls": "./src/urls.ts",
+    "./views": "./src/views.ts",
+    "./board": "./src/board.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

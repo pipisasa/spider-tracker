@@ -1,22 +1,47 @@
 import type {
   ActorDto,
+  AppDto,
+  AppVersioning,
   BulkTaskResultDto,
   BulkUpdateTasksResponse,
   DocumentFormat,
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectDto,
+  ReleaseDto,
   StatusDto,
+  RepoDto,
   TagDto,
   TaskDto,
+  TaskKind,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { INBOX_KINDS, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
+import { TASK_KINDS } from "@repo/core/schemas";
+import { allStatuses, workflowOf } from "@repo/core/statuses";
+import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
+import { shippingLabel } from "@repo/core/board";
+import {
+  actorHandle,
+  commentView,
+  documentCommentView,
+  documentDiffView,
+  documentVersionView,
+  projectRulesView,
+  relationView,
+  releaseView,
+  taskView,
+  type RelationView,
+  type ReleaseView,
+  type TaskView,
+} from "@repo/core/views";
 import type {
   BulkUpdateTasksInput,
   CreateTaskInput,
+  ReleaseAppInput,
+  UpdateAppInput,
+  UpdateRepoInput,
   DocumentEdit,
   UpdateDocumentInput,
   UpdateProjectInput,
@@ -24,7 +49,7 @@ import type {
 } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError, Option } from "commander";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import {
@@ -63,11 +88,22 @@ import {
   permissionModeFor,
   type PermissionMode,
 } from "./claude-launch";
-import { branchNameFor, taskKeysIn } from "@repo/core/git";
-import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
+import { branchNameFor, parseRepoRemote, repoFullName, taskKeysIn } from "@repo/core/git";
+import {
+  createOrSwitchBranch,
+  currentBranch,
+  isDirty,
+  isRepo,
+  originUrl,
+  remoteRepo,
+  runGit,
+  taskKeyFromBranch,
+  type GitRunner,
+} from "./git";
 import { isCompiled } from "./self-update";
 import { checkSession, planLines, teamAgents, windowArgv } from "./claude-team";
 import { TMUX_MISSING, openWindows, runTmux, shellQuote, tmuxPlan, tmuxVersion, windowCommand, windowNames, type TmuxRunner } from "./tmux";
+import { parseSourceDoc, publishDocuments, publishLines, type SourceDoc } from "./publish";
 import { describePlan, runUninstall, uninstallPlan } from "./uninstall";
 import { checkForUpdates } from "./update-check";
 import {
@@ -86,8 +122,14 @@ import {
   EXIT,
   PRIORITY_NAMES,
   firstStatus,
+  findWorkflowStatus,
   fromApiError,
+  kindOf,
   matchStatuses,
+  parseCategory,
+  parseKind,
+  parsePosition,
+  parseDate,
   parseLimit,
   parseVersion,
   matchesTaskFilter,
@@ -177,12 +219,8 @@ export function selfInvocation(): string[] {
   return isCompiled() ? [process.execPath] : [process.execPath, join(import.meta.dir, "index.ts")];
 }
 
-/** A task as the CLI prints it with --json: the API task plus its status and assignee handles. */
-export interface CliTask extends TaskDto {
-  status: Pick<StatusDto, "id" | "name" | "category"> | null;
-  assignees: string[];
-  tags: string[];
-}
+/** A task as the CLI prints it with --json (the same shape MCP returns, ST-107). */
+export type CliTask = TaskView;
 
 interface JsonOption {
   json?: boolean;
@@ -210,6 +248,8 @@ interface TaskFields extends JsonOption {
   assign?: string[];
   tag?: string[];
   parent?: string;
+  start?: string;
+  target?: string;
 }
 
 /** The changes `task update` makes, as typed (before resolving names to ids). */
@@ -219,6 +259,10 @@ interface TaskChanges {
   assign?: string[];
   tag?: string[];
   parent?: string;
+  start?: string;
+  target?: string;
+  /** Marks the task as having no code to ship (ST-93); false undoes it. */
+  noCode?: boolean;
 }
 
 /**
@@ -231,21 +275,28 @@ interface TaskUpdateOptions extends TaskFields {
   setAssign?: string[];
   setTag?: string[];
   setParent?: string;
+  setStart?: string;
+  setTarget?: string;
+  overdue?: boolean;
   project?: string;
   assignee?: string[];
   anyTag?: boolean;
   yes?: boolean;
+  /** --code / --no-code (ST-93): undefined unless one is given. */
+  code?: boolean;
   dryRun?: boolean;
 }
 
 interface TaskListOptions extends JsonOption {
   project?: string;
+  kind?: string;
   status?: string;
   mine?: boolean;
   assignee?: string[];
   tag?: string[];
   anyTag?: boolean;
   priority?: string[];
+  overdue?: boolean;
   limit: string;
 }
 
@@ -271,19 +322,21 @@ interface Credentials {
   baseUrl: string;
   /** The saved agent in use; undefined for SPIDER_TOKEN. */
   entry?: AgentEntry;
+  /** Why this saved agent: chosen with --as, named by SPIDER_AGENT, or the default agent. */
+  via?: string;
 }
 
 /** Which key a command uses: --as, then SPIDER_TOKEN, then SPIDER_AGENT, then the default saved agent. */
 async function credentialsFor(options: RunOptions, globals: Globals): Promise<Credentials> {
   const store = await readStore(options.env);
-  const saved = (entry: AgentEntry) => ({ token: entry.saved.token, baseUrl: entry.serverUrl, entry });
-  if (globals.as) return saved(findAgent(store, globals.as));
+  const saved = (entry: AgentEntry, via: string) => ({ token: entry.saved.token, baseUrl: entry.serverUrl, entry, via });
+  if (globals.as) return saved(findAgent(store, globals.as), "chosen with --as");
   const token = options.env.SPIDER_TOKEN?.trim();
   if (token) return { token, baseUrl: apiUrlOf(options.env) };
   const named = options.env.SPIDER_AGENT?.trim();
-  if (named) return saved(findAgent(store, named));
+  if (named) return saved(findAgent(store, named), "named by SPIDER_AGENT");
   const fallback = defaultAgent(store);
-  if (fallback) return saved(fallback);
+  if (fallback) return saved(fallback, "the default agent");
   const message = listAgents(store).length
     ? `No default agent. Pass --as <agent> or run \`spider agents default <agent>\` (${agentList(store)})`
     : "Not signed in. Run `spider accept-invite <code>` or `spider login`, or set SPIDER_TOKEN to an agent API key";
@@ -375,22 +428,14 @@ function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
     return cached;
   };
 
-  /** Adds the status and assignee handles, for printing. */
-  const describe = async (raw: TaskDto): Promise<CliTask> => {
-    // Servers from before tags (ST-8) don't send tagIds.
-    const task = { ...raw, tagIds: raw.tagIds ?? [] };
-    const [detail, rows, tagRows] = await Promise.all([
+  /** Adds the status, assignee handles and tag names, for printing (`taskView`, shared with MCP). */
+  const describe = async (task: TaskDto): Promise<CliTask> => {
+    const [detail, actors, tags] = await Promise.all([
       project(projectKeyOf(task.key)),
       loadActors(),
-      task.tagIds.length ? loadTags() : [],
+      task.tagIds?.length ? loadTags() : [],
     ]);
-    const status = detail.statuses.find((s) => s.id === task.statusId);
-    return {
-      ...task,
-      status: status ? { id: status.id, name: status.name, category: status.category } : null,
-      assignees: task.assigneeIds.map((id) => handleOf(rows, id)),
-      tags: task.tagIds.map((id) => tagRows.find((t) => t.id === id)?.name ?? id),
-    };
+    return taskView(task, { statuses: allStatuses(detail), actors, tags });
   };
 
   return { sdk, credentials, whoami, org, members: loadMembers, actors: loadActors, tags: loadTags, project, describe };
@@ -421,13 +466,6 @@ function taskKey(given: string | undefined, cwd: string, git: GitRunner): string
 
 // Human-readable output: one line per item, short enough for an agent's context window.
 
-/** An actor's handle, marked when deactivated; the id if unknown. */
-const handleOf = (rows: ActorDto[], id: string) => {
-  const actor = rows.find((m) => m.id === id);
-  if (!actor) return id;
-  return actor.deactivated ? `${actor.handle} (deactivated)` : actor.handle;
-};
-
 const assigneeList = (task: CliTask) => task.assignees.map((h) => `@${h}`).join(" ");
 
 function taskLines(tasks: CliTask[]): string {
@@ -440,6 +478,9 @@ function taskLines(tasks: CliTask[]): string {
         (t.status?.name ?? "?").padEnd(statusWidth),
         t.priority ? `P${t.priority}` : "  ",
         t.title,
+        t.targetDate ? `due ${t.targetDate}${isOverdue(t, t.status?.category) ? " (overdue)" : ""}` : "",
+        // Done means finished; where its code is (ST-93). Servers before releases send no shipping.
+        shippingLabel(t.shipping) ? `[${shippingLabel(t.shipping)}]` : "",
         t.tags.map((name) => `#${name}`).join(" "),
         assigneeList(t),
       ]
@@ -452,12 +493,55 @@ function taskLines(tasks: CliTask[]): string {
 function taskDetail(task: CliTask): string {
   const lines = [
     `${task.key}  ${task.title}`,
-    `Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
+    `${task.kind !== "task" ? `Kind: ${task.kind} · ` : ""}Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
     `Created ${task.createdAt} · Updated ${task.updatedAt}${task.completedAt ? ` · Completed ${task.completedAt}` : ""}`,
   ];
+  if (task.startDate || task.targetDate) {
+    const overdue = isOverdue(task, task.status?.category) ? " (overdue)" : "";
+    lines.push([task.startDate && `Start: ${task.startDate}`, task.targetDate && `Target: ${task.targetDate}${overdue}`].filter(Boolean).join(" · "));
+  }
   if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
+  const shipping = shippingLabel(task.shipping);
+  if (shipping) lines.push(`Shipping: ${shipping}${task.shipping?.release ? ` (${task.shipping.release.key})` : ""}`);
   if (task.description) lines.push("", task.description);
   return lines.join("\n");
+}
+
+/** A release (ST-93): its key, name and status, apps with versions, repos and included tasks. */
+function releaseDetail(release: ReleaseView): string {
+  const lines = [
+    `${release.key}  ${release.title}  ${release.status?.name ?? "?"}${release.shippedAt ? `  (shipped ${release.shippedAt.slice(0, 10)})` : ""}`,
+    `Apps: ${release.apps.length ? release.apps.map((a) => `${a.name} ${a.version}`).join(", ") : "none"} · Repos: ${release.repos.map((r) => r.fullName).join(", ") || "none"}${release.assignees.length ? ` · Owner: ${assigneeList(release)}` : ""}`,
+  ];
+  if (release.tasks.length === 0) lines.push("No tasks");
+  else {
+    const keyWidth = Math.max(...release.tasks.map((t) => t.key.length));
+    lines.push(
+      `Tasks (${release.tasks.length}):`,
+      ...release.tasks.map((t) => `  ${t.key.padEnd(keyWidth)}  ${t.status.name}  ${t.title}${t.shippedAt ? `  [shipped ${release.title}]` : ""}`),
+    );
+  }
+  return lines.join("\n");
+}
+
+/** One line per release: key, name, status, apps and task count. */
+function releaseLines(releases: ReleaseView[]): string {
+  if (releases.length === 0) return "No releases";
+  const keyWidth = Math.max(...releases.map((r) => r.key.length));
+  const titleWidth = Math.max(...releases.map((r) => r.title.length));
+  return releases
+    .map((r) =>
+      [
+        r.key.padEnd(keyWidth),
+        r.title.padEnd(titleWidth),
+        r.status?.name ?? "?",
+        r.apps.map((a) => `${a.name} ${a.version}`).join(", "),
+        `${r.tasks.length} task${r.tasks.length === 1 ? "" : "s"}`,
+      ]
+        .filter(Boolean)
+        .join("  "),
+    )
+    .join("\n");
 }
 
 /** One line per task of a bulk update, then the counts (and how to apply, after a preview). */
@@ -485,6 +569,47 @@ function bulkLines(
 }
 
 const projectLine = (p: ProjectDto) => `${p.key}  ${p.name}${p.archivedAt ? "  (archived)" : ""}`;
+
+/** One kind's workflow, a status per line with its category (and task count, when given). */
+function workflowLines(kind: TaskKind, statuses: (StatusDto & { taskCount?: number })[]): string[] {
+  const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
+  const categoryWidth = Math.max(0, ...statuses.map((s) => s.category.length));
+  return [
+    `${kind[0]?.toUpperCase()}${kind.slice(1)} workflow:`,
+    ...statuses.map((s) =>
+      [`  ${s.name.padEnd(nameWidth)}`, s.category.padEnd(categoryWidth), ...(s.taskCount === undefined ? [] : [String(s.taskCount)])]
+        .join("  ")
+        .trimEnd(),
+    ),
+  ];
+}
+
+/** "web  web/app (+ packages/core)  date  staging → prod". */
+const appLine = (a: AppDto) =>
+  [
+    a.name,
+    `${a.path}${a.sharedPaths.length ? ` (+ ${a.sharedPaths.join(", ")})` : ""}`,
+    a.versioning,
+    a.environments.length ? a.environments.join(" → ") : "no environments",
+  ].join("  ");
+
+function repoLines(repos: RepoDto[]): string {
+  if (repos.length === 0) return "No repos";
+  return repos
+    .map((r) =>
+      [
+        `${r.fullName}  ${r.defaultBranch}  ${r.projects.length ? r.projects.join(", ") : "no projects"}`,
+        ...r.apps.map((a) => `  ${appLine(a)}`),
+      ].join("\n"),
+    )
+    .join("\n");
+}
+
+function parseVersioning(value: string): AppVersioning {
+  const v = value.trim().toLowerCase();
+  if (v === "date" || v === "semver") return v;
+  throw usageError(`Invalid versioning "${value}". Use date or semver`);
+}
 
 const documentScope = (d: DocumentSummaryDto) => d.taskKey ?? d.projectKey ?? "org";
 
@@ -584,12 +709,12 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   const withJson = (cmd: Command) => cmd.option("--json", "print stable JSON");
 
   /** Builds the API input for create/update from the shared task options. */
-  const taskInput = async (projectKey: string, opts: TaskFields) => {
+  const taskInput = async (projectKey: string, opts: TaskFields, kind: TaskKind = "task") => {
     const input: UpdateTaskInput = {};
     if (opts.title !== undefined) input.title = opts.title;
     if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
     if (opts.priority !== undefined) input.priority = parsePriority(opts.priority);
-    if (opts.status !== undefined) input.statusId = resolveStatus(await conn().project(projectKey), opts.status).id;
+    if (opts.status !== undefined) input.statusId = resolveStatus(await conn().project(projectKey), opts.status, kind).id;
     if (opts.assign !== undefined) {
       const { actor } = await conn().whoami();
       input.assigneeIds = resolveAssignees(await conn().members(), actor.id, opts.assign);
@@ -599,6 +724,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const { sdk, org } = conn();
       input.parentId = opts.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(opts.parent, cwd, git))).id;
     }
+    if (opts.start !== undefined) input.startDate = parseDate(opts.start, "--start");
+    if (opts.target !== undefined) input.targetDate = parseDate(opts.target, "--target");
     return input;
   };
 
@@ -610,7 +737,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         .option("--priority <0-4>", "0 none, 1 urgent, 2 high, 3 medium, 4 low")
         .option("--assign <handle>", "assignee handle or \"me\"; repeatable or comma-separated", collect)
         .option("--tag <name>", "tag name; repeatable or comma-separated (replaces the tags on update)", collect)
-        .option("--parent <key>", 'parent task key, making this a sub-task ("" makes it top-level)'),
+        .option("--parent <key>", 'parent task key, making this a sub-task ("" makes it top-level)')
+        .option("--start <date>", 'start date, YYYY-MM-DD ("" clears it)')
+        .option("--target <date>", 'target date, YYYY-MM-DD, on or after the start ("" clears it)'),
     );
 
   /** Updates a task and prints the result. */
@@ -1291,7 +1420,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     projectCommand
       .command("create")
-      .description("create a project with the default statuses")
+      .description("create a project with the default workflows (task, release, milestone)")
       .requiredOption("--key <KEY>", "2–10 letters or digits, starting with a letter; prefixes task keys")
       .requiredOption("--name <text>", "name")
       .option("--description <text>", "description (Markdown)"),
@@ -1310,18 +1439,28 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const { sdk, org } = conn();
       const client = await sdk();
       const slug = await org();
-      const [detail, tasks] = await Promise.all([client.projects.get(slug, key), client.tasks.list(slug, key)]);
+      const [detail, tasks, documents] = await Promise.all([
+        client.projects.get(slug, key),
+        client.tasks.list(slug, key),
+        // Servers from before documents (ST-21) have no such route.
+        client.documents
+          .list(slug, { project: key.toUpperCase() })
+          .then((r) => r.items)
+          .catch(() => [] as DocumentSummaryDto[]),
+      ]);
       const rulesDoc = detail.rulesDocumentId ? await client.documents.get(slug, detail.rulesDocumentId) : null;
-      const rules = rulesDoc && { documentId: rulesDoc.id, title: rulesDoc.title, version: rulesDoc.version, content: rulesDoc.content };
-      const statuses = detail.statuses.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
-      const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
-      output(opts, { ...detail, statuses, rules }, () =>
+      // ProjectRulesDto, as MCP get_project and whoami give them.
+      const rules = rulesDoc && projectRulesView(detail, rulesDoc);
+      const counted = (list: StatusDto[]) => list.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
+      const statuses = counted(detail.statuses);
+      // Servers from before kinds (ST-90) send no workflows.
+      const workflows = Object.fromEntries(TASK_KINDS.map((kind) => [kind, counted(workflowOf(detail, kind))]));
+      // MCP get_project has the same shape, without taskCount.
+      output(opts, { ...detail, statuses, ...(detail.workflows ? { workflows } : {}), rules, documents }, () =>
         [
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
-          "",
-          "Statuses:",
-          ...statuses.map((s) => `  ${s.name.padEnd(nameWidth)}  ${s.taskCount}`),
+          ...TASK_KINDS.flatMap((kind) => (workflows[kind]?.length ? ["", ...workflowLines(kind, workflows[kind])] : [])),
           ...(detail.description ? ["", detail.description] : []),
           ...(rules ? ["", `Rules for agents: ${rules.title} (${rules.documentId}, v${rules.version})`, "", rules.content] : []),
         ].join("\n"),
@@ -1361,6 +1500,417 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     output(opts, result, () => `${opts.undo ? "Restored" : "Archived"} ${result.key}  ${result.name}`);
   });
 
+  // Workflow editing (ST-90): a project's statuses per task kind; owners, admins and their agents.
+  const statusCommand = projectCommand
+    .command("status")
+    .description("a project's workflows: the statuses of each task kind (task, release, milestone)");
+  const kindOption = (cmd: Command) => cmd.option("--kind <kind>", `workflow of this task kind: ${TASK_KINDS.join(", ")}`, "task");
+  /** Prints a project's workflow of `kind` after a change. */
+  const workflowOutput = (opts: JsonOption, json: unknown, project: ProjectDetailDto, kind: TaskKind, note: string) =>
+    output(opts, json, () => [note, ...workflowLines(kind, workflowOf(project, kind))].join("\n"));
+
+  withJson(
+    statusCommand
+      .command("list", { isDefault: true })
+      .description("list the statuses of a project's workflows")
+      .argument("<project>")
+      .option("--kind <kind>", `only the workflow of this task kind: ${TASK_KINDS.join(", ")} (default: every workflow)`),
+  ).action(async (key: string, opts: JsonOption & { kind?: string }) => {
+    const detail = await conn().project(key);
+    const kinds = opts.kind === undefined ? TASK_KINDS : [parseKind(opts.kind)];
+    const items = kinds.flatMap((kind) => workflowOf(detail, kind));
+    output(opts, { items }, () =>
+      kinds
+        .filter((kind) => workflowOf(detail, kind).length > 0)
+        .map((kind) => workflowLines(kind, workflowOf(detail, kind)).join("\n"))
+        .join("\n\n"),
+    );
+  });
+
+  withJson(
+    kindOption(
+      statusCommand
+        .command("add")
+        .description("add a status to a workflow (at the end, or at --position)")
+        .argument("<project>")
+        .argument("<name>")
+        .requiredOption("--category <category>", "backlog, todo, in_progress, in_review, done or canceled (can't change later)")
+        .option("--color <hex>", "colour, e.g. #22c55e")
+        .option("--position <n>", "place in the workflow, 0 for first"),
+    ),
+  ).action(async (key: string, name: string, opts: JsonOption & { kind: string; category: string; color?: string; position?: string }) => {
+    const kind = parseKind(opts.kind);
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).projects.statuses.create(await org(), key.toUpperCase(), {
+      kind,
+      name,
+      category: parseCategory(opts.category),
+      color: opts.color,
+      position: opts.position === undefined ? undefined : parsePosition(opts.position),
+    });
+    workflowOutput(opts, updated, updated, kind, `Added "${name}" to ${updated.key}'s ${kind} workflow`);
+  });
+
+  withJson(
+    kindOption(
+      statusCommand
+        .command("update")
+        .description("rename, recolor or move a status of a workflow")
+        .argument("<project>")
+        .argument("<status>", "status name or id")
+        .option("--name <text>", "new name")
+        .option("--color <hex>", 'colour, e.g. #22c55e ("" clears it)')
+        .option("--position <n>", "new place in the workflow, 0 for first"),
+    ),
+  ).action(async (key: string, ref: string, opts: JsonOption & { kind: string; name?: string; color?: string; position?: string }) => {
+    const kind = parseKind(opts.kind);
+    if (opts.name === undefined && opts.color === undefined && opts.position === undefined) {
+      throw usageError("Nothing to update. Pass --name, --color or --position");
+    }
+    const { sdk, org, project } = conn();
+    const status = findWorkflowStatus(await project(key), ref, kind);
+    const updated = await (await sdk()).projects.statuses.update(await org(), key.toUpperCase(), status.id, {
+      name: opts.name,
+      color: opts.color === undefined ? undefined : opts.color === "" ? null : opts.color,
+      position: opts.position === undefined ? undefined : parsePosition(opts.position),
+    });
+    workflowOutput(opts, updated, updated, kind, `Updated "${status.name}" in ${updated.key}'s ${kind} workflow`);
+  });
+
+  withJson(
+    kindOption(
+      statusCommand
+        .command("delete")
+        .description("delete a status, first moving its tasks to another status of the same workflow")
+        .argument("<project>")
+        .argument("<status>", "status name or id")
+        .requiredOption("--move-to <status>", "status (name or id) of the same workflow that takes its tasks"),
+    ),
+  ).action(async (key: string, ref: string, opts: JsonOption & { kind: string; moveTo: string }) => {
+    const kind = parseKind(opts.kind);
+    const { sdk, org, project } = conn();
+    const detail = await project(key);
+    const status = findWorkflowStatus(detail, ref, kind);
+    const target = findWorkflowStatus(detail, opts.moveTo, kind);
+    const result = await (await sdk()).projects.statuses.delete(await org(), key.toUpperCase(), status.id, { moveTo: target.id });
+    const moved = `${result.movedTasks} task${result.movedTasks === 1 ? "" : "s"} moved to "${target.name}"`;
+    workflowOutput(opts, result, result.project, kind, `Deleted "${status.name}" from ${result.project.key}'s ${kind} workflow; ${moved}`);
+  });
+
+  // Repos and apps (ST-92). A repo is "owner/name" or a GitHub URL; without one, the origin remote of the current folder.
+  const repoArg = (given: string | undefined): string => {
+    if (given !== undefined) {
+      const remote = parseRepoRemote(given);
+      if (!remote) throw usageError(`Not a GitHub repo: "${given}". Use owner/name or a GitHub URL`);
+      return repoFullName(remote);
+    }
+    const origin = remoteRepo(cwd, git);
+    if (!origin) throw usageError("Name the repo (owner/name): this folder has no GitHub origin remote");
+    return origin;
+  };
+
+  const repoCommand = program
+    .command("repo")
+    .description("git repos of the organization, attached to projects (add, change, attach: owners, admins and their agents)");
+
+  withJson(
+    repoCommand.command("list").description("list repos with their apps and projects").option("--project <KEY>", "only repos attached to this project"),
+  ).action(async (opts: JsonOption & { project?: string }) => {
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).repos.list(await org(), { project: opts.project });
+    output(opts, { items }, () => repoLines(items));
+  });
+
+  withJson(repoCommand.command("view").description("show a repo, its apps and projects").argument("[repo]", "owner/name (default: origin)")).action(
+    async (repo: string | undefined, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const found = await (await sdk()).repos.get(await org(), repoArg(repo));
+      output(opts, found, () => repoLines([found]));
+    },
+  );
+
+  withJson(
+    repoCommand
+      .command("add")
+      .description("add a repo by its GitHub remote URL (default: this folder's origin)")
+      .argument("[url]", "https://github.com/owner/name, git@github.com:owner/name.git or owner/name")
+      .option("--default-branch <name>", "default: main")
+      .option("--project <KEY>", "attach it to this project; repeatable or comma-separated", collect),
+  ).action(async (url: string | undefined, opts: JsonOption & { defaultBranch?: string; project?: string[] }) => {
+    const remote = url ?? originUrl(cwd, git);
+    if (!remote) throw usageError("Pass the repo's URL: this folder has no origin remote");
+    const { sdk, org } = conn();
+    const created = await (await sdk()).repos.create(await org(), {
+      url: remote,
+      defaultBranch: opts.defaultBranch,
+      projects: opts.project,
+    });
+    output(opts, created, () => `Added ${repoLines([created])}`);
+  });
+
+  withJson(
+    repoCommand
+      .command("update")
+      .description("change a repo's remote (after a rename on GitHub) or default branch")
+      .argument("<repo>", "owner/name")
+      .option("--url <url>", "the new remote URL or owner/name")
+      .option("--default-branch <name>", "default branch"),
+  ).action(async (repo: string, opts: JsonOption & { url?: string; defaultBranch?: string }) => {
+    const input: UpdateRepoInput = {};
+    if (opts.url !== undefined) input.url = opts.url;
+    if (opts.defaultBranch !== undefined) input.defaultBranch = opts.defaultBranch;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --url or --default-branch");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).repos.update(await org(), repoArg(repo), input);
+    output(opts, updated, () => `Updated ${repoLines([updated])}`);
+  });
+
+  withJson(repoCommand.command("remove").description("remove a repo with its apps and project links").argument("<repo>", "owner/name")).action(
+    async (repo: string, opts: JsonOption) => {
+      const name = repoArg(repo);
+      const { sdk, org } = conn();
+      await (await sdk()).repos.delete(await org(), name);
+      output(opts, { repo: name, removed: true }, () => `Removed ${name}`);
+    },
+  );
+
+  const attachCommand = (name: "attach" | "detach", description: string) =>
+    withJson(
+      repoCommand.command(name).description(description).argument("<repo>", "owner/name").argument("<project>", "project key, e.g. ST"),
+    ).action(async (repo: string, project: string, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const client = await sdk();
+      const result = await (name === "attach" ? client.repos.attach : client.repos.detach)(await org(), project, repoArg(repo));
+      output(opts, result, () => `${name === "attach" ? "Attached" : "Detached"}: ${repoLines([result])}`);
+    });
+  attachCommand("attach", "attach a repo to a project (again changes nothing)");
+  attachCommand("detach", "detach a repo from a project");
+
+  const appCommand = program
+    .command("app")
+    .description("apps in a repo: folder, shared packages, versioning and environments (owners, admins and their agents change them)");
+  const repoOption = (cmd: Command) => cmd.option("--repo <owner/name>", "the repo (default: this folder's origin)");
+  const appFields = (cmd: Command) =>
+    cmd
+      .option("--shared <path>", 'a shared package it depends on, e.g. packages/core; repeatable or comma-separated ("" for none)', collect)
+      .option("--versioning <date|semver>", "how releases are numbered: 2026.10.12 or 1.4.0")
+      .option("--env <name>", 'environments in deploy order, e.g. staging,prod ("" for none)', collect);
+  interface AppOptions extends JsonOption {
+    repo?: string;
+    path?: string;
+    shared?: string[];
+    versioning?: string;
+    env?: string[];
+  }
+
+  withJson(repoOption(appCommand.command("list").description("list apps (of every repo, or one with --repo)"))).action(
+    async (opts: JsonOption & { repo?: string }) => {
+      const { sdk, org } = conn();
+      const client = await sdk();
+      const slug = await org();
+      const repos = opts.repo ? [await client.repos.get(slug, repoArg(opts.repo))] : (await client.repos.list(slug)).items;
+      const items = repos.flatMap((r) => r.apps);
+      output(opts, { items }, () => (items.length ? items.map((a) => `${a.repo}  ${appLine(a)}`).join("\n") : "No apps"));
+    },
+  );
+
+  withJson(
+    appFields(
+      repoOption(
+        appCommand
+          .command("add")
+          .description("add an app to a repo")
+          .argument("<name>", "lower-case, e.g. web")
+          .requiredOption("--path <path>", 'its folder in the repo, e.g. web/app ("." for the whole repo)'),
+      ),
+    ),
+  ).action(async (name: string, opts: AppOptions) => {
+    const { sdk, org } = conn();
+    const created = await (await sdk()).repos.apps.create(await org(), repoArg(opts.repo), {
+      name,
+      path: opts.path ?? "",
+      sharedPaths: opts.shared,
+      versioning: opts.versioning === undefined ? undefined : parseVersioning(opts.versioning),
+      environments: opts.env,
+    });
+    output(opts, created, () => `Added ${created.repo}  ${appLine(created)}`);
+  });
+
+  withJson(
+    appFields(
+      repoOption(
+        appCommand
+          .command("update")
+          .description("rename an app or change its folder, shared packages, versioning or environments")
+          .argument("<name>", "the app")
+          .option("--name <name>", "a new name")
+          .option("--path <path>", "its folder in the repo"),
+      ),
+    ),
+  ).action(async (name: string, opts: AppOptions & { name?: string }) => {
+    const input: UpdateAppInput = {};
+    if (opts.name !== undefined) input.name = opts.name;
+    if (opts.path !== undefined) input.path = opts.path;
+    if (opts.shared !== undefined) input.sharedPaths = opts.shared;
+    if (opts.versioning !== undefined) input.versioning = parseVersioning(opts.versioning);
+    if (opts.env !== undefined) input.environments = opts.env;
+    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name, --path, --shared, --versioning or --env");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).repos.apps.update(await org(), repoArg(opts.repo), name, input);
+    output(opts, updated, () => `Updated ${updated.repo}  ${appLine(updated)}`);
+  });
+
+  withJson(repoOption(appCommand.command("remove").description("remove an app from its repo").argument("<name>", "the app"))).action(
+    async (name: string, opts: JsonOption & { repo?: string }) => {
+      const repo = repoArg(opts.repo);
+      const { sdk, org } = conn();
+      await (await sdk()).repos.apps.delete(await org(), repo, name);
+      output(opts, { repo, app: name.trim().toLowerCase(), removed: true }, () => `Removed ${name} from ${repo}`);
+    },
+  );
+
+  // Releases (ST-93). A release is a task of kind "release"; change its status with `spider task update KEY --status …`
+  // (or `spider task done KEY` for Released), which ships its tasks.
+  const releaseCommand = program
+    .command("release")
+    .description("releases: link repos and apps with versions, include Done tasks from any project, ship them when Released");
+  const describeRelease = async (release: ReleaseDto): Promise<ReleaseView> => {
+    const [actors, tags] = await Promise.all([conn().actors(), release.tagIds.length ? conn().tags() : []]);
+    return releaseView(release, { actors, tags });
+  };
+  /**
+   * `--app web=2026.10.13` or `--app owner/name:web=2026.10.13`; without a repo, the only --repo given,
+   * else this folder's origin remote.
+   */
+  const parseApps = (values: string[] | undefined, repos: string[] | undefined): ReleaseAppInput[] | undefined =>
+    values?.map((value) => {
+      const match = /^(?:(.+):)?([^:=]+)=(.+)$/.exec(value.trim());
+      if (!match?.[2] || !match[3]) throw usageError(`Invalid --app "${value}". Expected app=version, e.g. web=2026.10.13 (or owner/name:web=2026.10.13)`);
+      const repo = match[1] ? repoArg(match[1]) : repos?.length === 1 ? repoArg(repos[0]) : repos?.length ? undefined : repoArg(undefined);
+      if (!repo) throw usageError(`Name the repo of app ${match[2]} (owner/name:${match[2]}=${match[3]}): several --repo were given`);
+      return { repo, app: match[2], version: match[3] };
+    });
+  const releaseLinkOptions = (cmd: Command) =>
+    cmd
+      .option("--app <app=version>", "an app it ships and its version, e.g. web=2026.10.13 or owner/name:cli=0.1.8; repeatable or comma-separated", collect)
+      .option("--repo <owner/name>", "a repo it ships from (default for --app: this folder's origin); repeatable or comma-separated", collect);
+  interface ReleaseLinkOptions extends JsonOption {
+    app?: string[];
+    repo?: string[];
+  }
+  const taskKeys = (keys: string[]) => keys.map((k) => taskKey(k, cwd, git));
+
+  withJson(
+    releaseCommand
+      .command("list")
+      .description("list a project's releases in board order")
+      .requiredOption("--project <key>", "project key, e.g. ST")
+      .option("--status <name>", "status name or category of the release workflow")
+      .option("--app <name>", "only releases shipping this app"),
+  ).action(async (opts: JsonOption & { project: string; status?: string; app?: string }) => {
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).releases.list(await org(), opts.project.toUpperCase(), {
+      status: opts.status === undefined ? undefined : [opts.status],
+      app: opts.app,
+    });
+    const views = await Promise.all(items.map(describeRelease));
+    output(opts, { items: views }, () => releaseLines(views));
+  });
+
+  withJson(releaseCommand.command("view").description("show a release, its apps and versions, and its tasks").argument("<key>")).action(
+    async (key: string, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const release = await describeRelease(await (await sdk()).releases.get(await org(), taskKey(key, cwd, git)));
+      output(opts, release, () => releaseDetail(release));
+    },
+  );
+
+  withJson(
+    releaseLinkOptions(
+      releaseCommand
+        .command("create")
+        .description("create a release (Planned unless --status) with apps, repos and Done tasks")
+        .requiredOption("--project <key>", "project key, e.g. ST")
+        .requiredOption("--title <version>", "its name, usually the version, e.g. 2026.10.13")
+        .option("--description <text>", "description, e.g. release notes (Markdown)")
+        .option("--status <name>", "status of the release workflow")
+        .option("--assign <handle>", 'release owner handle or "me"; repeatable or comma-separated', collect)
+        .option("--target <date>", "target date, YYYY-MM-DD")
+        .option("--task <key>", "a Done task to include; repeatable or comma-separated", collect),
+    ),
+  ).action(
+    async (
+      opts: ReleaseLinkOptions & { project: string; title: string; description?: string; status?: string; assign?: string[]; target?: string; task?: string[] },
+    ) => {
+      const projectKey = opts.project.toUpperCase();
+      const { sdk, org, project, members, whoami } = conn();
+      const created = await (await sdk()).releases.create(await org(), projectKey, {
+        title: opts.title,
+        description: opts.description,
+        statusId: opts.status === undefined ? undefined : resolveStatus(await project(projectKey), opts.status, "release").id,
+        assigneeIds: opts.assign === undefined ? undefined : resolveAssignees(await members(), (await whoami()).actor.id, opts.assign),
+        targetDate: opts.target === undefined ? undefined : (parseDate(opts.target, "--target") ?? undefined),
+        repos: opts.repo?.map((r) => repoArg(r)),
+        apps: parseApps(opts.app, opts.repo),
+        tasks: opts.task === undefined ? undefined : taskKeys(opts.task),
+      });
+      const release = await describeRelease(created);
+      output(opts, release, () => `Created ${releaseDetail(release)}`);
+    },
+  );
+
+  withJson(
+    releaseLinkOptions(
+      releaseCommand.command("update").description("replace a release's apps (with versions) or repos").argument("<key>"),
+    ),
+  ).action(async (key: string, opts: ReleaseLinkOptions) => {
+    if (opts.app === undefined && opts.repo === undefined) throw usageError("Nothing to update. Pass --app or --repo (status: spider task update KEY --status …)");
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).releases.update(await org(), taskKey(key, cwd, git), {
+      repos: opts.repo?.map((r) => repoArg(r)),
+      apps: parseApps(opts.app, opts.repo),
+    });
+    const release = await describeRelease(updated);
+    output(opts, release, () => `Updated ${releaseDetail(release)}`);
+  });
+
+  withJson(
+    releaseCommand.command("add").description("add Done tasks (any project) to a release; all or nothing").argument("<key>", "the release").argument("<tasks...>", "task keys"),
+  ).action(async (key: string, keys: string[], opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const release = await describeRelease(await (await sdk()).releases.add(await org(), taskKey(key, cwd, git), taskKeys(keys)));
+    output(opts, release, () => releaseDetail(release));
+  });
+
+  withJson(
+    releaseCommand.command("remove").description("take tasks out of a release that hasn't shipped").argument("<key>", "the release").argument("<tasks...>", "task keys"),
+  ).action(async (key: string, keys: string[], opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    let last: ReleaseDto | undefined;
+    for (const k of taskKeys(keys)) last = await client.releases.remove(slug, taskKey(key, cwd, git), k);
+    if (!last) throw usageError("Name the tasks to remove");
+    const release = await describeRelease(last);
+    output(opts, release, () => releaseDetail(release));
+  });
+
+  withJson(
+    releaseCommand
+      .command("candidates")
+      .description("Done tasks with code that are in no release yet, most recently finished first")
+      .option("--project <key>", "only this project's tasks")
+      .option("--release <key>", "for this release"),
+  ).action(async (opts: JsonOption & { project?: string; release?: string }) => {
+    const { sdk, org, describe } = conn();
+    const { items } = await (await sdk()).releases.candidates(await org(), {
+      project: opts.project?.toUpperCase(),
+      release: opts.release === undefined ? undefined : taskKey(opts.release, cwd, git),
+    });
+    const views = await Promise.all(items.map(describe));
+    output(opts, { items: views }, () => (views.length ? taskLines(views) : "No candidates: every Done task with code is in a release"));
+  });
+
   const task = program.command("task").description("work with tasks");
 
   withJson(
@@ -1368,6 +1918,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .command("list")
       .description("list tasks")
       .option("--project <key>", "only this project (default: all)")
+      .option("--kind <kind>", `only tasks of this kind (${TASK_KINDS.join(", ")}); --status then matches its workflow only`)
       .option("--status <name>", "status name or category")
       .option("--mine", "only tasks assigned to me (same as --assignee me)")
       .option(
@@ -1378,9 +1929,11 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--tag <name>", "carrying all of these tags; repeatable or comma-separated", collect)
       .option("--any-tag", "with --tag: carrying any of the tags instead of all")
       .option("--priority <0-4>", "any of these priorities (0-4 or a name); repeatable or comma-separated", collect)
+      .option("--overdue", "only tasks past their target date (UTC) that aren't done or canceled")
       .option("--limit <n>", "at most n tasks", "50"),
   ).action(async (opts: TaskListOptions) => {
     const limit = parseLimit(opts.limit);
+    const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
     const { sdk, org, whoami, actors, project, describe } = conn();
     const slug = await org();
     const keys = opts.project ? [opts.project.toUpperCase()] : (await (await sdk()).projects.list(slug)).items.map((p) => p.key);
@@ -1413,13 +1966,15 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       let status: string[] | undefined;
       if (opts.status !== undefined) {
         // A status unknown in one project may exist in another; it is an error only if no project has it.
-        status = matchStatuses(detail, opts.status).map((s) => s.id);
-        detail.statuses.forEach((s) => statusNames.add(s.name));
+        // Without --kind, in every workflow (ST-90).
+        status = matchStatuses(detail, opts.status, kind ?? "all").map((s) => s.id);
+        (kind ? workflowOf(detail, kind) : allStatuses(detail)).forEach((s) => statusNames.add(s.name));
         if (status.length === 0) continue;
         statusKnown = true;
       }
-      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, tagMatch, priority });
-      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee: assigneeCheck, tagIds, tagMatch, priority })));
+      const overdue = opts.overdue ? { statuses: allStatuses(detail) } : undefined;
+      const { items } = await (await sdk()).tasks.list(slug, key, { kind, status, assignee, tags: opts.tag, tagMatch, priority, overdue: opts.overdue });
+      found.push(...items.filter((t) => matchesTaskFilter(t, { kind, statusIds: status, assignee: assigneeCheck, tagIds, tagMatch, priority, overdue })));
       if (found.length >= limit) break;
     }
     if (opts.status !== undefined && !statusKnown) {
@@ -1435,23 +1990,29 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const { sdk, org, describe } = conn();
       const client = await sdk();
       const resolved = taskKey(key, cwd, git);
-      const [found, subtasks, relations] = await Promise.all([
+      const [found, subtasks, relations, documents] = await Promise.all([
         client.tasks.get(await org(), resolved).then(describe),
-        // Servers from before sub-tasks (ST-9) and relations (ST-10) have no such routes.
+        // Servers from before sub-tasks (ST-9), relations (ST-10) and documents (ST-21) have no such routes.
         client.tasks
           .subtasks(await org(), resolved)
           .then(async (r) => Promise.all(r.items.map(describe)))
           .catch(() => [] as CliTask[]),
         client.tasks.relations
           .list(await org(), resolved)
-          .then((r) => r.items.map((rel) => ({ kind: rel.kind, task: rel.task.key, title: rel.task.title })))
-          .catch(() => [] as { kind: string; task: string; title: string }[]),
+          .then((r) => r.items.map(relationView))
+          .catch(() => [] as RelationView[]),
+        client.documents
+          .list(await org(), { task: resolved })
+          .then((r) => r.items)
+          .catch(() => [] as DocumentSummaryDto[]),
       ]);
-      output(opts, { ...found, subtasks, relations }, () =>
+      // The same shape as MCP get_task (TaskDetailView).
+      output(opts, { ...found, subtasks, relations, documents }, () =>
         [
           taskDetail(found),
           ...(relations.length ? ["", "Links:", ...relations.map((r) => `  ${r.kind.replace("_", " ")} ${r.task}  ${r.title}`)] : []),
           ...(subtasks.length ? ["", "Sub-tasks:", taskLines(subtasks)] : []),
+          ...(documents.length ? ["", "Documents:", documentLines(documents)] : []),
         ].join("\n"),
       );
     },
@@ -1488,6 +2049,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (changes.parent !== undefined) {
       set.parentId = changes.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(changes.parent, cwd, git))).id;
     }
+    if (changes.start !== undefined) set.startDate = parseDate(changes.start, "--start");
+    if (changes.target !== undefined) set.targetDate = parseDate(changes.target, "--target");
+    if (changes.noCode !== undefined) set.noCode = changes.noCode;
     if (Object.keys(set).length === 0) throw usageError(hints.nothing);
 
     const response = await (await sdk()).tasks.bulkUpdate(await org(), { ...target, set, dryRun });
@@ -1511,18 +2075,31 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--set-assign <handle>", "new assignees: the same as --assign; repeatable or comma-separated", collect)
       .option("--set-tag <name>", "new tags: the same as --tag, which filters with --project; repeatable or comma-separated", collect)
       .option("--set-parent <key>", 'new parent: the same as --parent, which filters with --project ("" makes them top-level)')
-      .option("--project <key>", "update the tasks of this project matching --status, --parent, --assignee, --tag, --priority")
+      .option("--set-start <date>", 'new start date: the same as --start ("" clears it)')
+      .option("--set-target <date>", 'new target date: the same as --target ("" clears it)')
+      .option("--project <key>", "update the tasks of this project matching --status, --parent, --assignee, --tag, --priority, --overdue")
+      .option("--overdue", "with --project: only tasks past their target date that aren't done or canceled")
       .option("--assignee <handle>", 'with --project: assigned to any of these, "me", "mine" or "none"; repeatable or comma-separated', collect)
       .option("--any-tag", "with --project and --tag: any of the tags instead of all")
+      .option("--no-code", "mark as having no code to ship: Done needs no release (ST-93)")
+      .option("--code", "undo --no-code: the task has code that a release ships")
       .option("--yes", "with --project: apply the changes (without it, only list what would change)")
       .option("--dry-run", "list what would change without changing anything"),
   ).action(async (keys: string[], opts: TaskUpdateOptions) => {
     if (opts.project !== undefined) {
       // Filter mode: the task-field flags select tasks; changes come only from --set-*.
       if (keys.length > 0) throw usageError("Pass task keys or --project with filters, not both");
-      for (const [flag, value] of [["--title", opts.title], ["--description", opts.description], ["--assign", opts.assign]] as const) {
+      for (const [flag, value] of [
+        ["--title", opts.title],
+        ["--description", opts.description],
+        ["--assign", opts.assign],
+        ["--start", opts.start],
+        ["--target", opts.target],
+      ] as const) {
         if (value !== undefined) {
-          throw usageError(`${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag and --set-parent`);
+          throw usageError(
+            `${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start and --set-target`,
+          );
         }
       }
       if (opts.parent !== undefined && !parseTaskKey(opts.parent.trim())) {
@@ -1536,17 +2113,27 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         tags: opts.tag,
         tagMatch: opts.anyTag ? "any" : undefined,
         priority: opts.priority?.split(",").map(parsePriority),
+        overdue: opts.overdue ? true : undefined,
       };
-      const changes = { status: opts.setStatus, priority: opts.setPriority, assign: opts.setAssign, tag: opts.setTag, parent: opts.setParent };
+      const changes: TaskChanges = {
+        status: opts.setStatus,
+        priority: opts.setPriority,
+        assign: opts.setAssign,
+        tag: opts.setTag,
+        parent: opts.setParent,
+        start: opts.setStart,
+        target: opts.setTarget,
+        noCode: opts.code === undefined ? undefined : !opts.code,
+      };
       await bulkUpdate({ filter }, changes, opts.dryRun === true || !opts.yes, {
-        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag or --set-parent",
+        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start or --set-target",
         apply: opts.dryRun ? undefined : "Run again with --yes to apply.",
       }, opts);
       return;
     }
 
-    if (opts.assignee !== undefined || opts.anyTag) {
-      throw usageError("--assignee and --any-tag filter tasks; use them with --project (--assign sets the assignees)");
+    if (opts.assignee !== undefined || opts.anyTag || opts.overdue) {
+      throw usageError("--assignee, --any-tag and --overdue filter tasks; use them with --project (--assign sets the assignees)");
     }
     // Outside filter mode, --status and --set-status (and the others) both set the field.
     const pick = (name: string, plain: string | undefined, set: string | undefined) => {
@@ -1563,11 +2150,19 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       assign: pickList("assign", opts.assign, opts.setAssign),
       tag: pickList("tag", opts.tag, opts.setTag),
       parent: pick("parent", opts.parent, opts.setParent),
+      start: pick("start", opts.start, opts.setStart),
+      target: pick("target", opts.target, opts.setTarget),
+      noCode: opts.code === undefined ? undefined : !opts.code,
     };
 
     if (keys.length <= 1 && !opts.dryRun) {
       const resolved = taskKey(keys[0], cwd, git);
-      const input = await taskInput(projectKeyOf(resolved), { ...opts, ...changes });
+      // A status name is matched in the workflow of the task's kind (ST-90).
+      // The project first, so a missing project is reported as such.
+      if (changes.status !== undefined) await conn().project(projectKeyOf(resolved));
+      const kind = changes.status === undefined ? "task" : kindOf(await (await conn().sdk()).tasks.get(await conn().org(), resolved));
+      const input = await taskInput(projectKeyOf(resolved), { ...opts, ...changes }, kind);
+      if (changes.noCode !== undefined) input.noCode = changes.noCode;
       if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --title, --status, --assign, …");
       await update(resolved, input, opts);
       return;
@@ -1577,7 +2172,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       throw usageError("--title and --description change one task at a time");
     }
     const resolvedKeys = keys.length ? keys.map((k) => taskKey(k, cwd, git)) : [taskKey(undefined, cwd, git)];
-    await bulkUpdate({ keys: resolvedKeys }, changes, opts.dryRun === true, { nothing: "Nothing to update. Pass --status, --priority, --assign, --tag or --parent" }, opts);
+    await bulkUpdate({ keys: resolvedKeys }, changes, opts.dryRun === true, {
+      nothing: "Nothing to update. Pass --status, --priority, --assign, --tag, --parent, --start or --target",
+    }, opts);
   });
 
   /**
@@ -1613,7 +2210,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     ]);
     const assigneeIds = [...new Set([...current.assigneeIds, who.actor.id])];
     const started = await describe(
-      await client.tasks.update(await org(), resolved, { statusId: firstStatus(detail, "in_progress").id, assigneeIds }),
+      await client.tasks.update(await org(), resolved, { statusId: firstStatus(detail, "in_progress", kindOf(current)).id, assigneeIds }),
     );
     const { branch, note } = opts.branch ? checkoutTaskBranch(resolved, started.title) : { branch: null };
     output(opts, { ...started, branch }, () => [taskLines([started]), ...(note ? [note] : [])].join("\n"));
@@ -1629,13 +2226,29 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   startCommand(task.command("start"));
   startCommand(program.command("start"));
 
-  withJson(task.command("done").description("move to the first done status").argument("[key]")).action(
+  withJson(task.command("done").description("move to the first done status of its workflow").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
       const resolved = taskKey(key, cwd, git);
-      const detail = await conn().project(projectKeyOf(resolved));
-      await update(resolved, { statusId: firstStatus(detail, "done").id }, opts);
+      const { sdk, org, project } = conn();
+      const [detail, current] = await Promise.all([project(projectKeyOf(resolved)), (await sdk()).tasks.get(await org(), resolved)]);
+      await update(resolved, { statusId: firstStatus(detail, "done", kindOf(current)).id }, opts);
     },
   );
+
+  withJson(
+    task
+      .command("duplicate")
+      .description("mark as a duplicate in one step: link it (duplicates), cancel it and comment; a repeat changes nothing")
+      .argument("[key]", "the duplicate (default: the current branch's task)")
+      .requiredOption("--of <key>", "the original task, e.g. ST-9")
+      .option("--comment <text>", "added below the automatic \"Duplicate of …\" comment"),
+  ).action(async (key: string | undefined, opts: JsonOption & { of: string; comment?: string }) => {
+    const resolved = taskKey(key, cwd, git);
+    const original = taskKey(opts.of, cwd, git);
+    const { sdk, org, describe } = conn();
+    const marked = await describe(await (await sdk()).tasks.markDuplicate(await org(), resolved, { of: original, comment: opts.comment }));
+    output(opts, marked, () => `Marked ${marked.key} as a duplicate of ${original}\n${taskLines([marked])}`);
+  });
 
   withJson(
     program
@@ -1648,9 +2261,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const body = (explicitKey ? rest : args).join(" ").trim();
     if (!body) throw usageError("Nothing to say. Usage: spider comment [ST-12] \"text\"");
     const key = taskKey(explicitKey, cwd, git);
-    const { sdk, org } = conn();
+    const { sdk, org, actors } = conn();
     const comment = await (await sdk()).comments.create(await org(), key, { body });
-    output(opts, comment, () => `Commented on ${comment.taskKey}`);
+    output(opts, commentView(comment, await actors()), () => `Commented on ${comment.taskKey}`);
   });
 
   withJson(program.command("comments").description("show a task's comments").argument("[key]")).action(
@@ -1658,8 +2271,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const resolved = taskKey(key, cwd, git);
       const { sdk, org, actors } = conn();
       const [{ items }, rows] = await Promise.all([(await sdk()).comments.list(await org(), resolved), actors()]);
-      const handle = (id: string) => handleOf(rows, id);
-      output(opts, { items }, () =>
+      const handle = (id: string) => actorHandle(rows, id);
+      output(opts, { items: items.map((c) => commentView(c, rows)) }, () =>
         items.length === 0
           ? `No comments on ${resolved}`
           : items.map((c) => `@${handle(c.authorId)} · ${c.createdAt.slice(0, 16).replace("T", " ")}\n${c.body}`).join("\n\n"),
@@ -1670,7 +2283,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     program
       .command("inbox")
-      .description("your notifications: mentions, assignments, comments and replies, and changed project rules")
+      .description("your notifications: mentions, assignments, comments and replies, changed project rules, and comments on documents")
       .option("--all", "include items already read")
       .option("--wait <seconds>", "wait up to this long (max 25) for a new item")
       .option("--mark-read", "mark the listed items read"),
@@ -1687,7 +2300,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         ? "Inbox is empty"
         : items
             .map((i) => {
-              const about = i.task?.key ?? (i.document ? `${i.document.projectKey} "${i.document.title}" (${i.document.id})` : "");
+              const about =
+                i.task?.key ?? (i.document ? `${i.document.projectKey ?? "document"} "${i.document.title}" (${i.document.id})` : "");
               const head = `#${i.id} ${about} ${i.kind} by @${i.from.handle}${i.readAt ? "" : " (unread)"}`;
               return i.comment ? `${head}\n  ${i.comment.body.split("\n").join("\n  ")}` : head;
             })
@@ -1747,10 +2361,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const old = opts.rev === undefined ? undefined : await client.documents.versions.get(slug, id, parseLimit(opts.rev));
     const shown = old ?? { ...current, createdAt: current.updatedAt };
     const rows = await actors();
-    const handle = shown.authorId ? handleOf(rows, shown.authorId) : "?";
-    const item = old
-      ? { ...old, projectKey: current.projectKey, taskKey: current.taskKey, currentVersion: current.version, url: current.url }
-      : current;
+    const handle = shown.authorId ? actorHandle(rows, shown.authorId) : "?";
+    const item = old ? documentVersionView(current, old) : current;
     output(opts, item, () =>
       [
         `${shown.title}  (${documentScope(current)}, ${shown.format}, v${shown.version}${old ? ` of ${current.version}` : ""})`,
@@ -1774,12 +2386,46 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const from = parseVersion(opts.from);
     const to = opts.to === undefined ? undefined : parseVersion(opts.to);
     const diff = await (await sdk()).documents.diff(await org(), id, { from, to });
-    output(opts, diff, () => {
+    // DocumentDiffView: the API's diff plus its unified text, as MCP diff_document.
+    output(opts, documentDiffView(diff), () => {
       const label = (v: typeof diff.from) => `${v.title} (v${v.version})`;
       const text = formatUnifiedDiff(diff.hunks, label(diff.from), label(diff.to));
       if (text) return text;
       const renamed = diff.from.title !== diff.to.title ? ` (title: ${diff.from.title} → ${diff.to.title})` : "";
       return `No changes in content between version ${diff.from.version} and ${diff.to.version}${renamed}`;
+    });
+  });
+
+  withJson(
+    doc
+      .command("backlinks")
+      .description("list the documents linking to a document, or mentioning a task ([[ST-12]] or a plain ST-12)")
+      .argument("<id|task>", "a document id or a task key"),
+  ).action(async (target: string, opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const parsed = parseTaskKey(target.trim());
+    const { items } = parsed
+      ? await client.tasks.backlinks(await org(), `${parsed.projectKey}-${parsed.number}`)
+      : await client.documents.backlinks(await org(), target);
+    output(opts, { items }, () => (items.length ? documentLines(items) : "No documents link here"));
+  });
+
+  withJson(
+    doc
+      .command("graph")
+      .description("the documents you can see as a graph: documents, their tasks and projects, and every link (use --json)"),
+  ).action(async (opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const graph = await (await sdk()).documents.graph(await org());
+    output(opts, graph, () => {
+      const titles = new Map(graph.documents.map((d) => [d.id, d.title]));
+      const name = (to: (typeof graph.links)[number]["to"]) =>
+        to.type === "document" ? (titles.get(to.id) ?? to.id) : to.type === "task" ? to.key : `${to.title} (no such document)`;
+      return [
+        `${graph.documents.length} documents, ${graph.tasks.length} tasks, ${graph.projects.length} projects, ${graph.links.length} links`,
+        ...graph.links.map((l) => `${titles.get(l.from) ?? l.from} -> ${name(l.to)}`),
+      ].join("\n");
     });
   });
 
@@ -1852,9 +2498,18 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (opts.title !== undefined) input.title = opts.title;
     if (opts.format !== undefined) input.format = parseFormat(opts.format);
     const saved = await client.documents.update(slug, id, input);
-    output(opts, saved, () =>
-      saved.version === current.version ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
-    );
+    output(opts, saved, () => {
+      if (saved.version === current.version) return `No changes to ${saved.title}`;
+      const lines = [`Saved ${saved.title} as version ${saved.version}`];
+      // A rename rewrites [[Old title]] links in the documents linking here (ST-101).
+      const { rewritten = [], skipped = [] } = saved.relinked ?? {};
+      if (rewritten.length) lines.push(`Updated links in ${rewritten.map((d) => d.title).join(", ")}`);
+      for (const d of skipped) {
+        const why = d.reason === "rules" ? "project rules; only owners and admins can change them" : "it would pass 1 MB";
+        lines.push(`Left [[${current.title}]] in ${d.title} (${d.id}): ${why}`);
+      }
+      return lines.join("\n");
+    });
   });
 
   /**
@@ -1893,6 +2548,73 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
 
   withJson(
     doc
+      .command("comment")
+      .description("comment on a document (reviews belong here, not in task comments); @handle mentions notify people and agents")
+      .argument("<id>", "document id")
+      .argument("[text...]", "the comment (Markdown)")
+      .option("--file <path>", 'the comment from a file, or "-" for standard input')
+      .option("--quote <text>", "comment on this fragment of the document (text from its current version)")
+      .option("--reply-to <commentId>", "reply in the thread of this comment"),
+  ).action(async (id: string, words: string[], opts: JsonOption & { file?: string; quote?: string; replyTo?: string }) => {
+    if (words.length > 0 && opts.file !== undefined) throw usageError("Pass the comment as text or with --file, not both");
+    const body = (opts.file === undefined ? words.join(" ") : await readContent(opts.file)).trim();
+    if (!body) throw usageError('Nothing to say. Usage: spider doc comment <id> "text" [--quote "fragment"]');
+    if (opts.quote !== undefined && opts.replyTo !== undefined) throw usageError("A reply can't quote: it belongs to its thread's quote");
+    const { sdk, org, actors } = conn();
+    const comment = await (await sdk()).documents.comments.create(await org(), id, {
+      body,
+      quote: opts.quote ?? null,
+      parentId: opts.replyTo ?? null,
+    });
+    output(opts, documentCommentView(comment, await actors()), () => `Commented on document ${comment.documentId} (comment ${comment.id})`);
+  });
+
+  withJson(
+    doc
+      .command("comments")
+      .description("show a document's comments: threads, quoted fragments, outdated and resolved marks")
+      .argument("<id>", "document id"),
+  ).action(async (id: string, opts: JsonOption) => {
+    const { sdk, org, actors } = conn();
+    const [{ items }, rows] = await Promise.all([(await sdk()).documents.comments.list(await org(), id), actors()]);
+    const views = items.map((c) => documentCommentView(c, rows));
+    output(opts, { items: views }, () => {
+      if (views.length === 0) return `No comments on document ${id}`;
+      const indent = (text: string, by: string) => text.split("\n").map((line) => `${by}${line}`).join("\n");
+      const line = (c: (typeof views)[number], by: string) => {
+        const marks = [c.outdated ? "outdated" : null, c.resolvedAt ? `resolved by @${c.resolver ?? "?"}` : null].filter(Boolean);
+        const head = `${by}@${c.author} · ${c.createdAt.slice(0, 16).replace("T", " ")} · ${c.id}${marks.length ? ` (${marks.join(", ")})` : ""}`;
+        const quote = c.quote ? `\n${indent(c.quote, `${by}> `)}` : "";
+        return `${head}${quote}\n${indent(c.body, by)}`;
+      };
+      // Replies (at any depth) under their thread's first comment.
+      const byId = new Map(views.map((c) => [c.id, c]));
+      const rootOf = (c: (typeof views)[number]): string => {
+        const parent = c.parentId ? byId.get(c.parentId) : undefined;
+        return parent && parent.id !== c.id ? rootOf(parent) : c.id;
+      };
+      return views
+        .filter((c) => rootOf(c) === c.id)
+        .map((root) => [root, ...views.filter((c) => c !== root && rootOf(c) === root.id)].map((c) => line(c, c === root ? "" : "  ")).join("\n\n"))
+        .join("\n\n");
+    });
+  });
+
+  withJson(
+    doc
+      .command("resolve")
+      .description("mark a comment thread on a document resolved (or --reopen it)")
+      .argument("<id>", "document id")
+      .argument("<commentId>", "the thread's first comment")
+      .option("--reopen", "reopen a resolved thread"),
+  ).action(async (id: string, commentId: string, opts: JsonOption & { reopen?: boolean }) => {
+    const { sdk, org, actors } = conn();
+    const comment = await (await sdk()).documents.comments.resolve(await org(), id, commentId, !opts.reopen);
+    output(opts, documentCommentView(comment, await actors()), () => `${comment.resolvedAt ? "Resolved" : "Reopened"} comment ${comment.id}`);
+  });
+
+  withJson(
+    doc
       .command("move")
       .description("move a document to another project, or make it organization-wide; keeps its id and versions")
       .argument("<id>")
@@ -1905,6 +2627,71 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const { sdk, org } = conn();
     const moved = await (await sdk()).documents.move(await org(), id, { project: opts.org ? null : (opts.project ?? "").toUpperCase() });
     output(opts, moved, () => `Moved ${moved.title} to ${moved.projectKey ?? "the organization"}`);
+  });
+
+  withJson(
+    doc
+      .command("publish")
+      .description(
+        "create or update documents from a folder's .md files (and its sub-folders'), with links between them as tracker links",
+      )
+      .argument("<dir>", "the folder")
+      .option("--project <key>", "project for new documents whose front matter names no project or task")
+      .option("--dry-run", "show what would be created and updated; change nothing")
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Front matter (optional) maps a file to its document:",
+          "  ---",
+          "  title: Plan         # default: the file name without .md",
+          "  project: ST         # or task: ST-12; only for a new document (default: --project, else organization-wide)",
+          "  id: <document id>   # written by publish after creating the document",
+          "  version: 3          # written by publish: the version the file was last published as",
+          "  ---",
+          "",
+          "Links to files of the folder, [[Title]] (or [[file name]]) and relative [text](other.md#heading) links,",
+          "are published as [[doc:<id>]] links, which survive renames; the files keep them as written.",
+          "A document saved in the tracker since the file's version is reported as a conflict and not overwritten:",
+          "merge the change into the file, set its version and publish again. Exit code 1 if any file is a conflict or failed.",
+        ].join("\n"),
+      ),
+  ).action(async (dir: string, opts: JsonOption & { project?: string; dryRun?: boolean }) => {
+    const root = resolvePath(cwd, dir);
+    const isDir = await stat(root).then((s) => s.isDirectory(), () => false);
+    if (!isDir) throw usageError(`${dir} isn't a folder`);
+    const paths = (await readdir(root, { recursive: true }))
+      .map((p) => p.split("\\").join("/"))
+      // Hidden files and folders (.git, .obsidian) and node_modules aren't documents.
+      .filter((p) => /\.md$/i.test(p) && !p.split("/").some((part) => part.startsWith(".") || part === "node_modules"))
+      .sort();
+    const docs: SourceDoc[] = [];
+    for (const path of paths) {
+      const raw = await readFile(join(root, path), "utf8");
+      try {
+        docs.push(parseSourceDoc(path, raw));
+      } catch (err) {
+        throw usageError(err instanceof Error ? err.message : String(err));
+      }
+    }
+    const seen = new Map<string, string>();
+    for (const d of docs) {
+      if (!d.id) continue;
+      const other = seen.get(d.id);
+      if (other) throw usageError(`${other} and ${d.path} have the same id ${d.id}`);
+      seen.set(d.id, d.path);
+    }
+    const { sdk, org } = conn();
+    const response = await publishDocuments({
+      client: await sdk(),
+      org: await org(),
+      docs,
+      project: opts.project?.toUpperCase(),
+      dryRun: opts.dryRun === true,
+      save: (d, raw) => writeFile(join(root, d.path), raw, "utf8"),
+    });
+    output(opts, response, () => publishLines(response));
+    if (response.summary.conflict + response.summary.failed > 0) result.exitCode = EXIT.unexpected;
   });
 
   program
@@ -1935,15 +2722,28 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       await closed;
     });
 
-  return { program, result };
+  /**
+   * For "not found" and "forbidden": which saved agent acted, when it sees only some projects. A task
+   * in another project reads as missing, and the default agent is easy to use by mistake (ST-107).
+   */
+  const scopeHint = async (): Promise<string> => {
+    const entry = api ? (await api.credentials.catch(() => undefined))?.entry : undefined;
+    if (!api || !entry?.saved.projects) return "";
+    const { via } = await api.credentials;
+    return ` (acting as ${entry.ref}${via ? `, ${via}` : ""}, which sees only ${scopeOf(entry)}; pass --as <agent> to act as another)`;
+  };
+
+  return { program, result, scopeHint };
 }
 
 /** Runs the CLI with `argv` (arguments after the program name) and resolves to the exit code. */
 export async function run(argv: string[], options: RunOptions): Promise<number> {
   const json = argv.includes("--json");
   const fail = (err: CliError) => {
+    // Every failure says something, even when the cause had no message (ST-107).
+    const message = err.message.trim() || `Failed with ${err.code === "error" ? "an unknown error" : err.code} (exit code ${err.exitCode})`;
     options.stderr.write(
-      json ? `${JSON.stringify({ error: { code: err.code, message: err.message } })}\n` : `spider: ${err.message}\n`,
+      json ? `${JSON.stringify({ error: { code: err.code, message } })}\n` : `spider: ${message}\n`,
     );
     return err.exitCode;
   };
@@ -1959,10 +2759,11 @@ export async function run(argv: string[], options: RunOptions): Promise<number> 
 }
 
 async function runProgram(argv: string[], options: RunOptions, json: boolean, fail: (err: CliError) => number) {
+  let built: ReturnType<typeof buildProgram> | undefined;
   try {
-    const { program, result } = buildProgram(options, options.cwd ?? process.cwd(), argv, json);
-    await program.parseAsync(argv, { from: "user" });
-    return result.exitCode ?? EXIT.ok;
+    built = buildProgram(options, options.cwd ?? process.cwd(), argv, json);
+    await built.program.parseAsync(argv, { from: "user" });
+    return built.result.exitCode ?? EXIT.ok;
   } catch (err) {
     if (err instanceof CommanderError) {
       // Commander's exitCode is 0 for --help, --version and `help`, and non-zero for real usage
@@ -1972,7 +2773,10 @@ async function runProgram(argv: string[], options: RunOptions, json: boolean, fa
       return json ? fail(new CliError(EXIT.usage, err.message.replace(/^error: /, ""), "usage")) : EXIT.usage;
     }
     if (err instanceof CliError) return fail(err);
-    if (err instanceof SpiderApiError) return fail(fromApiError(err));
+    if (err instanceof SpiderApiError) {
+      const hint = err.status === 403 || err.status === 404 ? await built?.scopeHint().catch(() => "") : "";
+      return fail(fromApiError(err, hint));
+    }
     const message = err instanceof Error ? err.message : String(err);
     return fail(new CliError(EXIT.unexpected, message, "unexpected"));
   }

@@ -21,12 +21,14 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { apiDocsRoutes } from "./api-docs";
 import { CLIENT_IP_HEADER, enabledAuthProviders, type Auth } from "./auth";
 import { toActorDto, toMembership } from "./dto";
-import type { Env } from "./env";
+import { githubAppConfig, type Env } from "./env";
+import { GithubUnavailableError, type GithubApp } from "./github";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
 import { clientIp, createRateLimiter } from "./rate-limit";
 import { deviceApprovalRoutes, deviceRoutes } from "./routes/device";
 import { createRealtime } from "./realtime";
+import { githubSetupRoutes, githubWebhookRoutes } from "./routes/github";
 import { orgRoutes } from "./routes/orgs";
 import type { AppEnv } from "./types";
 
@@ -48,7 +50,8 @@ function errorBody(code: string, message: string): ApiErrorBody {
   return { error: { code, message } };
 }
 
-export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
+/** `github`: the GitHub App port (ST-82); null or left out when the server has none configured. */
+export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth; env: Env; github?: GithubApp | null }) {
   const app = new Hono<AppEnv>();
   const realtime = createRealtime(db);
   const ipOf = (c: Context<AppEnv>) => clientIp(c.req.raw, env.TRUSTED_PROXY, c.env);
@@ -107,6 +110,11 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     if (ip !== "unknown") headers.set(CLIENT_IP_HEADER, ip);
     return auth.handler(new Request(c.req.raw, { headers }));
   });
+
+  // Where GitHub returns after installing the App; needs the browser session (ST-82).
+  app.route("/github", githubSetupRoutes(db, auth, github, env));
+  // GitHub's webhook (ST-83): no session or key, the signature is the credential.
+  app.route("/webhooks", githubWebhookRoutes(db, github, githubAppConfig(env)?.webhookSecret ?? null));
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
   app.route("/mcp", mcpRoutes(db, realtime, env.WEB_ORIGIN));
@@ -223,13 +231,20 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     return c.body(null, 204);
   });
 
-  app.route("/v1/orgs/:orgSlug", orgRoutes(db, realtime, env.WEB_ORIGIN));
+  app.route(
+    "/v1/orgs/:orgSlug",
+    orgRoutes(db, realtime, env.WEB_ORIGIN, { app: github, stateSecret: env.BETTER_AUTH_SECRET }),
+  );
 
   app.notFound((c) => c.json(errorBody("not_found", "Route not found"), 404));
 
   app.onError((err, c) => {
     if (err instanceof DomainError) {
       return c.json(errorBody(err.code, err.message), errorStatus[err.code]);
+    }
+    if (err instanceof GithubUnavailableError) {
+      console.error(err);
+      return c.json(errorBody("github_unavailable", "GitHub couldn't be reached or refused the request. Try again"), 502);
     }
     console.error(err);
     return c.json(errorBody("internal", "Something went wrong"), 500);

@@ -3,30 +3,43 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type {
   ActorContext,
+  ActorRef,
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectRulesDto,
+  ReleaseDto,
   StatusDto,
   TaskDto,
+  TaskKind,
 } from "@repo/core";
-import { matchStatuses } from "@repo/core/statuses";
+import { allStatuses, firstStatusOf, kindOf, matchStatuses, unknownStatusMessage, workflowOf } from "@repo/core/statuses";
 import {
   DomainError,
   MAX_BULK_TASKS,
   addComment,
+  addDocumentComment,
+  listDocumentComments,
+  resolveDocumentComment,
+  documentCommentView,
   archiveProject,
   authenticateApiKey,
   createDocument,
   diffDocumentVersions,
   editDocument,
-  formatUnifiedDiff,
+  documentDiffView,
   getDocument,
+  getDocumentGraph,
   getDocumentVersion,
+  listBacklinks,
   listDocuments,
+  listTaskBacklinks,
   moveDocument,
   updateDocument,
   createProject,
+  createStatus,
   createTask,
+  deleteStatus,
+  updateStatus,
   getProject,
   getProjectRules,
   getTask,
@@ -35,8 +48,17 @@ import {
   listMembers,
   listProjects,
   createTag,
+  attachRepo,
+  createApp,
+  createRepo,
+  detachRepo,
+  getRepo,
+  listRepos,
+  updateApp,
+  updateRepo,
   listComments,
   addRelation,
+  markDuplicate,
   listRelations,
   listSubtasks,
   removeRelation,
@@ -48,7 +70,23 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  addToRelease,
+  createRelease,
+  getRelease,
+  listReleaseCandidates,
+  listReleases,
+  removeFromRelease,
+  updateRelease,
+  releaseView,
+  actorHandle,
+  commentView,
+  documentVersionView,
+  relationView,
+  taskView,
   webUrls,
+  withDocumentUrl,
+  withProjectUrl,
+  withTaskUrl,
 } from "@repo/core";
 import type { Db, schema } from "@repo/db";
 import { Hono } from "hono";
@@ -58,8 +96,6 @@ import type { AppEnv } from "./types";
 
 type ActorRow = typeof schema.actors.$inferSelect;
 type Key = NonNullable<AppEnv["Variables"]["apiKey"]>;
-
-const PRIORITY_NAMES = ["none", "urgent", "high", "medium", "low"];
 
 const priority = z
   .number()
@@ -71,6 +107,18 @@ const tagsInput = z.array(z.string()).max(20).describe("Tag names (see list_tags
 /** A filter value, or several matched with OR (as repeated API query parameters). */
 const oneOrMany = z.union([z.string(), z.array(z.string()).max(50)]);
 const tagMatchSchema = z.enum(["all", "any"]);
+const dateInput = z.string().describe('A date as "YYYY-MM-DD"');
+const startDateInput = dateInput.nullable().describe('Start date, "YYYY-MM-DD"; null clears it');
+const targetDateInput = dateInput.nullable().describe('Target date, "YYYY-MM-DD", on or after the start date; null clears it');
+const overdueInput = z
+  .boolean()
+  .describe("true: only tasks past their target date (today = the server's UTC date) that aren't done or canceled");
+const noCodeInput = z
+  .boolean()
+  .describe("true: the task has no code to ship, so its Done needs no release (shipping state \"no code\"); false undoes it");
+const kindInput = z
+  .enum(["task", "release", "milestone"])
+  .describe("Task kind; each has its own workflow of statuses (see get_project workflows)");
 const assigneesInput = z
   .array(z.string())
   .max(20)
@@ -143,11 +191,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   const loadActors = () => (actorRows ??= listMembers(db, ctx.orgId, { includeDeactivated: true }));
   const loadMembers = async () => (await loadActors()).filter((m) => !m.deactivatedAt);
 
-  const handleOf = async (actorId: string) => {
-    const actor = (await loadActors()).find((m) => m.id === actorId);
-    if (!actor) return actorId;
-    return actor.deactivatedAt ? `${actor.handle} (deactivated)` : actor.handle;
-  };
+  const actorRefs = async (): Promise<ActorRef[]> =>
+    (await loadActors()).map((a) => ({ id: a.id, handle: a.handle, deactivated: a.deactivatedAt !== null }));
+  const handleOf = async (actorId: string) => actorHandle(await actorRefs(), actorId);
 
   const resolveAssignees = async (handles: string[]) => {
     const rows = await loadMembers();
@@ -165,15 +211,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     });
   };
 
-  const resolveStatus = (project: ProjectDetailDto, name: string): StatusDto => {
-    // A category ("in_progress") picks its first status in board order, like the CLI.
-    const status = matchStatuses(project, name)[0];
-    if (!status) {
-      throw new DomainError(
-        "validation",
-        `Unknown status "${name}" in ${project.key}. Valid statuses: ${project.statuses.map((s) => s.name).join(", ")}`,
-      );
-    }
+  /** A status of the workflow of `kind` (ST-90); a category ("in_progress") picks its first status in board order, like the CLI. */
+  const resolveStatus = (project: ProjectDetailDto, name: string, kind: TaskKind = "task"): StatusDto => {
+    const status = workflowOf(project, kind).find((s) => s.id === name) ?? matchStatuses(project, name, kind)[0];
+    if (!status) throw new DomainError("validation", unknownStatusMessage(project, name, kind));
     return status;
   };
 
@@ -190,54 +231,25 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       return tag.id;
     });
   };
-  const tagNames = async (ids: string[]) => {
-    const rows = await listTags(db, ctx.orgId);
-    return ids.map((id) => rows.find((t) => t.id === id)?.name ?? id);
-  };
+  let tagRows: ReturnType<typeof listTags> | undefined;
+  const loadTags = () => (tagRows ??= listTags(db, ctx.orgId));
 
   const projectOfTask = (taskKey: string) => getProject(db, ctx, taskKey.split("-")[0] ?? "");
 
-  /** A task as the model sees it: names and handles instead of ids. */
-  const describeTask = async (task: TaskDto, project: ProjectDetailDto, detail = false) => ({
-    key: task.key,
-    title: task.title,
-    status: project.statuses.find((s) => s.id === task.statusId)?.name ?? task.statusId,
-    priority: PRIORITY_NAMES[task.priority],
-    assignees: await Promise.all(task.assigneeIds.map(handleOf)),
-    tags: await tagNames(task.tagIds),
-    parent: task.parentKey,
-    url: urls.task(task.key),
-    ...(detail
-      ? {
-          description: task.description,
-          creator: await handleOf(task.creatorId),
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-          completedAt: task.completedAt,
-        }
-      : {}),
-  });
+  // Output shapes are the API DTOs, as the CLI prints them with --json (ST-107; see @repo/core/views).
 
-  const describeProject = (project: ProjectDetailDto) => ({
-    key: project.key,
-    name: project.name,
-    description: project.description,
-    archived: project.archivedAt !== null,
-    statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
-    rulesDocumentId: project.rulesDocumentId,
-    url: urls.project(project.key),
-  });
+  /** A task with its status, assignee handles and tag names (TaskView). */
+  const describeTask = async (task: TaskDto, project: ProjectDetailDto) => {
+    const [actors, tags] = await Promise.all([actorRefs(), task.tagIds.length ? loadTags() : []]);
+    return withTaskUrl(urls, taskView(task, { statuses: allStatuses(project), actors, tags }));
+  };
 
-  /** A project's rules as the model sees them. */
-  const describeRules = (r: ProjectRulesDto) => ({
-    project: r.projectKey,
-    documentId: r.documentId,
-    title: r.title,
-    version: r.version,
-    updatedAt: r.updatedAt,
-    content: r.content,
-    url: urls.document(r.documentId),
-  });
+  const describeProject = <T extends { key: string }>(project: T) => withProjectUrl(urls, project);
+
+  const describeDocument = <T extends DocumentSummaryDto>(d: T) => withDocumentUrl(urls, d);
+
+  /** A project's rules: ProjectRulesDto with the document's web address, as `spider project view --json`. */
+  const describeRules = (r: ProjectRulesDto) => ({ ...r, url: urls.document(r.documentId) });
 
   const server = new McpServer({ name: "spider-tracker", version: "0.1.0" }, instructions ? { instructions } : undefined);
 
@@ -261,12 +273,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     { description: "List the organization's projects (key, name, description).", inputSchema: {} },
     () =>
       run(async () =>
-        (await listProjects(db, ctx)).map((p) => ({
-          key: p.key,
-          name: p.name,
-          description: p.description,
-          url: urls.project(p.key),
-        })),
+        ({ items: (await listProjects(db, ctx)).map(describeProject) }),
       ),
   );
 
@@ -274,7 +281,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_project",
     {
       description:
-        "Get a project, its rules for agents (follow them), its workflow statuses (in board order, with their categories) and its documents (read them with get_document).",
+        "Get a project, its rules for agents (follow them), its workflows (`workflows`: the statuses of each task kind, task, release and milestone, in board order with their categories; `statuses` is the task workflow) and its documents (read them with get_document).",
       inputSchema: { projectKey: z.string().describe('Project key, e.g. "ST"') },
     },
     ({ projectKey }) =>
@@ -284,11 +291,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           listDocuments(db, ctx, { project: project.key }),
           getProjectRules(db, ctx, project.key),
         ]);
-        return {
-          ...describeProject(project),
-          rules: rules ? describeRules(rules) : null,
-          documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey, url: urls.document(d.id) })),
-        };
+        return { ...describeProject(project), rules: rules ? describeRules(rules) : null, documents: documents.map(describeDocument) };
       }),
   );
 
@@ -299,7 +302,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "create_project",
     {
       description:
-        "Create a project with the default statuses (Backlog, Todo, In Progress, In Review, Done, Canceled). Owners, admins and their agents only.",
+        "Create a project with the default workflows: task (Backlog, Todo, In Progress, In Review, Done, Canceled), release (Planned, On staging, Release review, Released, Canceled) and milestone (Planned, Active, Ready to close, Done). Owners, admins and their agents only.",
       inputSchema: {
         key: z
           .string()
@@ -345,13 +348,318 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ projectKey, undo }) => run(async () => describeProject(await archiveProject(db, ctx, projectKey, !undo))),
   );
 
+  // Workflow editing (ST-90). Statuses are named by id or name within one kind's workflow.
+  const statusRef = z.string().describe("Status name or id");
+  const colorInput = z.string().describe("Hex colour like #22c55e");
+  const positionInput = z.number().int().min(0).describe("Place in the workflow, from 0; past the end means last");
+  const findStatus = async (projectKey: string, kind: TaskKind, ref: string) => {
+    const project = await getProject(db, ctx, projectKey);
+    const statuses = workflowOf(project, kind);
+    const status = statuses.find((s) => s.id === ref) ?? statuses.find((s) => s.name.toLowerCase() === ref.trim().toLowerCase());
+    if (!status) throw new DomainError("validation", unknownStatusMessage(project, ref, kind));
+    return { project, status };
+  };
+
+  server.registerTool(
+    "create_status",
+    {
+      description:
+        "Add a status to a project's workflow for one task kind (default task), at the end or at position. Its category (backlog, todo, in_progress, in_review, done, canceled) can't change later. Owners, admins and their agents only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional(),
+        name: z.string().describe("Up to 40 characters, unique in the workflow"),
+        category: z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]),
+        color: colorInput.optional(),
+        position: positionInput.optional(),
+      },
+    },
+    ({ projectKey, kind, name, category, color, position }) =>
+      run(async () => describeProject(await createStatus(db, ctx, projectKey, { kind, name, category, color, position }))),
+  );
+
+  server.registerTool(
+    "update_status",
+    {
+      description:
+        "Rename, recolor or move a status within its workflow (kind default task). Owners, admins and their agents only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional(),
+        status: statusRef,
+        name: z.string().optional().describe("New name"),
+        color: colorInput.nullable().optional().describe("Hex colour like #22c55e; null clears it"),
+        position: positionInput.optional(),
+      },
+    },
+    ({ projectKey, kind, status: ref, name, color, position }) =>
+      run(async () => {
+        const { project, status } = await findStatus(projectKey, kind ?? "task", ref);
+        return describeProject(await updateStatus(db, ctx, project.key, status.id, { name, color, position }));
+      }),
+  );
+
+  server.registerTool(
+    "delete_status",
+    {
+      description:
+        "Delete a status from its workflow (kind default task), first moving its tasks to another status of the same workflow. Every workflow keeps at least one open status and one done status. Owners, admins and their agents only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional(),
+        status: statusRef,
+        moveTo: statusRef.describe("Status (name or id) of the same workflow to move its tasks to"),
+      },
+    },
+    ({ projectKey, kind, status: ref, moveTo }) =>
+      run(async () => {
+        const { project, status } = await findStatus(projectKey, kind ?? "task", ref);
+        const target = await findStatus(project.key, kind ?? "task", moveTo);
+        const result = await deleteStatus(db, ctx, project.key, status.id, { moveTo: target.status.id });
+        // DeleteStatusResponse, as `spider project status delete --json`.
+        return { ...result, project: describeProject(result.project) };
+      }),
+  );
+
+  // Repos and apps (ST-92): RepoDto and AppDto as the API returns them, as `spider repo … --json` prints them.
+  const repoInput = z.string().describe('The repo: "owner/name" (e.g. "pipisasa/spider-tracker") or its GitHub URL');
+  const repoPathInput = z.string().describe('A folder in the repo, e.g. "web/app" ("." for the whole repo)');
+  const appInput = {
+    sharedPaths: z.array(z.string()).max(20).optional().describe('Shared packages the app depends on, e.g. ["packages/core"]'),
+    versioning: z.enum(["date", "semver"]).optional().describe('"date" (2026.10.12) or "semver" (1.4.0)'),
+    environments: z
+      .array(z.string())
+      .max(10)
+      .optional()
+      .describe('Deploy order, e.g. ["staging", "prod"]; [] when a release is the only deploy (a CLI)'),
+  };
+
+  server.registerTool(
+    "list_repos",
+    {
+      description: "List the organization's git repos with their apps (path, versioning, environments) and the projects they're attached to.",
+      inputSchema: { project: z.string().optional().describe('Only the repos attached to this project key, e.g. "ST"') },
+    },
+    ({ project }) => run(async () => ({ items: await listRepos(db, ctx, { project }) })),
+  );
+
+  server.registerTool(
+    "get_repo",
+    { description: "Get a repo with its apps and projects.", inputSchema: { repo: repoInput } },
+    ({ repo }) => run(async () => getRepo(db, ctx, repo)),
+  );
+
+  server.registerTool(
+    "add_repo",
+    {
+      description:
+        "Add a git repo by its GitHub remote URL (https or ssh) or owner/name, optionally attached to projects. Owners, admins and their agents only.",
+      inputSchema: {
+        url: z.string().describe('"https://github.com/owner/name.git", "git@github.com:owner/name.git" or "owner/name"'),
+        defaultBranch: z.string().optional().describe('Default "main"'),
+        projects: z.array(z.string()).max(50).optional().describe("Project keys to attach it to"),
+      },
+    },
+    ({ url, defaultBranch, projects }) => run(async () => createRepo(db, ctx, { url, defaultBranch, projects })),
+  );
+
+  server.registerTool(
+    "update_repo",
+    {
+      description: "Change a repo's remote (after a rename on GitHub) or default branch. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        url: z.string().optional().describe("The new remote URL or owner/name"),
+        defaultBranch: z.string().optional(),
+      },
+    },
+    ({ repo, url, defaultBranch }) => run(async () => updateRepo(db, ctx, repo, { url, defaultBranch })),
+  );
+
+  server.registerTool(
+    "attach_repo",
+    {
+      description:
+        "Attach a repo to a project (detach: true removes it). Doing it twice changes nothing. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        detach: z.boolean().optional().describe("Detach the repo from the project instead"),
+      },
+    },
+    ({ repo, projectKey, detach }) =>
+      run(async () => (detach ? detachRepo(db, ctx, projectKey, repo) : attachRepo(db, ctx, projectKey, { repo }))),
+  );
+
+  server.registerTool(
+    "add_app",
+    {
+      description:
+        "Add an app (a deployable part, e.g. web, api, cli) to a repo: its folder, the shared packages it depends on, versioning (default semver) and environments in deploy order. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        name: z.string().describe('Lower-case, e.g. "web"'),
+        path: repoPathInput,
+        ...appInput,
+      },
+    },
+    ({ repo, ...input }) => run(async () => createApp(db, ctx, repo, input)),
+  );
+
+  server.registerTool(
+    "update_app",
+    {
+      description: "Rename an app or change its folder, shared packages, versioning or environments. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        app: z.string().describe('The app\'s current name, e.g. "web"'),
+        name: z.string().optional().describe("A new name"),
+        path: repoPathInput.optional(),
+        ...appInput,
+      },
+    },
+    ({ repo, app, ...input }) => run(async () => updateApp(db, ctx, repo, app, input)),
+  );
+
+  // Releases (ST-93): ReleaseView, as `spider release … --json` prints it.
+  const describeRelease = async (release: ReleaseDto) => {
+    const [actors, tags] = await Promise.all([actorRefs(), release.tagIds.length ? loadTags() : []]);
+    const view = releaseView(release, { actors, tags });
+    return withTaskUrl(urls, { ...view, tasks: view.tasks.map((t) => withTaskUrl(urls, t)) });
+  };
+  const releaseKeyInput = z.string().describe('The release\'s task key, e.g. "ST-120"');
+  const releaseAppsInput = z
+    .array(
+      z.object({
+        repo: z.string().describe('The app\'s repo, "owner/name"'),
+        app: z.string().describe('The app\'s name, e.g. "web"'),
+        version: z.string().describe('In the app\'s versioning: "2026.10.13" (date) or "0.1.8" (semver)'),
+      }),
+    )
+    .max(50);
+  const releaseReposInput = z
+    .array(z.string())
+    .max(20)
+    .describe('Repos ("owner/name") it ships from, attached to a project you can see (it may be another project)');
+  const taskKeysInput = z.array(z.string()).min(1).max(MAX_BULK_TASKS).describe('Task keys, e.g. ["ST-2", "OPS-7"]');
+
+  server.registerTool(
+    "list_releases",
+    {
+      description:
+        "List a project's releases (tasks of kind release) in board order, with their status, repos, apps and versions, and the Done tasks they include.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        status: oneOrMany.optional().describe("Status id, name or category of the release workflow; an array matches any"),
+        app: z.string().optional().describe('Only releases shipping this app, e.g. "web"'),
+      },
+    },
+    ({ projectKey, status, app }) =>
+      run(async () => ({
+        items: await Promise.all(
+          (await listReleases(db, ctx, projectKey, { status: status === undefined ? undefined : [status].flat(), app })).map(describeRelease),
+        ),
+      })),
+  );
+
+  server.registerTool(
+    "get_release",
+    { description: "Get a release with its status, repos, apps and versions, and included tasks.", inputSchema: { key: releaseKeyInput } },
+    ({ key: releaseKey }) => run(async () => describeRelease(await getRelease(db, ctx, releaseKey))),
+  );
+
+  server.registerTool(
+    "create_release",
+    {
+      description:
+        "Create a release in a project: a task of kind release (the title is usually the version, e.g. 2026.10.13) in its first Planned status unless you pass one. It links repos and apps with a version each, and can include Done tasks from any project. Done means finished; a task ships when its release is moved to Released (update_task).",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        title: z.string().describe('The release\'s name, usually its version, e.g. "2026.10.13"'),
+        description: z.string().optional().describe("Markdown, e.g. release notes"),
+        status: z.string().optional().describe("Status name of the release workflow; see get_project"),
+        assignees: assigneesInput.optional().describe("The release owner(s)"),
+        targetDate: dateInput.optional().describe('Target date, "YYYY-MM-DD"'),
+        repos: releaseReposInput.optional(),
+        apps: releaseAppsInput.optional().describe("The apps it ships, with a version each; their repos are linked too"),
+        tasks: taskKeysInput.optional().describe("Done tasks to include (see list_release_candidates)"),
+      },
+    },
+    ({ projectKey, title, description, status, assignees, targetDate, repos, apps, tasks }) =>
+      run(async () => {
+        const project = await getProject(db, ctx, projectKey);
+        const release = await createRelease(db, ctx, project.key, {
+          title,
+          description,
+          statusId: status ? resolveStatus(project, status, "release").id : undefined,
+          assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
+          targetDate,
+          repos,
+          apps,
+          tasks,
+        });
+        return describeRelease(release);
+      }),
+  );
+
+  server.registerTool(
+    "update_release",
+    {
+      description:
+        "Replace a release's repos or apps (with their versions). To change its status (Planned, On staging, Release review, Released), title or owner use update_task; Released marks its tasks shipped.",
+      inputSchema: {
+        key: releaseKeyInput,
+        repos: releaseReposInput.optional().describe("Replaces the linked repos (apps' repos stay linked)"),
+        apps: releaseAppsInput.optional().describe("Replaces the apps and versions"),
+      },
+    },
+    ({ key: releaseKey, repos, apps }) => run(async () => describeRelease(await updateRelease(db, ctx, releaseKey, { repos, apps }))),
+  );
+
+  server.registerTool(
+    "add_to_release",
+    {
+      description:
+        "Add Done tasks (from any project you can see) to a release that isn't Released or Canceled. A task ships in one release: one already in another is refused. All or nothing.",
+      inputSchema: { key: releaseKeyInput, tasks: taskKeysInput },
+    },
+    ({ key: releaseKey, tasks }) => run(async () => describeRelease(await addToRelease(db, ctx, releaseKey, { tasks }))),
+  );
+
+  server.registerTool(
+    "remove_from_release",
+    {
+      description: "Take tasks out of a release that hasn't shipped; they become candidates again. All or nothing.",
+      inputSchema: { key: releaseKeyInput, tasks: taskKeysInput },
+    },
+    ({ key: releaseKey, tasks }) => run(async () => describeRelease(await removeFromRelease(db, ctx, releaseKey, { tasks }))),
+  );
+
+  server.registerTool(
+    "list_release_candidates",
+    {
+      description:
+        "List Done tasks with code that are in no release and haven't shipped, most recently finished first (at most 200). Tasks marked noCode (update_task) never need a release.",
+      inputSchema: {
+        projectKey: z.string().optional().describe("Only this project's tasks"),
+        release: z.string().optional().describe('For this release, e.g. "ST-120"'),
+      },
+    },
+    ({ projectKey, release }) =>
+      run(async () => {
+        const tasks = await listReleaseCandidates(db, ctx, { project: projectKey, release });
+        return { items: await Promise.all(tasks.map(async (t) => describeTask(t, await projectOfTask(t.key)))) };
+      }),
+  );
+
   server.registerTool(
     "list_tasks",
     {
       description:
-        "List tasks in a project, in board order. Filter by status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority and title text; status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
+        "List tasks in a project, in board order. Filter by kind, status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority, title text and overdue (target date passed, not done or canceled); status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
+        kind: kindInput.optional().describe("Only tasks of this kind; status names then match its workflow only (without it, every workflow)"),
         status: oneOrMany.optional().describe('Status id, name ("In Progress") or category ("in_progress"); an array matches any'),
         assignee: oneOrMany
           .optional()
@@ -362,24 +670,27 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         tagMatch: tagMatchSchema.optional().describe('"all" (default): every tag; "any": at least one'),
         priority: z.array(priority).max(5).optional().describe("Any of these priorities: 0 none, 1 urgent, 2 high, 3 medium, 4 low"),
         query: z.string().optional().describe("Case-insensitive text to find in titles"),
+        overdue: overdueInput.optional(),
         limit: z.number().int().min(1).max(200).optional().describe("Maximum tasks to return (default 50)"),
       },
     },
-    ({ projectKey, status, assignee, tags, tagMatch, priority: priorities, query, limit }) =>
+    ({ projectKey, kind, status, assignee, tags, tagMatch, priority: priorities, query, overdue, limit }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const tasks = await listTasks(db, ctx, project.key, {
+          kind,
           status: status === undefined ? undefined : [status].flat(),
           assignee: assignee === undefined ? undefined : [assignee].flat(),
           tags,
           tagMatch,
           priority: priorities,
           q: query,
+          overdue,
         });
         const shown = tasks.slice(0, limit ?? 50);
         return {
+          items: await Promise.all(shown.map((t) => describeTask(t, project))),
           total: tasks.length,
-          tasks: await Promise.all(shown.map((t) => describeTask(t, project))),
         };
       }),
   );
@@ -388,7 +699,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_task",
     {
       description:
-        "Get a task by key, with its description, status name, assignee handles, parent, sub-tasks, links and documents.",
+        "Get a task by key, with its description, status name, assignee handles, parent, sub-tasks, links and documents. Done means finished, not shipped: `shipping` says where a Done task's code is (not_in_release, in_release, shipped, no_code) and in which release.",
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) =>
@@ -400,16 +711,12 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           listRelations(db, ctx, task.key),
           listDocuments(db, ctx, { task: task.key }),
         ]);
+        // TaskDetailView, as `spider task view --json`.
         return {
-          relations: relations.map((r) => ({ kind: r.kind, task: r.task.key, title: r.task.title })),
-          documents: documents.map((d) => ({ id: d.id, title: d.title, url: urls.document(d.id) })),
-          ...(await describeTask(task, await projectOfTask(task.key), true)),
-          subtasks: await Promise.all(
-            subtasks.map(async (t) => {
-              const { key, title, status } = await describeTask(t, await projectOfTask(t.key));
-              return { key, title, status };
-            }),
-          ),
+          ...(await describeTask(task, await projectOfTask(task.key))),
+          subtasks: await Promise.all(subtasks.map(async (t) => describeTask(t, await projectOfTask(t.key)))),
+          relations: relations.map(relationView),
+          documents: documents.map(describeDocument),
         };
       }),
   );
@@ -427,9 +734,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
         parent: z.string().optional().describe('Parent task key, e.g. "ST-3", to create a sub-task'),
+        startDate: dateInput.optional().describe('Start date, "YYYY-MM-DD"'),
+        targetDate: dateInput.optional().describe('Target date, "YYYY-MM-DD", on or after the start date'),
       },
     },
-    ({ projectKey, title, description, status, priority, assignees, tags, parent }) =>
+    ({ projectKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const task = await createTask(db, ctx, project.key, {
@@ -440,8 +749,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent ? (await getTask(db, ctx, parent)).id : undefined,
+          startDate,
+          targetDate,
         });
-        return describeTask(task, project, true);
+        return describeTask(task, project);
       }),
   );
 
@@ -453,26 +764,34 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         key: z.string().describe('Task key, e.g. "ST-12"'),
         title: z.string().optional(),
         description: z.string().nullable().optional().describe("Markdown; null clears it"),
-        status: z.string().optional().describe("Status name; see get_project"),
+        status: z.string().optional().describe("Status name or category, in the workflow of the task's kind; see get_project"),
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
         parent: z.string().nullable().optional().describe('Parent task key; null makes it a top-level task'),
+        startDate: startDateInput.optional(),
+        targetDate: targetDateInput.optional(),
+        noCode: noCodeInput.optional(),
       },
     },
-    ({ key: taskKey, title, description, status, priority, assignees, tags, parent }) =>
+    ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate, noCode }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
+        // A status is matched in the workflow of the task's kind.
+        const kind = status ? kindOf(await getTask(db, ctx, taskKey)) : "task";
         const task = await updateTask(db, ctx, taskKey, {
           title,
           description,
           priority,
-          statusId: status ? resolveStatus(project, status).id : undefined,
+          statusId: status ? resolveStatus(project, status, kind).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
+          startDate,
+          targetDate,
+          noCode,
         });
-        return describeTask(task, project, true);
+        return describeTask(task, project);
       }),
   );
 
@@ -485,6 +804,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         filter: z
           .object({
             projectKey: z.string().describe('Project key, e.g. "ST"'),
+            kind: kindInput.optional().describe("Only tasks of this kind"),
             parent: z.string().optional().describe('Only direct sub-tasks of this task key, e.g. "ST-1"'),
             status: oneOrMany.optional().describe("Current status: id, name or category; an array matches any"),
             assignee: oneOrMany.optional().describe('"me", "mine", "none" or a handle; an array matches any'),
@@ -492,23 +812,28 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             tagMatch: tagMatchSchema.optional(),
             priority: z.array(priority).max(5).optional().describe("Any of these priorities"),
             query: z.string().optional().describe("Case-insensitive text to find in titles"),
+            overdue: overdueInput.optional(),
           })
           .optional()
           .describe(`Tasks to change, as in list_tasks; fails if more than ${MAX_BULK_TASKS} match`),
-        status: z.string().optional().describe("New status name or category, matched in each task's project; see get_project"),
+        status: z.string().optional().describe("New status name or category, matched in each task's project and kind's workflow; see get_project"),
         priority: priority.optional(),
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
         parent: z.string().nullable().optional().describe("New parent task key; null makes them top-level tasks"),
+        startDate: startDateInput.optional(),
+        targetDate: targetDateInput.optional(),
+        noCode: noCodeInput.optional(),
         dryRun: z.boolean().optional().describe("Report what would change without changing anything"),
       },
     },
-    ({ keys, filter, status, priority, assignees, tags, parent, dryRun }) =>
+    ({ keys, filter, status, priority, assignees, tags, parent, startDate, targetDate, noCode, dryRun }) =>
       run(async () => {
         const result = await updateTasks(db, ctx, {
           keys,
           filter: filter && {
             project: filter.projectKey,
+            kind: filter.kind,
             parent: filter.parent,
             status: filter.status === undefined ? undefined : [filter.status].flat(),
             assignee: filter.assignee === undefined ? undefined : [filter.assignee].flat(),
@@ -516,6 +841,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             tagMatch: filter.tagMatch,
             priority: filter.priority,
             q: filter.query,
+            overdue: filter.overdue,
           },
           set: {
             status,
@@ -523,6 +849,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
             tagIds: tags ? await resolveTags(tags) : undefined,
             parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
+            startDate,
+            targetDate,
+            noCode,
           },
           dryRun,
         });
@@ -537,14 +866,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           return project;
         };
         return {
-          dryRun: result.dryRun,
-          summary: result.summary,
+          ...result,
           results: await Promise.all(
-            result.results.map(async ({ key: taskKey, outcome, task, error }) =>
-              task
-                ? { outcome, ...(await describeTask(task, await projectOf(task.key))) }
-                : { key: taskKey, outcome, error: error?.message },
-            ),
+            result.results.map(async (r) => ({ ...r, task: r.task && (await describeTask(r.task, await projectOf(r.task.key))) })),
           ),
         };
       }),
@@ -556,8 +880,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     const current = await getTask(db, ctx, taskKey);
     let statusId: string | undefined;
     if (moveToInProgress) {
-      const status = project.statuses.find((s) => s.category === "in_progress");
-      if (!status) throw new DomainError("validation", `${project.key} has no in-progress status`);
+      const kind = kindOf(current);
+      const status = firstStatusOf(project, "in_progress", kind);
+      if (!status) throw new DomainError("validation", `${project.key}${kind === "task" ? "" : `'s ${kind} workflow`} has no in-progress status`);
       statusId = status.id;
     }
     const assigneeIds = current.assigneeIds.includes(ctx.actorId)
@@ -565,7 +890,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       : [...current.assigneeIds, ctx.actorId];
     const task = await updateTask(db, ctx, current.key, { assigneeIds, statusId });
     await realtime.presence.touch(ctx, task.key);
-    return describeTask(task, project, true);
+    return describeTask(task, project);
   };
 
   server.registerTool(
@@ -580,7 +905,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   server.registerTool(
     "start_task",
     {
-      description: "Start working on a task: assign it to yourself and move it to the project's first in-progress status.",
+      description: "Start working on a task: assign it to yourself and move it to the first in-progress status of its workflow.",
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) => run(() => takeTask(taskKey, true)),
@@ -616,18 +941,23 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey, kind, task }) => run(async () => ((await removeRelation(db, ctx, taskKey, { kind, task })), { removed: true })),
   );
 
-  /** A document as the model sees it: scope keys and the author's handle. */
-  const describeDocument = async (d: DocumentSummaryDto) => ({
-    id: d.id,
-    title: d.title,
-    format: d.format,
-    project: d.projectKey,
-    task: d.taskKey,
-    version: d.version,
-    updatedBy: await handleOf(d.authorId),
-    updatedAt: d.updatedAt,
-    url: urls.document(d.id),
-  });
+  server.registerTool(
+    "mark_duplicate",
+    {
+      description:
+        "Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment \"Duplicate of KEY\". Calling it again changes nothing; a task can't duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).",
+      inputSchema: {
+        key: z.string().describe('The duplicate, e.g. "ST-12"'),
+        of: z.string().describe('The original task, e.g. "ST-9"'),
+        comment: z.string().optional().describe("Markdown added below the automatic comment"),
+      },
+    },
+    ({ key: taskKey, of, comment }) =>
+      run(async () => {
+        const task = await markDuplicate(db, ctx, taskKey, { of, comment });
+        return describeTask(task, await projectOfTask(task.key));
+      }),
+  );
 
   server.registerTool(
     "list_documents",
@@ -640,7 +970,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       },
     },
     ({ project, task }) =>
-      run(async () => Promise.all((await listDocuments(db, ctx, { project, task })).map(describeDocument))),
+      run(async () => ({ items: (await listDocuments(db, ctx, { project, task })).map(describeDocument) })),
   );
 
   server.registerTool(
@@ -656,21 +986,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ id, version }) =>
       run(async () => {
         const document = await getDocument(db, ctx, id);
-        if (version === undefined || version === document.version) {
-          return { ...(await describeDocument(document)), content: document.content };
-        }
-        const old = await getDocumentVersion(db, ctx, id, version);
-        return {
-          id: document.id,
-          title: old.title,
-          format: old.format,
-          version: old.version,
-          currentVersion: document.version,
-          savedBy: old.authorId ? await handleOf(old.authorId) : null,
-          savedAt: old.createdAt,
-          url: urls.document(document.id),
-          content: old.content,
-        };
+        if (version === undefined || version === document.version) return describeDocument(document);
+        return documentVersionView(describeDocument(document), await getDocumentVersion(db, ctx, id, version));
       }),
   );
 
@@ -687,22 +1004,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     },
     ({ id, from, to }) =>
       run(async () => {
-        const diff = await diffDocumentVersions(db, ctx, id, { from, to });
-        const side = async (v: typeof diff.from) => ({
-          version: v.version,
-          title: v.title,
-          format: v.format,
-          savedBy: v.authorId ? await handleOf(v.authorId) : null,
-          savedAt: v.createdAt,
-        });
-        return {
-          id: diff.documentId,
-          from: await side(diff.from),
-          to: await side(diff.to),
-          added: diff.added,
-          removed: diff.removed,
-          diff: formatUnifiedDiff(diff.hunks, `v${diff.from.version}`, `v${diff.to.version}`),
-        };
+        // DocumentDiffView, as `spider doc diff --json`.
+        return documentDiffView(await diffDocumentVersions(db, ctx, id, { from, to }));
       }),
   );
 
@@ -727,10 +1030,49 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   );
 
   server.registerTool(
+    "list_backlinks",
+    {
+      description:
+        "Follow the knowledge base backwards: the documents linking to a document ([[its title]] or [[doc:<id>]]), or mentioning a task ([[ST-12]] or a plain ST-12; not the task's own documents). Most recently updated first. Pass id or task.",
+      inputSchema: {
+        id: z.string().optional().describe("Document id"),
+        task: z.string().optional().describe('Task key, e.g. "ST-12"'),
+      },
+    },
+    ({ id, task }) =>
+      run(async () => {
+        if (!id === !task) throw new DomainError("validation", "Pass either id (a document) or task (a task key)");
+        const documents = task ? await listTaskBacklinks(db, ctx, task) : await listBacklinks(db, ctx, id ?? "");
+        // { items } of document summaries, as `spider doc backlinks --json`.
+        return { items: documents.map(describeDocument) };
+      }),
+  );
+
+  server.registerTool(
+    "get_document_graph",
+    {
+      description:
+        "The documents you can see as a graph: documents, the tasks and projects they sit in or link to, and every link (from a document to a document, a task, or a title no document has yet: unresolved). A task document belongs to its task, a task to its project.",
+      inputSchema: {},
+    },
+    () =>
+      run(async () => {
+        // DocumentGraphDto with urls, as GET …/documents/graph and `spider doc graph --json`.
+        const graph = await getDocumentGraph(db, ctx);
+        return {
+          ...graph,
+          documents: graph.documents.map(describeDocument),
+          tasks: graph.tasks.map((t) => withTaskUrl(urls, t)),
+          projects: graph.projects.map(describeProject),
+        };
+      }),
+  );
+
+  server.registerTool(
     "update_document",
     {
       description:
-        "Save a new version of a document. Only the fields you pass change; content replaces the whole text (to change part of it, use edit_document). Fails if someone saved since baseVersion: read it again with get_document and reapply your edit.",
+        "Save a new version of a document. Only the fields you pass change; content replaces the whole text (to change part of it, use edit_document). Fails if someone saved since baseVersion: read it again with get_document and reapply your edit. A new title rewrites [[Old title]] links in the documents you can edit that link here (relinked lists them, and any skipped).",
       inputSchema: {
         id: z.string().describe("Document id"),
         baseVersion: z.number().int().positive().describe("The version you read (from get_document)"),
@@ -740,7 +1082,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       },
     },
     ({ id, baseVersion, title, content, format }) =>
-      run(async () => describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }))),
+      run(async () => {
+        // UpdatedDocumentDto: the document, plus `relinked` when a new title rewrote links to it.
+        return describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }));
+      }),
   );
 
   server.registerTool(
@@ -799,15 +1144,60 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       run(async () => {
         const comments = await listComments(db, ctx, taskKey);
         await realtime.presence.touch(ctx, taskKey);
-        return Promise.all(
-          comments.map(async (c) => ({
-            id: c.id,
-            author: await handleOf(c.authorId),
-            body: c.body,
-            parentId: c.parentId,
-            createdAt: c.createdAt,
-          })),
-        );
+        const actors = await actorRefs();
+        return { items: comments.map((c) => commentView(c, actors)) };
+      }),
+  );
+
+  server.registerTool(
+    "list_document_comments",
+    {
+      description:
+        "Read the comments on a document, oldest first, with author handles. A comment with a quote is about that fragment of the text; outdated means the fragment has changed since. resolvedAt marks a resolved thread; replies have parentId.",
+      inputSchema: { id: z.string().describe("Document id") },
+    },
+    ({ id }) =>
+      run(async () => {
+        const comments = await listDocumentComments(db, ctx, id);
+        const actors = await actorRefs();
+        // { items } of DocumentCommentView, as `spider doc comments --json`.
+        return { items: comments.map((c) => documentCommentView(c, actors)) };
+      }),
+  );
+
+  server.registerTool(
+    "add_document_comment",
+    {
+      description:
+        "Comment on a document (Markdown): reviews and feedback on a document belong here, not in task comments. Pass quote (exact text from the current version) to comment on a fragment; set parent_id to reply in a thread. @handle mentions notify people and agents; the document's author and the thread are notified too. Agents may post at most 5 comments per document per minute.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        body: z.string().min(1).describe("Comment text (Markdown). Never include secrets"),
+        quote: z.string().optional().describe("The fragment of the document the comment is about (top-level comments only)"),
+        parent_id: z.string().optional().describe("Id of the comment you are replying to"),
+      },
+    },
+    ({ id, body, quote, parent_id }) =>
+      run(async () => {
+        const comment = await addDocumentComment(db, ctx, id, { body, quote: quote ?? null, parentId: parent_id ?? null });
+        return documentCommentView(comment, await actorRefs());
+      }),
+  );
+
+  server.registerTool(
+    "resolve_document_comment",
+    {
+      description: "Mark a document comment thread (its first comment) resolved, or reopen it with resolved: false.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        comment_id: z.string().describe("Id of the thread's first comment"),
+        resolved: z.boolean().optional().describe("Default true; false reopens the thread"),
+      },
+    },
+    ({ id, comment_id, resolved }) =>
+      run(async () => {
+        const comment = await resolveDocumentComment(db, ctx, id, comment_id, { resolved: resolved ?? true });
+        return documentCommentView(comment, await actorRefs());
       }),
   );
 
@@ -821,7 +1211,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
-        const statusName = (id: unknown) => project.statuses.find((s) => s.id === id)?.name ?? id;
+        const statusName = (id: unknown) => allStatuses(project).find((s) => s.id === id)?.name ?? id;
         const handles = async (ids: unknown) => (Array.isArray(ids) ? Promise.all(ids.map((id) => handleOf(String(id)))) : ids);
         return Promise.all(
           (await listTaskActivity(db, ctx, taskKey)).map(async (e) => {
@@ -857,7 +1247,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey, body, parent_id }) =>
       run(async () => {
         const comment = await addComment(db, ctx, taskKey, { body, parentId: parent_id ?? null });
-        return { id: comment.id, task: comment.taskKey, createdAt: comment.createdAt };
+        return commentView(comment, await actorRefs());
       }),
   );
 
@@ -865,7 +1255,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_inbox",
     {
       description:
-        "Your notifications: mentions, assignments, comments and replies on your tasks, and changed rules of your projects (kind \"rules\": read them with get_project), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
+        "Your notifications: mentions, assignments, comments and replies on your tasks, changed rules of your projects (kind \"rules\": read them with get_project), and comments on documents (kinds document_mention, document_reply, document_comment: read the thread with list_document_comments, answer with add_document_comment), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
       inputSchema: {
         unread_only: z.boolean().optional().describe("Only items not marked read (default true)"),
         after: z.number().int().nonnegative().optional().describe("Only items with a larger id"),
@@ -890,7 +1280,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           kind: i.kind,
           ...(i.task ? { task: i.task.key, title: i.task.title } : {}),
           ...(i.document
-            ? { project: i.document.projectKey, rulesDocument: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) } }
+            ? {
+                project: i.document.projectKey,
+                [i.kind === "rules" ? "rulesDocument" : "document"]: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) },
+              }
             : {}),
           from: i.from.handle,
           comment: i.comment ? { id: i.comment.id, body: i.comment.body } : null,

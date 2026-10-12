@@ -7,6 +7,8 @@ import type {
   BulkUpdateTasksResponse,
   ApiErrorBody,
   CommentDto,
+  DeleteStatusResponse,
+  DocumentCommentDto,
   AgentInviteDto,
   CreatedAgentInviteDto,
   CreatedApiKeyDto,
@@ -26,10 +28,15 @@ import type {
   Priority,
   ProjectDto,
   RelationDto,
+  ReleaseDto,
+  AppDto,
+  RepoDto,
   SavedViewDto,
   TagDto,
   SubtaskDto,
   TaskDto,
+  TaskKind,
+  UpdatedDocumentDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
 import type {
@@ -38,11 +45,18 @@ import type {
   CreateAgentInviteInput,
   CreateAgentInput,
   CreateCommentInput,
+  CreateDocumentCommentInput,
   CreateDocumentInput,
   CreateProjectInput,
   CreateSavedViewInput,
+  CreateStatusInput,
   CreateTagInput,
+  CreateAppInput,
+  CreateRepoInput,
+  UpdateAppInput,
+  UpdateRepoInput,
   CreateTaskInput,
+  MarkDuplicateInput,
   RelationInput,
   UpdateAgentInput,
   UpdateDocumentInput,
@@ -51,7 +65,10 @@ import type {
   MoveDocumentInput,
   UpdateProjectInput,
   UpdateSavedViewInput,
+  UpdateStatusInput,
   UpdateTaskInput,
+  CreateReleaseInput,
+  UpdateReleaseInput,
 } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
@@ -59,6 +76,8 @@ import type {
 
 /** Filters of `tasks.list` (see `taskListFilters` in @repo/core/schemas). */
 export interface TaskListQuery {
+  /** Only tasks of this kind (ST-90); status names then match its workflow only. */
+  kind?: TaskKind;
   /** Status ids, names or categories. */
   status?: string[];
   /** Actor ids or handles (deactivated ones too), "me", "mine" (the caller's person and their agents) or "none". */
@@ -72,6 +91,8 @@ export interface TaskListQuery {
   q?: string;
   /** Direct sub-tasks of this task key. */
   parent?: string;
+  /** Only tasks past their target date (the server's UTC today) that aren't done or canceled. */
+  overdue?: boolean;
 }
 
 /** What the client tells the API it is; recorded as the activity source. */
@@ -127,7 +148,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     });
     if (!res.ok) {
       const error = (await res.json().catch(() => null)) as ApiErrorBody | null;
-      throw new SpiderApiError(res.status, error?.error?.code ?? "unknown", error?.error?.message ?? res.statusText);
+      // HTTP/2 has no status text, and proxies answer with HTML: never an empty message.
+      throw new SpiderApiError(
+        res.status,
+        error?.error?.code ?? "unknown",
+        error?.error?.message || `${method} ${path} failed with HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`,
+      );
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
@@ -148,6 +174,8 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
 
   const org = (slug: string) => `/v1/orgs/${encodeURIComponent(slug)}`;
   const seg = encodeURIComponent;
+  /** "owner/name" as the two path segments /:owner/:name. */
+  const repoPath = (repo: string) => repo.trim().split("/").map(seg).join("/");
 
   return {
     /** The agent an API key acts as, and its organization. */
@@ -217,6 +245,19 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
       unarchive: (orgSlug: string, projectKey: string) =>
         request<ProjectDetailDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
+      /** Workflow editing (ST-90, owners, admins and their agents); each answers with the project's workflows. */
+      statuses: {
+        create: (orgSlug: string, projectKey: string, input: CreateStatusInput) =>
+          request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/statuses`, input),
+        update: (orgSlug: string, projectKey: string, statusId: string, input: UpdateStatusInput) =>
+          request<ProjectDetailDto>("PATCH", `${org(orgSlug)}/projects/${seg(projectKey)}/statuses/${seg(statusId)}`, input),
+        /** Moves the status's tasks to `moveTo` (a status of the same workflow), then deletes it. */
+        delete: (orgSlug: string, projectKey: string, statusId: string, { moveTo }: { moveTo: string }) =>
+          request<DeleteStatusResponse>(
+            "DELETE",
+            `${org(orgSlug)}/projects/${seg(projectKey)}/statuses/${seg(statusId)}?${new URLSearchParams({ moveTo })}`,
+          ),
+      },
     },
 
     views: {
@@ -237,6 +278,75 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       delete: (orgSlug: string, tagId: string) => request<void>("DELETE", `${org(orgSlug)}/tags/${seg(tagId)}`),
     },
 
+    /**
+     * Git repos and their apps (ST-92). A repo is named by "owner/name" (`create` also takes a
+     * remote URL). Everyone reads them; owners, admins and their agents manage them.
+     */
+    repos: {
+      /** By name; only those attached to `project` when given. */
+      list: (orgSlug: string, query: { project?: string } = {}) =>
+        request<ListResponse<RepoDto>>(
+          "GET",
+          `${org(orgSlug)}/repos${query.project ? `?${new URLSearchParams({ project: query.project })}` : ""}`,
+        ),
+      get: (orgSlug: string, repo: string) => request<RepoDto>("GET", `${org(orgSlug)}/repos/${repoPath(repo)}`),
+      /** Added by its remote URL (or "owner/name"); 409 if it exists. */
+      create: (orgSlug: string, input: CreateRepoInput) => request<RepoDto>("POST", `${org(orgSlug)}/repos`, input),
+      update: (orgSlug: string, repo: string, input: UpdateRepoInput) =>
+        request<RepoDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}`, input),
+      /** With its apps and project links. */
+      delete: (orgSlug: string, repo: string) => request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}`),
+      /** Attaching again changes nothing. */
+      attach: (orgSlug: string, projectKey: string, repo: string) =>
+        request<RepoDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/repos`, { repo }),
+      /** Detaching one that isn't attached changes nothing. */
+      detach: (orgSlug: string, projectKey: string, repo: string) =>
+        request<RepoDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/repos/${repoPath(repo)}`),
+      apps: {
+        create: (orgSlug: string, repo: string, input: CreateAppInput) =>
+          request<AppDto>("POST", `${org(orgSlug)}/repos/${repoPath(repo)}/apps`, input),
+        update: (orgSlug: string, repo: string, app: string, input: UpdateAppInput) =>
+          request<AppDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`, input),
+        delete: (orgSlug: string, repo: string, app: string) =>
+          request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`),
+      },
+    },
+
+    /**
+     * Releases (ST-93): tasks of kind "release" linking repos and apps (a version each) and
+     * including Done tasks of any project. Change a release's status with `tasks.update`;
+     * Released ships its tasks.
+     */
+    releases: {
+      /** In board order; `status` (ids, names or categories) and `app` (a name) narrow it. */
+      list: (orgSlug: string, projectKey: string, query: { status?: string[]; app?: string } = {}) => {
+        const params = new URLSearchParams();
+        for (const value of query.status ?? []) params.append("status", value);
+        if (query.app) params.set("app", query.app);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<ReleaseDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/releases${qs}`);
+      },
+      get: (orgSlug: string, releaseKey: string) => request<ReleaseDto>("GET", `${org(orgSlug)}/releases/${seg(releaseKey)}`),
+      create: (orgSlug: string, projectKey: string, input: CreateReleaseInput) =>
+        request<ReleaseDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/releases`, input),
+      /** Replaces its repos or apps (with versions). */
+      update: (orgSlug: string, releaseKey: string, input: UpdateReleaseInput) =>
+        request<ReleaseDto>("PATCH", `${org(orgSlug)}/releases/${seg(releaseKey)}`, input),
+      /** Done tasks of any project; all or nothing, 409 when one is in another release. */
+      add: (orgSlug: string, releaseKey: string, taskKeys: string[]) =>
+        request<ReleaseDto>("POST", `${org(orgSlug)}/releases/${seg(releaseKey)}/tasks`, { tasks: taskKeys }),
+      remove: (orgSlug: string, releaseKey: string, taskKey: string) =>
+        request<ReleaseDto>("DELETE", `${org(orgSlug)}/releases/${seg(releaseKey)}/tasks/${seg(taskKey)}`),
+      /** Done tasks with code in no release and not shipped, most recently finished first. */
+      candidates: (orgSlug: string, query: { project?: string; release?: string } = {}) => {
+        const params = new URLSearchParams();
+        if (query.project) params.set("project", query.project);
+        if (query.release) params.set("release", query.release);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/release-candidates${qs}`);
+      },
+    },
+
     comments: {
       list: (orgSlug: string, taskKey: string) =>
         request<ListResponse<CommentDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/comments`),
@@ -247,7 +357,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     inbox: {
       /**
        * Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items.
-       * `kinds` defaults to the task kinds; ask for "rules" to get project rules changes too.
+       * `kinds` defaults to the task kinds; ask for "rules" and the "document_*" kinds to get project rules changes and document comments too.
        */
       list: (
         orgSlug: string,
@@ -273,14 +383,17 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       get: (orgSlug: string, id: string) => request<DocumentDto>("GET", `${org(orgSlug)}/documents/${seg(id)}`),
       /** Every visible document, the tasks and projects around them, and their links. */
       graph: (orgSlug: string) => request<DocumentGraphDto>("GET", `${org(orgSlug)}/documents/graph`),
-      /** Documents linking here with `[[its title]]`, most recently updated first. */
+      /** Documents linking here with `[[its title]]` or `[[doc:<id>]]`, most recently updated first. */
       backlinks: (orgSlug: string, id: string) =>
         request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/backlinks`),
       create: (orgSlug: string, input: CreateDocumentInput) =>
         request<DocumentDto>("POST", `${org(orgSlug)}/documents`, input),
-      /** Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. */
+      /**
+       * Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. A rename
+       * rewrites `[[Old title]]` links in the documents linking here and reports them in `relinked`.
+       */
       update: (orgSlug: string, id: string, input: UpdateDocumentInput) =>
-        request<DocumentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}`, input),
+        request<UpdatedDocumentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}`, input),
       /** Partial edits (replace a fragment, append, replace a section), saved as one new version. */
       edit: (orgSlug: string, id: string, input: EditDocumentInput) =>
         request<DocumentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/edit`, input),
@@ -292,6 +405,17 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
           request<ListResponse<DocumentVersionSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions`),
         get: (orgSlug: string, id: string, version: number) =>
           request<DocumentVersionDto>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions/${version}`),
+      },
+      /** Comments on a document (ST-118): on the whole document or on a quoted fragment, with replies. */
+      comments: {
+        /** Oldest first, with `outdated` (the quote is gone from the current content) and resolved state. */
+        list: (orgSlug: string, id: string) =>
+          request<ListResponse<DocumentCommentDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/comments`),
+        create: (orgSlug: string, id: string, input: CreateDocumentCommentInput) =>
+          request<DocumentCommentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/comments`, input),
+        /** Resolves or reopens a thread (a top-level comment). */
+        resolve: (orgSlug: string, id: string, commentId: string, resolved = true) =>
+          request<DocumentCommentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}/comments/${seg(commentId)}`, { resolved }),
       },
       /** A line diff of two saved versions; without `to`, against the current one. 404 for a missing version. */
       diff: (orgSlug: string, id: string, { from, to }: DocumentDiffQuery) => {
@@ -308,6 +432,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
        */
       list: (orgSlug: string, projectKey: string, query: TaskListQuery = {}) => {
         const params = new URLSearchParams();
+        if (query.kind) params.set("kind", query.kind);
         for (const value of query.status ?? []) params.append("status", value);
         for (const value of query.assignee ?? []) params.append("assignee", value);
         for (const value of query.tags ?? []) params.append("tag", value);
@@ -315,6 +440,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         for (const value of query.priority ?? []) params.append("priority", String(value));
         if (query.q) params.set("q", query.q);
         if (query.parent) params.set("parent", query.parent);
+        if (query.overdue !== undefined) params.set("overdue", String(query.overdue));
         const qs = params.size ? `?${params}` : "";
         return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks${qs}`);
       },
@@ -334,6 +460,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<BulkUpdateTasksResponse>("POST", `${org(orgSlug)}/tasks/bulk-update`, input),
       delete: (orgSlug: string, taskKey: string) =>
         request<void>("DELETE", `${org(orgSlug)}/tasks/${seg(taskKey)}`),
+      /**
+       * Marks the task as a duplicate of `input.of` in one step: the `duplicates` link, the project's first
+       * canceled status and a "Duplicate of KEY" comment. A repeat changes nothing.
+       */
+      markDuplicate: (orgSlug: string, taskKey: string, input: MarkDuplicateInput) =>
+        request<TaskDto>("POST", `${org(orgSlug)}/tasks/${seg(taskKey)}/duplicate`, input),
       relations: {
         list: (orgSlug: string, taskKey: string) =>
           request<ListResponse<RelationDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/relations`),
@@ -345,6 +477,9 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
             `${org(orgSlug)}/tasks/${seg(taskKey)}/relations?${new URLSearchParams({ kind: input.kind, task: input.task })}`,
           ),
       },
+      /** Documents mentioning the task (`[[ST-12]]` or a plain ST-12), most recently updated first; not its own. */
+      backlinks: (orgSlug: string, taskKey: string) =>
+        request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/backlinks`),
       /** Direct sub-tasks, oldest first. */
       subtasks: (orgSlug: string, taskKey: string) =>
         request<ListResponse<SubtaskDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/subtasks`),

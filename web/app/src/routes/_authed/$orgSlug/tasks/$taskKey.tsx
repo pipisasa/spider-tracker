@@ -1,21 +1,24 @@
-import { TaskDocuments } from "@/components/documents";
+import { TaskDocuments, TaskMentions } from "@/components/documents";
+import { DuplicateDialog } from "@/components/duplicate-dialog";
 import { Relations } from "@/components/relations";
+import { ReleasePanel, ShippingChip } from "@/components/releases";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
-import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
+import { ActorAvatar, AssigneePicker, DateInput, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
 import { actorLabel } from "@/lib/assignees";
 import { useWorkingNow } from "@/lib/use-presence";
-import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
+import { actorsQuery, membersQuery, projectQuery, releaseQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import { branchNameFor } from "@repo/core/git";
-import type { UpdateTaskInput } from "@repo/core/schemas";
+import { allStatuses, kindOf, workflowOf } from "@repo/core/statuses";
+import { isOverdue, type UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, CopyIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -56,10 +59,18 @@ function TaskPage() {
   const update = useUpdateTask(orgSlug);
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
+  const [markingDuplicate, setMarkingDuplicate] = useState(false);
+  const canEdit = membership.actor.role !== "guest";
 
   const save = (input: UpdateTaskInput, callbacks?: SaveCallbacks) =>
     update.mutate({ taskKey: task.key, input }, callbacks);
   const creator = actors.find((m) => m.id === task.creatorId);
+  // Every kind's statuses, for looking up other tasks' (ST-90); the picker offers this task's workflow.
+  const statuses = allStatuses(project);
+  const overdue = isOverdue(task, statuses.find((s) => s.id === task.statusId)?.category);
+  const category = statuses.find((s) => s.id === task.statusId)?.category;
+  const isRelease = kindOf(task) === "release";
+  const { data: release } = useQuery({ ...releaseQuery(orgSlug, task.key), enabled: isRelease });
 
   function deleteTask() {
     remove.mutate(task.key, {
@@ -84,7 +95,7 @@ function TaskPage() {
   const fields = (
     <>
         <Field label="Status">
-          <StatusSelect statuses={project.statuses} value={task.statusId} onChange={(statusId) => save({ statusId })} />
+          <StatusSelect statuses={workflowOf(project, kindOf(task))} value={task.statusId} onChange={(statusId) => save({ statusId })} />
         </Field>
         <Field label="Priority">
           <PrioritySelect value={task.priority} onChange={(priority) => save({ priority })} />
@@ -101,6 +112,18 @@ function TaskPage() {
         <Field label="Tags">
           <TagPicker orgSlug={orgSlug} value={task.tagIds ?? []} onChange={(tagIds) => save({ tagIds })} />
         </Field>
+        <Field label="Start date">
+          <DateInput label="Start date" value={task.startDate} max={task.targetDate} onChange={(startDate) => save({ startDate })} />
+        </Field>
+        <Field label={overdue ? "Target date · overdue" : "Target date"}>
+          <DateInput
+            label="Target date"
+            value={task.targetDate}
+            min={task.startDate}
+            invalid={overdue}
+            onChange={(targetDate) => save({ targetDate })}
+          />
+        </Field>
         <Field label="Created">
           <span className="flex items-center gap-2 text-sm">
             {creator && <ActorAvatar actor={creator} className="size-5" />}
@@ -112,10 +135,42 @@ function TaskPage() {
             <span className="text-sm">{dateTimeFormat.format(new Date(task.completedAt))}</span>
           </Field>
         )}
+        {/* Done means finished; shipping is tracked by releases (ST-93). */}
+        {task.shipping && (
+          <Field label="Shipping">
+            <span className="flex flex-col gap-1 text-sm">
+              {task.shipping.release ? (
+                <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.shipping.release.key }} className="w-fit hover:underline">
+                  <ShippingChip shipping={task.shipping} />
+                </Link>
+              ) : (
+                <ShippingChip shipping={task.shipping} />
+              )}
+              {task.shippedAt && <span className="text-xs text-muted-foreground">{dateTimeFormat.format(new Date(task.shippedAt))}</span>}
+            </span>
+          </Field>
+        )}
+        {isRelease && task.shippedAt && (
+          <Field label="Released">
+            <span className="text-sm">{dateTimeFormat.format(new Date(task.shippedAt))}</span>
+          </Field>
+        )}
+        {canEdit && kindOf(task) === "task" && category === "done" && !task.releaseId && !task.shippedAt && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={task.noCode} onChange={(e) => save({ noCode: e.target.checked })} />
+            No code to ship
+          </label>
+        )}
         <Button variant="ghost" className="mt-auto justify-start" onClick={copyBranchName}>
           <GitBranchIcon />
           Copy branch name
         </Button>
+        {canEdit && (
+          <Button variant="ghost" className="justify-start" onClick={() => setMarkingDuplicate(true)}>
+            <CopyIcon />
+            Duplicate of…
+          </Button>
+        )}
         <Button
           variant="ghost"
           className="justify-start text-destructive hover:text-destructive"
@@ -160,20 +215,23 @@ function TaskPage() {
         <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"}
           afterTitle={<div className="flex flex-col gap-4 rounded-lg border p-3 md:hidden">{fields}</div>}
         />
+        {release && <ReleasePanel orgSlug={orgSlug} release={release} canWrite={canEdit} />}
         <Subtasks
           key={`subtasks-${task.id}`}
           orgSlug={orgSlug}
           task={task}
           projectKey={project.key}
-          statuses={project.statuses}
+          statuses={statuses}
           members={actors}
         />
-        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
+        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={statuses} />
         <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
-        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={project.statuses} />
+        <TaskMentions orgSlug={orgSlug} taskKey={task.key} />
+        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={statuses} />
       </main>
 
       <aside className="hidden w-72 shrink-0 flex-col gap-4 border-l p-4 md:flex">{fields}</aside>
+      <DuplicateDialog orgSlug={orgSlug} taskKey={task.key} open={markingDuplicate} onOpenChange={setMarkingDuplicate} />
     </div>
   );
 }

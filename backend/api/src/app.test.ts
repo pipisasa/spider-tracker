@@ -287,6 +287,20 @@ withDb("projects and tasks API", () => {
     expect((await call(owner, "GET", "/projects/SPI/tasks?tag=nope")).status).toBe(400);
     expect((await call(owner, "GET", "/projects/SPI/tasks?priority=9")).status).toBe(400);
 
+    // Dates (ST-91): set, validated, cleared; ?overdue=true finds open tasks past their target.
+    const dated = await call(owner, "POST", "/projects/SPI/tasks", { title: "Late", startDate: "2020-01-01", targetDate: "2020-01-31" });
+    expect(dated.status).toBe(201);
+    expect(await dated.json()).toMatchObject({ key: "SPI-2", startDate: "2020-01-01", targetDate: "2020-01-31" });
+    expect((await call(owner, "POST", "/projects/SPI/tasks", { title: "Bad", targetDate: "31.01.2020" })).status).toBe(400);
+    expect((await call(owner, "PATCH", "/tasks/SPI-2", { startDate: "2020-02-01" })).status).toBe(400);
+    expect(await count("overdue=true")).toBe(1);
+    expect(await count("overdue=false")).toBe(2);
+    expect((await call(owner, "GET", "/projects/SPI/tasks?overdue=maybe")).status).toBe(400);
+    const undated = await call(owner, "PATCH", "/tasks/SPI-2", { startDate: null, targetDate: null });
+    expect(await undated.json()).toMatchObject({ startDate: null, targetDate: null });
+    expect(await count("overdue=true")).toBe(0);
+    expect((await call(owner, "DELETE", "/tasks/SPI-2")).status).toBe(204);
+
     expect((await call(owner, "DELETE", "/tasks/SPI-1")).status).toBe(204);
     expect((await call(owner, "GET", "/tasks/SPI-1")).status).toBe(404);
   });
@@ -470,11 +484,59 @@ withDb("SDK and client-declared source", () => {
     expect((await client.tasks.list(slug, "SPI", { priority: [4], q: "SDK" })).items).toHaveLength(0);
     // An agent's "mine": itself, its owner and the owner's other agents.
     expect((await client.tasks.list(slug, "SPI", { assignee: ["mine"] })).items).toHaveLength(1);
+    // Dates and the overdue filter (ST-91); the task is done, so it isn't overdue.
+    expect(await client.tasks.update(slug, created.key, { targetDate: "2020-01-01" })).toMatchObject({ targetDate: "2020-01-01" });
+    expect((await client.tasks.list(slug, "SPI", { overdue: true })).items).toHaveLength(0);
+    await client.tasks.bulkUpdate(slug, { keys: [created.key], set: { status: "todo" } });
+    expect((await client.tasks.list(slug, "SPI", { overdue: true })).items.map((t) => t.key)).toEqual([created.key]);
 
     expect(await client.tasks.delete(slug, created.key)).toBeUndefined();
     const error = await client.tasks.get(slug, created.key).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SpiderApiError);
     expect(error).toMatchObject({ status: 404, code: "not_found" });
+  });
+
+  test("workflows through the SDK: kinds, add, rename, reorder and delete statuses (ST-90)", async () => {
+    const client = sdk();
+    // New projects get all three default workflows.
+    const fresh = await client.projects.create(slug, { name: "Workflows", key: "WFL" });
+    expect(fresh.workflows.task.map((s) => s.name)).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"]);
+    expect(fresh.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Release review", "Released", "Canceled"]);
+    expect(fresh.workflows.milestone.map((s) => s.name)).toEqual(["Planned", "Active", "Ready to close", "Done"]);
+    expect(fresh.statuses).toEqual(fresh.workflows.task);
+    expect(fresh.url).toBe(`${env.WEB_ORIGIN}/${slug}/projects/WFL`);
+
+    const task = await client.tasks.create(slug, "WFL", { title: "Plain" });
+    const release = await client.tasks.create(slug, "WFL", { title: "v1", kind: "release" });
+    expect([task.kind, release.kind]).toEqual(["task", "release"]);
+    expect(release.statusId).toBe(fresh.workflows.release[0]!.id);
+    expect((await client.tasks.list(slug, "WFL", { kind: "release" })).items.map((t) => t.key)).toEqual([release.key]);
+    const wrong = await client.tasks.update(slug, task.key, { statusId: fresh.workflows.release[1]?.id }).catch((e: unknown) => e);
+    expect(wrong).toMatchObject({ status: 400, code: "validation" });
+
+    let project = await client.projects.statuses.create(slug, "WFL", { kind: "release", name: "Smoke test", category: "in_review", position: 2 });
+    expect(project.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Smoke test", "Release review", "Released", "Canceled"]);
+    const smoke = project.workflows.release[2]!;
+    project = await client.projects.statuses.update(slug, "WFL", smoke.id, { name: "Staging checks", color: "#123456", position: 1 });
+    expect(project.workflows.release[1]).toMatchObject({ id: smoke.id, name: "Staging checks", color: "#123456", position: 1 });
+    const clash = await client.projects.statuses.update(slug, "WFL", smoke.id, { name: "planned" }).catch((e: unknown) => e);
+    expect(clash).toMatchObject({ status: 409, code: "conflict" });
+
+    // Deleting moves the tasks first; the last done status can't go.
+    await client.tasks.update(slug, release.key, { statusId: smoke.id });
+    const planned = project.workflows.release[0]!;
+    const deleted = await client.projects.statuses.delete(slug, "WFL", smoke.id, { moveTo: planned.id });
+    expect(deleted.movedTasks).toBe(1);
+    expect(deleted.project.url).toBe(`${env.WEB_ORIGIN}/${slug}/projects/WFL`);
+    expect((await client.tasks.get(slug, release.key)).statusId).toBe(planned.id);
+    const released = project.workflows.release.find((s) => s.category === "done")!;
+    const last = await client.projects.statuses.delete(slug, "WFL", released.id, { moveTo: planned.id }).catch((e: unknown) => e);
+    expect(last).toMatchObject({ status: 400, code: "validation" });
+    const noTarget = await app.request(`/v1/orgs/${slug}/projects/WFL/statuses/${planned.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${secret}` },
+    });
+    expect(noTarget.status).toBe(400);
   });
 
   test("bulk updates through the SDK: keys or a filter, per-task outcomes, dry run, 400 on bad input (ST-106)", async () => {
@@ -515,6 +577,33 @@ withDb("SDK and client-declared source", () => {
     expect(tooMany).toMatchObject({ status: 400 });
     const nothing = await client.tasks.bulkUpdate(slug, { keys, set: {} }).catch((e: unknown) => e);
     expect(nothing).toMatchObject({ status: 400 });
+  });
+
+  test("marking a duplicate through the SDK: one call, idempotent, 400 for self and cycles, 409 for a second original (ST-114)", async () => {
+    const client = sdk({ source: "cli" });
+    const copy = await client.tasks.create(slug, "SPI", { title: "Dup copy" });
+    const original = await client.tasks.create(slug, "SPI", { title: "Dup original" });
+    const other = await client.tasks.create(slug, "SPI", { title: "Dup other" });
+    const canceled = (await client.projects.get(slug, "SPI")).statuses.find((s) => s.category === "canceled");
+
+    const marked = await client.tasks.markDuplicate(slug, copy.key, { of: original.key, comment: "Subset" });
+    expect(marked).toMatchObject({ key: copy.key, statusId: canceled?.id, url: copy.url });
+    expect((await client.tasks.relations.list(slug, copy.key)).items.map((r) => `${r.kind} ${r.task.key}`)).toEqual([
+      `duplicates ${original.key}`,
+    ]);
+    expect((await client.comments.list(slug, copy.key)).items.map((c) => c.body)).toEqual([
+      `Duplicate of ${original.key}: Dup original\n\nSubset`,
+    ]);
+    expect(await client.tasks.markDuplicate(slug, copy.key, { of: original.key })).toMatchObject({ updatedAt: marked.updatedAt });
+    expect((await client.comments.list(slug, copy.key)).items).toHaveLength(1);
+    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, copy.id));
+    expect(new Set(log.map((e) => e.source))).toEqual(new Set(["cli"]));
+
+    const fail = (key: string, of: string) => client.tasks.markDuplicate(slug, key, { of }).catch((e: unknown) => e);
+    expect(await fail(copy.key, copy.key)).toMatchObject({ status: 400, code: "validation" });
+    expect(await fail(original.key, copy.key)).toMatchObject({ status: 400, code: "validation" });
+    expect(await fail(copy.key, other.key)).toMatchObject({ status: 409, code: "conflict" });
+    expect(await fail(copy.key, "SPI-999")).toMatchObject({ status: 404 });
   });
 
   test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
@@ -606,9 +695,32 @@ withDb("SDK and client-declared source", () => {
     const byId = await client.documents.create(slug, { title: "By id", content: `[[doc:${target.id}]]` });
     await client.documents.update(slug, target.id, { baseVersion: 1, title: "Graph target renamed" });
     expect((await client.documents.graph(slug)).links).toContainEqual({ from: byId.id, to: { type: "document", id: target.id } });
-    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([byId.id]);
+    // The rename rewrote the source's [[graph target|it]] too (ST-101): saved last, it comes first.
+    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id, byId.id]);
     await client.documents.delete(slug, byId.id);
     expect(await client.documents.backlinks(slug, crypto.randomUUID()).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    await client.documents.delete(slug, source.id);
+    await client.documents.delete(slug, target.id);
+  });
+
+  test("a rename rewrites [[links]]; GET /tasks/:key/backlinks lists mentioning documents (ST-101)", async () => {
+    const client = sdk();
+    const task = await client.tasks.create(slug, "SPI", { title: "Mentioned task" });
+    const target = await client.documents.create(slug, { title: "Relink target", project: "SPI" });
+    const source = await client.documents.create(slug, {
+      title: "Relink source",
+      content: `[[Relink target|there]] and ${task.key}`,
+    });
+    const renamed = await client.documents.update(slug, target.id, { baseVersion: 1, title: "Relinked" });
+    expect(renamed.relinked).toEqual({ rewritten: [{ id: source.id, title: "Relink source" }], skipped: [] });
+    expect((await client.documents.get(slug, source.id)).content).toBe(`[[Relinked|there]] and ${task.key}`);
+
+    const backlinks = (await client.tasks.backlinks(slug, task.key)).items;
+    expect(backlinks.map((d) => [d.id, d.url])).toEqual([[source.id, `${env.WEB_ORIGIN}/${slug}/docs/${source.id}`]]);
+    expect((await client.documents.graph(slug)).tasks.find((t) => t.key === task.key)?.url).toBe(
+      `${env.WEB_ORIGIN}/${slug}/tasks/${task.key}`,
+    );
+    expect(await client.tasks.backlinks(slug, "SPI-99999").catch((e: unknown) => e)).toMatchObject({ status: 404 });
     await client.documents.delete(slug, source.id);
     await client.documents.delete(slug, target.id);
   });
@@ -624,6 +736,37 @@ withDb("SDK and client-declared source", () => {
     expect(await client.views.delete(slug, "SPI", view.id)).toBeUndefined();
     expect((await client.views.list(slug, "SPI")).items).toEqual([]);
     expect(await client.views.list(slug, "NOPE").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
+  test("repos and apps through the SDK: add by URL, attach, apps; 409, 400 and 404 (ST-92)", async () => {
+    const client = sdk();
+    const repo = await client.repos.create(slug, { url: "https://github.com/pipisasa/spider-tracker.git", projects: ["SPI"] });
+    expect(repo).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"], apps: [] });
+    expect(await client.repos.create(slug, { url: "pipisasa/Spider-Tracker" }).catch((e: unknown) => e)).toMatchObject({ status: 409 });
+    expect(await client.repos.create(slug, { url: "https://gitlab.com/a/b" }).catch((e: unknown) => e)).toMatchObject({ status: 400 });
+
+    const web = await client.repos.apps.create(slug, "pipisasa/spider-tracker", {
+      name: "web",
+      path: "web/app",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
+    expect(web).toMatchObject({ repo: "pipisasa/spider-tracker", name: "web", environments: ["staging", "prod"] });
+    expect((await client.repos.apps.update(slug, "pipisasa/spider-tracker", "web", { sharedPaths: ["packages/core"] })).sharedPaths).toEqual([
+      "packages/core",
+    ]);
+    expect((await client.repos.get(slug, "PIPISASA/spider-tracker")).apps.map((a) => a.name)).toEqual(["web"]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items.map((r) => r.fullName)).toEqual(["pipisasa/spider-tracker"]);
+
+    expect((await client.repos.detach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual([]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items).toEqual([]);
+    expect((await client.repos.attach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual(["SPI"]);
+    expect(await client.repos.update(slug, "pipisasa/spider-tracker", { defaultBranch: "trunk" })).toMatchObject({ defaultBranch: "trunk" });
+
+    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web")).toBeUndefined();
+    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(await client.repos.delete(slug, "pipisasa/spider-tracker")).toBeUndefined();
+    expect(await client.repos.get(slug, "pipisasa/spider-tracker").catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
   test("API-key clients declare their source; unknown values fall back to api", async () => {
@@ -814,6 +957,35 @@ withDb("comments and inbox API", () => {
     // The loop guard surfaces as 429.
     for (let i = 0; i < 4; i++) await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: `note ${i}` });
     expect((await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "too much" })).status).toBe(429);
+  });
+
+  test("document comments (ST-118): a review stays on the document and reaches its author", async () => {
+    const cookie = await signIn(email);
+    const asOwner = (method: string, path: string, body?: unknown) =>
+      app.request(`/v1/orgs/${slug}${path}`, {
+        method,
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const doc = (await (await asOwner("POST", "/documents", { title: "Spec", project: "SPI", content: "Ship **it** today." })).json()) as { id: string };
+    const before = (await (await asOwner("GET", "/inbox?kinds=document_comment,document_reply")).json()) as { items: unknown[] };
+    expect(before.items).toEqual([]);
+
+    // Commenting on a fragment that isn't there is a 400; one that is, a 201.
+    expect((await asOwner("POST", `/documents/${doc.id}/comments`, { body: "?", quote: "tomorrow" })).status).toBe(400);
+    const posted = await asOwner("POST", `/documents/${doc.id}/comments`, { body: "Why today?", quote: "Ship it today" });
+    expect(posted.status).toBe(201);
+    const root = (await posted.json()) as { id: string };
+    expect(root).toMatchObject({ documentId: doc.id, quote: "Ship it today", outdated: false, documentVersion: 1, resolvedAt: null });
+
+    const listed = (await (await asOwner("GET", `/documents/${doc.id}/comments`)).json()) as { items: { id: string }[] };
+    expect(listed.items.map((c) => c.id)).toEqual([root.id]);
+
+    const resolved = await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, { resolved: true });
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({ resolvedAt: expect.any(String) });
+    expect((await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, {})).status).toBe(400);
+    expect((await asOwner("GET", `/documents/${crypto.randomUUID()}/comments`)).status).toBe(404);
   });
 });
 

@@ -58,12 +58,19 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 ### Documents and links
 
 - Specs, plans and reports are documents: MCP `create_document` / `get_document` / `update_document` / `edit_document`; CLI `spider doc create|view|edit … --json`. Tasks, projects and documents come with a `url` (their web page): give it to the user when you mention one.
+- Feedback on a document (a review, questions, objections) goes on the document, not in a task's comments: MCP `add_document_comment` (with `quote` to comment on a fragment of the text, `parent_id` to reply) / `list_document_comments` / `resolve_document_comment`; CLI `spider doc comment <id> "…" [--quote "fragment"] [--reply-to <commentId>] --json`, `spider doc comments <id> --json`, `spider doc resolve <id> <commentId>`. The document's author, mentioned people and the thread are notified (inbox kinds `document_mention`, `document_reply`, `document_comment`). A comment marked `outdated` quotes text that has changed since.
 - Link from a document's Markdown with `[[Title]]` (another document by title), `[[Title|label]]` (shown as label), `[[doc:<id>]]` (by id: survives renames and shows the current title; prefer it when you know the id) and `[[ST-12]]` (a task; plain keys like ST-12 count too). Links show as backlinks and in the documents graph; links inside code don't count.
+- To publish a set of documents kept as local `.md` files, run `spider doc publish <dir> [--project ST] [--dry-run]` instead of editing them one by one: it creates or updates each file's document, writes `id` and `version` into the file's front matter, turns `[[Title]]` and relative `.md` links between the files into `[[doc:<id>]]` links, and reports a document changed in the tracker since the file's `version` as a conflict instead of overwriting it.
 
 ### Hand off
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.
-- Only mark a task **Done** (`spider task done`) when the user asks or the work is merged and released; review is a person's call.
+- Only mark a task **Done** (`spider task done`) when the user asks or the work is approved and merged; review is a person's call. Done means **finished, not shipped**: shipping to production is tracked by releases (below).
 - If you are blocked, say so to the user and leave the task In Progress with a note in its description rather than moving it backwards silently.
+
+### Releases and shipping
+- A Done task's `shipping` (MCP `get_task`, `spider task view ST-12 --json`; `Shipping:` in `spider task view`) says where its code is: `not_in_release` (finished, not shipped yet), `in_release` (in a release on its way; `release` names it and its status, e.g. "2026.10.14 · on staging"), `shipped` (its release is Released; `shippedAt` is when) or `no_code` (nothing to ship). Don't tell the user a task is live in production unless its state is `shipped`.
+- A Done task with nothing to ship (a decision, docs outside the apps, research) can be marked so: MCP `update_task` with `noCode: true`; CLI `spider task update ST-12 --no-code`.
+- Releases are tasks of kind `release`, named by their version. Only work on them when the user asks (a release owner puts Done tasks into a release, deploys and marks it Released): MCP `list_release_candidates`, `create_release`, `add_to_release`, `remove_from_release`, `get_release`; CLI `spider release candidates|create|add|remove|view|list`. Moving a release to Released (MCP `update_task` with `status: "Released"`; CLI `spider task done ST-120`) marks every included task shipped; their status stays Done.
 
 ## Never put secrets in task text
 Titles and descriptions are visible to everyone in the organization and kept in history. Never paste tokens, API keys (`spt_…`), passwords, connection strings, `.env` contents or private customer data into them. Describe *where* a secret lives instead.
@@ -74,10 +81,12 @@ Titles and descriptions are visible to everyone in the organization and kept in 
 | `0` | OK | |
 | `1` | Unexpected (network, server error) | Retry once, then report it |
 | `2` | Usage or validation (bad option, unknown status or handle) | Read the message — it lists the valid options — and fix the call |
-| `3` | Not found (task, project) | Check the key with `task list` / `projects` |
+| `3` | Not found (task, project) | Check the key with `task list` / `projects`. If the message says you act as an agent that sees only other projects, pass `--as <your handle>` |
 | `4` | Auth or permission (not signed in, invalid key, role too low) | Check `spider agents`; if there is no saved agent, ask the user to run `spider accept-invite <code>` or `spider login` |
 
-With `--json`, errors go to stderr as `{"error":{"code","message"}}`. MCP tools return errors as tool results (`isError`) with the same messages. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
+With `--json`, errors go to stderr as `{"error":{"code","message"}}`; read stderr, don't discard it. MCP tools return errors as tool results (`isError`) with the same messages.
+
+MCP results and CLI `--json` output have the same shapes: a task has `key`, `title`, `status: { name, category }`, `priority` (0–4), `assignees` (handles), `tags`, `parentKey`, `shipping` and `url`; documents have `projectKey` and `taskKey`; comments have `author` (handle); lists are `{ "items": [...] }`. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
 
 ## Reference
 - `spider --help` and `spider <command> --help` list every CLI command and option.
