@@ -16,6 +16,7 @@ import type {
   PresenceDto,
   RelationDto,
   ReleaseDto,
+  MilestoneDto,
   AppDto,
   GithubInstallationDto,
   GithubInstallUrlDto,
@@ -58,6 +59,7 @@ import type {
   UpdateTaskInput,
   CreateReleaseInput,
   UpdateReleaseInput,
+  CreateMilestoneInput,
 } from "@repo/core/schemas";
 import {
   queryOptions,
@@ -133,6 +135,12 @@ export const keys = {
     ["orgs", org, "releases", "one", releaseKey] as const,
   releaseCandidates: (org: string, projectKey?: string) =>
     ["orgs", org, "releases", "candidates", projectKey ?? null] as const,
+  // Milestones (ST-96): any task change can move their progress, so all live under one prefix.
+  milestoneLists: (org: string) => ["orgs", org, "milestones"] as const,
+  milestones: (org: string, projectKey: string) =>
+    ["orgs", org, "milestones", "project", projectKey] as const,
+  milestone: (org: string, milestoneKey: string) =>
+    ["orgs", org, "milestones", "one", milestoneKey] as const,
 };
 
 /** Which documents to list: a task's, a project's (with its tasks'), or all. */
@@ -383,6 +391,8 @@ export function useUpdateTask(org: string) {
       }
       // A release's status ships (or unships) its tasks; a task's status or no-code mark moves it among candidates (ST-93).
       void qc.invalidateQueries({ queryKey: keys.releaseLists(org) });
+      // Any task change can move a milestone's progress, or the milestone itself (ST-96).
+      void qc.invalidateQueries({ queryKey: keys.milestoneLists(org) });
       if (task.kind === "release" && input.statusId !== undefined) {
         void qc.invalidateQueries({ queryKey: ["orgs", org, "projects"] });
         void qc.invalidateQueries({ queryKey: ["orgs", org, "tasks"] });
@@ -1161,3 +1171,36 @@ export const useDisconnectGithubInstallation = (org: string) =>
     (id: number) => api<void>(`${orgPath(org)}/github/installations/${id}`, { method: "DELETE" }),
     "GitHub disconnected",
   );
+
+// Milestones (ST-96): the project's roadmap.
+
+export const milestonesQuery = (org: string, projectKey: string) =>
+  queryOptions({
+    queryKey: keys.milestones(org, projectKey),
+    queryFn: async () =>
+      (await api<ListResponse<MilestoneDto>>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/milestones`)).items,
+  });
+
+export const milestoneQuery = (org: string, milestoneKey: string) =>
+  queryOptions({
+    queryKey: keys.milestone(org, milestoneKey),
+    queryFn: () => api<MilestoneDto>(`${orgPath(org)}/milestones/${encodeURIComponent(milestoneKey)}`),
+  });
+
+export function useCreateMilestone(org: string, projectKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateMilestoneInput) =>
+      api<MilestoneDto>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/milestones`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (milestone) => {
+      toast.success(`Created ${milestone.key}`);
+      qc.setQueryData(keys.milestone(org, milestone.key), milestone);
+      void qc.invalidateQueries({ queryKey: keys.milestoneLists(org) });
+      void qc.invalidateQueries({ queryKey: keys.tasks(org, projectKey) });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+}

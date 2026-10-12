@@ -9,6 +9,7 @@ import { notify } from "./inbox";
 import type {
   BulkTaskResultDto,
   BulkUpdateTasksResponse,
+  MilestoneRefDto,
   Priority,
   ProjectDetailDto,
   ReleaseRefDto,
@@ -35,6 +36,7 @@ import {
   type CreateTaskInput,
   type UpdateTaskInput,
 } from "./schemas";
+import { assertMilestoneFor, effectiveMilestones, milestoneTasksOnDelete, settleMilestones } from "./milestone-membership";
 import { applyReleaseTransition, releaseTasksOnDelete } from "./shipping";
 import { allStatuses, matchStatuses, unknownStatusMessage, workflowOf } from "./statuses";
 import { parseInput } from "./validate";
@@ -58,6 +60,8 @@ interface TaskLinks {
   release: ReleaseRefDto | null;
   /** In a release outside the viewer's scope: its id isn't shown. */
   releaseHidden: boolean;
+  /** The milestone it belongs to, its own or inherited (ST-96), when the viewer can see it. */
+  milestone: MilestoneRefDto | null;
 }
 
 /** Where a task's code is (ST-93); see TaskDto.shipping. */
@@ -97,6 +101,8 @@ function toTaskDto(row: TaskRow, projectKey: string, links: TaskLinks): TaskDto 
     shippedAt: row.shippedAt?.toISOString() ?? null,
     noCode: row.noCode,
     shipping: shippingOf(row, links),
+    milestoneId: row.milestoneId,
+    milestone: links.milestone,
   };
 }
 
@@ -108,6 +114,7 @@ const emptyLinks = (): TaskLinks => ({
   category: null,
   release: null,
   releaseHidden: false,
+  milestone: null,
 });
 
 /**
@@ -179,6 +186,37 @@ async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) 
       continue;
     }
     links.release = { id: release.id, key: `${release.projectKey}-${release.number}`, title: release.title, status: release.status };
+  }
+
+  // The milestone, the task's own or its nearest ancestor's (ST-96).
+  const memberships = await effectiveMilestones(db, taskIds);
+  const milestoneIds = [...new Set([...memberships.values()].map((m) => m.milestoneId))];
+  const milestoneRows = milestoneIds.length
+    ? await db
+        .select({
+          id: tasks.id,
+          number: tasks.number,
+          title: tasks.title,
+          projectId: tasks.projectId,
+          projectKey: projects.key,
+          status: { id: statuses.id, name: statuses.name, category: statuses.category },
+        })
+        .from(tasks)
+        .innerJoin(statuses, eq(tasks.statusId, statuses.id))
+        .innerJoin(projects, eq(tasks.projectId, projects.id))
+        .where(and(inArray(tasks.id, milestoneIds), isNull(tasks.deletedAt)))
+    : [];
+  for (const [taskId, membership] of memberships) {
+    const links = map.get(taskId);
+    const milestone = milestoneRows.find((m) => m.id === membership.milestoneId);
+    if (!links || !milestone || !inScope(scope, milestone.projectId)) continue;
+    links.milestone = {
+      id: milestone.id,
+      key: `${milestone.projectKey}-${milestone.number}`,
+      title: milestone.title,
+      status: milestone.status,
+      inherited: membership.inherited,
+    };
   }
   return map;
 }
@@ -357,6 +395,7 @@ export async function createTaskIn(tx: Tx, ctx: ActorContext, projectKey: string
   await assertActorsInOrg(tx, ctx.orgId, assigneeIds);
   await assertTagsInOrg(tx, ctx.orgId, tagIds);
   if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId);
+  if (data.milestoneId) await assertMilestoneFor(tx, { kind, projectId: project.id, label: "the new task" }, data.milestoneId);
 
   const [task] = await tx
     .insert(tasks)
@@ -372,6 +411,7 @@ export async function createTaskIn(tx: Tx, ctx: ActorContext, projectKey: string
       parentId: data.parentId ?? null,
       startDate: data.startDate ?? null,
       targetDate: data.targetDate ?? null,
+      milestoneId: data.milestoneId ?? null,
       sortKey: await sortKeyFor(tx, project.id, status.id),
       creatorId: ctx.actorId,
       completedAt: CLOSED.includes(status.category) ? new Date() : null,
@@ -401,6 +441,7 @@ export async function createTaskIn(tx: Tx, ctx: ActorContext, projectKey: string
       ...(tagIds.length ? { tagIds } : {}),
       ...(task.startDate ? { startDate: task.startDate } : {}),
       ...(task.targetDate ? { targetDate: task.targetDate } : {}),
+      ...(task.milestoneId ? { milestoneId: task.milestoneId } : {}),
     },
   });
 
@@ -633,6 +674,16 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
     if (task.kind !== "task" && data.noCode) throw new DomainError("validation", `Only tasks have code to ship; ${projectKey}-${task.number} is a ${task.kind}`);
     track("noCode", data.noCode);
   }
+  if (data.milestoneId !== undefined) {
+    const label = `${projectKey}-${task.number}`;
+    if (data.milestoneId) await assertMilestoneFor(tx, { kind: task.kind, projectId: task.projectId, label }, data.milestoneId);
+    track("milestoneId", data.milestoneId);
+  }
+  // The milestone the task is in before the change, when the change may complete one (ST-96).
+  const settles =
+    task.kind === "task" &&
+    [data.statusId, data.position, data.noCode, data.milestoneId, data.parentId].some((v) => v !== undefined);
+  const milestoneBefore = settles ? (await effectiveMilestones(tx, [task.id])).get(task.id)?.milestoneId : undefined;
 
   // A position move wins over a bare status change; both re-sort the task.
   const targetStatusId = data.position?.statusId ?? data.statusId;
@@ -712,6 +763,11 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
   }
   await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
+  // A finished task (or one leaving) may complete its milestone, old or new (ST-96).
+  if (settles && Object.keys(changes).length > 0) {
+    const milestoneAfter = (await effectiveMilestones(tx, [task.id])).get(task.id)?.milestoneId;
+    await settleMilestones(tx, ctx.orgId, [milestoneBefore, milestoneAfter]);
+  }
   const links = (await linksByTask(tx, scope, [updated.id])).get(updated.id) ?? emptyLinks();
   return {
     task: (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { ...links, assigneeIds, tagIds })]))[0]!,
@@ -813,11 +869,15 @@ export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Pr
   await db.transaction(async (tx) => {
     const { task, projectKey } = await findTask(tx, ctx, taskKey);
     const now = new Date();
+    // Its milestone may be complete without it (ST-96); its sub-tasks leave with it.
+    const milestone = task.kind === "task" ? (await effectiveMilestones(tx, [task.id])).get(task.id)?.milestoneId : undefined;
     await tx.update(tasks).set({ deletedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.deleted" });
     await publish(tx, { type: "task.deleted", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
     // A deleted release no longer holds its tasks (ST-93); shipped ones stay shipped.
     if (task.kind === "release") await releaseTasksOnDelete(tx, ctx, task.id);
+    // A deleted milestone no longer holds its tasks (ST-96).
+    if (task.kind === "milestone") await milestoneTasksOnDelete(tx, ctx, task.id);
 
     // Sub-tasks become top-level tasks rather than hanging off a deleted parent (ST-9).
     const children = await tx
@@ -825,6 +885,7 @@ export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Pr
       .set({ parentId: null, updatedAt: now })
       .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt)))
       .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId });
+    await settleMilestones(tx, ctx.orgId, [milestone]);
     if (children.length === 0) return;
     const keys = await tx
       .select({ id: projects.id, key: projects.key })

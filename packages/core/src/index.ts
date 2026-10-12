@@ -44,3 +44,6 @@ export * from "./board";
 export * from "./github";
 export * from "./github-webhooks";
 export * from "./git-links";
+export * from "./bots";
+export * from "./milestone-membership";
+export * from "./milestones";

@@ -31,6 +31,7 @@ import type {
   RelationDto,
   ReleaseDto,
   ReleaseChangelogDto,
+  MilestoneDto,
   AppDto,
   RepoDto,
   SavedViewDto,
@@ -72,6 +73,7 @@ import type {
   CreateReleaseInput,
   UpdateReleaseInput,
   ReleaseChangelogInput,
+  CreateMilestoneInput,
 } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
@@ -354,6 +356,24 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         const qs = params.size ? `?${params}` : "";
         return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/release-candidates${qs}`);
       },
+    },
+
+    /**
+     * Milestones (ST-96): tasks of kind "milestone" grouping tasks of their project, the project's
+     * roadmap. Put a task in one with `tasks.update(org, key, { milestoneId })`; change a milestone's
+     * status with `tasks.update` too.
+     */
+    milestones: {
+      /** The roadmap: by target date, then start date (undated last); `status` (ids, names or categories) narrows it. */
+      list: (orgSlug: string, projectKey: string, query: { status?: string[] } = {}) => {
+        const params = new URLSearchParams();
+        for (const value of query.status ?? []) params.append("status", value);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<MilestoneDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/milestones${qs}`);
+      },
+      get: (orgSlug: string, milestoneKey: string) => request<MilestoneDto>("GET", `${org(orgSlug)}/milestones/${seg(milestoneKey)}`),
+      create: (orgSlug: string, projectKey: string, input: CreateMilestoneInput) =>
+        request<MilestoneDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/milestones`, input),
     },
 
     comments: {

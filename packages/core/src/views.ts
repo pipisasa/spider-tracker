@@ -11,6 +11,7 @@ import type {
   DocumentDto,
   DocumentSummaryDto,
   DocumentVersionDto,
+  MilestoneDto,
   ProjectDto,
   ProjectRulesDto,
   RelationKind,
@@ -160,4 +161,15 @@ export const releaseView = (release: ReleaseDto, { actors, tags }: Omit<TaskView
   repos: release.repos,
   apps: release.apps,
   tasks: release.tasks,
+});
+
+/** A milestone (ST-96) as the CLI and MCP print it: the API milestone plus assignee handles and tag names. */
+export interface MilestoneView extends Omit<MilestoneDto, "status">, Pick<TaskView, "status" | "assignees" | "tags"> {}
+
+export const milestoneView = (milestone: MilestoneDto, { actors, tags }: Omit<TaskViewLookups, "statuses">): MilestoneView => ({
+  ...milestone,
+  ...taskView(milestone, { statuses: [milestone.status], actors, tags }),
+  progress: milestone.progress,
+  tasks: milestone.tasks,
+  releases: milestone.releases,
 });

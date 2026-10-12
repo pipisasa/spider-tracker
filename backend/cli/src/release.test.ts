@@ -45,6 +45,8 @@ const task = (key: string, title: string): TaskDto => ({
   shippedAt: null,
   noCode: false,
   shipping: { state: "not_in_release", release: null },
+  milestoneId: null,
+  milestone: null,
 });
 
 function release(description: string | null = null): ReleaseDto {

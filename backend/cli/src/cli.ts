@@ -6,6 +6,7 @@ import type {
   BulkUpdateTasksResponse,
   DocumentFormat,
   DocumentSummaryDto,
+  MilestoneDto,
   ProjectDetailDto,
   ProjectDto,
   ReleaseChangelogDto,
@@ -24,7 +25,7 @@ import { allStatuses, workflowOf } from "@repo/core/statuses";
 import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
-import { shippingLabel } from "@repo/core/board";
+import { milestoneProgressLabel, shippingLabel } from "@repo/core/board";
 import { appNotes, changelogBlock, changelogFileSection, insertReleaseSection, regroupChangelog, releaseTag } from "@repo/core/release-notes";
 import { checkRelease, taskAppsFrom } from "@repo/core/release-check";
 import {
@@ -36,7 +37,9 @@ import {
   projectRulesView,
   relationView,
   releaseView,
+  milestoneView,
   taskView,
+  type MilestoneView,
   type RelationView,
   type ReleaseView,
   type TaskView,
@@ -256,6 +259,8 @@ interface TaskFields extends JsonOption {
   parent?: string;
   start?: string;
   target?: string;
+  /** A milestone's task key (ST-96); "" takes the task out. */
+  milestone?: string;
 }
 
 /** The changes `task update` makes, as typed (before resolving names to ids). */
@@ -269,6 +274,8 @@ interface TaskChanges {
   target?: string;
   /** Marks the task as having no code to ship (ST-93); false undoes it. */
   noCode?: boolean;
+  /** A milestone's task key (ST-96); "" takes the tasks out. */
+  milestone?: string;
 }
 
 /**
@@ -283,6 +290,7 @@ interface TaskUpdateOptions extends TaskFields {
   setParent?: string;
   setStart?: string;
   setTarget?: string;
+  setMilestone?: string;
   overdue?: boolean;
   project?: string;
   assignee?: string[];
@@ -507,6 +515,10 @@ function taskDetail(task: CliTask): string {
     lines.push([task.startDate && `Start: ${task.startDate}`, task.targetDate && `Target: ${task.targetDate}${overdue}`].filter(Boolean).join(" · "));
   }
   if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
+  // Servers before milestones (ST-96) send none.
+  if (task.milestone) {
+    lines.push(`Milestone: ${task.milestone.key} ${task.milestone.title} (${task.milestone.status.name})${task.milestone.inherited ? ", from its parent" : ""}`);
+  }
   const shipping = shippingLabel(task.shipping);
   if (shipping) lines.push(`Shipping: ${shipping}${task.shipping?.release ? ` (${task.shipping.release.key})` : ""}`);
   if (task.description) lines.push("", task.description);
@@ -528,6 +540,58 @@ function releaseDetail(release: ReleaseView): string {
     );
   }
   return lines.join("\n");
+}
+
+/** A milestone (ST-96): key, title, status, dates, progress, releases and tasks, then its description. */
+function milestoneDetail(milestone: MilestoneView): string {
+  const dates = [milestone.startDate && `Start: ${milestone.startDate}`, milestone.targetDate && `Target: ${milestone.targetDate}`].filter(Boolean);
+  const { progress } = milestone;
+  const lines = [
+    `${milestone.key}  ${milestone.title}  ${milestone.status?.name ?? "?"}`,
+    [...dates, milestone.assignees.length ? `Owner: ${assigneeList(milestone)}` : ""].filter(Boolean).join(" · ") || "No dates",
+    `Progress: ${milestoneProgressLabel(progress)}${progress.canceled ? ` (${progress.canceled} canceled)` : ""}${progress.complete ? " · ready to close" : ""}`,
+  ];
+  if (milestone.releases.length) {
+    lines.push(
+      `Releases: ${milestone.releases.map((r) => `${r.title} (${r.key}, ${r.shippedAt ? `shipped ${r.shippedAt.slice(0, 10)}` : r.status.name})`).join(", ")}`,
+    );
+  }
+  if (milestone.tasks.length === 0) lines.push("No tasks");
+  else {
+    const keyWidth = Math.max(...milestone.tasks.map((t) => t.key.length));
+    const statusWidth = Math.max(...milestone.tasks.map((t) => t.status.name.length));
+    lines.push(
+      `Tasks (${milestone.tasks.length}):`,
+      ...milestone.tasks.map((t) => {
+        const shipping = shippingLabel(t.shipping);
+        return `  ${t.key.padEnd(keyWidth)}  ${t.status.name.padEnd(statusWidth)}  ${t.title}${t.inherited && t.parentKey ? `  (sub-task of ${t.parentKey})` : ""}${shipping ? `  [${shipping}]` : ""}`;
+      }),
+    );
+  }
+  if (milestone.description) lines.push("", milestone.description);
+  return lines.join("\n");
+}
+
+/** One line per milestone, in roadmap order: key, title, status, target date and progress. */
+function roadmapLines(milestones: MilestoneView[]): string {
+  if (milestones.length === 0) return "No milestones";
+  const keyWidth = Math.max(...milestones.map((m) => m.key.length));
+  const titleWidth = Math.max(...milestones.map((m) => m.title.length));
+  const statusWidth = Math.max(...milestones.map((m) => (m.status?.name ?? "?").length));
+  return milestones
+    .map((m) =>
+      [
+        m.key.padEnd(keyWidth),
+        m.title.padEnd(titleWidth),
+        (m.status?.name ?? "?").padEnd(statusWidth),
+        m.targetDate ? `target ${m.targetDate}` : "",
+        milestoneProgressLabel(m.progress),
+        m.releases.length ? `releases ${m.releases.map((r) => r.title).join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("  "),
+    )
+    .join("\n");
 }
 
 /** One line per release: key, name, status, apps and task count. */
@@ -801,7 +865,15 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     }
     if (opts.start !== undefined) input.startDate = parseDate(opts.start, "--start");
     if (opts.target !== undefined) input.targetDate = parseDate(opts.target, "--target");
+    if (opts.milestone !== undefined) input.milestoneId = await milestoneIdOf(opts.milestone);
     return input;
+  };
+
+  /** A milestone's task key as its id (ST-96); "" is null (out of any milestone). Core checks it is a milestone. */
+  const milestoneIdOf = async (key: string): Promise<string | null> => {
+    if (key.trim() === "") return null;
+    const { sdk, org } = conn();
+    return (await (await sdk()).tasks.get(await org(), taskKey(key, cwd, git))).id;
   };
 
   const taskOptions = (cmd: Command) =>
@@ -814,7 +886,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         .option("--tag <name>", "tag name; repeatable or comma-separated (replaces the tags on update)", collect)
         .option("--parent <key>", 'parent task key, making this a sub-task ("" makes it top-level)')
         .option("--start <date>", 'start date, YYYY-MM-DD ("" clears it)')
-        .option("--target <date>", 'target date, YYYY-MM-DD, on or after the start ("" clears it)'),
+        .option("--target <date>", 'target date, YYYY-MM-DD, on or after the start ("" clears it)')
+        .option("--milestone <key>", 'milestone task key of the same project, e.g. ST-130 (sub-tasks inherit it; "" takes the task out)'),
     );
 
   /** Updates a task and prints the result. */
@@ -2122,6 +2195,75 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (!check.ok) result.exitCode = EXIT.unexpected;
   });
 
+  // Milestones (ST-96): tasks of kind "milestone"; the roadmap lists a project's by date. Tasks join
+  // with `spider task update KEY --milestone ST-130`; a milestone's status changes with `task update` too.
+  const describeMilestone = async (milestone: MilestoneDto): Promise<MilestoneView> => {
+    const [actors, tags] = await Promise.all([conn().actors(), milestone.tagIds.length ? conn().tags() : []]);
+    return milestoneView(milestone, { actors, tags });
+  };
+  /** The project given, else the one of the current branch's task. */
+  const projectArg = (given: string | undefined) => (given ? given.toUpperCase() : projectKeyOf(taskKey(undefined, cwd, git)));
+  const roadmap = async (project: string | undefined, opts: JsonOption & { status?: string }) => {
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).milestones.list(await org(), projectArg(project), {
+      status: opts.status === undefined ? undefined : [opts.status],
+    });
+    const views = await Promise.all(items.map(describeMilestone));
+    output(opts, { items: views }, () => roadmapLines(views));
+  };
+  const roadmapCommand = (cmd: Command) =>
+    withJson(
+      cmd
+        .argument("[project]", "project key, e.g. ST (default: the current branch's task's project)")
+        .option("--status <name>", "status name or category of the milestone workflow"),
+    ).action(roadmap);
+
+  roadmapCommand(
+    program
+      .command("roadmap")
+      .description("a project's milestones by target date, with progress (done of total; shipped of done with code) and releases"),
+  );
+  const milestoneCommand = program
+    .command("milestone")
+    .description("milestones: goal and Done when in the description, dates, tasks (sub-tasks inherit), progress; Ready to close once all is Done and shipped");
+  roadmapCommand(milestoneCommand.command("list").description("the same as spider roadmap"));
+
+  withJson(milestoneCommand.command("view").description("show a milestone, its progress, tasks and releases").argument("<key>")).action(
+    async (key: string, opts: JsonOption) => {
+      const { sdk, org } = conn();
+      const milestone = await describeMilestone(await (await sdk()).milestones.get(await org(), taskKey(key, cwd, git)));
+      output(opts, milestone, () => milestoneDetail(milestone));
+    },
+  );
+
+  withJson(
+    milestoneCommand
+      .command("create")
+      .description("create a milestone (Planned unless --status); put tasks in with spider task update KEY --milestone")
+      .requiredOption("--project <key>", "project key, e.g. ST")
+      .requiredOption("--title <text>", 'its name, e.g. "Phase 4: Git and GitHub"')
+      .option("--description <text>", 'the goal and "Done when" (Markdown)')
+      .option("--status <name>", "status of the milestone workflow, e.g. Active")
+      .option("--assign <handle>", 'owner handle or "me"; repeatable or comma-separated', collect)
+      .option("--start <date>", "start date, YYYY-MM-DD")
+      .option("--target <date>", "target date, YYYY-MM-DD"),
+  ).action(
+    async (opts: JsonOption & { project: string; title: string; description?: string; status?: string; assign?: string[]; start?: string; target?: string }) => {
+      const projectKey = opts.project.toUpperCase();
+      const { sdk, org, project, members, whoami } = conn();
+      const created = await (await sdk()).milestones.create(await org(), projectKey, {
+        title: opts.title,
+        description: opts.description,
+        statusId: opts.status === undefined ? undefined : resolveStatus(await project(projectKey), opts.status, "milestone").id,
+        assigneeIds: opts.assign === undefined ? undefined : resolveAssignees(await members(), (await whoami()).actor.id, opts.assign),
+        startDate: opts.start === undefined ? undefined : (parseDate(opts.start, "--start") ?? undefined),
+        targetDate: opts.target === undefined ? undefined : (parseDate(opts.target, "--target") ?? undefined),
+      });
+      const milestone = await describeMilestone(created);
+      output(opts, milestone, () => `Created ${milestoneDetail(milestone)}`);
+    },
+  );
+
   const task = program.command("task").description("work with tasks");
 
   withJson(
@@ -2275,6 +2417,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (changes.start !== undefined) set.startDate = parseDate(changes.start, "--start");
     if (changes.target !== undefined) set.targetDate = parseDate(changes.target, "--target");
     if (changes.noCode !== undefined) set.noCode = changes.noCode;
+    if (changes.milestone !== undefined) set.milestoneId = await milestoneIdOf(changes.milestone);
     if (Object.keys(set).length === 0) throw usageError(hints.nothing);
 
     const response = await (await sdk()).tasks.bulkUpdate(await org(), { ...target, set, dryRun });
@@ -2300,6 +2443,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--set-parent <key>", 'new parent: the same as --parent, which filters with --project ("" makes them top-level)')
       .option("--set-start <date>", 'new start date: the same as --start ("" clears it)')
       .option("--set-target <date>", 'new target date: the same as --target ("" clears it)')
+      .option("--set-milestone <key>", 'new milestone: the same as --milestone ("" takes them out)')
       .option("--project <key>", "update the tasks of this project matching --status, --parent, --assignee, --tag, --priority, --overdue")
       .option("--overdue", "with --project: only tasks past their target date that aren't done or canceled")
       .option("--assignee <handle>", 'with --project: assigned to any of these, "me", "mine" or "none"; repeatable or comma-separated', collect)
@@ -2318,10 +2462,11 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         ["--assign", opts.assign],
         ["--start", opts.start],
         ["--target", opts.target],
+        ["--milestone", opts.milestone],
       ] as const) {
         if (value !== undefined) {
           throw usageError(
-            `${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start and --set-target`,
+            `${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start, --set-target and --set-milestone`,
           );
         }
       }
@@ -2347,9 +2492,10 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         start: opts.setStart,
         target: opts.setTarget,
         noCode: opts.code === undefined ? undefined : !opts.code,
+        milestone: opts.setMilestone,
       };
       await bulkUpdate({ filter }, changes, opts.dryRun === true || !opts.yes, {
-        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start or --set-target",
+        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start, --set-target or --set-milestone",
         apply: opts.dryRun ? undefined : "Run again with --yes to apply.",
       }, opts);
       return;
@@ -2376,6 +2522,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       start: pick("start", opts.start, opts.setStart),
       target: pick("target", opts.target, opts.setTarget),
       noCode: opts.code === undefined ? undefined : !opts.code,
+      milestone: pick("milestone", opts.milestone, opts.setMilestone),
     };
 
     if (keys.length <= 1 && !opts.dryRun) {
@@ -2396,7 +2543,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     }
     const resolvedKeys = keys.length ? keys.map((k) => taskKey(k, cwd, git)) : [taskKey(undefined, cwd, git)];
     await bulkUpdate({ keys: resolvedKeys }, changes, opts.dryRun === true, {
-      nothing: "Nothing to update. Pass --status, --priority, --assign, --tag, --parent, --start or --target",
+      nothing: "Nothing to update. Pass --status, --priority, --assign, --tag, --parent, --start, --target or --milestone",
     }, opts);
   });
 

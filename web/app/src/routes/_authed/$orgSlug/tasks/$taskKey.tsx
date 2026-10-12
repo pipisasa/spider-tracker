@@ -3,6 +3,7 @@ import { TaskDocuments, TaskMentions } from "@/components/documents";
 import { DuplicateDialog } from "@/components/duplicate-dialog";
 import { Relations } from "@/components/relations";
 import { ReleasePanel, ShippingChip } from "@/components/releases";
+import { MilestonePanel, MilestonePicker } from "@/components/roadmap";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
@@ -12,7 +13,17 @@ import { Input } from "@/components/ui/input";
 import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
 import { actorLabel } from "@/lib/assignees";
 import { useWorkingNow } from "@/lib/use-presence";
-import { actorsQuery, membersQuery, projectQuery, releaseQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
+import {
+  actorsQuery,
+  membersQuery,
+  milestoneQuery,
+  milestonesQuery,
+  projectQuery,
+  releaseQuery,
+  taskQuery,
+  useDeleteTask,
+  useUpdateTask,
+} from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import { branchNameFor } from "@repo/core/git";
 import { allStatuses, kindOf, workflowOf } from "@repo/core/statuses";
@@ -72,6 +83,10 @@ function TaskPage() {
   const category = statuses.find((s) => s.id === task.statusId)?.category;
   const isRelease = kindOf(task) === "release";
   const { data: release } = useQuery({ ...releaseQuery(orgSlug, task.key), enabled: isRelease });
+  // Milestones (ST-96): a milestone's page shows its progress; a task's has the milestone picker.
+  const isMilestone = kindOf(task) === "milestone";
+  const { data: milestone } = useQuery({ ...milestoneQuery(orgSlug, task.key), enabled: isMilestone });
+  const { data: milestones = [] } = useQuery({ ...milestonesQuery(orgSlug, project.key), enabled: kindOf(task) === "task" });
 
   function deleteTask() {
     remove.mutate(task.key, {
@@ -113,6 +128,17 @@ function TaskPage() {
         <Field label="Tags">
           <TagPicker orgSlug={orgSlug} value={task.tagIds ?? []} onChange={(tagIds) => save({ tagIds })} />
         </Field>
+        {kindOf(task) === "task" && (
+          <Field label="Milestone">
+            <MilestonePicker
+              milestones={milestones}
+              value={task.milestoneId ?? null}
+              current={task.milestone ?? null}
+              disabled={!canEdit}
+              onChange={(milestoneId) => save({ milestoneId })}
+            />
+          </Field>
+        )}
         <Field label="Start date">
           <DateInput label="Start date" value={task.startDate} max={task.targetDate} onChange={(startDate) => save({ startDate })} />
         </Field>
@@ -217,6 +243,7 @@ function TaskPage() {
           afterTitle={<div className="flex flex-col gap-4 rounded-lg border p-3 md:hidden">{fields}</div>}
         />
         {release && <ReleasePanel orgSlug={orgSlug} release={release} canWrite={canEdit} />}
+        {milestone && <MilestonePanel orgSlug={orgSlug} milestone={milestone} />}
         <Subtasks
           key={`subtasks-${task.id}`}
           orgSlug={orgSlug}

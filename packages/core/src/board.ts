@@ -2,7 +2,7 @@
 // release columns are on, the default) one column per status of the release workflow holding
 // release cards. Shared by the web app and tests; browser-safe, no database imports.
 
-import type { ProjectDetailDto, StatusDto, TaskShippingDto } from "./contracts";
+import type { MilestoneProgressDto, ProjectDetailDto, StatusDto, TaskShippingDto } from "./contracts";
 import { workflowOf } from "./statuses";
 
 /** Board settings (ST-93); release columns are on unless turned off. */
@@ -53,6 +53,16 @@ export function boardColumns<T extends Card, R extends Card>(
  * A Done card's shipping state in words: "not in a release", "2026.10.14 · on staging",
  * "shipped 2026.10.12", "no code", or "in a release" when the release is out of the viewer's sight.
  */
+/**
+ * A milestone's progress in words (ST-96): "3/5 done · 1/2 shipped"; the shipped part only once a
+ * Done task has code, and "no tasks" for an empty one.
+ */
+export function milestoneProgressLabel(progress: MilestoneProgressDto): string {
+  if (progress.total === 0) return "no tasks";
+  const done = `${progress.done}/${progress.total} done`;
+  return progress.withCode > 0 ? `${done} · ${progress.shipped}/${progress.withCode} shipped` : done;
+}
+
 export function shippingLabel(shipping: TaskShippingDto | null | undefined): string | null {
   if (!shipping) return null;
   switch (shipping.state) {

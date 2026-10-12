@@ -133,6 +133,9 @@ withDb("MCP server", () => {
         "remove_from_release",
         "list_release_candidates",
         "get_release_changelog",
+        "list_milestones",
+        "get_milestone",
+        "create_milestone",
         "assign_to_me",
         "create_document",
         "diff_document",
@@ -834,6 +837,49 @@ withDb("MCP server", () => {
     });
     const listed = (await call(client, "list_releases", { projectKey: "SPI", status: "Released" })).json() as { items: unknown[] };
     expect(listed.items).toEqual([(await call(client, "get_release", { key: release.key })).json()]);
+  });
+
+  test("milestones (ST-96): create, put tasks in (sub-tasks inherit), roadmap with progress; Done and no code moves it to Ready to close", async () => {
+    const created = (
+      await call(client, "create_milestone", {
+        projectKey: "SPI",
+        title: "Phase 9",
+        description: "**Goal:** x\n\n**Done when:** y",
+        status: "Active",
+        targetDate: "2026-12-01",
+      })
+    ).json() as { key: string; url: string };
+    expect(created).toMatchObject({ kind: "milestone", status: { name: "Active" }, progress: { total: 0 }, url: expect.stringContaining(`/tasks/${created.key}`) });
+
+    const parent = (await call(client, "create_task", { projectKey: "SPI", title: "Milestone parent", milestone: created.key })).json() as { key: string };
+    expect(parent).toMatchObject({ milestone: { key: created.key, inherited: false } });
+    const child = (await call(client, "create_task", { projectKey: "SPI", title: "Milestone child", parent: parent.key })).json() as { key: string };
+    expect(child).toMatchObject({ milestoneId: null, milestone: { key: created.key, inherited: true } });
+    const other = (await call(client, "create_task", { projectKey: "SPI", title: "Milestone other" })).json() as { key: string };
+    expect((await call(client, "update_task", { key: other.key, milestone: created.key })).json()).toMatchObject({ milestone: { key: created.key } });
+    expect((await call(client, "update_task", { key: other.key, milestone: null })).json()).toMatchObject({ milestoneId: null, milestone: null });
+    const wrong = await call(client, "update_task", { key: other.key, milestone: parent.key });
+    expect(wrong).toMatchObject({ isError: true });
+    expect(wrong.text).toContain("not a milestone");
+
+    const listed = (await call(client, "list_milestones", { projectKey: "SPI" })).json() as { items: { key: string; tasks: { key: string; url: string }[] }[] };
+    const item = listed.items.find((m) => m.key === created.key);
+    expect(item).toMatchObject({
+      progress: { total: 2, done: 0, complete: false },
+      tasks: [
+        { key: parent.key, inherited: false, url: expect.stringContaining(`/tasks/${parent.key}`) },
+        { key: child.key, inherited: true, parentKey: parent.key },
+      ],
+    });
+    expect(item as unknown).toEqual((await call(client, "get_milestone", { key: created.key })).json());
+
+    const bulk = (await call(client, "update_tasks", { keys: [parent.key, child.key], status: "Done", noCode: true })).json() as { summary: unknown };
+    expect(bulk.summary).toEqual({ changed: 2, unchanged: 0, failed: 0 });
+    expect((await call(client, "get_milestone", { key: created.key })).json()).toMatchObject({
+      status: { name: "Ready to close", category: "in_review" },
+      progress: { total: 2, done: 2, withCode: 0, shipped: 0, complete: true },
+    });
+    expect((await call(client, "list_milestones", { projectKey: "SPI", status: "Ready to close" })).json()).toMatchObject({ items: [{ key: created.key }] });
   });
 
   test("a key from another organization can't see this one's tasks", async () => {

@@ -35,6 +35,7 @@ activity (append-only log for everything)
 | **GitHub delivery** | A webhook delivery GitHub sent (ST-83), by its `X-GitHub-Delivery` id: what makes each one handled once |
 | **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
+| **Milestone** | A task of kind `milestone` (ST-96): goal and "Done when" in its description, start and target dates; tasks of its project join through `tasks.milestone_id`, and sub-tasks without one inherit their parent's (computed, not stored). The project's milestones by date are its roadmap |
 | **Release** | A task of kind `release` (ST-93): links repos (`release_repos`) and apps with a version each (`release_apps`), includes Done tasks of any project (`tasks.release_id`); marking it Released sets `shipped_at` on it and its tasks |
 | **Git link** | A branch, commit or pull request linked to a task, with how its key was found (ST-84) |
 | **Pull request** | A repo's GitHub pull request that links to a task: state, draft, branches, and its `updated_at` on GitHub for the out-of-order guard (ST-84) |
@@ -199,6 +200,9 @@ create table tasks (
   release_id uuid references tasks on delete set null,
   shipped_at timestamptz,                              -- when its release was marked Released (a release: when it was)
   no_code boolean not null default false,              -- nothing to ship: a Done task that needs no release
+  -- Milestones (ST-96): a milestone (a task of kind 'milestone') of the same project; sub-tasks
+  -- without one inherit the nearest ancestor's (computed on read, never stored).
+  milestone_id uuid references tasks on delete set null,
   sort_key text not null,
   custom_fields jsonb not null default '{}',
   creator_id uuid not null references actors,
@@ -211,9 +215,11 @@ create table tasks (
   -- The status is one of the workflow of the task's project and kind (ST-90).
   constraint tasks_status_fk foreign key (project_id, kind, status_id) references statuses (project_id, kind, id),
   constraint tasks_dates_ordered check (start_date is null or target_date is null or start_date <= target_date),
-  constraint tasks_release_not_self check (release_id <> id)
+  constraint tasks_release_not_self check (release_id <> id),
+  constraint tasks_milestone_not_self check (milestone_id <> id)
 );
 create index tasks_release_idx on tasks (release_id);
+create index tasks_milestone_idx on tasks (milestone_id);
 create index on tasks (project_id, status_id, sort_key) where deleted_at is null;
 create index on tasks using gin (custom_fields jsonb_path_ops);
 create index on tasks using gin (search);
