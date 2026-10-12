@@ -1,5 +1,5 @@
 import type { AuthProvider } from "@repo/core";
-import { isEmailAllowed, parseAllowlist } from "@repo/core";
+import { isEmailAllowed, isSignupAllowed, parseAllowlist } from "@repo/core";
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { betterAuth } from "better-auth";
@@ -60,13 +60,15 @@ export function createAuth(db: Db, env: Env, mailer: Mailer) {
     ],
     user: {
       // Runs before any user is created, for every sign-in method (magic link, GitHub, Batele ID).
+      // The address must be on the list and verified by the method: anyone can put a listed
+      // address on their GitHub or Batele ID profile. Magic links verify it by delivery.
       validateUserInfo: ({ user, source }) => {
         if (source.action !== "create-user") return;
         const email = typeof user.email === "string" ? user.email : "";
-        // Email is optional: Batele users without one get a placeholder address and may always
-        // sign up. It can't be used elsewhere: `.invalid` never receives a magic link.
-        if (email.endsWith(`@${BATELE_PLACEHOLDER_DOMAIN}`)) return;
-        if (email && isEmailAllowed(email, allowlist)) return;
+        // Email is optional for Batele ID: users without one get a placeholder address and may
+        // always sign up. Only Batele ID may use it; `.invalid` never receives a magic link.
+        if (source.oauth?.providerId === "batele-id" && email.endsWith(`@${BATELE_PLACEHOLDER_DOMAIN}`)) return;
+        if (email && isSignupAllowed({ email, emailVerified: user.emailVerified === true }, allowlist)) return;
         return {
           error: "signup_not_allowed",
           errorDescription: "This account isn't allowed to sign up. Ask an admin to add you.",

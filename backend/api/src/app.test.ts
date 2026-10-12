@@ -618,14 +618,30 @@ withDb("sign-up allowlist", () => {
   test("validateUserInfo refuses new users outside the list, for any sign-in method", async () => {
     const hook = gatedAuth.options.user?.validateUserInfo;
     if (!hook) throw new Error("validateUserInfo is not configured");
-    const call = (email: string, action: "create-user" | "sign-in") =>
-      hook({ user: { email }, source: { action, method: "oauth", oauth: { providerId: "batele-id" } } });
-    expect(await call("someone@elsewhere.test", "create-user")).toMatchObject({ error: "signup_not_allowed" });
-    expect(await call("someone@allowed-domain.test", "create-user")).toBeUndefined();
+    const call = (
+      email: string,
+      action: "create-user" | "sign-in",
+      { emailVerified = false, provider = "batele-id" }: { emailVerified?: boolean; provider?: "batele-id" | "github" | "magic-link" } = {},
+    ) =>
+      hook({
+        user: { email, emailVerified },
+        source:
+          provider === "magic-link"
+            ? { action, method: "magic-link" }
+            : { action, method: "oauth", oauth: { providerId: provider } },
+      });
+    const refusedSignup = { error: "signup_not_allowed" };
+    expect(await call("someone@elsewhere.test", "create-user", { emailVerified: true })).toMatchObject(refusedSignup);
+    expect(await call("someone@allowed-domain.test", "create-user", { emailVerified: true, provider: "github" })).toBeUndefined();
+    expect(await call("someone@allowed-domain.test", "create-user", { emailVerified: true, provider: "magic-link" })).toBeUndefined();
+    // Anyone can put a listed address on their provider profile: it has to be verified.
+    expect(await call("someone@allowed-domain.test", "create-user", { provider: "github" })).toMatchObject(refusedSignup);
+    expect(await call("someone@allowed-domain.test", "create-user")).toMatchObject(refusedSignup);
     expect(await call("someone@elsewhere.test", "sign-in")).toBeUndefined();
-    // Email is optional for Batele ID: the placeholder address may always sign up.
+    // Email is optional for Batele ID: the placeholder address may always sign up, through Batele ID only.
     expect(await call("01abc@users.batele-id.invalid", "create-user")).toBeUndefined();
-    expect(await call("", "create-user")).toMatchObject({ error: "signup_not_allowed" });
+    expect(await call("01abc@users.batele-id.invalid", "create-user", { provider: "github" })).toMatchObject(refusedSignup);
+    expect(await call("", "create-user")).toMatchObject(refusedSignup);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isEmailAllowed, parseAllowlist } from "./signup";
+import { isEmailAllowed, isSignupAllowed, parseAllowlist } from "./signup";
 
 describe("sign-up allowlist", () => {
   const list = parseAllowlist(" Alice@Example.com, @batele.plus\n@users.batele-id.invalid ");
@@ -19,5 +19,12 @@ describe("sign-up allowlist", () => {
 
   test("an empty list allows everyone", () => {
     expect(isEmailAllowed("anyone@example.com", parseAllowlist(""))).toBe(true);
+  });
+
+  test("sign-ups need a listed address that was verified", () => {
+    expect(isSignupAllowed({ email: "bob@batele.plus", emailVerified: true }, list)).toBe(true);
+    expect(isSignupAllowed({ email: "bob@batele.plus", emailVerified: false }, list)).toBe(false);
+    expect(isSignupAllowed({ email: "bob@example.com", emailVerified: true }, list)).toBe(false);
+    expect(isSignupAllowed({ email: "anyone@example.com", emailVerified: false }, parseAllowlist(""))).toBe(true);
   });
 });
