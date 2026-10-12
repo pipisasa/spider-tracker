@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { styleText } from "node:util";
 import { Separator, confirm as inquirerConfirm, select as inquirerSelect } from "@inquirer/prompts";
 import { run, type Choice } from "./cli";
@@ -65,11 +66,15 @@ async function spawnInherit(argv: string[], options: { env: Record<string, strin
   }
 }
 
-/** Runs `claude` with captured output; undefined when it isn't installed. */
+/**
+ * Runs `claude` with captured output; undefined when it isn't installed. It runs from the home
+ * folder: inside a project, `claude plugin marketplace remove` also edits that project's
+ * .claude/settings.json, and spider only ever manages user-scope plugins.
+ */
 async function runClaude(args: string[]) {
   const claude = Bun.which("claude");
   if (!claude) return undefined;
-  const child = Bun.spawn([claude, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([claude, ...args], { cwd: homedir(), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
