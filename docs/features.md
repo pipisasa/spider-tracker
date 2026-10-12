@@ -10,7 +10,7 @@
 - Relations: blocks / blocked by, relates to, duplicates
 - Several assignees per task, which can be people or agents
 - Views: list, board (kanban), timeline, calendar
-- Filters (status, assignee, priority, tag, title text) on the board and list, kept in the page URL so links are shareable; saved views per project, personal or shared with everyone who sees the project; the same filters (tags by name, all required) on the API, MCP `list_tasks` and `spider task list`, where the assignee filter also finds tasks still assigned to deactivated members
+- Filters (status, assignee, priority, tag, title text) on the board and list, kept in the page URL so links are shareable; saved views per project, personal or shared with everyone who sees the project; the same filters (tags by name, all required) on the API, MCP `list_tasks` and `spider task list`, where the assignee filter also finds tasks still assigned to deactivated members; "Me and my agents" (`assignee=mine`) shows the tasks of a person and every agent they own (from an agent: its owner and the owner's agents), savable in views
 - Grouping and sorting on any field, including custom fields
 - Milestones and cycles (sprints)
 - Bulk edits, command palette (`⌘K`), keyboard shortcuts everywhere

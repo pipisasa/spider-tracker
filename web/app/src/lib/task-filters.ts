@@ -1,4 +1,4 @@
-import type { TaskDto } from "@repo/core/contracts";
+import type { AgentDto, TaskDto } from "@repo/core/contracts";
 import { viewFiltersSchema, type ViewFilters } from "@repo/core/schemas";
 
 // Filters of the project page (ST-15): they live in the URL search params, so links can be
@@ -22,7 +22,7 @@ export function parseFilters(search: Record<string, unknown>): TaskFilters {
   const status = unique(list(search.status).filter((v): v is string => typeof v === "string" && UUID.test(v)));
   if (status.length) filters.status = status;
   const assignee = unique(
-    list(search.assignee).filter((v): v is string => typeof v === "string" && (v === "me" || v === "none" || UUID.test(v))),
+    list(search.assignee).filter((v): v is string => typeof v === "string" && (v === "me" || v === "mine" || v === "none" || UUID.test(v))),
   );
   if (assignee.length) filters.assignee = assignee;
   const priority = unique(
@@ -83,8 +83,21 @@ export function toggleValue<T>(values: T[] | undefined, value: T): T[] {
   return current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
 }
 
-/** The tasks matching every active filter; `meId` is the viewer's actor id (for `assignee=me`). */
-export function applyFilters(tasks: TaskDto[], filters: TaskFilters, meId: string): TaskDto[] {
+/**
+ * What `assignee=mine` stands for in the web: the viewer and the agents they own. The agents list
+ * holds active agents only, so tasks left with a deleted agent of theirs don't match here (the API's
+ * `?assignee=mine` includes them).
+ */
+export const mineActorIds = (meId: string, agents: AgentDto[]): string[] => [
+  meId,
+  ...agents.filter((a) => a.ownerId === meId).map((a) => a.actor.id),
+];
+
+/**
+ * The tasks matching every active filter; `meId` is the viewer's actor id (for `assignee=me`),
+ * `mineIds` the actors of `assignee=mine` (see `mineActorIds`).
+ */
+export function applyFilters(tasks: TaskDto[], filters: TaskFilters, meId: string, mineIds: string[] = [meId]): TaskDto[] {
   if (isEmptyFilters(filters)) return tasks;
   const query = filters.q?.trim().toLowerCase();
   return tasks.filter((task) => {
@@ -95,7 +108,7 @@ export function applyFilters(tasks: TaskDto[], filters: TaskFilters, meId: strin
       if (!(filters.tagMatch === "any" ? filters.tag.some(has) : filters.tag.every(has))) return false;
     }
     if (filters.assignee?.length) {
-      const wanted = filters.assignee.map((a) => (a === "me" ? meId : a));
+      const wanted = filters.assignee.flatMap((a) => (a === "me" ? [meId] : a === "mine" ? mineIds : [a]));
       const matches = task.assigneeIds.length === 0 ? wanted.includes("none") : task.assigneeIds.some((id) => wanted.includes(id));
       if (!matches) return false;
     }

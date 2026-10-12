@@ -670,7 +670,9 @@ const paths = {
           name: "assignee",
           in: "query",
           schema: { type: "array", items: { type: "string" } },
-          description: 'Actor id or handle (deactivated ones too), "me", or "none" for unassigned tasks',
+          description:
+            'Actor id or handle (deactivated ones too), "me", "mine" (you and your agents; for an agent key, ' +
+            "its owner and the owner's agents, deleted ones too), or \"none\" for unassigned tasks",
         },
         {
           name: "tag",

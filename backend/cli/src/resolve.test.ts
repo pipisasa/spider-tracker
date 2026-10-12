@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ActorDto, ProjectDetailDto, StatusDto } from "@repo/core/contracts";
+import type { ActorDto, AgentDto, ProjectDetailDto, StatusDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 import {
   matchesTaskFilter,
@@ -7,6 +7,7 @@ import {
   firstStatus,
   fromApiError,
   matchStatuses,
+  mineActorIds,
   parseLimit,
   parsePriority,
   resolveAssignees,
@@ -82,6 +83,29 @@ describe("assignee resolution", () => {
 
   test("an unknown handle is a usage error", () => {
     expect(() => resolveAssignees(members, "x", ["carol"])).toThrow(/Valid handles: me, alice, bob/);
+  });
+});
+
+describe('"mine" for the client-side re-check', () => {
+  const agent = (id: string, ownerId: string): AgentDto => ({
+    actor: { ...member(id, id), type: "agent" },
+    ownerId,
+    owner: { id: ownerId, name: ownerId, handle: ownerId },
+    description: null,
+    canManage: false,
+    keys: [],
+    projects: null,
+  });
+  const agents = [agent("bot1", "alice"), agent("bot2", "alice"), agent("bot3", "bob")];
+  const gone: ActorDto = { ...member("gone", "gone"), type: "agent", deactivated: true };
+  const actors = [member("alice", "alice"), member("bob", "bob"), ...agents.map((a) => a.actor), gone];
+
+  test("a person: themselves, their agents and (ownership unknown) deactivated agents", () => {
+    expect(mineActorIds(member("alice", "alice"), agents, actors).sort()).toEqual(["alice", "bot1", "bot2", "gone"]);
+  });
+  test("an agent: its owner and the owner's agents, itself included", () => {
+    expect(mineActorIds({ ...member("bot2", "bot2"), type: "agent" }, agents, actors).sort()).toEqual(["alice", "bot1", "bot2", "gone"]);
+    expect(mineActorIds({ ...member("bot3", "bot3"), type: "agent" }, agents, actors).sort()).toEqual(["bob", "bot3", "gone"]);
   });
 });
 

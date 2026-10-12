@@ -1,6 +1,6 @@
 import { normalizeHandle } from "@repo/core/schemas";
 import { matchStatuses } from "@repo/core/statuses";
-import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto } from "@repo/core/contracts";
+import type { ActorDto, AgentDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 
 export const EXIT = { ok: 0, unexpected: 1, usage: 2, notFound: 3, auth: 4 } as const;
@@ -86,6 +86,24 @@ export function resolveAssignees(members: ActorDto[], meId: string, handles: str
     return member.id;
   });
   return [...new Set(ids)];
+}
+
+/**
+ * What "mine" may stand for, for re-checking a task list on the client: the caller's person (the
+ * caller, or an agent caller's owner), that person's agents, and every deactivated agent, since
+ * the agents list leaves them out and doesn't say whose they were. A superset is enough: a server
+ * that knows "mine" has already narrowed the list; one that ignores filters gets an approximation.
+ */
+export function mineActorIds(me: ActorDto, agents: AgentDto[], actors: ActorDto[]): string[] {
+  const person = me.type === "agent" ? (agents.find((a) => a.actor.id === me.id)?.ownerId ?? me.id) : me.id;
+  return [
+    ...new Set([
+      person,
+      me.id,
+      ...agents.filter((a) => a.ownerId === person).map((a) => a.actor.id),
+      ...actors.filter((a) => a.type === "agent" && a.deactivated).map((a) => a.id),
+    ]),
+  ];
 }
 
 /** Tag names (case-insensitive, with or without "#") to ids; unknown names list the existing tags. */

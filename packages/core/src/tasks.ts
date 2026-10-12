@@ -21,7 +21,7 @@ import {
 import { matchStatuses } from "./statuses";
 import { parseInput } from "./validate";
 
-const { actors, projects, statuses, tags, taskAssignees, taskTags, tasks } = schema;
+const { actors, agents, projects, statuses, tags, taskAssignees, taskTags, tasks } = schema;
 
 type TaskRow = typeof tasks.$inferSelect;
 type StatusRow = typeof statuses.$inferSelect;
@@ -284,6 +284,21 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
   });
 }
 
+/**
+ * The actors "mine" stands for, as a subquery: the viewer's person (the viewer, or the owner of an
+ * agent viewer) and every agent that person owns, deactivated ones too, within the organization.
+ */
+function mineActorIds(db: Db, viewer: ActorContext) {
+  const self = aliasedTable(agents, "self");
+  const owner = db.select({ id: self.ownerId }).from(self).where(eq(self.actorId, viewer.actorId));
+  const person = sql`coalesce(${owner}, ${viewer.actorId}::uuid)`;
+  return db
+    .select({ id: actors.id })
+    .from(actors)
+    .leftJoin(agents, eq(agents.actorId, actors.id))
+    .where(and(eq(actors.orgId, viewer.orgId), or(eq(actors.id, person), eq(agents.ownerId, person))));
+}
+
 /** SQL conditions for the list filters of `project`; unknown statuses, members and tags are validation errors. */
 async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDto, filters: unknown): Promise<SQL[]> {
   const data = parseInput(taskListFilters, filters);
@@ -310,32 +325,38 @@ async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDt
     const rows = await listMembers(db, orgIdOf(viewer), { includeDeactivated: true });
     const ids = new Set<string>();
     let none = false;
+    let mine = false;
     for (const raw of data.assignee) {
       const handle = normalizeHandle(raw);
       if (handle === "none") {
         none = true;
-      } else if (handle === "me") {
-        if (typeof viewer === "string") throw new DomainError("validation", `"me" needs a signed-in member`);
-        ids.add(viewer.actorId);
+      } else if (handle === "me" || handle === "mine") {
+        if (typeof viewer === "string") throw new DomainError("validation", `"${handle}" needs a signed-in member`);
+        if (handle === "me") ids.add(viewer.actorId);
+        else mine = true;
       } else {
         const actor = rows.find((a) => a.id === raw || a.handle.toLowerCase() === handle);
         if (!actor) {
           throw new DomainError(
             "validation",
-            `Unknown member "${raw}". Valid handles: me, none, ${rows.map((a) => a.handle).join(", ")}`,
+            `Unknown member "${raw}". Valid handles: me, mine, none, ${rows.map((a) => a.handle).join(", ")}`,
           );
         }
         ids.add(actor.id);
       }
     }
-    const assigned = (actorIds?: string[]) =>
+    const assigned = (actorIds?: string[] | ReturnType<typeof mineActorIds>) =>
       exists(
         db
           .select({ one: sql`1` })
           .from(taskAssignees)
           .where(and(eq(taskAssignees.taskId, tasks.id), actorIds ? inArray(taskAssignees.actorId, actorIds) : undefined)),
       );
-    const options = [ids.size ? assigned([...ids]) : undefined, none ? not(assigned()) : undefined];
+    const options = [
+      ids.size ? assigned([...ids]) : undefined,
+      mine && typeof viewer !== "string" ? assigned(mineActorIds(db, viewer)) : undefined,
+      none ? not(assigned()) : undefined,
+    ];
     const condition = or(...options);
     if (condition) where.push(condition);
   }

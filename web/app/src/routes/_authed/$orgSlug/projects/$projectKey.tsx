@@ -9,8 +9,25 @@ import { Button } from "@/components/ui/button";
 import { useAppAction } from "@/lib/app-events";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { actorsQuery, documentsQuery, membersQuery, projectQuery, tagsQuery, tasksQuery, useArchiveProject } from "@/lib/work";
-import { applyFilters, filtersToSearch, isEmptyFilters, normalizeFilters, parseFilters, type TaskFilters } from "@/lib/task-filters";
+import {
+  actorsQuery,
+  agentsQuery,
+  documentsQuery,
+  membersQuery,
+  projectQuery,
+  tagsQuery,
+  tasksQuery,
+  useArchiveProject,
+} from "@/lib/work";
+import {
+  applyFilters,
+  filtersToSearch,
+  isEmptyFilters,
+  mineActorIds,
+  normalizeFilters,
+  parseFilters,
+  type TaskFilters,
+} from "@/lib/task-filters";
 import type { SavedViewDto } from "@repo/core/contracts";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -47,6 +64,9 @@ function ProjectPage() {
   // Deactivated assignees too, so cards and rows still show them.
   const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const { data: tags = [] } = useQuery(tagsQuery(orgSlug));
+  // Only for "Me and my agents" (assignee=mine): which agents are the viewer's.
+  const mineSelected = filters.assignee?.includes("mine") ?? false;
+  const { data: agents } = useQuery({ ...agentsQuery(orgSlug), enabled: mineSelected });
   const [newTaskStatus, setNewTaskStatus] = useState<string | undefined>();
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newDocumentOpen, setNewDocumentOpen] = useState(false);
@@ -56,7 +76,8 @@ function ProjectPage() {
   const archived = project.archivedAt !== null;
 
   const meId = membership.actor.id;
-  const visibleTasks = useMemo(() => applyFilters(tasks, filters, meId), [tasks, filters, meId]);
+  const mineIds = useMemo(() => mineActorIds(meId, agents ?? []), [meId, agents]);
+  const visibleTasks = useMemo(() => applyFilters(tasks, filters, meId, mineIds), [tasks, filters, meId, mineIds]);
   const filtered = !isEmptyFilters(filters);
 
   const setFilters = (next: TaskFilters) =>

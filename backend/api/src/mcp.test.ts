@@ -357,6 +357,23 @@ withDb("MCP server", () => {
     expect(orphaned.json()).toMatchObject({ total: 1, tasks: [{ key: task.key, assignees: ["gone (deactivated)"] }] });
   });
 
+  test('assignee "mine": the agent\'s owner and all the owner\'s agents, deleted ones too', async () => {
+    const ctx = ownerCtxs[0];
+    if (!ctx) throw new Error("no owner");
+    const { actor: sibling } = await createAgent(db, ctx, { name: "Sibling", handle: "sibling" });
+    await createTask(db, ctx, "SPI", { title: "mine-check owner", assigneeIds: [ctx.actorId] });
+    await createTask(db, ctx, "SPI", { title: "mine-check sibling", assigneeIds: [sibling.id] });
+    await createTask(db, ctx, "SPI", { title: "mine-check nobody" });
+    const titles = async (assignee: unknown, query: string) =>
+      ((await call(client, "list_tasks", { projectKey: "SPI", assignee, query })).json() as { tasks: { title: string }[] }).tasks
+        .map((t) => t.title)
+        .sort();
+    expect(await titles("mine", "mine-check")).toEqual(["mine-check owner", "mine-check sibling"]);
+    expect(await titles(["@MINE", "none"], "mine-check")).toEqual(["mine-check nobody", "mine-check owner", "mine-check sibling"]);
+    expect(await titles("mine", "Orphaned")).toEqual(["Orphaned"]);
+    expect(await titles("me", "mine-check")).toEqual([]);
+  });
+
     test("a key from another organization can't see this one's tasks", async () => {
     expect(await call(otherClient, "get_task", { key: "SPI-1" })).toMatchObject({ isError: true });
     expect((await call(otherClient, "list_tasks", { projectKey: "SPI" })).json()).toMatchObject({ total: 0 });
