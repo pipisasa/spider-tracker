@@ -66,6 +66,8 @@ bun run release:cli --release ST-120                # cli-v<version> with the cl
 bun run spider task done ST-120                     # Released: marks its tasks shipped (once web and api are deployed to prod, ST-94)
 ```
 
+`release check` compares each app from its previous tag, so fetch tags first (`git fetch --tags`; CI and shallow clones often have none). An app of the release with no earlier tag is checked from `--since` or its whole history, and the check prints a warning for it.
+
 `release changelog --write` never overwrites a changelog block edited by hand (`--force` does). Apps deployed without a script that takes notes (web, api) get their GitHub release by hand if wanted: `gh release create web-2026.10.13 --notes "$(bun run spider release notes ST-120 --app web)"`. The server can't push tags or create GitHub releases (no GitHub write access), so these steps stay local.
 
 `spider update` and the passive "new spider available" notice look for the release marked latest with a `cli-v*` tag, so keep CLI releases `--latest` (or the CLI falls back to the newest `cli-v*` release in the list).

@@ -6,7 +6,9 @@ import {
   changelogFileSection,
   changelogState,
   compareVersions,
+  escapeMarkers,
   findHandoff,
+  flattenHeadings,
   finishChangelog,
   insertReleaseSection,
   previousTag,
@@ -133,6 +135,24 @@ describe("renderChangelog", () => {
     expect(renderChangelog([], entries.slice(2), false)).toBe("- **OPS-3** Runbook\n  Wrote it.");
     expect(renderChangelog(apps, [], true)).toBe("_No tasks in this release yet._");
     expect(renderChangelog(apps, entries.slice(0, 1), true)).toContain("### cli 0.1.9\n\n_No tasks._");
+  });
+
+  test("a note's fenced code keeps its # lines; markers and leading Markdown in titles and notes are escaped", () => {
+    const note = "## Details\n```sh\n# a shell comment\nspider release check\n```\n# After";
+    expect(flattenHeadings(note)).toBe("**Details**\n```sh\n# a shell comment\nspider release check\n```\n**After**");
+
+    expect(escapeMarkers("a <!-- /spider:changelog --> b <!-- spider:changelog hash=0000aaaa --> <!--spider:release ST-1 -->")).toBe(
+      "a &lt;!-- /spider:changelog --> b &lt;!-- spider:changelog hash=0000aaaa --> &lt;!--spider:release ST-1 -->",
+    );
+    const sneaky = [{ key: "ST-7", title: "**Bold** <!-- /spider:changelog -->", whatChanged: "Ends it <!-- /spider:changelog -->\nmore", apps: [] }];
+    const markdown = renderChangelog([], sneaky, false);
+    expect(markdown).toBe("- **ST-7** \\*\\*Bold** &lt;!-- /spider:changelog -->\n  Ends it &lt;!-- /spider:changelog -->\n  more");
+    // The block written with it reads back whole, not as a hand edit.
+    const description = withChangelog("Intro.", markdown);
+    expect(changelogBlock(description)).toEqual({ content: markdown, edited: false });
+    expect(changelogState(description, markdown)).toBe("current");
+    expect(renderChangelog([], [{ key: "ST-8", title: "# Not a heading", whatChanged: null, apps: [] }], false)).toBe("- **ST-8** \\# Not a heading");
+    expect(renderChangelog([], [{ key: "ST-9", title: "_x_ and *y*", whatChanged: null, apps: [] }], false)).toBe("- **ST-9** \\_x_ and *y*");
   });
 
   test("appNotes takes one app's section", () => {

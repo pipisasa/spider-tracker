@@ -9,7 +9,7 @@ import { DomainError } from "./errors";
 import { publish } from "./events";
 import { getProject } from "./projects";
 import { repoFullName } from "./remotes";
-import { findApp, findRepo } from "./repos";
+import { findApp, findRepo, repoVisibleIn } from "./repos";
 import {
   appVersionProblem,
   createReleaseInput,
@@ -27,7 +27,9 @@ import { parseInput } from "./validate";
 // Releases (ST-93): tasks of kind "release". A release links repos and apps (a version each) and
 // includes Done tasks from any project, one release per task (`tasks.release_id`). Marking it
 // Released ships them (see shipping.ts). Members and their agents manage releases like other tasks;
-// a project-scoped agent sees and adds only tasks of its own projects.
+// a project-scoped agent sees and adds only tasks of its own projects, and sees only the repos and
+// apps (and their deployments) in repos attached to them (ST-92's rule). Hidden links stay as they
+// are when it changes the others.
 
 const { apps, gitLinks, projectRepos, projects, releaseApps, releaseRepos, repos, statuses, tasks } = schema;
 
@@ -119,7 +121,10 @@ async function writeLinks(tx: Tx, releaseId: string, repoIds: string[], appRows:
   if (appRows.length) await tx.insert(releaseApps).values(appRows.map((a) => ({ releaseId, appId: a.appId, version: a.version })));
 }
 
-/** The release's links as they read in activity entries: "owner/name" and "web 2026.10.13". */
+/**
+ * The release's links as they read in activity entries: "owner/name" and "web 2026.10.13", and
+ * each app label's repo, which activity-feed.ts uses to hide the labels of repos a viewer can't see.
+ */
 async function linkLabels(db: Db | Tx, releaseId: string) {
   const repoRows = await db
     .select({ owner: repos.owner, name: repos.name })
@@ -127,17 +132,42 @@ async function linkLabels(db: Db | Tx, releaseId: string) {
     .innerJoin(repos, eq(repos.id, releaseRepos.repoId))
     .where(eq(releaseRepos.releaseId, releaseId));
   const appRows = await db
-    .select({ name: apps.name, version: releaseApps.version })
+    .select({ name: apps.name, version: releaseApps.version, owner: repos.owner, repoName: repos.name })
     .from(releaseApps)
     .innerJoin(apps, eq(apps.id, releaseApps.appId))
+    .innerJoin(repos, eq(repos.id, apps.repoId))
     .where(eq(releaseApps.releaseId, releaseId));
+  const label = (a: { name: string; version: string }) => `${a.name} ${a.version}`;
   return {
     repos: repoRows.map(repoFullName).sort(),
-    apps: appRows.map((a) => `${a.name} ${a.version}`).sort(),
+    apps: appRows.map(label).sort(),
+    appRepos: Object.fromEntries(appRows.map((a) => [label(a), repoFullName({ owner: a.owner, name: a.repoName })])),
   };
 }
 
-/** The status, repos, apps, (in-scope) included tasks and deployments of each release. */
+/** Activity changes for links going from `before` to `after`; `appRepos` names every app label's repo. */
+function linkChanges(before: Awaited<ReturnType<typeof linkLabels>>, after: Awaited<ReturnType<typeof linkLabels>>) {
+  const changes: Record<string, unknown> = {};
+  if (before.repos.join("\n") !== after.repos.join("\n")) changes.repos = [before.repos, after.repos];
+  if (before.apps.join("\n") !== after.apps.join("\n")) {
+    changes.apps = [before.apps, after.apps];
+    changes.appRepos = { ...before.appRepos, ...after.appRepos };
+  }
+  return changes;
+}
+
+/** Of these repo ids, the ones a viewer with `scope` can see. */
+async function visibleRepoIds(db: Db | Tx, scope: ProjectScope, ids: string[]): Promise<Set<string>> {
+  if (!scope) return new Set(ids);
+  if (ids.length === 0) return new Set();
+  const rows = await db
+    .select({ id: repos.id })
+    .from(repos)
+    .where(and(inArray(repos.id, ids), repoVisibleIn(db, scope)));
+  return new Set(rows.map((r) => r.id));
+}
+
+/** The status and the in-scope repos, apps, included tasks and deployments of each release. */
 async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto[]): Promise<ReleaseDto[]> {
   if (releases.length === 0) return [];
   const ids = releases.map((r) => r.id);
@@ -149,7 +179,7 @@ async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto
     .select({ releaseId: releaseRepos.releaseId, id: repos.id, owner: repos.owner, name: repos.name })
     .from(releaseRepos)
     .innerJoin(repos, eq(repos.id, releaseRepos.repoId))
-    .where(inArray(releaseRepos.releaseId, ids))
+    .where(and(inArray(releaseRepos.releaseId, ids), repoVisibleIn(db, scope)))
     .orderBy(sql`lower(${repos.owner})`, sql`lower(${repos.name})`);
   const appRows = await db
     .select({
@@ -162,7 +192,7 @@ async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto
     .from(releaseApps)
     .innerJoin(apps, eq(apps.id, releaseApps.appId))
     .innerJoin(repos, eq(repos.id, apps.repoId))
-    .where(inArray(releaseApps.releaseId, ids))
+    .where(and(inArray(releaseApps.releaseId, ids), repoVisibleIn(db, scope)))
     .orderBy(sql`lower(${repos.owner})`, sql`lower(${repos.name})`, asc(apps.name));
   const taskRows = await db
     .select({ task: tasks, projectKey: projects.key, status: { id: statuses.id, name: statuses.name, category: statuses.category } })
@@ -171,7 +201,7 @@ async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
     .where(and(inArray(tasks.releaseId, ids), isNull(tasks.deletedAt), scope ? inArray(tasks.projectId, [...scope]) : undefined))
     .orderBy(asc(projects.key), asc(tasks.number));
-  const deploymentRows = await deploymentDtos(db, ids);
+  const deploymentRows = await deploymentDtos(db, ids, undefined, scope);
 
   return releases.map((release) => {
     const status = statusRows.find((s) => s.id === release.statusId);
@@ -262,7 +292,7 @@ export async function createRelease(db: Db, ctx: ActorContext, projectKey: strin
         entityType: "task",
         entityId: created.id,
         action: "task.updated",
-        changes: { repos: [[], after.repos], apps: [[], after.apps] },
+        changes: { repos: [[], after.repos], apps: [[], after.apps], appRepos: after.appRepos },
       });
     }
     if (data.tasks?.length) {
@@ -274,7 +304,10 @@ export async function createRelease(db: Db, ctx: ActorContext, projectKey: strin
   });
 }
 
-/** Replaces a release's repos or apps (with their versions). */
+/**
+ * Replaces a release's repos or apps (with their versions). Links in repos a scoped actor can't see
+ * are kept: `repos: []` from it removes only the repos it sees.
+ */
 export async function updateRelease(db: Db, ctx: ActorContext, releaseKey: string, input: unknown): Promise<ReleaseDto> {
   assertCanWrite(ctx);
   const data = parseInput(updateReleaseInput, input);
@@ -290,15 +323,16 @@ export async function updateRelease(db: Db, ctx: ActorContext, releaseKey: strin
       .from(releaseApps)
       .innerJoin(apps, eq(apps.id, releaseApps.appId))
       .where(eq(releaseApps.releaseId, release.task.id));
+    const visible = await visibleRepoIds(tx, scope, [...currentRepos.map((r) => r.repoId), ...currentApps.map((a) => a.repoId)]);
+    const hiddenRepos = currentRepos.filter((r) => !visible.has(r.repoId)).map((r) => r.repoId);
+    const hiddenApps = currentApps.filter((a) => !visible.has(a.repoId));
     const links = await resolveLinks(tx, ctx, scope, { repos: data.repos, apps: data.apps });
-    const nextApps = data.apps ? links.apps : currentApps;
-    const namedRepos = data.repos ? links.repos.map((r) => r.id) : currentRepos.map((r) => r.repoId);
+    const nextApps = data.apps ? [...hiddenApps, ...links.apps] : currentApps;
+    const namedRepos = data.repos ? [...hiddenRepos, ...links.repos.map((r) => r.id)] : currentRepos.map((r) => r.repoId);
     await writeLinks(tx, release.task.id, [...namedRepos, ...nextApps.map((a) => a.repoId)], nextApps);
 
     const after = await linkLabels(tx, release.task.id);
-    const changes: Record<string, [unknown, unknown]> = {};
-    if (before.repos.join("\n") !== after.repos.join("\n")) changes.repos = [before.repos, after.repos];
-    if (before.apps.join("\n") !== after.apps.join("\n")) changes.apps = [before.apps, after.apps];
+    const changes = linkChanges(before, after);
     if (Object.keys(changes).length > 0) {
       await tx.update(tasks).set({ updatedAt: new Date() }).where(eq(tasks.id, release.task.id));
       await recordActivity(tx, ctx, { entityType: "task", entityId: release.task.id, action: "task.updated", changes });

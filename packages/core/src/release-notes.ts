@@ -145,13 +145,36 @@ export function previousTag(app: { name: string; versioning: AppVersioning }, ta
 
 type EntryInput = Pick<ReleaseChangelogEntryDto, "key" | "title" | "whatChanged" | "apps">;
 
-/** Headings inside a note would split the changelog's app sections: they become bold lines. */
-const flattenHeadings = (text: string) => text.replace(/^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$/gm, "**$1**");
+/**
+ * Headings inside a note would split the changelog's app sections: they become bold lines. Lines
+ * inside fenced code blocks (a "# comment" in a shell snippet) are left alone.
+ */
+export function flattenHeadings(text: string): string {
+  let fence = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (/^ {0,3}(```|~~~)/.test(line)) fence = !fence;
+      return fence ? line : line.replace(/^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$/, "**$1**");
+    })
+    .join("\n");
+}
+
+/**
+ * Text from tasks can't hold the markers this module looks for: "<!-- spider:changelog …" or
+ * "<!-- /spider:changelog -->" would end the description's block early (and CHANGELOG.md's
+ * "<!-- spider:release …" marker would claim a release). Their "<" becomes "&lt;", which Markdown
+ * shows as "<".
+ */
+export const escapeMarkers = (text: string) => text.replace(/<!--(\s*\/?\s*spider:(?:changelog|release))/gi, "&lt;!--$1");
+
+/** A title after the bold key: leading "#", "*" or "_" are escaped so they can't merge with the key's "**". */
+const escapeTitle = (title: string) => escapeMarkers(title.trim()).replace(/^[#*_]+/, (lead) => lead.replace(/./g, "\\$&"));
 
 function entryLines(entry: EntryInput): string {
-  const head = `- **${entry.key}** ${entry.title.trim()}`;
+  const head = `- **${entry.key}** ${escapeTitle(entry.title)}`;
   if (!entry.whatChanged) return head;
-  const body = flattenHeadings(entry.whatChanged)
+  const body = flattenHeadings(escapeMarkers(entry.whatChanged))
     .split("\n")
     .map((line) => (line.trim() ? `  ${line}` : ""))
     .join("\n");

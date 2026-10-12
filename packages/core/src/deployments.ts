@@ -2,7 +2,7 @@ import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
-import { assertCanWrite, type ActorContext, type Viewer } from "./access";
+import { assertCanWrite, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import { systemContext } from "./bots";
 import type { DeploymentDto, RecordDeploymentResponse, StatusCategory, StatusDto } from "./contracts";
@@ -11,6 +11,7 @@ import { DomainError } from "./errors";
 import { publish } from "./events";
 import { findRelease, releaseDto } from "./releases";
 import { parseRepoRemote, repoFullName } from "./remotes";
+import { repoVisibleIn } from "./repos";
 import { deploymentListQuery, recordDeploymentInput } from "./schemas";
 import { parseInput } from "./validate";
 
@@ -23,6 +24,7 @@ import { parseInput } from "./validate";
 // - Released stays a person's (or the release owner's) move: it is allowed once every app with
 //   environments is deployed to its last one (shipping.ts), never made automatically;
 // - nothing moves a release backwards.
+// A project-scoped agent sees and deploys only apps in repos attached to its projects (ST-92).
 
 const { apps, deployments, releaseApps, repos, statuses, tasks } = schema;
 
@@ -48,7 +50,7 @@ export async function recordDeployment(db: Db, ctx: ActorContext, releaseKey: st
     if (!status) throw new Error("Status missing");
     if (status.category === "canceled") throw new DomainError("validation", `Release ${key} is ${status.name}; reopen it before recording deployments`);
 
-    const app = await releaseApp(tx, release.task.id, key, data.app, data.repo);
+    const app = await releaseApp(tx, await projectScope(tx, ctx), release.task.id, key, data.app, data.repo);
     if (!app.environments.includes(data.environment)) {
       throw new DomainError(
         "validation",
@@ -92,18 +94,19 @@ export async function recordDeployment(db: Db, ctx: ActorContext, releaseKey: st
 export async function listDeployments(db: Db, viewer: Viewer, releaseKey: string, query: unknown = {}): Promise<DeploymentDto[]> {
   const { app, environment } = parseInput(deploymentListQuery, query);
   const release = await findRelease(db, viewer, releaseKey);
-  const rows = await deploymentDtos(db, [release.task.id], environment ? eq(deployments.environment, environment) : undefined);
+  const scope = await projectScope(db, viewer);
+  const rows = await deploymentDtos(db, [release.task.id], environment ? eq(deployments.environment, environment) : undefined, scope);
   return app ? rows.filter((d) => d.app === app) : rows;
 }
 
-/** The release's app named `name` (in `repo`, when given), or a validation error naming its apps. */
-async function releaseApp(tx: Tx, releaseId: string, releaseKey: string, name: string, repo: string | undefined) {
+/** The release's app named `name` (in `repo`, when given), or a validation error naming its apps; only apps in repos `scope` sees. */
+async function releaseApp(tx: Tx, scope: ProjectScope, releaseId: string, releaseKey: string, name: string, repo: string | undefined) {
   const rows = await tx
     .select({ id: apps.id, name: apps.name, environments: apps.environments, owner: repos.owner, repoName: repos.name })
     .from(releaseApps)
     .innerJoin(apps, eq(apps.id, releaseApps.appId))
     .innerJoin(repos, eq(repos.id, apps.repoId))
-    .where(eq(releaseApps.releaseId, releaseId))
+    .where(and(eq(releaseApps.releaseId, releaseId), repoVisibleIn(tx, scope)))
     .orderBy(asc(repos.owner), asc(repos.name), asc(apps.name));
   const linked = rows.map((r) => ({ ...r, repo: repoFullName({ owner: r.owner, name: r.repoName }) }));
   let matches = linked.filter((a) => a.name === name);
