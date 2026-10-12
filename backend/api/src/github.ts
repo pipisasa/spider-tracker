@@ -35,12 +35,66 @@ export interface GithubApp {
   createPullRequest(request: GithubPullRequestRequest): Promise<CreatePullRequestResult>;
 }
 
-/** GitHub couldn't be reached or refused a request (the API answers 502). */
+/** What is kept of a failed GitHub request: never its headers or body (they can hold secrets). */
+export interface GithubFailure {
+  status?: number;
+  method?: string;
+  /** Without its query string or credentials. */
+  url?: string;
+}
+
+/**
+ * GitHub couldn't be reached or refused a request (the API answers 502). It deliberately keeps no
+ * `cause`: Octokit's RequestError carries the request, and the OAuth code exchange's body holds the
+ * App's client secret and the person's code (ST-137). Only `failure` is kept, for the logs.
+ */
 export class GithubUnavailableError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
+  readonly failure: GithubFailure;
+
+  constructor(message: string, failure: GithubFailure = {}) {
+    super(message);
     this.name = "GithubUnavailableError";
+    this.failure = failure;
   }
+}
+
+const recordOf = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+
+/** A URL without its query, fragment or credentials; null when it isn't one. */
+function safeUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The status, method and URL of a failed Octokit request, read by shape (Octokit's packages bundle several RequestError copies). */
+export function githubFailureOf(err: unknown): GithubFailure {
+  const error = recordOf(err);
+  if (!error) return {};
+  const request = recordOf(error.request);
+  const failure: GithubFailure = {};
+  if (typeof error.status === "number") failure.status = error.status;
+  if (typeof request?.method === "string") failure.method = request.method;
+  const url = safeUrl(request?.url);
+  if (url) failure.url = url;
+  return failure;
+}
+
+/** The GithubUnavailableError for a failed request: a message and the failure's safe fields only. */
+export const githubUnavailable = (what: string, err: unknown) =>
+  new GithubUnavailableError(`GitHub request failed: ${what}`, githubFailureOf(err));
+
+/** One log line for a GitHub failure: the message and the safe fields, never the error object. */
+export function logGithubFailure(err: GithubUnavailableError): void {
+  const { status, method, url } = err.failure;
+  const request = url ? [method, url].filter(Boolean).join(" ") : null;
+  const details = [status === undefined ? null : `status ${status}`, request].filter(Boolean);
+  console.error(details.length ? `${err.message} (${details.join(", ")})` : err.message);
 }
 
 type Account = { login: string } | { slug: string; name: string } | null | undefined;
@@ -52,7 +106,7 @@ async function guarded<T>(what: string, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {
-    throw new GithubUnavailableError(`GitHub request failed: ${what}`, { cause: err });
+    throw githubUnavailable(what, err);
   }
 }
 
@@ -105,11 +159,18 @@ export function githubReasons(data: unknown): string {
   return reasons.filter(Boolean).join("; ") || parsed.data.message || "Validation Failed";
 }
 
-export function createGithubApp(config: GithubAppConfig): GithubApp {
+export interface GithubAppOptions {
+  /** Replaces the network, for tests (without retries then). */
+  fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+}
+
+export function createGithubApp(config: GithubAppConfig, options: GithubAppOptions = {}): GithubApp {
+  const Client = options.fetch ? Octokit.defaults({ request: { fetch: options.fetch, retries: 0 } }) : Octokit;
   const app = new App({
     appId: config.appId,
     privateKey: config.privateKey,
     oauth: { clientId: config.clientId, clientSecret: config.clientSecret },
+    Octokit: Client,
   });
 
   return {
@@ -124,12 +185,12 @@ export function createGithubApp(config: GithubAppConfig): GithubApp {
         (err: unknown) => {
           if (err instanceof RequestError && err.status < 500) return null;
           if (err instanceof Error && /bad_verification_code|incorrect or expired/i.test(err.message)) return null;
-          throw new GithubUnavailableError("GitHub request failed: OAuth code exchange", { cause: err });
+          throw githubUnavailable("OAuth code exchange", err);
         },
       );
       if (!token) return false;
       return guarded("user installations", async () => {
-        const user = new Octokit({ auth: token });
+        const user = new Client({ auth: token });
         for await (const { data } of user.paginate.iterator("GET /user/installations", { per_page: 100 })) {
           if (data.some((i) => i.id === installationId)) return true;
         }
@@ -168,7 +229,7 @@ export function createGithubApp(config: GithubAppConfig): GithubApp {
         return { created: true, pullRequest: toPullRequestData(data) };
       } catch (err) {
         if (!(err instanceof RequestError) || err.status !== 422) {
-          throw new GithubUnavailableError("GitHub request failed: create pull request", { cause: err });
+          throw githubUnavailable("create pull request", err);
         }
         const reasons = githubReasons(err.response?.data);
         if (!/already exists/i.test(reasons)) throw new DomainError("validation", `GitHub refused the pull request: ${reasons}`);

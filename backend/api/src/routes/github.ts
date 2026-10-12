@@ -2,6 +2,7 @@ import type { ApiErrorBody, GithubInstallUrlDto, GithubStatusDto } from "@repo/c
 import {
   DomainError,
   GITHUB_WEBHOOK_MAX_BYTES,
+  GithubInstallationTakenError,
   assertCanSyncGithubInstallation,
   createGithubInstallState,
   disconnectGithubInstallation,
@@ -18,7 +19,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Auth } from "../auth";
 import type { Env } from "../env";
-import { GithubUnavailableError, type GithubApp } from "../github";
+import { GithubUnavailableError, logGithubFailure, type GithubApp } from "../github";
 import type { AppEnv } from "../types";
 
 // The GitHub App (ST-82): Settings → GitHub's routes under /v1/orgs/:orgSlug/github, and the
@@ -56,11 +57,11 @@ export function githubOrgRoutes(db: Db, github: GithubApp | null, stateSecret: s
   });
 
   // A browser flow: only a signed-in person can finish it at /github/setup.
-  app.post("/install", (c) => {
+  app.post("/install", async (c) => {
     if (!github) return c.json(notConfigured, 503);
     const user = c.get("user");
     if (!user) throw new DomainError("forbidden", "Only people can connect GitHub, from Settings → GitHub");
-    const state = createGithubInstallState(c.get("actor"), { secret: stateSecret, userId: user.id });
+    const state = await createGithubInstallState(db, c.get("actor"), { secret: stateSecret, userId: user.id });
     const body: GithubInstallUrlDto = { url: github.installUrl(state) };
     return c.json(body);
   });
@@ -134,11 +135,12 @@ export function githubSetupRoutes(db: Db, auth: Auth, github: GithubApp | null, 
       return back(`connected=${installation.id}`);
     } catch (err) {
       if (err instanceof GithubUnavailableError) {
-        console.error(err);
+        logGithubFailure(err);
         return fail("github_unavailable");
       }
       if (err instanceof DomainError) {
-        if (err.code === "conflict") return fail(err.message.includes("another organization") ? "other_organization" : "conflict");
+        if (err instanceof GithubInstallationTakenError) return fail("other_organization");
+        if (err.code === "conflict") return fail("conflict");
         if (err.code === "not_found") return fail("not_found");
         if (err.code === "forbidden") return fail("forbidden");
       }

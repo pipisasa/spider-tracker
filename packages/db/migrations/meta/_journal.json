@@ -204,6 +204,13 @@
       "when": 1791846375725,
       "tag": "0028_deployments",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791847147615,
+      "tag": "0029_github_install_states",
+      "breakpoints": true
     }
   ]
 }

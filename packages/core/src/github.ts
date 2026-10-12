@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { ensureBot } from "./bots";
@@ -20,7 +20,7 @@ import { insertRepo, repoVisibleIn } from "./repos";
 // Core never calls GitHub: the API's GitHub port (Octokit, or a fake in tests) fetches the
 // installation and its repositories and hands them over as plain data.
 
-const { actors, githubInstallations, organizations, repos } = schema;
+const { actors, githubInstallations, githubInstallStates, organizations, repos } = schema;
 
 /** An installation as GitHub describes it. */
 export interface GithubInstallationData {
@@ -48,6 +48,8 @@ export interface GithubInstallState {
   orgId: string;
   userId: string;
   expiresAt: number;
+  /** Makes the state single-use: recorded in github_install_states when issued, deleted when used (ST-137). */
+  nonce: string;
 }
 
 const statePayload = z.object({ o: z.string(), u: z.string(), e: z.number(), n: z.string() });
@@ -56,14 +58,16 @@ const statePayload = z.object({ o: z.string(), u: z.string(), e: z.number(), n: 
 const stateKey = (secret: string) => createHmac("sha256", secret).update("spider-tracker/github-install-state").digest();
 const sign = (secret: string, payload: string) => createHmac("sha256", stateKey(secret)).update(payload).digest("base64url");
 
+const newNonce = () => randomBytes(18).toString("base64url");
+
 /** `<payload>.<HMAC-SHA256>`, both base64url; valid for GITHUB_INSTALL_STATE_TTL_MS. */
 export function signGithubInstallState(
   secret: string,
-  state: { orgId: string; userId: string },
+  state: { orgId: string; userId: string; nonce?: string },
   now: number = Date.now(),
 ): string {
   const payload = Buffer.from(
-    JSON.stringify({ o: state.orgId, u: state.userId, e: now + GITHUB_INSTALL_STATE_TTL_MS, n: randomBytes(9).toString("base64url") }),
+    JSON.stringify({ o: state.orgId, u: state.userId, e: now + GITHUB_INSTALL_STATE_TTL_MS, n: state.nonce ?? newNonce() }),
   ).toString("base64url");
   return `${payload}.${sign(secret, payload)}`;
 }
@@ -83,27 +87,55 @@ export function verifyGithubInstallState(secret: string, state: string, now: num
   }
   const data = statePayload.safeParse(parsed);
   if (!data.success || data.data.e <= now) return null;
-  return { orgId: data.data.o, userId: data.data.u, expiresAt: data.data.e };
-}
-
-/** Owners and admins (people) start the install flow; the state names them and the organization. */
-export function createGithubInstallState(ctx: ActorContext, { secret, userId }: { secret: string; userId: string }): string {
-  assertRole(ctx, ["owner", "admin"], "connect GitHub");
-  return signGithubInstallState(secret, { orgId: ctx.orgId, userId });
+  return { orgId: data.data.o, userId: data.data.u, expiresAt: data.data.e, nonce: data.data.n };
 }
 
 /**
- * Checks the setup callback's `state` against the signed-in person: it must be theirs, unexpired,
- * and they must still be an owner or admin of its organization. Returns the context to connect
- * the installation with, and the organization's slug (for the redirect back).
+ * Owners and admins (people) start the install flow; the state names them and the organization.
+ * Its nonce is recorded so the state works once; expired ones are cleaned up on the way.
+ */
+export async function createGithubInstallState(
+  db: Db,
+  ctx: ActorContext,
+  { secret, userId, now = Date.now() }: { secret: string; userId: string; now?: number },
+): Promise<string> {
+  assertRole(ctx, ["owner", "admin"], "connect GitHub");
+  const nonce = newNonce();
+  await db.delete(githubInstallStates).where(lt(githubInstallStates.expiresAt, new Date(now)));
+  await db.insert(githubInstallStates).values({ nonce, orgId: ctx.orgId, userId, expiresAt: new Date(now + GITHUB_INSTALL_STATE_TTL_MS) });
+  return signGithubInstallState(secret, { orgId: ctx.orgId, userId, nonce }, now);
+}
+
+const invalidState = () =>
+  new DomainError("validation", "The GitHub install link is invalid, expired or already used; start again from Settings → GitHub");
+
+/**
+ * Checks the setup callback's `state` against the signed-in person: it must be theirs, unexpired
+ * and unused (it is used up here), and they must still be an owner or admin of its organization.
+ * Returns the context to connect the installation with, and the organization's slug (for the
+ * redirect back).
  */
 export async function resolveGithubSetup(
   db: Db,
-  { secret, state, userId }: { secret: string; state: string; userId: string },
+  { secret, state, userId, now = Date.now() }: { secret: string; state: string; userId: string; now?: number },
 ): Promise<{ ctx: ActorContext; orgSlug: string }> {
-  const verified = verifyGithubInstallState(secret, state);
-  if (!verified) throw new DomainError("validation", "The GitHub install link is invalid or expired; start again from Settings → GitHub");
+  const verified = verifyGithubInstallState(secret, state, now);
+  if (!verified) throw invalidState();
+  // Checked before using it up, so someone else's session can't spend the person's link.
   if (verified.userId !== userId) throw new DomainError("forbidden", "This GitHub install was started by someone else");
+  // Atomic: of two callbacks with the same state, only one deletes the row.
+  const [used] = await db
+    .delete(githubInstallStates)
+    .where(
+      and(
+        eq(githubInstallStates.nonce, verified.nonce),
+        eq(githubInstallStates.orgId, verified.orgId),
+        eq(githubInstallStates.userId, userId),
+        gt(githubInstallStates.expiresAt, new Date(now)),
+      ),
+    )
+    .returning({ nonce: githubInstallStates.nonce });
+  if (!used) throw invalidState();
   const [row] = await db
     .select({ actorId: actors.id, role: actors.role, slug: organizations.slug })
     .from(actors)
@@ -135,6 +167,14 @@ export async function githubBotContext(tx: Tx, orgId: string): Promise<ActorCont
 }
 
 // --- Installations ----------------------------------------------------------------------------
+
+/** The installation is connected to another organization: a 409, and the setup callback's `other_organization`. */
+export class GithubInstallationTakenError extends DomainError {
+  constructor(account: string) {
+    super("conflict", `The GitHub installation on ${account} is connected to another organization`);
+    this.name = "GithubInstallationTakenError";
+  }
+}
 
 type InstallationRow = typeof githubInstallations.$inferSelect;
 
@@ -273,7 +313,8 @@ export function repoAccessChanges(lists: { attached?: string[]; added?: string[]
  * Connects an installation to the organization, or refreshes it (a sync): its account, and which
  * repos it grants. Repos the organization already has (same owner/name, any case) get the
  * installation; the others are added (attached to no project). Repos it no longer grants keep
- * their row and lose the installation. Refused when the installation belongs to another organization.
+ * their row and lose the installation. Refused (GithubInstallationTakenError) when the installation
+ * belongs to another organization.
  */
 export async function saveGithubInstallation(
   db: Db,
@@ -289,7 +330,7 @@ export async function saveGithubInstallation(
       .for("update")
       .limit(1);
     if (current && current.orgId !== ctx.orgId) {
-      throw new DomainError("conflict", `The GitHub installation on ${installation.account} is connected to another organization`);
+      throw new GithubInstallationTakenError(installation.account);
     }
     const values = {
       accountLogin: installation.account,

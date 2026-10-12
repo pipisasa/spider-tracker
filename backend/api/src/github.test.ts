@@ -205,23 +205,75 @@ withDb("GitHub install flow (ST-82)", () => {
 
   test("the person must prove they can access the installation", async () => {
     const back = (res: Response) => new URL(res.headers.get("location") ?? "").searchParams;
-    const state = await startInstall(owner);
-    const base = { installation_id: String(installationId), setup_action: "install", state };
+    // A state works once: each callback gets a new one.
+    const callback = async (query: Record<string, string> = {}) =>
+      setup(owner, { installation_id: String(installationId), setup_action: "install", state: await startInstall(owner), ...query });
 
-    const noCode = await setup(owner, base);
+    const noCode = await callback();
     expect(noCode.status).toBe(302);
     expect(noCode.headers.get("location")).toStartWith(`${env.WEB_ORIGIN}/${slug}/settings/github?`);
     expect(back(noCode).get("error")).toBe("not_verified");
 
     github.codes.set("other-account", [999]);
-    expect(back(await setup(owner, { ...base, code: "other-account" })).get("error")).toBe("no_access");
-    expect(back(await setup(owner, { ...base, installation_id: "abc", code: "x" })).get("error")).toBe("missing_installation");
-    expect(back(await setup(owner, { ...base, setup_action: "request" })).get("requested")).toBe("1");
+    expect(back(await callback({ code: "other-account" })).get("error")).toBe("no_access");
+    expect(back(await callback({ installation_id: "abc", code: "x" })).get("error")).toBe("missing_installation");
+    expect(back(await callback({ setup_action: "request" })).get("requested")).toBe("1");
 
     github.down = true;
     github.codes.set("down", [installationId]);
-    expect(back(await setup(owner, { ...base, code: "down" })).get("error")).toBe("github_unavailable");
+    expect(back(await callback({ code: "down" })).get("error")).toBe("github_unavailable");
     github.down = false;
+  });
+
+  test("a used state is refused (ST-137)", async () => {
+    const state = await startInstall(owner);
+    const query = { installation_id: String(installationId), setup_action: "install", state, code: "used-1" };
+    expect((await setup(owner, query)).status).toBe(302);
+    const again = await setup(owner, { ...query, code: "used-2" });
+    expect(again.status).toBe(400);
+    expect(await again.text()).toContain("already used");
+  });
+
+  test("a failed code exchange logs neither the client secret nor the code (ST-137)", async () => {
+    // The real Octokit client, its network replaced: GitHub answers the code exchange with a 500.
+    const config = githubAppConfig(env);
+    if (!config) throw new Error("expected a config");
+    const requests: string[] = [];
+    const octokitApp = createApp({
+      db,
+      auth,
+      env,
+      github: createGithubApp(config, {
+        fetch: async (input, init) => {
+          requests.push(`${init?.method ?? "GET"} ${input instanceof Request ? input.url : String(input)} ${typeof init?.body === "string" ? init.body : ""}`);
+          return Response.json({ message: "Server Error" }, { status: 500 });
+        },
+      }),
+    });
+    const code = `code-${crypto.randomUUID()}`;
+    const state = await startInstall(owner);
+
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args);
+    let res: Response;
+    try {
+      res = await octokitApp.request(
+        `/github/setup?${new URLSearchParams({ installation_id: String(installationId), setup_action: "install", state, code })}`,
+        { headers: { Cookie: owner }, redirect: "manual" },
+      );
+    } finally {
+      console.error = original;
+    }
+    expect(new URL(res.headers.get("location") ?? "").searchParams.get("error")).toBe("github_unavailable");
+    // The request did carry both, so the check below means something.
+    expect(requests.join("\n")).toContain(config.clientSecret);
+    expect(requests.join("\n")).toContain(code);
+
+    const output = logged.map((args) => args.map((a) => (typeof a === "string" ? a : Bun.inspect(a, { depth: 20 }))).join(" ")).join("\n");
+    expect(output).toBe("GitHub request failed: OAuth code exchange (status 500, POST https://github.com/login/oauth/access_token)");
+    expect(output).not.toContain(config.clientSecret);
+    expect(output).not.toContain(code);
   });
 
   test("a verified callback connects the installation and attaches the existing repo", async () => {

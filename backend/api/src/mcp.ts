@@ -104,7 +104,7 @@ import {
 import type { Db, schema } from "@repo/db";
 import { Hono } from "hono";
 import { z } from "zod";
-import { GithubUnavailableError, type GithubApp } from "./github";
+import { GithubUnavailableError, logGithubFailure, type GithubApp } from "./github";
 import type { Realtime } from "./realtime";
 import type { AppEnv } from "./types";
 
@@ -1425,7 +1425,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           });
         } catch (err) {
           if (!(err instanceof GithubUnavailableError)) throw err;
-          console.error(err);
+          logGithubFailure(err);
           throw new DomainError("validation", "GitHub couldn't be reached or refused the request. Try again");
         }
       }),
