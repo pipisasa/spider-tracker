@@ -115,9 +115,16 @@ withDb("MCP server", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "add_app",
         "add_comment",
         "add_document_comment",
+        "add_repo",
         "archive_project",
+        "attach_repo",
+        "get_repo",
+        "list_repos",
+        "update_app",
+        "update_repo",
         "assign_to_me",
         "create_document",
         "diff_document",
@@ -671,6 +678,49 @@ withDb("MCP server", () => {
     expect(await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: "nope" })).toMatchObject({
       isError: true,
     });
+  });
+
+  test("repos and apps (ST-92): add by URL, apps, attach and detach, recorded with source mcp", async () => {
+    const repo = await call(client, "add_repo", { url: "git@github.com:pipisasa/spider-tracker.git", projects: ["SPI"] });
+    expect(repo.json()).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"] });
+    expect(await call(client, "add_repo", { url: "pipisasa/spider-tracker" })).toMatchObject({
+      isError: true,
+      text: "Repo pipisasa/spider-tracker already exists",
+    });
+    expect(await call(client, "add_repo", { url: "https://gitlab.com/a/b" })).toMatchObject({ isError: true });
+
+    const app = await call(client, "add_app", {
+      repo: "pipisasa/spider-tracker",
+      name: "api",
+      path: "backend/api",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
+    expect(app.json()).toMatchObject({ repo: "pipisasa/spider-tracker", name: "api", versioning: "date", environments: ["staging", "prod"] });
+    expect(
+      (await call(client, "update_app", { repo: "https://github.com/pipisasa/spider-tracker", app: "api", sharedPaths: ["packages/db"] })).json(),
+    ).toMatchObject({ name: "api", sharedPaths: ["packages/db"] });
+
+    expect((await call(client, "attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "SPI", detach: true })).json()).toMatchObject({
+      projects: [],
+    });
+    expect((await call(client, "list_repos", { project: "SPI" })).json()).toEqual({ items: [] });
+    expect((await call(client, "attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "SPI" })).json()).toMatchObject({
+      projects: ["SPI"],
+    });
+    expect((await call(client, "update_repo", { repo: "pipisasa/spider-tracker", defaultBranch: "trunk" })).json()).toMatchObject({
+      defaultBranch: "trunk",
+    });
+    const listed = (await call(client, "list_repos")).json() as { items: { apps: { name: string }[] }[] };
+    expect(listed.items.map((r) => r.apps.map((a) => a.name))).toEqual([["api"]]);
+    expect((await call(client, "get_repo", { repo: "pipisasa/spider-tracker" })).json() as unknown).toEqual(listed.items[0]);
+    expect(await call(otherClient, "get_repo", { repo: "pipisasa/spider-tracker" })).toMatchObject({ isError: true });
+
+    const sources = await db
+      .select({ source: schema.activity.source })
+      .from(schema.activity)
+      .where(and(eq(schema.activity.entityType, "repo"), eq(schema.activity.entityId, (repo.json() as { id: string }).id)));
+    expect(new Set(sources.map((s) => s.source))).toEqual(new Set(["mcp"]));
   });
 
   test("a key from another organization can't see this one's tasks", async () => {

@@ -153,6 +153,44 @@ export interface TagDto {
   color: string | null;
 }
 
+/** How an app's releases are numbered (ST-92): "2026.10.12" or "1.4.0". */
+export type AppVersioning = "date" | "semver";
+
+/** A deployable part of a repo (ST-92). */
+export interface AppDto {
+  id: string;
+  repoId: string;
+  /** The repo's "owner/name". */
+  repo: string;
+  /** Lower-case, e.g. "web". */
+  name: string;
+  /** Its folder in the repo, e.g. "web/app" ("." for the whole repo). */
+  path: string;
+  /** Shared packages it depends on, e.g. ["packages/core"]. */
+  sharedPaths: string[];
+  versioning: AppVersioning;
+  /** Deploy order, e.g. ["staging", "prod"]; empty when there is nothing to deploy (a CLI). */
+  environments: string[];
+  createdAt: string;
+}
+
+/** A git repo of the organization (ST-92), attached to projects, with its apps. */
+export interface RepoDto {
+  id: string;
+  owner: string;
+  name: string;
+  /** "owner/name". */
+  fullName: string;
+  defaultBranch: string;
+  /** Set once the GitHub App is installed on the repo (ST-82); null for repos added by URL. */
+  githubInstallationId: number | null;
+  /** Keys of the projects it is attached to (those the caller can see), sorted. */
+  projects: string[];
+  /** By name. */
+  apps: AppDto[];
+  createdAt: string;
+}
+
 /** A saved filter set of a project's board or list (ST-15). */
 export interface SavedViewDto {
   id: string;

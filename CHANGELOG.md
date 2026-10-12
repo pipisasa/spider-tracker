@@ -43,6 +43,7 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 
 ### CLI
 
+- New `spider repo list|view|add|update|remove|attach|detach` and `spider app list|add|update|remove` (ST-92): the organization's GitHub repos, added by remote URL and attached to projects, and their apps (folder, shared packages, `date`/`semver` versioning, environments in deploy order). `repo add` and `--repo` default to the current folder's `origin` remote. MCP has `list_repos`, `get_repo`, `add_repo`, `update_repo`, `attach_repo`, `add_app` and `update_app`, returning the same JSON as `--json`.
 - New `spider task duplicate [key] --of KEY [--comment "…"]` closes a task as a duplicate in one step (link, canceled status, comment); MCP has the matching `mark_duplicate` tool. `link_tasks` now refuses a `duplicates` link that would close a cycle (ST-114).
 - `task view --json` adds `documents`; `project view --json` adds the project's `documents`, and its `rules` gain `projectKey`, `projectName`, `format`, `updatedAt` and `url` (the full `ProjectRulesDto`); `doc diff --json` adds `diff` (the unified text); `comment --json` and `comments --json` add `author` (the handle). Nothing was removed or renamed (ST-107).
 - `task update` and other commands that fail with "not found" or "forbidden" while acting as a saved agent limited to some projects say which agent acted, how it was chosen (`--as`, `SPIDER_AGENT` or the default agent) and which projects it sees: a task in another project reads as missing to it (ST-107).
@@ -51,6 +52,7 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 
 ### API
 
+- Repos and apps (ST-92): `GET|POST /v1/orgs/{org}/repos`, `GET|PATCH|DELETE /v1/orgs/{org}/repos/{owner}/{name}`, `POST …/apps`, `PATCH|DELETE …/apps/{app}`, and `POST /v1/orgs/{org}/projects/{key}/repos` / `DELETE …/repos/{owner}/{name}` to attach and detach. SDK: `repos.*`. Web: Settings → Repos.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
 

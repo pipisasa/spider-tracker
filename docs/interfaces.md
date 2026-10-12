@@ -35,6 +35,13 @@ See [auth.md](./auth.md) for all flows.
 - `GET|PATCH /v1/orgs/:org/projects/:key` — a project with its statuses, `archivedAt` (archived ones too) and `rulesDocumentId`; `PATCH { name?, description?, rulesDocumentId? }` (owners, admins and their agents; the key can't change, `description: null` clears it). `rulesDocumentId` (ST-111) makes one of the project's own documents (not organization-wide, not a task's: `400`) its rules for agents, `null` clears them; setting them notifies the project's agents ([agents.md](./agents.md#project-rules)).
 - `POST|DELETE /v1/orgs/:org/projects/:key/archive` — archive (left out of lists, new tasks get `400 "Project ST is archived"`; its tasks stay readable and editable) or restore (owners, admins and their agents). Both return the project; repeating one changes nothing.
 
+### Repos and apps
+ST-92. A repo is addressed by its GitHub `owner/name` (case-insensitive). Everyone in the organization reads repos; a project-scoped agent sees only the repos attached to its projects, and only those projects in a repo's `projects`. Owners, admins and their agents manage them (as projects, ST-61); a scoped agent must attach a new repo to one of its projects and can't remove a repo other projects use.
+- `GET|POST /v1/orgs/:org/repos[?project=KEY]` — repos by name, each `RepoDto` `{ id, owner, name, fullName, defaultBranch, githubInstallationId, projects: keys, apps: AppDto[], createdAt }`; `{ url, defaultBranch?, projects? }` adds one: `url` is a GitHub remote (`https://github.com/o/r(.git)`, `git@github.com:o/r.git`, `ssh://…`) or `o/r`; other hosts are `400`, an existing remote `409`.
+- `GET|PATCH|DELETE /v1/orgs/:org/repos/:owner/:name` — `PATCH { url?, defaultBranch? }` (a new remote after a rename); `DELETE` removes its apps and project links too.
+- `POST /v1/orgs/:org/repos/:owner/:name/apps`, `PATCH|DELETE …/apps/:app` — `{ name, path, sharedPaths?, versioning?: date|semver (default semver), environments? }`; `AppDto` adds `id`, `repoId`, `repo` (`owner/name`) and `createdAt`. Names are lower-case and unique in the repo (`409`); paths are relative folders (`.` for the whole repo); environments are in deploy order (`[]` for a CLI).
+- `POST /v1/orgs/:org/projects/:key/repos { repo }`, `DELETE /v1/orgs/:org/projects/:key/repos/:owner/:name` — attach or detach; both return the repo, and repeating one changes nothing.
+
 ### Tasks
 - `GET /v1/orgs/:org/projects/:key/tasks[?status=&assignee=&tag=&tagMatch=&priority=&q=&parent=&overdue=true]` — the project's tasks in board order. Repeat a parameter for several values (`?tag=bug&tag=ui&priority=1&priority=2`). `status`: id, name or category; `assignee`: actor id or handle (deactivated ones too, so orphaned assignments can be found), `me`, `mine` or `none`; `tag`: name, case-insensitive; `priority`: `0`–`4`; `q`: text in the title, case-insensitive; `parent`: a task key, for its direct sub-tasks (an unknown or out-of-scope one is `400`); `overdue=true` (ST-91): tasks whose `targetDate` is before today (the server's UTC date) and whose status isn't in the done or canceled category. Statuses, assignees and priorities match **any** of their values; a task must carry **all** the tags, or at least one with `tagMatch=any` (`all` is the default everywhere: API, MCP, CLI and web); parameters combine with AND. A leading `@` and case are ignored in assignee handles, `me`, `mine` and `none` included; all three are reserved and can't be taken as handles. `mine` (ST-76) is "me and my agents": for a person, themselves plus every agent they own; for an agent key, its owner plus all the owner's agents (itself included); deleted agents count too. It is resolved on the server, in one subquery within the organization. A missing or out-of-scope project is `404` whether or not filters are given; the filters are checked after that, and unknown statuses, members and tags are `400` with the valid options. The filters live in `listTasks` (`taskListFilters` in `@repo/core/schemas`), shared by the API, MCP and CLI; SDK: `tasks.list(org, key, { status, assignee, tags, tagMatch, priority, q, parent, overdue })`.
 - **Dates (ST-91):** tasks have optional `startDate` and `targetDate`, plain `YYYY-MM-DD` strings (no time, no time zone) or `null`. `POST …/tasks` and `PATCH /tasks/:key` take them (`null` clears; anything but a real calendar date is `400`); the start must be on or before the target, also when an update changes only one of them (`400 "The start date must be on or before the target date"`). Changes are recorded in the activity log like other fields. "Overdue" compares the target date with the server's UTC date ([data-model.md](./data-model.md#design-decisions)).
@@ -128,6 +135,8 @@ The server's `initialize` answer carries **instructions** with the rules of the 
 | `list_members` | People and agents with their handles |
 | `link_tasks`, `unlink_tasks` | Links between tasks: `blocks` / `blocked_by`, `relates`, `duplicates` / `duplicated_by` (from this task's side); `get_task` lists them |
 | `mark_duplicate` | `key` is a duplicate `of` another task (ST-114): links it, moves it to its project's first canceled status and comments "Duplicate of KEY" (plus `comment`), in one step; returns the task as `get_task` describes it. A repeat changes nothing; self, cycles and a second original are refused |
+| `list_repos`, `get_repo`, `add_repo`, `update_repo`, `attach_repo` | Repos (ST-92): `list_repos` (`project` to filter) → `{ items: RepoDto[] }`, the others a `RepoDto`; `add_repo` takes a GitHub `url` (or `owner/name`), `defaultBranch`, `projects`; `attach_repo` takes `repo`, `projectKey` and `detach: true` to remove. No delete tool: `spider repo remove` or the web |
+| `add_app`, `update_app` | Apps of a repo: `name`, `path`, `sharedPaths`, `versioning` (`date` / `semver`), `environments` in deploy order; `update_app` names the app with `app` and can rename it with `name` |
 | `list_tags`, `create_tag` | Organization tags; `create_task` / `update_task` take `tags` by name (update replaces the list) |
 | `list_comments`, `add_comment` | A task's comments; comment with `@handle` mentions, `parent_id` to reply |
 | `list_document_comments`, `add_document_comment`, `resolve_document_comment` | A document's comments (ST-118) as `DocumentCommentView` (`{ items }`); comment with `body`, `quote` (a fragment of the current text, top-level only) and `parent_id` to reply; resolve a thread by its first comment (`resolved: false` reopens) |
@@ -268,6 +277,14 @@ spider start [ST-12] [--no-branch]        # the same
 spider task done [ST-12]    # the project's first done status
 spider task duplicate [ST-12] --of ST-9 [--comment "…"]   # link duplicates + first canceled status + a comment, in one step (ST-114)
 spider tags
+spider repo list [--project ST]          # repos with their apps and projects (ST-92)
+spider repo view [owner/name]            # default: this folder's origin remote
+spider repo add [url] [--project ST] [--default-branch main]   # a GitHub URL or owner/name; default: origin
+spider repo update owner/name [--url …] [--default-branch …]
+spider repo attach owner/name ST         # `repo detach` removes; `repo remove owner/name` deletes it with its apps
+spider app list [--repo owner/name]
+spider app add web --path web/app [--shared packages/core,packages/sdk] [--versioning date|semver] [--env staging,prod] [--repo owner/name]
+spider app update web [--name …] [--path …] [--shared ""] [--versioning …] [--env ""]   # "" clears a list; `app remove web` deletes
 spider task create … [--tag bug --tag agent]   # also on update (replaces; --tag "" clears)
 spider link ST-1 blocks ST-2                     # blocked-by, relates, duplicates, duplicated-by; `spider unlink` removes
 spider task create … --parent ST-3              # a sub-task; on update --parent "" makes it top-level
@@ -322,6 +339,8 @@ Since ST-107 the CLI (`--json`) and the MCP tools print tasks, documents, commen
 | Documents graph | `DocumentGraphDto` with `url` on documents, tasks and projects | `doc graph` | `get_document_graph` |
 | Comment | `CommentDto` plus `author` (handle) | `comment`, `comments` → `{ items }` | `add_comment`, `list_comments` → `{ items }` |
 | Document comment | `DocumentCommentDto` plus `author` and `resolver` (handles; `resolver` null when open) | `doc comment`, `doc resolve`, `doc comments` → `{ items }` | `add_document_comment`, `resolve_document_comment`, `list_document_comments` → `{ items }` |
+| Repo | `RepoDto` (`fullName`, `defaultBranch`, `projects`, `apps: AppDto[]`, …); no `url` | `repo list` → `{ items }`, `repo view/add/update/attach/detach` | `list_repos` → `{ items }`, `get_repo`, `add_repo`, `update_repo`, `attach_repo` |
+| App | `AppDto` (`repo`, `name`, `path`, `sharedPaths`, `versioning`, `environments`, …) | `app add/update`, `app list` → `{ items }` | `add_app`, `update_app` |
 | Project | `ProjectDto` (`archivedAt`, `url`, …); `ProjectDetailDto` adds `statuses` and, for a read, `documents` | `projects` → `{ items }`, `project create/update/archive/view` | `list_projects` → `{ items }`, `create_project`, `update_project`, `archive_project`, `get_project` |
 
 Differences that remain:

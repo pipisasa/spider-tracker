@@ -695,6 +695,37 @@ withDb("SDK and client-declared source", () => {
     expect(await client.views.list(slug, "NOPE").catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
+  test("repos and apps through the SDK: add by URL, attach, apps; 409, 400 and 404 (ST-92)", async () => {
+    const client = sdk();
+    const repo = await client.repos.create(slug, { url: "https://github.com/pipisasa/spider-tracker.git", projects: ["SPI"] });
+    expect(repo).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"], apps: [] });
+    expect(await client.repos.create(slug, { url: "pipisasa/Spider-Tracker" }).catch((e: unknown) => e)).toMatchObject({ status: 409 });
+    expect(await client.repos.create(slug, { url: "https://gitlab.com/a/b" }).catch((e: unknown) => e)).toMatchObject({ status: 400 });
+
+    const web = await client.repos.apps.create(slug, "pipisasa/spider-tracker", {
+      name: "web",
+      path: "web/app",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
+    expect(web).toMatchObject({ repo: "pipisasa/spider-tracker", name: "web", environments: ["staging", "prod"] });
+    expect((await client.repos.apps.update(slug, "pipisasa/spider-tracker", "web", { sharedPaths: ["packages/core"] })).sharedPaths).toEqual([
+      "packages/core",
+    ]);
+    expect((await client.repos.get(slug, "PIPISASA/spider-tracker")).apps.map((a) => a.name)).toEqual(["web"]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items.map((r) => r.fullName)).toEqual(["pipisasa/spider-tracker"]);
+
+    expect((await client.repos.detach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual([]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items).toEqual([]);
+    expect((await client.repos.attach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual(["SPI"]);
+    expect(await client.repos.update(slug, "pipisasa/spider-tracker", { defaultBranch: "trunk" })).toMatchObject({ defaultBranch: "trunk" });
+
+    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web")).toBeUndefined();
+    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(await client.repos.delete(slug, "pipisasa/spider-tracker")).toBeUndefined();
+    expect(await client.repos.get(slug, "pipisasa/spider-tracker").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
   test("API-key clients declare their source; unknown values fall back to api", async () => {
     const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", { title: "From the CLI" });
     const raw = await app.request(`/v1/orgs/${slug}/projects/SPI/tasks`, {
