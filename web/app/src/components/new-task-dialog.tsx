@@ -110,7 +110,7 @@ export function NewTaskDialog({
                 className="-ml-7 min-h-32 pb-2"
               />
             </Suspense>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <StatusSelect statuses={project.statuses} value={statusId} onChange={setStatusId} />
               <PrioritySelect value={priority} onChange={setPriority} />
               <AssigneePicker members={members} value={assigneeIds} onChange={setAssigneeIds} />

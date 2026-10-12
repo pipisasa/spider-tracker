@@ -129,3 +129,22 @@
     @apply font-sans;
     }
 }
+/* Phones: dialogs fill the screen (a bottom-anchored full sheet) and respect the safe areas. */
+@media (max-width: 639px) {
+  [data-slot="dialog-content"] {
+    top: 0;
+    left: 0;
+    translate: none;
+    transform: none;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    border-radius: 0;
+    align-content: start;
+    overflow-y: auto;
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+}
