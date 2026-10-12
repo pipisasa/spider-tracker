@@ -209,8 +209,8 @@ function OrgLayout() {
   );
 
   return (
-    <div className="flex min-h-svh flex-col md:flex-row">
-      <header className="sticky top-0 z-30 flex items-center gap-2 border-b bg-background px-2 pt-[env(safe-area-inset-top)] md:hidden">
+    <div className="flex h-svh flex-col overflow-hidden md:flex-row">
+      <header className="z-30 flex shrink-0 items-center gap-2 border-b bg-background px-2 pt-[env(safe-area-inset-top)] md:hidden">
         <Button variant="ghost" size="icon" className="size-10" aria-label="Open menu" onClick={() => setMenuOpen(true)}>
           <MenuIcon className="size-5" />
         </Button>
@@ -229,11 +229,11 @@ function OrgLayout() {
           </div>
         </SheetContent>
       </Sheet>
-      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-muted/30 p-3 md:flex">
+      <aside className="hidden h-full w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-muted/30 p-3 md:flex">
         {sidebar}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div id="org-content" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
         <Outlet />
       </div>
 

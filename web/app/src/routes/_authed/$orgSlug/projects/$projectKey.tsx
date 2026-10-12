@@ -103,12 +103,11 @@ function ProjectPage() {
   });
 
   return (
-    // The board fills the viewport below the mobile top bar (2.5rem button + 1px border + safe area) so only its columns scroll;
-    // list and docs keep normal page scrolling.
+    // The board fills the content column so only its columns scroll; list and docs flow inside the scrolling column.
     <div
       className={
         view === "board"
-          ? "flex h-[calc(100svh-2.5rem-1px-env(safe-area-inset-top))] min-h-0 flex-col overflow-hidden md:h-svh"
+          ? "flex min-h-0 flex-1 flex-col overflow-hidden"
           : "flex flex-1 flex-col"
       }
     >
