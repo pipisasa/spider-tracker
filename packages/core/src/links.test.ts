@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeTitle, outgoingLinksIn, resolveTitle, taskKeyTarget, wikiLinksIn } from "./links";
+import {
+  documentIdLink,
+  documentIdTarget,
+  normalizeTitle,
+  outgoingLinksIn,
+  resolveDocumentLink,
+  resolveTitle,
+  taskKeyTarget,
+  wikiLinksIn,
+} from "./links";
 
 describe("wikiLinksIn", () => {
   test("reads targets, labels and heading parts", () => {
@@ -24,12 +33,13 @@ describe("outgoingLinksIn", () => {
   test("splits documents from tasks and drops repeats", () => {
     expect(outgoingLinksIn("[[Roadmap]] [[roadmap ]] [[st-12]] mentions ST-12 and OPS-3; [[ST-1 notes]]")).toEqual({
       documents: ["Roadmap", "ST-1 notes"],
+      documentIds: [],
       tasks: ["ST-12", "OPS-3"],
     });
   });
 
   test("ignores task keys in code", () => {
-    expect(outgoingLinksIn("`ST-4` and\n```\nST-5\n```")).toEqual({ documents: [], tasks: [] });
+    expect(outgoingLinksIn("`ST-4` and\n```\nST-5\n```")).toEqual({ documents: [], documentIds: [], tasks: [] });
   });
 });
 
@@ -53,5 +63,35 @@ describe("resolveTitle", () => {
     expect(resolveTitle(docs, "Notes", null)?.id).toBe("org");
     expect(resolveTitle(docs.slice(2), "Notes", "WEB")?.id).toBe("st-new");
     expect(resolveTitle(docs, "Missing", "ST")).toBeNull();
+  });
+});
+
+const ID = "01a13118-982f-7c2e-8a6e-932d744cc798";
+
+describe("links by id (ST-115)", () => {
+  test("documentIdTarget reads doc:<uuid> in any case; documentIdLink writes it", () => {
+    expect(documentIdTarget(`doc:${ID}`)).toBe(ID);
+    expect(documentIdTarget(` DOC: ${ID.toUpperCase()} `)).toBe(ID);
+    expect(documentIdTarget("doc:not-an-id")).toBeNull();
+    expect(documentIdTarget(ID)).toBeNull();
+    expect(documentIdLink(ID.toUpperCase())).toBe(`doc:${ID}`);
+  });
+
+  test("outgoingLinksIn lists ids apart from titles, once each", () => {
+    expect(outgoingLinksIn(`[[doc:${ID}|Spec]] [[doc:${ID.toUpperCase()}#Goals]] [[doc:x]]`)).toEqual({
+      documents: ["doc:x"],
+      documentIds: [ID],
+      tasks: [],
+    });
+  });
+
+  test("resolveDocumentLink opens ids and titles", () => {
+    const docs = [
+      { id: ID, title: "Spec", projectKey: "ST", updatedAt: "2026-10-01" },
+      { id: "other", title: "Plan", projectKey: null, updatedAt: "2026-10-01" },
+    ];
+    expect(resolveDocumentLink(docs, `doc:${ID}`, null)?.title).toBe("Spec");
+    expect(resolveDocumentLink(docs, "plan", "ST")?.id).toBe("other");
+    expect(resolveDocumentLink(docs, "doc:00000000-0000-7000-8000-000000000000", null)).toBeNull();
   });
 });

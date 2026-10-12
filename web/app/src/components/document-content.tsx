@@ -12,8 +12,14 @@ interface MdNode {
   data?: Record<string, unknown>;
 }
 
-/** Turns `[[target|label]]` in text into wiki-link anchors; code nodes have no text children. */
-export function remarkWikiLinks(href: (target: string) => string | null) {
+/**
+ * Turns `[[target|label]]` in text into wiki-link anchors; code nodes have no text children.
+ * `text` gives what an unlabelled link shows (a document's title for `[[doc:<id>]]`).
+ */
+export function remarkWikiLinks(
+  href: (target: string) => string | null,
+  text: (target: string) => string | null = () => null,
+) {
   const split = (value: string): MdNode[] => {
     const out: MdNode[] = [];
     let last = 0;
@@ -32,7 +38,9 @@ export function remarkWikiLinks(href: (target: string) => string | null) {
             ...(url ? { href: url } : {}),
             "data-target": target,
           },
-          hChildren: [{ type: "text", value: link.label ?? target }],
+          hChildren: [
+            { type: "text", value: link.label ?? text(target) ?? target },
+          ],
         },
       });
       last = match.index + match[0].length;
@@ -64,10 +72,16 @@ export function DocumentContent({
 }: {
   format: DocumentFormat;
   content: string;
-  wikiLinks?: Pick<WikiLinkHost, "href" | "open">;
+  wikiLinks?: Pick<WikiLinkHost, "href" | "open" | "label">;
 }) {
   const plugins = useMemo(
-    () => [remarkGfm, remarkWikiLinks((t) => wikiLinks?.href(t) ?? null)],
+    () => [
+      remarkGfm,
+      remarkWikiLinks(
+        (t) => wikiLinks?.href(t) ?? null,
+        (t) => wikiLinks?.label?.(t) ?? null,
+      ),
+    ],
     [wikiLinks],
   );
   const components = useMemo<Components>(

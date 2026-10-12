@@ -1,4 +1,4 @@
-import type { ActorContext } from "@repo/core";
+import type { ActorContext, WebUrls } from "@repo/core";
 import type { schema } from "@repo/db";
 import type { Auth } from "./auth";
 
@@ -17,5 +17,7 @@ export type AppEnv = {
     };
     /** Set by the org middleware on /v1/orgs/:orgSlug/* routes. */
     actor: ActorContext;
+    /** The organization's web pages (the `url` fields, ST-115); set with `actor`. */
+    urls: WebUrls;
   };
 };

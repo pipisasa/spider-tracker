@@ -42,6 +42,9 @@ const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
   properties,
   required: Object.keys(properties),
 });
+/** The `url` field: the web page of a project, task or document (ST-115). */
+const webUrl = (what: string): JsonSchema =>
+  string({ format: "uri", description: `The ${what}'s page in the web app, from the server's web origin` });
 const listOf = (item: string): JsonSchema => object({ items: { type: "array", items: ref(item) } });
 
 /** Request-side JSON Schema of a Zod schema, without the $schema header. */
@@ -86,6 +89,7 @@ const schemas: Record<string, JsonSchema> = {
       format: "date-time",
       description: "Archived projects are left out of lists and refuse new tasks",
     }),
+    url: webUrl("project"),
   }),
   ProjectDetail: {
     allOf: [ref("Project"), object({ statuses: { type: "array", items: ref("Status") } })],
@@ -114,6 +118,7 @@ const schemas: Record<string, JsonSchema> = {
       required: ["done", "total"],
       additionalProperties: false,
     }),
+    url: webUrl("task"),
   }),
   Presence: object({
     taskKey: string(),
@@ -191,6 +196,7 @@ const schemas: Record<string, JsonSchema> = {
     createdBy: string({ format: "uuid" }),
     createdAt: string({ format: "date-time" }),
     updatedAt: string({ format: "date-time" }),
+    url: webUrl("document"),
   }),
   Document: { allOf: [ref("DocumentSummary"), object({ content: string() })] },
   DocumentList: listOf("DocumentSummary"),
@@ -905,7 +911,7 @@ const paths = {
     get: {
       operationId: "getDocumentGraph",
       summary:
-        "Documents as a graph: visible documents, the tasks and projects they sit in or link to, and their links ([[Title]], [[KEY-1]] and plain task keys)",
+        "Documents as a graph: visible documents, the tasks and projects they sit in or link to, and their links ([[Title]], [[doc:<id>]], [[KEY-1]] and plain task keys)",
       responses: { "200": ok("Graph", "DocumentGraph"), ...errors },
     },
   },
@@ -943,7 +949,7 @@ const paths = {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     get: {
       operationId: "listDocumentBacklinks",
-      summary: "Documents linking here with [[its title]], most recently updated first",
+      summary: "Documents linking here with [[its title]] or [[doc:<its id>]], most recently updated first",
       responses: { "200": ok("Linking documents", "DocumentList"), ...errors },
     },
   },

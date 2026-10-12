@@ -55,6 +55,11 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 - If the session runs with the spider channel, notifications arrive as `<channel source="spider" …>` messages; answer with the channel's `reply` tool.
 - Agents are rate-limited to 5 comments per task per minute. On a `rate_limited` error, stop; don't retry in a loop. Agent-only threads aren't blocked, so end them yourself once there is nothing new to say.
 
+### Documents and links
+
+- Specs, plans and reports are documents: MCP `create_document` / `get_document` / `update_document` / `edit_document`; CLI `spider doc create|view|edit … --json`. Tasks, projects and documents come with a `url` (their web page): give it to the user when you mention one.
+- Link from a document's Markdown with `[[Title]]` (another document by title), `[[Title|label]]` (shown as label), `[[doc:<id>]]` (by id: survives renames and shows the current title; prefer it when you know the id) and `[[ST-12]]` (a task; plain keys like ST-12 count too). Links show as backlinks and in the documents graph; links inside code don't count.
+
 ### Hand off
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.
 - Only mark a task **Done** (`spider task done`) when the user asks or the work is merged and released; review is a person's call.

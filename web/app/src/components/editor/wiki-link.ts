@@ -4,6 +4,8 @@ import { InputRule, mergeAttributes, Node } from "@tiptap/core";
 export interface WikiLinkHost {
   /** The page a target opens, or null when nothing has that title (drawn dimmed). */
   href: (target: string) => string | null;
+  /** The text a link without its own label shows instead of the target, e.g. a document's title for `[[doc:<id>]]`. */
+  label?: (target: string) => string | null;
   /** Goes there in the app; a missing document may be created first. */
   open: (target: string) => void;
   /** Documents (and tasks) to offer after `[[`. */
@@ -92,10 +94,12 @@ export const WikiLink = Node.create<WikiLinkOptions>({
       const dom = document.createElement("a");
       dom.className = "wiki-link";
       dom.dataset.wikiLink = "";
-      dom.textContent = (node.attrs.label as string | null) ?? target;
+      const label = node.attrs.label as string | null;
+      dom.textContent = label ?? target;
       // Re-resolved on hover and click: the documents list may load after the editor opens.
       const refresh = () => {
         const host = this.options.host();
+        if (!label) dom.textContent = host?.label?.(target) ?? target;
         const href = host?.href(target) ?? null;
         if (href) dom.href = href;
         else dom.removeAttribute("href");

@@ -102,6 +102,44 @@ run("document links, backlinks and the graph (ST-100)", () => {
     expect((await listBacklinks(db, ctx, opsGuide.id)).map((d) => d.id)).toEqual([home]);
   });
 
+  test("[[doc:<id>]] links survive renames and count in the graph and backlinks (ST-115)", async () => {
+    const target = await createDocument(db, ctx, {
+      project: "WEB",
+      title: "Architecture",
+    });
+    const missing = "00000000-0000-7000-8000-000000000000";
+    const source = await createDocument(db, ctx, {
+      project: "OPS",
+      title: "Overview",
+      content: `[[doc:${target.id.toUpperCase()}|the design]] [[DOC: ${target.id}]] [[doc:${missing}]] [[doc:nope]]`,
+    });
+    // Stored lower-case once; a malformed id is just a title.
+    expect(await linksOf(source.id)).toEqual(
+      [
+        `document:doc:${missing}`,
+        `document:doc:${target.id}`,
+        "document:doc:nope",
+      ].sort(),
+    );
+    await updateDocument(db, ctx, target.id, {
+      baseVersion: 1,
+      title: "Architecture v2",
+    });
+
+    const graph = await getDocumentGraph(db, ctx);
+    const from = graph.links
+      .filter((l) => l.from === source.id)
+      .map((l) => l.to);
+    expect(from).toContainEqual({ type: "document", id: target.id });
+    expect(from).toContainEqual({
+      type: "unresolved",
+      title: `doc:${missing}`,
+    });
+    expect((await listBacklinks(db, ctx, target.id)).map((d) => d.id)).toEqual([
+      source.id,
+    ]);
+  });
+
   test("scoped agents see only their projects in the graph and backlinks", async () => {
     const shared = await createDocument(db, ctx, { title: "Shared" });
     const hidden = await createDocument(db, ctx, { project: "OPS", title: "Secret", content: "[[Shared]] WEB-1" });
