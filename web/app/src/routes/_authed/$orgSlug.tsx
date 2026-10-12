@@ -1,4 +1,5 @@
 import { NewProjectDialog } from "@/components/new-project-dialog";
+import { ThemeMenuItems } from "@/components/theme-menu";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -99,6 +100,8 @@ function OrgLayout() {
                 Account
               </Link>
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <ThemeMenuItems />
             <DropdownMenuItem onSelect={signOut}>
               <LogOutIcon />
               Sign out

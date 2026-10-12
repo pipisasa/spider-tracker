@@ -25,7 +25,7 @@ export function DocumentContent({
         sandbox=""
         referrerPolicy="no-referrer"
         srcDoc={content}
-        className="h-[70vh] w-full resize-y rounded-lg border bg-white"
+        className="h-[70vh] w-full resize-y rounded-lg border bg-white dark:brightness-90"
       />
     );
   }

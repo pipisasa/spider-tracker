@@ -14,6 +14,7 @@
 - Milestones and cycles (sprints)
 - Bulk edits, command palette (`⌘K`), keyboard shortcuts everywhere
 - Real-time updates and optimistic UI
+- Dark theme with a System / Light / Dark switch in the organization menu (follows the system by default)
 
 ## Agents
 
