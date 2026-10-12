@@ -64,6 +64,7 @@ import {
   fromApiError,
   matchStatuses,
   parseLimit,
+  parseVersion,
   parsePriority,
   parseRelationKind,
   resolveAssignees,
@@ -145,6 +146,8 @@ export interface CliTask extends TaskDto {
 interface JsonOption {
   json?: boolean;
 }
+
+type DocEditOptions = JsonOption & { title?: string; format?: string; file?: string; baseVersion?: string; force?: boolean };
 
 interface TaskFields extends JsonOption {
   title?: string;
@@ -1263,21 +1266,30 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     doc
       .command("edit")
-      .description("save a new version of a document; fails if someone else saved it meanwhile")
+      .description("save a new version of a document; fails if someone saved it after --base-version")
       .argument("<id>")
       .option("--title <text>", "new title")
       .option("--format <md|html>", "new format")
-      .option("--file <path>", 'new content from a file, or "-" for standard input'),
-  ).action(async (id: string, opts: JsonOption & { title?: string; format?: string; file?: string }) => {
+      .option("--file <path>", 'new content from a file, or "-" for standard input')
+      .option("--base-version <n>", "the version your edit is based on (from doc view / doc list)")
+      .option("--force", "without --base-version: save on top of whatever the current version is"),
+  ).action(async (id: string, opts: DocEditOptions) => {
     if (opts.title === undefined && opts.format === undefined && opts.file === undefined) {
       throw usageError("Nothing to change. Pass --title, --format or --file");
     }
+    // ST-21: the base version must be the one the edit was made from, not one re-read just before saving.
+    if (opts.baseVersion === undefined && !opts.force) {
+      throw usageError(
+        "Pass --base-version <n> (the version you read with doc view) so a newer save isn't overwritten, or --force to overwrite whatever is current",
+      );
+    }
+    const baseVersion = opts.baseVersion === undefined ? undefined : parseVersion(opts.baseVersion);
     const { sdk, org } = conn();
     const client = await sdk();
     const slug = await org();
     const content = opts.file === undefined ? undefined : await readContent(opts.file);
     const current = await client.documents.get(slug, id);
-    const input: UpdateDocumentInput = { baseVersion: current.version, content };
+    const input: UpdateDocumentInput = { baseVersion: baseVersion ?? current.version, content };
     if (opts.title !== undefined) input.title = opts.title;
     if (opts.format !== undefined) input.format = parseFormat(opts.format);
     const saved = await client.documents.update(slug, id, input);
