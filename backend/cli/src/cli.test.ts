@@ -345,3 +345,159 @@ describe("saved agents", () => {
     }
   });
 });
+
+describe("Claude Code plugins", () => {
+  /** A fake `claude`: records calls; `missing` makes it not installed. */
+  const fakeClaude = (missing = false) => {
+    const calls: string[][] = [];
+    const runClaude: RunOptions["runClaude"] = async (args) => {
+      calls.push(args);
+      return missing ? undefined : { exitCode: 0, output: "" };
+    };
+    return { calls, runClaude };
+  };
+  const acceptApi = fakeApi({
+    "POST /v1/agent-invites/accept": () =>
+      Response.json({
+        token: "spt_new",
+        actor: { id: "a2", type: "agent", name: "Builder", handle: "builder", avatarUrl: null, role: "member" },
+        organization: { id: "o", slug: "acme", name: "Acme" },
+        projects: [{ key: "ST", name: "Spider" }],
+        owner: { id: "u", name: "Ann", handle: "ann" },
+      }),
+  });
+
+  test("accept-invite writes the agent into the private plugin and installs it", async () => {
+    const { env, cleanup } = savedAgents();
+    const { calls, runClaude } = fakeClaude();
+    const root = join(env.SPIDER_CONFIG_DIR, "claude-plugin");
+    try {
+      const accepted = await cli(
+        ["accept-invite", "ABCD-EFGH", "--server", "prod", "--name", "Builder", "--description", "Builds things", "--prompt", "You build.", "--json"],
+        { env, fetch: acceptApi.fetch, runClaude },
+      );
+      expect(accepted.code).toBe(0);
+      const path = join(root, "spider-agents", "agents", "prod", "acme", "builder.md");
+      expect(JSON.parse(accepted.stdout).claudeAgent).toEqual({
+        plugin: "spider-agents",
+        name: "builder",
+        path,
+        qualifiedName: "spider-agents:prod:acme:builder",
+      });
+      const text = readFileSync(path, "utf8");
+      expect(text).toContain("spider-agent: prod/acme/builder");
+      expect(text).toContain("\nYou build.\n");
+      expect(text).not.toContain("spt_");
+      expect(existsSync(join(root, ".claude-plugin", "marketplace.json"))).toBe(true);
+      expect(calls).toEqual([
+        ["plugin", "marketplace", "add", root],
+        ["plugin", "install", "spider-agents@spider-local", "--scope", "user"],
+      ]);
+
+      // spider claude starts it as the plugin agent.
+      let launched: string[] = [];
+      await cli(["claude", "builder"], { env, self: ["spider"], spawn: async (argv) => ((launched = argv), 0) });
+      expect(launched.slice(0, 3)).toEqual(["claude", "--agent", "spider-agents:prod:acme:builder"]);
+
+      // remove --claude deletes it.
+      const removed = await cli(["agents", "remove", "builder", "--claude", "--json"], { env });
+      expect(JSON.parse(removed.stdout).claudeAgentsDeleted).toEqual([path]);
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("accept-invite --no-claude writes nothing; without claude it still writes the file", async () => {
+    const { env, cleanup } = savedAgents();
+    const { calls, runClaude } = fakeClaude(true);
+    const root = join(env.SPIDER_CONFIG_DIR, "claude-plugin");
+    try {
+      const skipped = await cli(["accept-invite", "ABCD-EFGH", "--server", "prod", "--no-claude", "--json"], {
+        env,
+        fetch: acceptApi.fetch,
+        runClaude,
+      });
+      expect(skipped.code).toBe(0);
+      expect(JSON.parse(skipped.stdout).claudeAgent).toBeNull();
+      expect(existsSync(root)).toBe(false);
+      expect(calls).toEqual([]);
+
+      const noClaude = await cli(["accept-invite", "ABCD-EFGH", "--server", "prod"], { env, fetch: acceptApi.fetch, runClaude });
+      expect(noClaude.code).toBe(0);
+      expect(noClaude.stdout).toContain("Claude Code is not installed");
+      expect(existsSync(join(root, "spider-agents", "agents", "prod", "acme", "builder.md"))).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("setup claude installs both plugins at user scope, idempotently", async () => {
+    const { env, cleanup } = savedAgents();
+    const { calls, runClaude } = fakeClaude();
+    const root = join(env.SPIDER_CONFIG_DIR, "claude-plugin");
+    try {
+      for (let i = 0; i < 2; i++) {
+        const done = await cli(["setup", "claude", "--json"], { env, runClaude });
+        expect(done.code).toBe(0);
+        expect(JSON.parse(done.stdout)).toEqual({
+          scope: "user",
+          claude: true,
+          marketplace: "pipisasa/spider-tracker",
+          plugin: "spider-tracker@spider-tracker",
+          agentsPlugin: "spider-agents@spider-local",
+        });
+      }
+      const once = [
+        ["plugin", "marketplace", "add", "pipisasa/spider-tracker"],
+        ["plugin", "install", "spider-tracker@spider-tracker", "--scope", "user"],
+        ["plugin", "marketplace", "add", root],
+        ["plugin", "install", "spider-agents@spider-local", "--scope", "user"],
+      ];
+      expect(calls).toEqual([...once, ...once]);
+
+      // SPIDER_PLUGIN_MARKETPLACE overrides the source; a relative path is resolved.
+      calls.length = 0;
+      await cli(["setup", "claude"], { env: { ...env, SPIDER_PLUGIN_MARKETPLACE: "./repo" }, runClaude, cwd: "/work" });
+      expect(calls[0]).toEqual(["plugin", "marketplace", "add", "/work/repo"]);
+
+      // A failing claude command is exit 1; a missing claude is a note and exit 0.
+      const failing = await cli(["setup", "claude"], { env, runClaude: async () => ({ exitCode: 1, output: "boom" }) });
+      expect(failing.code).toBe(1);
+      expect(failing.stderr).toContain("boom");
+      const missing = await cli(["setup", "claude", "--json"], { env, runClaude: fakeClaude(true).runClaude });
+      expect(missing.code).toBe(0);
+      expect(JSON.parse(missing.stdout).claude).toBe(false);
+      expect(missing.stderr).toContain("curl -fsSL https://claude.ai/install.sh");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("setup claude --project merges into .claude/settings.json", async () => {
+    const { home, env, cleanup } = savedAgents();
+    const { calls, runClaude } = fakeClaude();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const settings = join(home, ".claude", "settings.json");
+    writeFileSync(
+      settings,
+      JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, enabledPlugins: { "other@x": true }, extraKnownMarketplaces: { x: {} } }),
+    );
+    try {
+      const done = await cli(["setup", "claude", "--project"], { env, runClaude, cwd: home });
+      expect(done.code).toBe(0);
+      expect(calls).toEqual([]);
+      expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual({
+        permissions: { allow: ["Bash(ls)"] },
+        enabledPlugins: { "other@x": true, "spider-tracker@spider-tracker": true },
+        extraKnownMarketplaces: { x: {}, "spider-tracker": { source: { source: "github", repo: "pipisasa/spider-tracker" } } },
+      });
+      await cli(["setup", "claude", "--project"], { env: { ...env, SPIDER_PLUGIN_MARKETPLACE: "/src/spider" }, cwd: home });
+      expect(JSON.parse(readFileSync(settings, "utf8")).extraKnownMarketplaces["spider-tracker"]).toEqual({
+        source: { source: "directory", path: "/src/spider" },
+      });
+    } finally {
+      cleanup();
+    }
+  });
+});

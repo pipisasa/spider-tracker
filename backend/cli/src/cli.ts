@@ -28,7 +28,17 @@ import {
   type AgentEntry,
   type Store,
 } from "./credentials";
-import { claudeAgentFor, claudeAgentTarget, linkedClaudeAgents, removeClaudeAgents, scanClaudeAgents } from "./claude-agents";
+import { PLUGIN_ID, claudeAgentFor, linkedClaudeAgents, pluginRoot, removeClaudeAgents, scanClaudeAgents, writeClaudeAgent } from "./claude-agents";
+import {
+  ClaudeCommandError,
+  INSTALL_CLAUDE_HINT,
+  SHARED_PLUGIN_ID,
+  installAgentsPlugin,
+  installSharedPlugin,
+  marketplaceSource,
+  writeProjectSettings,
+  type RunClaude,
+} from "./claude-setup";
 import { currentBranch, taskKeyFromBranch } from "./git";
 import {
   CliError,
@@ -76,6 +86,8 @@ export interface RunOptions {
   spawn?: (argv: string[], options: { env: Record<string, string | undefined> }) => Promise<number>;
   /** The command that runs this CLI, for the MCP config `spider claude` writes; defaults to the running one. */
   self?: string[];
+  /** Runs `claude <args>` capturing its output (plugin setup); undefined result when Claude Code is missing. */
+  runClaude?: RunClaude;
 }
 
 export interface Choice {
@@ -395,6 +407,19 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   /** The server login and accept-invite talk to: --server, SPIDER_API_URL, else prod. */
   const serverFor = (store: Store) => resolveServer(store, globals().server ?? (options.env.SPIDER_API_URL?.trim() || "prod"));
 
+  /** Makes sure Claude Code knows the private agents plugin; a note for the user when it couldn't. */
+  const ensureAgentsPlugin = async (): Promise<string | undefined> => {
+    const root = pluginRoot(options.env);
+    if (!root) return undefined;
+    try {
+      if (options.runClaude && (await installAgentsPlugin(options.runClaude, root))) return undefined;
+      return `${INSTALL_CLAUDE_HINT}\nThe agent file is written; then run spider setup claude to install the ${PLUGIN_ID} plugin.`;
+    } catch (error) {
+      if (error instanceof ClaudeCommandError) return `Couldn't install the ${PLUGIN_ID} plugin: ${error.message}`;
+      throw error;
+    }
+  };
+
   withJson(
     program
       .command("accept-invite")
@@ -403,9 +428,14 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--name <name>", "what to call the agent")
       .option("--handle <handle>", "its @handle (default: from the name)")
       .option("--description <text>", "what it does")
+      .option("--prompt <text>", "its role: the system prompt of its Claude Code agent (default: from name and description)")
+      .option("--no-claude", "don't write a Claude Code agent for it")
       .option("--default", "make it the default agent"),
   ).action(
-    async (code: string, opts: JsonOption & { name?: string; handle?: string; description?: string; default?: boolean }) => {
+    async (
+      code: string,
+      opts: JsonOption & { name?: string; handle?: string; description?: string; prompt?: string; claude: boolean; default?: boolean },
+    ) => {
       const store = await readStore(options.env);
       // An invite link names its server; a bare code goes to --server / SPIDER_API_URL / prod.
       const { key, server } = (!globals().server && serverForLink(store, code)) || serverFor(store);
@@ -429,13 +459,25 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       // Keep an implicit default (the only agent so far) once there are two.
       store.default = isDefault ? { server: key, org: organization.slug, agent: actor.handle } : previous && { server: previous.server, org: previous.org, agent: previous.agent };
       await writeStore(options.env, store);
-      // Where /spider-tracker:create-agent should write its Claude Code agent, with a free name.
-      const claudeAgent = await claudeAgentTarget(options.env.HOME, findAgent(store, ref));
+      // Its Claude Code agent goes into the private spider-agents plugin.
+      const claudeAgent = opts.claude
+        ? await writeClaudeAgent(options.env, findAgent(store, ref), {
+            description: opts.description?.trim() || `${actor.name}, Spider Tracker agent @${actor.handle} in ${organization.name}`,
+            prompt:
+              opts.prompt?.trim() ||
+              `You are ${actor.name}${opts.description?.trim() ? `: ${opts.description.trim()}` : ""}. Work on the Spider Tracker tasks assigned to you or that mention you, keep them updated, and hand off finished work for review.`,
+            projects: projects.length ? projects : null,
+          })
+        : undefined;
+      const note = claudeAgent ? await ensureAgentsPlugin() : undefined;
+      if (note && opts.json) stderr.write(`${note}\n`);
       output(opts, { agent: ref, actor, organization, projects, owner, claudeAgent: claudeAgent ?? null }, () =>
         [
           `You are @${actor.handle} (${actor.name}) in ${organization.name}, set up by @${owner.handle}.`,
           `Projects: ${projects.length ? projects.map((p) => `${p.key} ${p.name}`).join(", ") : "all"}`,
           `Saved as ${ref}${isDefault ? " (default)" : ""}.`,
+          ...(claudeAgent ? [`Claude Code agent: ${claudeAgent.qualifiedName} (${claudeAgent.path})`] : []),
+          ...(note ? [note] : []),
           "",
           "Next:",
           `  spider claude ${actor.handle}        start Claude Code as this agent`,
@@ -572,13 +614,13 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .description("forget a saved agent on this machine")
       .argument("<agent>")
       .option("--revoke", "also revoke its key on the server")
-      .option("--claude", "also delete its Claude Code agent files (~/.claude/agents, linked by spider-agent)"),
+      .option("--claude", "also delete its Claude Code agent (the spider-agents plugin and ~/.claude/agents, linked by spider-agent)"),
   ).action(async (ref: string, opts: JsonOption & { revoke?: boolean; claude?: boolean }) => {
     const store = await readStore(options.env);
     const entry = findAgent(store, ref);
     if (opts.revoke) await revoke(entry);
-    const deleted = opts.claude ? await removeClaudeAgents(options.env.HOME, entry) : [];
-    const kept = opts.claude ? [] : linkedClaudeAgents(await scanClaudeAgents(options.env.HOME), entry).map((f) => f.path);
+    const deleted = opts.claude ? (await removeClaudeAgents(options.env, entry)).map((f) => f.path) : [];
+    const kept = opts.claude ? [] : linkedClaudeAgents(await scanClaudeAgents(options.env), entry).map((f) => f.path);
     removeAgent(store, entry);
     await writeStore(options.env, store);
     output(opts, { removed: entry.ref, revoked: !!opts.revoke, claudeAgentsDeleted: deleted, claudeAgentsKept: kept }, () =>
@@ -635,7 +677,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const dir = await mkdtemp(join(tmpdir(), "spider-claude-"));
       const config = join(dir, "mcp.json");
       await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
-      const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env.HOME, entry);
+      const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env, entry);
       const command = [
         "claude",
         ...extra,
@@ -655,6 +697,41 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         await rm(dir, { recursive: true, force: true });
       }
     });
+
+  const setup = program.command("setup").description("set up integrations on this machine");
+  withJson(
+    setup
+      .command("claude")
+      .description(`install the ${SHARED_PLUGIN_ID} Claude Code plugin (tracker skill, spider MCP server, /spider-tracker:create-agent) and the ${PLUGIN_ID} plugin for your agents`)
+      .option("--project", "instead enable the plugin for this project's team in ./.claude/settings.json"),
+  ).action(async (opts: JsonOption & { project?: boolean }) => {
+    const source = marketplaceSource(options.env, cwd);
+    if (opts.project) {
+      const path = await writeProjectSettings(cwd, source).catch((error: unknown) => {
+        throw error instanceof ClaudeCommandError ? usageError(error.message) : error;
+      });
+      output(opts, { scope: "project", settings: path, marketplace: source, plugin: SHARED_PLUGIN_ID }, () =>
+        `Enabled ${SHARED_PLUGIN_ID} (from ${source}) in ${path}. Commit it; Claude Code offers the plugin to everyone who trusts this project.`,
+      );
+      return;
+    }
+    const root = pluginRoot(options.env);
+    const install = async () => {
+      if (!options.runClaude || !(await installSharedPlugin(options.runClaude, source))) return false;
+      if (root && !(await installAgentsPlugin(options.runClaude, root))) return false;
+      return true;
+    };
+    const installed = await install().catch((error: unknown) => {
+      throw error instanceof ClaudeCommandError ? new CliError(EXIT.unexpected, error.message, "unexpected") : error;
+    });
+    // Without Claude Code there is nothing to install into: a note, not a failure (install scripts run this).
+    if (!installed) stderr.write(`${INSTALL_CLAUDE_HINT}\nThen run spider setup claude again.\n`);
+    output(
+      opts,
+      { scope: "user", claude: installed, marketplace: source, plugin: SHARED_PLUGIN_ID, agentsPlugin: installed && root ? PLUGIN_ID : null },
+      () => (installed ? `Installed ${SHARED_PLUGIN_ID} (from ${source}) and ${PLUGIN_ID} for your user. Restart Claude Code to load them.` : ""),
+    );
+  });
 
   // For Claude Code's MCP `headersHelper`: prints {"Authorization": "Bearer …"} from the same
   // credentials the CLI uses, so .mcp.json needs no exported variable.

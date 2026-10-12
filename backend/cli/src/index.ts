@@ -55,6 +55,19 @@ async function spawnInherit(argv: string[], options: { env: Record<string, strin
   }
 }
 
+/** Runs `claude` with captured output; undefined when it isn't installed. */
+async function runClaude(args: string[]) {
+  const claude = Bun.which("claude");
+  if (!claude) return undefined;
+  const child = Bun.spawn([claude, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { exitCode, output: `${stdout}${stderr}` };
+}
+
 const interactive = !!process.stdin.isTTY && !!process.stdout.isTTY;
 
 process.exitCode = await run(process.argv.slice(2), {
@@ -66,4 +79,5 @@ process.exitCode = await run(process.argv.slice(2), {
   stdin: () => Bun.stdin.text(),
   select: interactive ? select : undefined,
   spawn: spawnInherit,
+  runClaude,
 });

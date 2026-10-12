@@ -295,8 +295,11 @@ withDb("spider CLI against the API", () => {
       agent: null,
     });
 
-    const removed = await as(["agents", "remove", "writer", "--revoke"]);
-    expect(removed.stdout).toBe(`Removed local/${slug}/writer and revoked its key\n`);
+    // Each got a Claude Code agent in the private plugin; --claude deletes it with the agent.
+    const writerAgent = join(configDir, "claude-plugin", "spider-agents", "agents", "local", slug, "writer.md");
+    expect(readFileSync(writerAgent, "utf8")).toContain(`spider-agent: local/${slug}/writer`);
+    const removed = await as(["agents", "remove", "writer", "--revoke", "--claude"]);
+    expect(removed.stdout).toBe(`Removed local/${slug}/writer and revoked its key\nDeleted Claude Code agent ${writerAgent}\n`);
     const writerKey = store.servers.local?.orgs[slug]?.agents.writer?.token ?? "";
     expect((await app.request("/v1/whoami", { headers: { Authorization: `Bearer ${writerKey}` } })).status).toBe(401);
     rmSync(configDir, { recursive: true, force: true });
