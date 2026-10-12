@@ -107,7 +107,7 @@ export function NewTaskDialog({
                 label="Description"
                 placeholder="Add a description… type '/' for commands"
                 autofocus={false}
-                className="min-h-32 pb-2"
+                className="-ml-7 min-h-32 pb-2"
               />
             </Suspense>
             <div className="grid grid-cols-3 gap-2">
