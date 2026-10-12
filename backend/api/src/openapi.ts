@@ -35,6 +35,9 @@ import {
   moveDocumentInput,
   updateProjectInput,
   updateTaskInput,
+  createReleaseInput,
+  updateReleaseInput,
+  releaseTasksInput,
 } from "@repo/core/schemas";
 import { z } from "zod";
 
@@ -161,8 +164,71 @@ const schemas: Record<string, JsonSchema> = {
       required: ["done", "total"],
       additionalProperties: false,
     }),
+    releaseId: nullable("string", {
+      format: "uuid",
+      description: "The release (a task of kind release) this task ships in; null when in none or in one the caller can't see",
+    }),
+    shippedAt: nullable("string", { format: "date-time", description: "When its release was marked Released (for a release: when it was)" }),
+    noCode: { type: "boolean", description: "Marked as having no code to ship: it never needs a release" },
+    shipping: {
+      description: "Where a Done task's code is (Done means finished, not shipped); null for releases, milestones and tasks that aren't Done and in no release",
+      oneOf: [{ type: "null" }, ref("TaskShipping")],
+    },
     url: webUrl("task"),
   }),
+  StatusRef: object({
+    id: string({ format: "uuid" }),
+    name: string(),
+    category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+  }),
+  TaskShipping: object({
+    state: string({ enum: ["not_in_release", "in_release", "shipped", "no_code"] }),
+    release: {
+      description: "The release it is in; null when in none, or in one the caller can't see",
+      oneOf: [
+        { type: "null" },
+        object({ id: string({ format: "uuid" }), key: string(), title: string({ examples: ["2026.10.13"] }), status: ref("StatusRef") }),
+      ],
+    },
+  }),
+  Release: {
+    allOf: [
+      ref("Task"),
+      object({
+        status: ref("StatusRef"),
+        repos: { type: "array", items: object({ id: string({ format: "uuid" }), fullName: string({ examples: ["pipisasa/spider-tracker"] }) }) },
+        apps: {
+          type: "array",
+          items: object({
+            appId: string({ format: "uuid" }),
+            repo: string(),
+            name: string({ examples: ["web"] }),
+            versioning: string({ enum: ["date", "semver"] }),
+            environments: { type: "array", items: string() },
+            version: string({ examples: ["2026.10.13", "0.1.8"] }),
+          }),
+        },
+        tasks: {
+          type: "array",
+          description: "The included Done tasks (a project-scoped agent: only its projects'), by project key and number",
+          items: object({
+            id: string({ format: "uuid" }),
+            key: string(),
+            title: string(),
+            projectKey: string(),
+            status: ref("StatusRef"),
+            completedAt: nullable("string", { format: "date-time" }),
+            shippedAt: nullable("string", { format: "date-time" }),
+            url: webUrl("task"),
+          }),
+        },
+      }),
+    ],
+  },
+  ReleaseList: listOf("Release"),
+  CreateReleaseInput: fromZod(createReleaseInput),
+  UpdateReleaseInput: fromZod(updateReleaseInput),
+  ReleaseTasksInput: fromZod(releaseTasksInput),
   Presence: object({
     taskKey: string(),
     actorId: string({ format: "uuid" }),
@@ -1165,6 +1231,65 @@ const paths = {
       operationId: "detachRepo",
       summary: "Detach a repo from the project; detaching one that isn't attached changes nothing",
       responses: { "200": ok("The repo", "Repo"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/releases": {
+    parameters: [orgSlug, projectKey],
+    get: {
+      operationId: "listReleases",
+      summary: "The project's releases (tasks of kind release) in board order, with repos, apps and versions, and included tasks",
+      parameters: [
+        { name: "status", in: "query", schema: { type: "array", items: { type: "string" } }, description: "Status ids, names or categories of the release workflow; repeat for several" },
+        { name: "app", in: "query", schema: { type: "string" }, description: 'Only releases shipping this app, e.g. "web"' },
+      ],
+      responses: { "200": ok("Releases", "ReleaseList"), ...errors },
+    },
+    post: {
+      operationId: "createRelease",
+      summary:
+        "Create a release: a task of kind release (its title is usually the version) linking repos and apps with a version each (in the app's versioning), optionally including Done tasks of any project",
+      requestBody: body("CreateReleaseInput"),
+      responses: { "201": ok("Created release", "Release"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/releases/{taskKey}": {
+    parameters: [orgSlug, taskKey],
+    get: { operationId: "getRelease", summary: "A release with its repos, apps and included tasks", responses: { "200": ok("Release", "Release"), ...errors } },
+    patch: {
+      operationId: "updateRelease",
+      summary: "Replace a release's repos or apps (with their versions); apps' repos stay linked. Status changes go through PATCH /tasks/{taskKey}: Released ships the included tasks",
+      requestBody: body("UpdateReleaseInput"),
+      responses: { "200": ok("Updated release", "Release"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/releases/{taskKey}/tasks": {
+    parameters: [orgSlug, taskKey],
+    post: {
+      operationId: "addToRelease",
+      summary:
+        "Add Done tasks (any project) to a release that isn't Released or Canceled; one release per task (409 if in another), adding again changes nothing; all or nothing",
+      requestBody: body("ReleaseTasksInput"),
+      responses: { "200": ok("The release", "Release"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/releases/{taskKey}/tasks/{includedKey}": {
+    parameters: [orgSlug, taskKey, pathParam("includedKey", 'The included task\'s key, e.g. "SPI-3"')],
+    delete: {
+      operationId: "removeFromRelease",
+      summary: "Take a task out of a release that hasn't shipped",
+      responses: { "200": ok("The release", "Release"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/release-candidates": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listReleaseCandidates",
+      summary: "Done tasks with code in no release and not shipped, most recently finished first (at most 200)",
+      parameters: [
+        { name: "project", in: "query", schema: { type: "string" }, description: "Only this project's tasks" },
+        { name: "release", in: "query", schema: { type: "string" }, description: "For this release (a task key)" },
+      ],
+      responses: { "200": ok("Candidates", "TaskList"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/documents": {

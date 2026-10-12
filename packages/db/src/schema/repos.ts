@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { bigint, check, index, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { actors, organizations } from "./tenancy";
-import { projects } from "./work";
+import { projects, tasks } from "./work";
 
 // Git repos and the apps in them (ST-92). A repo belongs to the organization and is attached to
 // projects through `project_repos` (a repo can serve several projects). It is added by its remote
@@ -63,4 +63,35 @@ export const apps = pgTable(
     unique("apps_repo_name_key").on(t.repoId, t.name),
     check("apps_versioning_check", sql`${t.versioning} in ('date', 'semver')`),
   ],
+);
+
+
+// What a release (a task of kind "release", ST-93) ships: the repos it links, and a version per app.
+// A repo may be attached to other projects than the release's, as long as its creator can reach it.
+export const releaseRepos = pgTable(
+  "release_repos",
+  {
+    releaseId: uuid("release_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.releaseId, t.repoId] }), index("release_repos_repo_idx").on(t.repoId)],
+);
+
+export const releaseApps = pgTable(
+  "release_apps",
+  {
+    releaseId: uuid("release_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    appId: uuid("app_id")
+      .notNull()
+      .references(() => apps.id, { onDelete: "cascade" }),
+    // In the app's versioning: "2026.10.13" (date) or "0.1.8" (semver).
+    version: text("version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.releaseId, t.appId] }), index("release_apps_app_idx").on(t.appId)],
 );

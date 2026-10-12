@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   customType,
   check,
   date,
@@ -105,6 +106,12 @@ export const tasks = pgTable(
     // Optional plan dates (ST-91), plain YYYY-MM-DD with no time zone; start ≤ target.
     startDate: date("start_date"),
     targetDate: date("target_date"),
+    // The release (a task of kind "release", ST-93) this Done task ships in; one release per task.
+    releaseId: uuid("release_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
+    // When its release was marked Released (for a release: when it was). Done means finished; this means in production.
+    shippedAt: timestamp("shipped_at", { withTimezone: true }),
+    // Marked as having no code to ship (ST-93): a Done task that never needs a release.
+    noCode: boolean("no_code").notNull().default(false),
     creatorId: uuid("creator_id")
       .notNull()
       .references(() => actors.id),
@@ -121,6 +128,8 @@ export const tasks = pgTable(
       foreignColumns: [statuses.projectId, statuses.kind, statuses.id],
     }),
     index("tasks_board_idx").on(t.projectId, t.statusId, t.sortKey),
+    index("tasks_release_idx").on(t.releaseId),
+    check("tasks_release_not_self", sql`${t.releaseId} <> ${t.id}`),
     check("tasks_priority_range", sql`${t.priority} between 0 and 4`),
     check("tasks_dates_ordered", sql`${t.startDate} is null or ${t.targetDate} is null or ${t.startDate} <= ${t.targetDate}`),
   ],

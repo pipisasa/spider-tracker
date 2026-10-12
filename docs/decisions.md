@@ -199,3 +199,16 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - Deleting a status moves its tasks first (the caller picks the target) instead of refusing while tasks use it, and every workflow keeps an open and a done status so tasks can always start and finish. Categories can't change, so `completedAt` only moves when tasks move.
 
 **Trade-off:** `statuses` and `workflows.task` repeat the same list in every project response. Status names in list filters without a kind match in every workflow (names before categories), so `--status Done` finds done tasks and done milestones.
+
+## 15. A release is a task; shipping is a property of Done tasks, not a status
+
+**Decision:** releases (ST-93) are tasks of kind `release`, with their own workflow, and included tasks point at their release with `tasks.release_id` (one release per task). Shipping is stored on the task (`shipped_at`, set when its release enters the done category) and shown as a derived `shipping` state (`not_in_release`, `in_release`, `shipped`, `no_code`), never as a status: Done means finished, and an included task's status never changes when it ships. A Done task with nothing to ship is marked with an explicit `no_code` flag.
+
+**Why:**
+- A release needs what tasks have (status, owner, dates, comments, documents, activity, the board), so it reuses them instead of a parallel entity.
+- A status per shipping step would mix two questions (is the work finished? is it in production?) in one workflow and force every project's task workflow to grow release steps.
+- `shipped_at` on each task keeps "when did this reach users" readable without a join, and lets a release's status move back (Released → Release review) by clearing it.
+- "No code" can't be derived yet: commits are linked to tasks only in a later step (ST-84). An explicit flag is the conservative choice; once commits are linked, "no commits and no apps" can be its default.
+- Releasing refuses while an included task isn't Done, and canceling or deleting a release takes its tasks out, so `release_id` always points at a release that can still ship them.
+
+**Trade-off:** `release_id` is a self-reference on `tasks`, so the database can't check that it points at a release or that the task is Done; core enforces both. A task reopened after it was added stays in the release and blocks Released until it is Done again.

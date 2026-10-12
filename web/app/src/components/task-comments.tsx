@@ -48,6 +48,11 @@ export function describeActivity(
     const verb = entry.action === "relation.added" ? "added link" : "removed link";
     return `${verb}: ${label.toLowerCase()} ${String(task)}`;
   }
+  // Releases (ST-93): a release marked Released ships its tasks; moving it back undoes that.
+  if ((entry.action === "task.shipped" || entry.action === "task.unshipped") && entry.changes) {
+    const version = String(entry.changes.version ?? entry.changes.release ?? "a release");
+    return entry.action === "task.shipped" ? `shipped in ${version}` : `no longer shipped in ${version}`;
+  }
   if (entry.action !== "task.updated" || !entry.changes) return null;
   const parts: string[] = [];
   for (const [field, value] of Object.entries(entry.changes)) {
@@ -62,6 +67,12 @@ export function describeActivity(
     else if (field === "parentId")
       parts.push(to ? "set a parent task" : "removed the parent task");
     else if (field === "tagIds") parts.push(describeTagChange(from, to, tags));
+    else if (field === "releaseId") parts.push(to ? "added it to a release" : "took it out of its release");
+    else if (field === "noCode") parts.push(to ? "marked it as having no code" : "marked it as having code");
+    else if (field === "apps" || field === "repos") {
+      const list = Array.isArray(to) && to.length > 0 ? to.map(String).join(", ") : "none";
+      parts.push(`set the ${field} to ${list}`);
+    }
     else if (field === "startDate" || field === "targetDate") {
       const name = field === "startDate" ? "start date" : "target date";
       parts.push(typeof to === "string" ? `set the ${name} to ${formatDay(to)}` : `removed the ${name}`);

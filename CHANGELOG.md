@@ -33,6 +33,15 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 - **Web:** Settings → Projects → Workflows: add, rename, recolor, reorder and delete statuses of each kind's workflow. The board and list show tasks of kind `task`.
 - Database migration (task kinds): `task_kind` enum, `kind` on `statuses` and `tasks`, names unique per workflow regardless of case, and the default release and milestone workflows for existing projects.
 
+### Releases (ST-93)
+
+Done means finished, not shipped; releases ship Done tasks.
+- **API:** tasks gain `releaseId`, `shippedAt`, `noCode` and `shipping` (`{ state: not_in_release | in_release | shipped | no_code, release }`; null for releases, milestones and tasks that aren't Done and in no release). `PATCH /tasks/:key` and bulk updates take `noCode`. New `GET|POST /v1/orgs/{org}/projects/{key}/releases`, `GET|PATCH /v1/orgs/{org}/releases/{key}`, `POST …/releases/{key}/tasks`, `DELETE …/releases/{key}/tasks/{taskKey}` and `GET /v1/orgs/{org}/release-candidates`. Moving a release to Released ships its tasks (`shippedAt`, activity `task.shipped` "shipped in <version>"), and needs them all Done; moving it back unships them; canceling or deleting it takes its tasks out. SDK: `releases.*`.
+- **MCP:** new `create_release`, `get_release`, `list_releases`, `update_release`, `add_to_release`, `remove_from_release` and `list_release_candidates` (same JSON as `spider release … --json`); `update_task` and `update_tasks` take `noCode`. Task outputs gain the four fields above (additive).
+- **CLI:** new `spider release list|view|create|update|add|remove|candidates` (`--app web=2026.10.13`, default repo the origin remote) and `spider task update --no-code` / `--code`. `task view` shows `Shipping: …`; `task list` rows of Done tasks show `[not in a release]`, `[2026.10.14 · on staging]`, `[shipped 2026.10.13]` or `[no code]`. `--json` task output gains the four fields.
+- **Web:** the board shows release columns after the task columns (one per release status, a "Release columns" switch, on by default) with release cards (version, apps, task keys); Done cards show their shipping state; dragging a Done task onto a release card adds it. A Releases view per project: releases in flight, then the shipped ones as the changelog, filterable by app. A release's page shows its apps, versions and tasks (add, remove); a Done task's page shows its shipping and a "No code to ship" switch.
+- Database migration (releases): `tasks.release_id`, `shipped_at`, `no_code`, and the `release_repos` and `release_apps` tables.
+
 ### Start and target dates (ST-91)
 
 - **API:** tasks carry `startDate` and `targetDate` (`YYYY-MM-DD` or `null`); create, update and bulk update take them (start ≤ target). `GET …/projects/:key/tasks?overdue=true` lists open tasks past their target date (today = the server's UTC date). SDK: the same fields and `tasks.list(…, { overdue: true })`.
@@ -63,6 +72,10 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 - Repos and apps (ST-92): `GET|POST /v1/orgs/{org}/repos`, `GET|PATCH|DELETE /v1/orgs/{org}/repos/{owner}/{name}`, `POST …/apps`, `PATCH|DELETE …/apps/{app}`, and `POST /v1/orgs/{org}/projects/{key}/repos` / `DELETE …/repos/{owner}/{name}` to attach and detach. SDK: `repos.*`. Web: Settings → Repos.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+
+### Plugin 0.3.9
+
+- The `tasks` skill says Done means finished, not shipped, and how to read a task's shipping state (`shipping`, `spider task view`), mark a task with no code, and work with releases (ST-93).
 
 ### Plugin 0.3.8
 
