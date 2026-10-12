@@ -94,6 +94,11 @@ export function resolveAssignees(members: ActorDto[], meId: string, handles: str
  * is every actor (`members?all=true`), whose `ownerId` says whose each agent is.
  */
 export function mineActorIds(me: ActorDto, actors: ActorDto[]): string[] {
+  // Servers before ST-78 don't send ownerId. The server has already applied `mine` (ST-76), so
+  // this client-side re-check only needs a superset: me, every agent, and every deactivated actor.
+  if (!actors.some((a) => "ownerId" in a)) {
+    return [...new Set([me.id, ...actors.filter((a) => a.type === "agent" || a.deactivated).map((a) => a.id)])];
+  }
   const person = me.type === "agent" ? (me.ownerId ?? actors.find((a) => a.id === me.id)?.ownerId ?? me.id) : me.id;
   return [...new Set([person, me.id, ...actors.filter((a) => a.ownerId === person).map((a) => a.id)])];
 }

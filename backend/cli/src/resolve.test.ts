@@ -156,3 +156,11 @@ describe("client-side task filter (older servers ignore the query)", () => {
     expect(matchesTaskFilter(task, { assignee: ["none", "a1"] })).toBe(true);
   });
 });
+
+test("mine: against a server without ownerId, the re-check keeps a superset (me and every agent)", () => {
+  const legacy = (id: string, type: "human" | "agent") =>
+    ({ id, type, name: id, handle: id, avatarUrl: null, role: "member", deactivated: false }) as unknown as ActorDto;
+  const me = legacy("p1", "human");
+  const ids = mineActorIds(me, [me, legacy("a1", "agent"), legacy("p2", "human"), legacy("a2", "agent")]);
+  expect(ids.sort()).toEqual(["a1", "a2", "p1"]);
+});
