@@ -729,3 +729,18 @@ export const releaseCandidatesQuery = z.object({
 });
 
 export type ReleaseCandidatesQuery = z.input<typeof releaseCandidatesQuery>;
+
+/**
+ * Writes a release's generated changelog into its description (ST-95). `taskApps` names the apps
+ * each task touches (task key → app names; the CLI reads them from local git) so the changelog is
+ * grouped by app; `force` replaces a changelog block edited by hand.
+ */
+export const releaseChangelogInput = z.object({
+  taskApps: z
+    .record(taskKeyRef, z.array(appSlug).max(50))
+    .refine((map) => Object.keys(map).length <= 500, "At most 500 tasks")
+    .optional(),
+  force: z.boolean().optional(),
+});
+
+export type ReleaseChangelogInput = z.input<typeof releaseChangelogInput>;

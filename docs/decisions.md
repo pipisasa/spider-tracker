@@ -212,3 +212,15 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - Releasing refuses while an included task isn't Done, and canceling or deleting a release takes its tasks out, so `release_id` always points at a release that can still ship them.
 
 **Trade-off:** `release_id` is a self-reference on `tasks`, so the database can't check that it points at a release or that the task is Done; core enforces both. A task reopened after it was added stays in the release and blocks Released until it is Done again.
+
+## 16. Release changelogs come from handoff notes, are written on request, and git checks run locally
+
+**Decision:** a release's changelog (ST-95) is generated from its included tasks: the title plus the "What changed" section of the task's handoff note, the latest comment with such a section by one of the task's assignees, else by anyone. It is written into the release's description only on request (`spider release changelog --write`, MCP `get_release_changelog` with `write`), between markers whose hash records what was written; a hand-edited block is never replaced without `force`. Grouping by app and the git check (`spider release check`) run in the CLI on local `git log`; CHANGELOG.md and GitHub release notes are CLI steps too (`spider release notes`).
+
+**Why:**
+- Handoff comments already carry a **What changed** section by convention (the tasks skill now asks for it), so no new field is needed; preferring the assignee's latest note skips reviewers' summaries and older drafts, and falling back to anyone keeps reassigned work.
+- An explicit write keeps the description editable: automatic regeneration on every task change would overwrite the release owner's wording. The hash notices edits without storing a second copy.
+- The server has no clone of the repo and no permission to push tags or create GitHub releases, and commit links (ST-84) aren't there yet. The local clone has everything, and every git call goes through the CLI's injected runner, so tests fake it.
+- Keys count from commit subjects, closing keywords and merged branch names only: commit bodies often mention other tasks ("the seam for ST-84").
+
+**Trade-off:** a multi-app changelog written over MCP isn't grouped by app (the server can't tell which task touched which app) until ST-84 links commits; the CLI groups it. The check depends on the local clone being up to date and on app tags (`web-2026.10.13`, `cli-v0.1.8`) existing; an app never tagged is compared from `--since` or the start of history.

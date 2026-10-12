@@ -287,6 +287,81 @@ export interface ReleaseDto extends TaskDto {
   tasks: ReleaseTaskDto[];
 }
 
+/** A task in a release's changelog (ST-95): its title and the "What changed" part of its handoff note. */
+export interface ReleaseChangelogEntryDto {
+  key: string;
+  title: string;
+  projectKey: string;
+  /** The "What changed" section of the task's handoff note (Markdown); null when none was found. */
+  whatChanged: string | null;
+  /** The comment it was taken from. */
+  handoff: { commentId: string; authorId: string; createdAt: string } | null;
+  /** Names of the release's apps the task touches; empty when unknown (see `grouped`). */
+  apps: string[];
+  /** The web page's address; set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
+}
+
+/** How the changelog block in a release's description compares with the generated changelog. */
+export type ChangelogState = "missing" | "current" | "outdated" | "edited";
+
+/**
+ * A release's changelog (ST-95), generated from its included tasks and grouped by app when it is
+ * known which apps each task touches (a one-app release, or app names from the CLI's git scan).
+ */
+export interface ReleaseChangelogDto {
+  release: { id: string; key: string; title: string; url?: string };
+  /** The release's apps with their versions and git tags ("web-2026.10.13", "cli-v0.1.8"). */
+  apps: { name: string; repo: string; version: string; tag: string }[];
+  /** True when entries carry the apps they touch, so `markdown` has a section per app. */
+  grouped: boolean;
+  /** By project key, then number. */
+  entries: ReleaseChangelogEntryDto[];
+  /** The generated changelog (Markdown, a `###` section per app). */
+  markdown: string;
+  /** The changelog block in the release's description and how it compares with `markdown`. */
+  description: { state: ChangelogState; content: string | null };
+  /** What a write did to the description; null for a read. */
+  written: "added" | "replaced" | "unchanged" | null;
+}
+
+/** One app's part of a release git check (ST-95). */
+export interface ReleaseCheckAppDto {
+  name: string;
+  inRelease: boolean;
+  /** The version the release ships; null when the app isn't in it. */
+  version: string | null;
+  /** The release's tag for the app ("web-2026.10.13"); null when the app isn't in it. */
+  tag: string | null;
+  /** The start of the range (exclusive): the previous tag, `--since`, or null for the whole history. */
+  since: string | null;
+  /** The end of the range: the release's tag when it exists, else the branch checked. */
+  until: string;
+  /** Commits in the range that touch the app's folder or shared paths. */
+  commits: number;
+  /** Task keys mentioned by those commits. */
+  tasks: string[];
+}
+
+/**
+ * `spider release check` (ST-95): the commits since each app's previous tag compared with the
+ * release's tasks, from local git. `ok` is false when any of the three findings has something.
+ */
+export interface ReleaseCheckDto {
+  release: { key: string; title: string };
+  repo: string;
+  ok: boolean;
+  apps: ReleaseCheckAppDto[];
+  /** Candidates (Done, with code, in no release) whose commits touch the release's apps. */
+  leftOut: { key: string; title: string; apps: string[]; commits: string[] }[];
+  /** Included tasks that no commit in the release apps' ranges mentions. */
+  noCommits: { key: string; title: string }[];
+  /** Apps of the repo changed since their previous tag that the release doesn't ship. */
+  appsNotInRelease: { name: string; since: string | null; commits: number; tasks: string[] }[];
+  /** The release's apps in other repos, not checked here. */
+  skippedApps: { name: string; repo: string }[];
+}
+
 /** A GitHub App installation connected to the organization (ST-82). */
 export interface GithubInstallationDto {
   /** GitHub's installation id. */

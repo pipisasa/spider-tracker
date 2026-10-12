@@ -1223,6 +1223,12 @@ withDb("spider CLI against the API", () => {
       const addedMcp = await mcp("add_to_release", { key: mcpRelease.key, tasks: [parityTask] });
       expect(await mcp("remove_from_release", { key: mcpRelease.key, tasks: [parityTask] })).toEqual(await cli("release", "view", mcpRelease.key));
       expect(addedMcp).toEqual(await cli("release", "add", mcpRelease.key, parityTask));
+      // Changelogs (ST-95): the server's changelog on both sides (the CLI without its git grouping).
+      expect(await mcp("get_release_changelog", { key: releaseKey })).toEqual(await cli("release", "changelog", releaseKey, "--no-git"));
+      const mcpWritten = await mcp("get_release_changelog", { key: mcpRelease.key, write: true });
+      expect(mcpWritten).toMatchObject({ written: "added", description: { state: "current" } });
+      // Writing again changes nothing; otherwise the same changelog.
+      expect(await cli("release", "changelog", mcpRelease.key, "--write", "--no-git")).toEqual({ ...(mcpWritten as object), written: "unchanged" });
 
       // Writes return the same fields.
       expect(shape(await mcp("update_task", { key: "SPI-1", priority: 1 }))).toEqual(shape(await cli("task", "update", "SPI-1", "--priority", "2")));

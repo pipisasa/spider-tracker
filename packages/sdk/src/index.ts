@@ -29,6 +29,7 @@ import type {
   ProjectDto,
   RelationDto,
   ReleaseDto,
+  ReleaseChangelogDto,
   AppDto,
   RepoDto,
   SavedViewDto,
@@ -69,6 +70,7 @@ import type {
   UpdateTaskInput,
   CreateReleaseInput,
   UpdateReleaseInput,
+  ReleaseChangelogInput,
 } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
@@ -337,6 +339,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<ReleaseDto>("POST", `${org(orgSlug)}/releases/${seg(releaseKey)}/tasks`, { tasks: taskKeys }),
       remove: (orgSlug: string, releaseKey: string, taskKey: string) =>
         request<ReleaseDto>("DELETE", `${org(orgSlug)}/releases/${seg(releaseKey)}/tasks/${seg(taskKey)}`),
+      /** The changelog generated from the included tasks' handoff notes (ST-95). */
+      changelog: (orgSlug: string, releaseKey: string) =>
+        request<ReleaseChangelogDto>("GET", `${org(orgSlug)}/releases/${seg(releaseKey)}/changelog`),
+      /** Writes the changelog into the release's description; 409 when its block was edited by hand, unless `force`. */
+      writeChangelog: (orgSlug: string, releaseKey: string, input: ReleaseChangelogInput = {}) =>
+        request<ReleaseChangelogDto>("POST", `${org(orgSlug)}/releases/${seg(releaseKey)}/changelog`, input),
       /** Done tasks with code in no release and not shipped, most recently finished first. */
       candidates: (orgSlug: string, query: { project?: string; release?: string } = {}) => {
         const params = new URLSearchParams();

@@ -8,6 +8,8 @@ import { boardColumns, shippingLabel } from "./board";
 import type { TaskDto } from "./contracts";
 import { createOrganization } from "./organizations";
 import { createProject, getProject } from "./projects";
+import { addComment } from "./comments";
+import { getReleaseChangelog, writeReleaseChangelog } from "./release-changelog";
 import { addToRelease, createRelease, getRelease, listReleaseCandidates, listReleases, removeFromRelease, updateRelease } from "./releases";
 import { createApp, createRepo } from "./repos";
 import { firstStatusOf } from "./statuses";
@@ -229,5 +231,77 @@ run("releases (ST-93)", () => {
     expect(await getTask(db, opsAgent, mixed.key)).toMatchObject({ releaseId: null, shipping: { state: "in_release", release: null } });
     expect(shippingLabel((await getTask(db, opsAgent, mixed.key)).shipping)).toBe("in a release");
     expect(firstStatusOf(await getProject(db, owner, "ST"), "done", "release")?.name).toBe("Released");
+  });
+
+  test("changelog (ST-95): titles plus each handoff's What changed, grouped by app, written into the description without clobbering edits", async () => {
+    const board = await createTask(db, owner, "ST", { title: "Board columns", statusId: await statusOf("ST", "task", "Done"), assigneeIds: [owner.actorId] });
+    const cli = await doneTask("ST", "Release check");
+    const quiet = await doneTask("OPS", "No handoff");
+    await addComment(db, owner, board.key, { body: "**What changed**\n- old summary\n\n**Verified**\n- ok" });
+    await addComment(db, owner, board.key, { body: "**Handoff:** branch x.\n\n**What changed**\n- Release columns\n\n**Open**\n- none" });
+    await addComment(db, owner, board.key, { body: "Approved." });
+    await addComment(db, owner, cli.key, { body: "## What changed\n`spider release check`" });
+
+    // One app: every task is under it.
+    const single = await createRelease(db, owner, "ST", {
+      title: "2026.10.20",
+      description: "Hand-written intro.",
+      apps: [{ repo: "pipisasa/spider-tracker", app: "web", version: "2026.10.20" }],
+      tasks: [board.key, quiet.key],
+    });
+    const read = await getReleaseChangelog(db, owner, single.key);
+    expect(read).toMatchObject({
+      release: { key: single.key, title: "2026.10.20" },
+      apps: [{ name: "web", repo: "pipisasa/spider-tracker", version: "2026.10.20", tag: "web-2026.10.20" }],
+      grouped: true,
+      description: { state: "missing", content: null },
+      written: null,
+    });
+    expect(read.entries).toEqual([
+      expect.objectContaining({ key: quiet.key, whatChanged: null, handoff: null, apps: ["web"] }),
+      expect.objectContaining({ key: board.key, title: "Board columns", whatChanged: "- Release columns", apps: ["web"], handoff: expect.objectContaining({ authorId: owner.actorId }) }),
+    ].sort((a, b) => (a.key < b.key ? -1 : 1)));
+    expect(read.markdown).toContain(`### web 2026.10.20\n\n`);
+    expect(read.markdown).toContain(`- **${board.key}** Board columns\n  - Release columns`);
+
+    const written = await writeReleaseChangelog(db, owner, single.key);
+    expect(written).toMatchObject({ written: "added", description: { state: "current", content: read.markdown } });
+    const description = (await getTask(db, owner, single.key)).description ?? "";
+    expect(description.startsWith("Hand-written intro.\n\n<!-- spider:changelog hash=")).toBe(true);
+    expect(await writeReleaseChangelog(db, owner, single.key)).toMatchObject({ written: "unchanged" });
+
+    // A new task makes it outdated; writing replaces only the block.
+    await addToRelease(db, owner, single.key, { tasks: [cli.key] });
+    expect((await getReleaseChangelog(db, owner, single.key)).description.state).toBe("outdated");
+    expect(await writeReleaseChangelog(db, owner, single.key)).toMatchObject({ written: "replaced" });
+    expect((await getTask(db, owner, single.key)).description).toContain("`spider release check`");
+
+    // A hand edit is kept unless forced.
+    const edited = ((await getTask(db, owner, single.key)).description ?? "").replace("Board columns", "Board columns (reworded)");
+    await updateTask(db, owner, single.key, { description: edited });
+    expect((await getReleaseChangelog(db, owner, single.key)).description.state).toBe("edited");
+    await expect(writeReleaseChangelog(db, owner, single.key)).rejects.toThrow("edited by hand");
+    expect((await getTask(db, owner, single.key)).description).toBe(edited);
+    expect(await writeReleaseChangelog(db, owner, single.key, { force: true })).toMatchObject({ written: "replaced", description: { state: "current" } });
+
+    // Several apps: one list until taskApps (from the CLI's git scan) groups it.
+    const multi = await createRelease(db, owner, "ST", {
+      title: "2026.10.21",
+      apps: [
+        { repo: "pipisasa/spider-tracker", app: "web", version: "2026.10.21" },
+        { repo: "pipisasa/spider-tracker", app: "cli", version: "0.2.1" },
+      ],
+    });
+    await removeFromRelease(db, owner, single.key, { tasks: [board.key, cli.key] });
+    await addToRelease(db, owner, multi.key, { tasks: [board.key, cli.key] });
+    const flat = await getReleaseChangelog(db, owner, multi.key);
+    expect(flat.grouped).toBe(false);
+    expect(flat.markdown.startsWith("### Changes\n")).toBe(true);
+    const grouped = await writeReleaseChangelog(db, owner, multi.key, { taskApps: { [board.key]: ["web"], [cli.key]: ["cli", "nope"] } });
+    expect(grouped).toMatchObject({ grouped: true, written: "added" });
+    expect(grouped.apps.map((a) => a.tag)).toEqual(["cli-v0.2.1", "web-2026.10.21"]);
+    expect(grouped.markdown).toBe(`### cli 0.2.1\n\n- **${cli.key}** Release check\n  \`spider release check\`\n\n### web 2026.10.21\n\n- **${board.key}** Board columns\n  - Release columns`);
+    // The project-scoped agent can't write a release it can't see.
+    await expect(writeReleaseChangelog(db, opsAgent, multi.key)).rejects.toThrow("not found");
   });
 });
