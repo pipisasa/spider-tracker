@@ -169,6 +169,13 @@
       "when": 1791840696987,
       "tag": "0023_github_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791840901527,
+      "tag": "0024_releases",
+      "breakpoints": true
     }
   ]
 }

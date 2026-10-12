@@ -40,7 +40,7 @@ Done means finished, not shipped; releases ship Done tasks.
 - **MCP:** new `create_release`, `get_release`, `list_releases`, `update_release`, `add_to_release`, `remove_from_release` and `list_release_candidates` (same JSON as `spider release … --json`); `update_task` and `update_tasks` take `noCode`. Task outputs gain the four fields above (additive).
 - **CLI:** new `spider release list|view|create|update|add|remove|candidates` (`--app web=2026.10.13`, default repo the origin remote) and `spider task update --no-code` / `--code`. `task view` shows `Shipping: …`; `task list` rows of Done tasks show `[not in a release]`, `[2026.10.14 · on staging]`, `[shipped 2026.10.13]` or `[no code]`. `--json` task output gains the four fields.
 - **Web:** the board shows release columns after the task columns (one per release status, a "Release columns" switch, on by default) with release cards (version, apps, task keys); Done cards show their shipping state; dragging a Done task onto a release card adds it. A Releases view per project: releases in flight, then the shipped ones as the changelog, filterable by app. A release's page shows its apps, versions and tasks (add, remove); a Done task's page shows its shipping and a "No code to ship" switch.
-- Database migration (releases): `tasks.release_id`, `shipped_at`, `no_code`, and the `release_repos` and `release_apps` tables.
+- Database migration `0024_releases`: `tasks.release_id`, `shipped_at`, `no_code`, and the `release_repos` and `release_apps` tables.
 
 ### Start and target dates (ST-91)
 
