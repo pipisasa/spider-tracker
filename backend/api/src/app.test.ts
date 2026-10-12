@@ -275,6 +275,12 @@ withDb("projects and tasks API", () => {
     expect(await count("priority=2&priority=3")).toBe(0);
     expect(await count("status=done&assignee=me&q=ship")).toBe(1);
     expect(await count("assignee=none")).toBe(0);
+    await call(owner, "POST", "/tags", { name: "other" });
+    expect(await count("tag=urgent-fix&tag=other")).toBe(0);
+    expect(await count("tag=urgent-fix&tag=other&tagMatch=any")).toBe(1);
+    expect(await count("tag=urgent-fix&tag=other&tagMatch=all")).toBe(0);
+    expect((await call(owner, "GET", "/projects/SPI/tasks?tagMatch=some")).status).toBe(400);
+    expect((await call(owner, "GET", "/projects/NOPE/tasks?priority=9")).status).toBe(404);
     expect((await call(owner, "GET", "/projects/SPI/tasks?tag=nope")).status).toBe(400);
     expect((await call(owner, "GET", "/projects/SPI/tasks?priority=9")).status).toBe(400);
 

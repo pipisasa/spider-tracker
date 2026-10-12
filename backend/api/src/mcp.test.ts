@@ -190,6 +190,15 @@ withDb("MCP server", () => {
     expect((await call(client, "list_tasks", { projectKey: "SPI", tags: ["infra"], priority: [2] })).json()).toMatchObject({
       total: 0,
     });
+    // tagMatch: all by default, any on request; status and assignee also take arrays.
+    expect((await call(client, "create_tag", { name: "docs" })).isError).toBeFalsy();
+    await call(client, "create_task", { projectKey: "SPI", title: "Docs only", tags: ["docs"] });
+    const both = { projectKey: "SPI", tags: ["infra", "docs"] };
+    expect((await call(client, "list_tasks", both)).json()).toMatchObject({ total: 0 });
+    const any = (await call(client, "list_tasks", { ...both, tagMatch: "any", status: ["todo", "backlog"], assignee: ["none", "@me"] })).json() as {
+      tasks: { title: string }[];
+    };
+    expect(any.tasks.map((t) => t.title).sort()).toEqual(["Docs only", "Tagged"]);
     const unknownTag = await call(client, "list_tasks", { projectKey: "SPI", tags: ["nope"] });
     expect(unknownTag).toMatchObject({ isError: true });
     expect(unknownTag.text).toContain("infra");

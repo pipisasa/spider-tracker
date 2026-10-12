@@ -26,12 +26,14 @@ function MultiSelect({
   options,
   selected,
   onToggle,
+  footer,
 }: {
   label: string;
   icon?: LucideIcon;
   options: Option[];
   selected: string[];
   onToggle: (value: string) => void;
+  footer?: ReactNode;
 }) {
   return (
     <Popover>
@@ -59,6 +61,7 @@ function MultiSelect({
             </CommandGroup>
           </CommandList>
         </Command>
+        {footer}
       </PopoverContent>
     </Popover>
   );
@@ -182,6 +185,23 @@ export function TaskFilterBar({
         }))}
         selected={filters.tag ?? []}
         onToggle={(id) => onChange({ ...filters, tag: toggleValue(filters.tag, id) })}
+        footer={
+          <div role="group" aria-label="Tag match" className="flex items-center gap-1 border-t p-1.5 text-xs">
+            <span className="px-1 text-muted-foreground">Match</span>
+            {(["all", "any"] as const).map((mode) => (
+              <Button
+                key={mode}
+                variant={(filters.tagMatch ?? "all") === mode ? "secondary" : "ghost"}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                aria-pressed={(filters.tagMatch ?? "all") === mode}
+                onClick={() => onChange({ ...filters, tagMatch: mode === "any" ? "any" : undefined })}
+              >
+                {mode}
+              </Button>
+            ))}
+          </div>
+        }
       />
       {!isEmptyFilters(filters) && (
         <>

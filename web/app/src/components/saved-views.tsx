@@ -134,7 +134,9 @@ function SaveViewDialog({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = createSavedViewInput.safeParse({ name, filters: normalizeFilters(filters), shared, view: layout });
+    // tagMatch is stored explicitly (see viewFiltersSchema).
+    const stored = { ...normalizeFilters(filters), tagMatch: filters.tagMatch ?? "all" };
+    const parsed = createSavedViewInput.safeParse({ name, filters: stored, shared, view: layout });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid input");
       return;
