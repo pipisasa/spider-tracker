@@ -8,6 +8,8 @@ import { DragHandle } from "./drag-handle";
 import "./editor.css";
 import { markdownExtensions } from "./extensions";
 import { SlashCommand } from "./slash-command";
+import type { WikiLinkHost } from "./wiki-link";
+import { WikiLinkSuggestion } from "./wiki-link-suggestion";
 
 /**
  * Notion-style WYSIWYG editor over a Markdown string: loads `value` once and
@@ -22,6 +24,7 @@ export default function RichEditor({
   label = "Content",
   className = "min-h-[60vh] pb-24",
   editable = true,
+  wikiLinks,
 }: {
   value: string;
   onChange: (markdown: string) => void;
@@ -32,13 +35,18 @@ export default function RichEditor({
   className?: string;
   /** False renders the content read-only: no toolbar, slash menu or drag handle. */
   editable?: boolean;
+  /** Resolves, opens and suggests `[[links]]`; without it they render but don't open. */
+  wikiLinks?: WikiLinkHost;
 }) {
   const container = useRef<HTMLDivElement>(null);
   // The Markdown last known to the parent; reset whenever the editor is created.
   const lastMarkdown = useRef(value);
+  // Links read the latest host on each click and suggestion, without recreating the editor.
+  const wikiHost = useRef(wikiLinks ?? null);
+  wikiHost.current = wikiLinks ?? null;
   const editor = useEditor({
     extensions: [
-      ...markdownExtensions(),
+      ...markdownExtensions(() => wikiHost.current),
       Placeholder.configure({
         placeholder: ({ node }) =>
           node.type.name === "heading"
@@ -47,6 +55,7 @@ export default function RichEditor({
         includeChildren: false,
       }),
       SlashCommand,
+      WikiLinkSuggestion.configure({ host: () => wikiHost.current }),
     ],
     content: value,
     contentType: "markdown",

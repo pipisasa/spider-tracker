@@ -6,6 +6,7 @@ import type {
   CommentDto,
   CreatedAgentInviteDto,
   DocumentDto,
+  DocumentGraphDto,
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
@@ -83,6 +84,11 @@ export const keys = {
     ["orgs", org, "documents", "list", scope] as const,
   document: (org: string, id: string) =>
     ["orgs", org, "documents", id] as const,
+  // Under "list", so every document change refreshes them too.
+  documentGraph: (org: string) =>
+    ["orgs", org, "documents", "list", "graph"] as const,
+  documentBacklinks: (org: string, id: string) =>
+    ["orgs", org, "documents", "list", "backlinks", id] as const,
   documentVersions: (org: string, id: string) =>
     ["orgs", org, "documents", id, "versions"] as const,
   documentVersion: (org: string, id: string, version: number) =>
@@ -590,6 +596,25 @@ export const documentQuery = (org: string, id: string) =>
   queryOptions({
     queryKey: keys.document(org, id),
     queryFn: () => api<DocumentDto>(`${orgPath(org)}/documents/${id}`),
+  });
+
+/** Documents, the tasks and projects around them, and their links (ST-100). */
+export const documentGraphQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.documentGraph(org),
+    queryFn: () => api<DocumentGraphDto>(`${orgPath(org)}/documents/graph`),
+  });
+
+/** Documents linking to this one with `[[its title]]`. */
+export const documentBacklinksQuery = (org: string, id: string) =>
+  queryOptions({
+    queryKey: keys.documentBacklinks(org, id),
+    queryFn: async () =>
+      (
+        await api<ListResponse<DocumentSummaryDto>>(
+          `${orgPath(org)}/documents/${id}/backlinks`,
+        )
+      ).items,
   });
 
 export const documentVersionsQuery = (org: string, id: string) =>

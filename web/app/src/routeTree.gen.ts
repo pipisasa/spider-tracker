@@ -20,6 +20,7 @@ import { Route as AgentInviteCodeRouteImport } from './routes/agent-invite.$code
 import { Route as AuthedOrgSlugIndexRouteImport } from './routes/_authed/$orgSlug/index'
 import { Route as AuthedOrgSlugDocsIndexRouteImport } from './routes/_authed/$orgSlug/docs/index'
 import { Route as AuthedOrgSlugDocsDocumentIdRouteImport } from './routes/_authed/$orgSlug/docs/$documentId'
+import { Route as AuthedOrgSlugDocsGraphRouteImport } from './routes/_authed/$orgSlug/docs/graph'
 import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from './routes/_authed/$orgSlug/projects/$projectKey'
 import { Route as AuthedOrgSlugSettingsAgentsRouteImport } from './routes/_authed/$orgSlug/settings/agents'
 import { Route as AuthedOrgSlugSettingsMembersRouteImport } from './routes/_authed/$orgSlug/settings/members'
@@ -81,6 +82,11 @@ const AuthedOrgSlugDocsDocumentIdRoute =
     path: '/docs/$documentId',
     getParentRoute: () => AuthedOrgSlugRoute,
   } as any)
+const AuthedOrgSlugDocsGraphRoute = AuthedOrgSlugDocsGraphRouteImport.update({
+  id: '/docs/graph',
+  path: '/docs/graph',
+  getParentRoute: () => AuthedOrgSlugRoute,
+} as any)
 const AuthedOrgSlugProjectsProjectKeyRoute =
   AuthedOrgSlugProjectsProjectKeyRouteImport.update({
     id: '/projects/$projectKey',
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/agent-invite/$code': typeof AgentInviteCodeRoute
   '/$orgSlug/': typeof AuthedOrgSlugIndexRoute
   '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
+  '/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
   '/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/': typeof AuthedIndexRoute
   '/$orgSlug': typeof AuthedOrgSlugIndexRoute
   '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
+  '/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
   '/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$orgSlug/': typeof AuthedOrgSlugIndexRoute
   '/_authed/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
+  '/_authed/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
   '/_authed/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
   '/_authed/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
   '/_authed/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/agent-invite/$code'
     | '/$orgSlug/'
     | '/$orgSlug/docs/$documentId'
+    | '/$orgSlug/docs/graph'
     | '/$orgSlug/projects/$projectKey'
     | '/$orgSlug/settings/agents'
     | '/$orgSlug/settings/members'
@@ -192,6 +202,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$orgSlug'
     | '/$orgSlug/docs/$documentId'
+    | '/$orgSlug/docs/graph'
     | '/$orgSlug/projects/$projectKey'
     | '/$orgSlug/settings/agents'
     | '/$orgSlug/settings/members'
@@ -210,6 +221,7 @@ export interface FileRouteTypes {
     | '/_authed/'
     | '/_authed/$orgSlug/'
     | '/_authed/$orgSlug/docs/$documentId'
+    | '/_authed/$orgSlug/docs/graph'
     | '/_authed/$orgSlug/projects/$projectKey'
     | '/_authed/$orgSlug/settings/agents'
     | '/_authed/$orgSlug/settings/members'
@@ -303,6 +315,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedOrgSlugDocsDocumentIdRouteImport
       parentRoute: typeof AuthedOrgSlugRoute
     }
+    '/_authed/$orgSlug/docs/graph': {
+      id: '/_authed/$orgSlug/docs/graph'
+      path: '/docs/graph'
+      fullPath: '/$orgSlug/docs/graph'
+      preLoaderRoute: typeof AuthedOrgSlugDocsGraphRouteImport
+      parentRoute: typeof AuthedOrgSlugRoute
+    }
     '/_authed/$orgSlug/projects/$projectKey': {
       id: '/_authed/$orgSlug/projects/$projectKey'
       path: '/projects/$projectKey'
@@ -344,6 +363,7 @@ declare module '@tanstack/react-router' {
 interface AuthedOrgSlugRouteChildren {
   AuthedOrgSlugIndexRoute: typeof AuthedOrgSlugIndexRoute
   AuthedOrgSlugDocsDocumentIdRoute: typeof AuthedOrgSlugDocsDocumentIdRoute
+  AuthedOrgSlugDocsGraphRoute: typeof AuthedOrgSlugDocsGraphRoute
   AuthedOrgSlugProjectsProjectKeyRoute: typeof AuthedOrgSlugProjectsProjectKeyRoute
   AuthedOrgSlugSettingsAgentsRoute: typeof AuthedOrgSlugSettingsAgentsRoute
   AuthedOrgSlugSettingsMembersRoute: typeof AuthedOrgSlugSettingsMembersRoute
@@ -355,6 +375,7 @@ interface AuthedOrgSlugRouteChildren {
 const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
   AuthedOrgSlugIndexRoute: AuthedOrgSlugIndexRoute,
   AuthedOrgSlugDocsDocumentIdRoute: AuthedOrgSlugDocsDocumentIdRoute,
+  AuthedOrgSlugDocsGraphRoute: AuthedOrgSlugDocsGraphRoute,
   AuthedOrgSlugProjectsProjectKeyRoute: AuthedOrgSlugProjectsProjectKeyRoute,
   AuthedOrgSlugSettingsAgentsRoute: AuthedOrgSlugSettingsAgentsRoute,
   AuthedOrgSlugSettingsMembersRoute: AuthedOrgSlugSettingsMembersRoute,

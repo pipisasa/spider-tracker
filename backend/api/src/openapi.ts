@@ -203,6 +203,30 @@ const schemas: Record<string, JsonSchema> = {
     allOf: [ref("DocumentVersionSummary"), object({ documentId: string({ format: "uuid" }), content: string() })],
   },
   DocumentVersionList: listOf("DocumentVersionSummary"),
+  DocumentLink: object({
+    from: string({ format: "uuid", description: "The linking document" }),
+    to: {
+      oneOf: [
+        object({ type: string({ const: "document" }), id: string({ format: "uuid" }) }),
+        object({ type: string({ const: "task" }), key: string() }),
+        object({ type: string({ const: "unresolved" }), title: string({ description: "As first written; titles match case-insensitively" }) }),
+      ],
+    },
+  }),
+  DocumentGraph: object({
+    documents: { type: "array", items: ref("DocumentSummary") },
+    tasks: {
+      type: "array",
+      items: object({
+        key: string(),
+        title: string(),
+        projectKey: string(),
+        statusCategory: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+      }),
+    },
+    projects: { type: "array", items: object({ key: string(), name: string() }) },
+    links: { type: "array", items: ref("DocumentLink") },
+  }),
   CreateDocumentInput: fromZod(createDocumentInput),
   UpdateDocumentInput: fromZod(updateDocumentInput),
   MoveDocumentInput: fromZod(moveDocumentInput),
@@ -841,6 +865,15 @@ const paths = {
       responses: { "201": ok("Created document", "Document"), ...errors },
     },
   },
+  "/v1/orgs/{orgSlug}/documents/graph": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "getDocumentGraph",
+      summary:
+        "Documents as a graph: visible documents, the tasks and projects they sit in or link to, and their links ([[Title]], [[KEY-1]] and plain task keys)",
+      responses: { "200": ok("Graph", "DocumentGraph"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/documents/{documentId}": {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     get: { operationId: "getDocument", summary: "A document with its content", responses: { "200": ok("Document", "Document"), ...errors } },
@@ -859,6 +892,14 @@ const paths = {
       summary: "Move a document to a project (key), or make it organization-wide (null); keeps id and versions, detaches it from a task",
       requestBody: body("MoveDocumentInput"),
       responses: { "200": ok("Moved document", "Document"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/backlinks": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: {
+      operationId: "listDocumentBacklinks",
+      summary: "Documents linking here with [[its title]], most recently updated first",
+      responses: { "200": ok("Linking documents", "DocumentList"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/versions": {

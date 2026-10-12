@@ -83,3 +83,23 @@ export const documentVersions = pgTable(
   },
   (t) => [primaryKey({ columns: [t.documentId, t.version] })],
 );
+
+// What each document's current content links to (ST-100): `[[Title]]` as the title written
+// (trimmed, inner whitespace collapsed; matched case-insensitively), `[[ST-12]]` and plain task
+// keys as task keys. Rebuilt on every save; titles and keys are resolved when read, so a link
+// can name a document that doesn't exist yet.
+export const documentLinks = pgTable(
+  "document_links",
+  {
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["document", "task"] }).notNull(),
+    target: text("target").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.documentId, t.kind, t.target] }),
+    index("document_links_target_idx").on(t.kind, sql`lower(${t.target})`),
+    check("document_links_kind_check", sql`${t.kind} in ('document', 'task')`),
+  ],
+);

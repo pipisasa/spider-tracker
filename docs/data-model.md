@@ -292,6 +292,17 @@ create table document_versions (
   content text not null, author_id uuid references actors, created_at timestamptz not null default now(),
   primary key (document_id, version)
 );
+-- What each document's content links to (ST-100), rebuilt on every save: [[Title]] as written
+-- (matched case-insensitively), [[ST-12]] and plain task keys. Resolved when read, so a link may
+-- name a document that doesn't exist yet; duplicate titles prefer the same project, then the
+-- organization, then the newest (@repo/core/links resolveTitle).
+create table document_links (
+  document_id uuid not null references documents on delete cascade,
+  kind text not null check (kind in ('document', 'task')),
+  target text not null,
+  primary key (document_id, kind, target)
+);
+create index document_links_target_idx on document_links (kind, lower(target));
 
 -- ── files (objects stored in Cloudflare R2) ──────────
 create table files (

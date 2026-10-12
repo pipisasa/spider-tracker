@@ -11,8 +11,8 @@ import {
 import { filterDocumentsByProject, ORG_FILTER } from "@/lib/document-filter";
 import { archivedProjectsQuery, documentsQuery, projectsQuery } from "@/lib/work";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { PlusIcon } from "lucide-react";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { NetworkIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 // Every document in the organization, project documents included (filter by project); new ones from here are organization-wide.
@@ -73,6 +73,12 @@ function DocumentsPage() {
             ))}
           </SelectContent>
         </Select>
+        <Button size="sm" variant="outline" asChild>
+          <Link to="/$orgSlug/docs/graph" params={{ orgSlug }}>
+            <NetworkIcon />
+            Graph
+          </Link>
+        </Button>
         {membership.actor.role !== "guest" && (
           <Button size="sm" onClick={() => setOpen(true)}>
             <PlusIcon />
