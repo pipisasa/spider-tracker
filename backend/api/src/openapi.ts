@@ -5,7 +5,14 @@ import {
   createAgentInput,
   createApiKeyInput,
   createCommentInput,
+  createDocumentCommentInput,
+  resolveDocumentCommentInput,
   createTagInput,
+  attachRepoInput,
+  createAppInput,
+  createRepoInput,
+  updateAppInput,
+  updateRepoInput,
   createSavedViewInput,
   updateSavedViewInput,
   viewFiltersSchema,
@@ -183,18 +190,36 @@ const schemas: Record<string, JsonSchema> = {
     createdAt: string({ format: "date-time" }),
     editedAt: nullable("string", { format: "date-time" }),
   }),
+  DocumentComment: object({
+    id: string({ format: "uuid" }),
+    documentId: string({ format: "uuid" }),
+    parentId: nullable("string", { format: "uuid", description: "The comment replied to" }),
+    authorId: string({ format: "uuid" }),
+    body: string({ description: "Markdown; @handle mentions notify members" }),
+    quote: nullable("string", { description: "The fragment the comment is about (top-level comments); null: the whole document" }),
+    outdated: { type: "boolean", description: "The quote no longer occurs in the current content" },
+    documentVersion: { type: "integer", description: "The document's version when the comment was posted" },
+    resolvedAt: nullable("string", { format: "date-time", description: "Set when the thread was marked resolved" }),
+    resolvedBy: nullable("string", { format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+    editedAt: nullable("string", { format: "date-time" }),
+  }),
+  DocumentCommentList: listOf("DocumentComment"),
+  CreateDocumentCommentInput: fromZod(createDocumentCommentInput),
+  ResolveDocumentCommentInput: fromZod(resolveDocumentCommentInput),
   InboxItem: object({
     id: { type: "integer", description: "Increasing; use as the `after` cursor" },
     kind: string({
-      enum: ["mention", "assigned", "comment", "reply", "rules"],
-      description: "rules: a project's rules were set or changed (returned only when asked for with `kinds`)",
+      enum: ["mention", "assigned", "comment", "reply", "rules", "document_mention", "document_comment", "document_reply"],
+      description:
+        "rules: a project's rules were set or changed; document_*: a comment on a document mentions you, replies to you, or is on your document or thread. Both are returned only when asked for with `kinds`",
     }),
     createdAt: string({ format: "date-time" }),
     readAt: nullable("string", { format: "date-time" }),
-    task: { oneOf: [object({ key: string(), title: string() }), { type: "null" }], description: "Null for rules items" },
+    task: { oneOf: [object({ key: string(), title: string() }), { type: "null" }], description: "Null for rules and document_* items" },
     document: {
-      oneOf: [object({ id: string({ format: "uuid" }), title: string(), projectKey: string() }), { type: "null" }],
-      description: "For rules items: the project's rules document",
+      oneOf: [object({ id: string({ format: "uuid" }), title: string(), projectKey: nullable("string") }), { type: "null" }],
+      description: "For rules items the project's rules document; for document_* items the commented document (projectKey null when organization-wide)",
     },
     comment: { oneOf: [object({ id: string({ format: "uuid" }), body: string() }), { type: "null" }] },
     from: object({ id: string({ format: "uuid" }), handle: string(), name: string(), type: string({ enum: ["human", "agent"] }) }),
@@ -202,6 +227,34 @@ const schemas: Record<string, JsonSchema> = {
   Tag: object({ id: string({ format: "uuid" }), name: string(), color: nullable("string") }),
   TagList: listOf("Tag"),
   CreateTagInput: fromZod(createTagInput),
+  App: object({
+    id: string({ format: "uuid" }),
+    repoId: string({ format: "uuid" }),
+    repo: string({ examples: ["pipisasa/spider-tracker"], description: "The repo's owner/name" }),
+    name: string({ examples: ["web"] }),
+    path: string({ examples: ["web/app"], description: 'Its folder in the repo ("." for the whole repo)' }),
+    sharedPaths: { type: "array", items: string(), description: 'Shared packages it depends on, e.g. "packages/core"' },
+    versioning: string({ enum: ["date", "semver"] }),
+    environments: { type: "array", items: string(), description: 'Deploy order, e.g. ["staging", "prod"]; empty for a CLI' },
+    createdAt: string({ format: "date-time" }),
+  }),
+  Repo: object({
+    id: string({ format: "uuid" }),
+    owner: string(),
+    name: string(),
+    fullName: string({ examples: ["pipisasa/spider-tracker"] }),
+    defaultBranch: string(),
+    githubInstallationId: nullable("integer", { description: "Set once the GitHub App is installed on the repo; null for repos added by URL" }),
+    projects: { type: "array", items: string(), description: "Keys of the projects it is attached to (those the caller can see)" },
+    apps: { type: "array", items: ref("App") },
+    createdAt: string({ format: "date-time" }),
+  }),
+  RepoList: listOf("Repo"),
+  CreateRepoInput: fromZod(createRepoInput),
+  UpdateRepoInput: fromZod(updateRepoInput),
+  AttachRepoInput: fromZod(attachRepoInput),
+  CreateAppInput: fromZod(createAppInput),
+  UpdateAppInput: fromZod(updateAppInput),
   ViewFilters: fromZod(viewFiltersSchema),
   SavedView: object({
     id: string({ format: "uuid" }),
@@ -507,6 +560,8 @@ const pathParam = (name: string, description: string) => ({
 });
 const orgSlug = pathParam("orgSlug", "Organization slug");
 const projectKey = pathParam("projectKey", 'Project key, e.g. "SPI"');
+const repoOwner = pathParam("owner", 'GitHub owner of the repo, e.g. "pipisasa"');
+const repoName = pathParam("name", 'Repo name, e.g. "spider-tracker"');
 const taskKey = pathParam("taskKey", 'Task key, e.g. "SPI-12"');
 const userCode = pathParam("userCode", 'Code shown by spider login, e.g. "WDJB-MJHT"');
 const body = (schema: string) => ({ required: true, ...json(schema) });
@@ -1045,6 +1100,73 @@ const paths = {
       responses: { "204": { description: "Deleted" }, ...errors },
     },
   },
+  "/v1/orgs/{orgSlug}/repos": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listRepos",
+      summary: "The organization's repos with their apps and projects (a project-scoped agent: only its projects' repos)",
+      parameters: [{ name: "project", in: "query", schema: { type: "string" }, description: "Only the repos attached to this project key" }],
+      responses: { "200": ok("Repos", "RepoList"), ...errors },
+    },
+    post: {
+      operationId: "createRepo",
+      summary:
+        "Add a repo by its GitHub remote (URL or owner/name), optionally attached to projects (owners, admins and their agents; a project-scoped agent must attach it to one of its projects). 409 if it exists",
+      requestBody: body("CreateRepoInput"),
+      responses: { "201": ok("Created repo", "Repo"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos/{owner}/{name}": {
+    parameters: [orgSlug, repoOwner, repoName],
+    get: { operationId: "getRepo", summary: "A repo with its apps and projects", responses: { "200": ok("Repo", "Repo"), ...errors } },
+    patch: {
+      operationId: "updateRepo",
+      summary: "Change a repo's remote (after a rename) or default branch (owners, admins and their agents)",
+      requestBody: body("UpdateRepoInput"),
+      responses: { "200": ok("Updated repo", "Repo"), ...errors },
+    },
+    delete: {
+      operationId: "deleteRepo",
+      summary: "Remove a repo with its apps and project links (owners, admins and their agents)",
+      responses: { "204": { description: "Removed" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos/{owner}/{name}/apps": {
+    parameters: [orgSlug, repoOwner, repoName],
+    post: {
+      operationId: "createApp",
+      summary: "Add an app to a repo: folder, shared packages, versioning (default semver), environments in deploy order. 409 if the name is taken",
+      requestBody: body("CreateAppInput"),
+      responses: { "201": ok("Created app", "App"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/repos/{owner}/{name}/apps/{app}": {
+    parameters: [orgSlug, repoOwner, repoName, pathParam("app", 'App name, e.g. "web"')],
+    patch: {
+      operationId: "updateApp",
+      summary: "Rename an app or change its paths, versioning or environments",
+      requestBody: body("UpdateAppInput"),
+      responses: { "200": ok("Updated app", "App"), ...errors },
+    },
+    delete: { operationId: "deleteApp", summary: "Remove an app", responses: { "204": { description: "Removed" }, ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/repos": {
+    parameters: [orgSlug, projectKey],
+    post: {
+      operationId: "attachRepo",
+      summary: "Attach a repo to the project (owners, admins and their agents); attaching it again changes nothing",
+      requestBody: body("AttachRepoInput"),
+      responses: { "200": ok("The repo", "Repo"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/repos/{owner}/{name}": {
+    parameters: [orgSlug, projectKey, repoOwner, repoName],
+    delete: {
+      operationId: "detachRepo",
+      summary: "Detach a repo from the project; detaching one that isn't attached changes nothing",
+      responses: { "200": ok("The repo", "Repo"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/documents": {
     parameters: [orgSlug],
     get: {
@@ -1135,6 +1257,30 @@ const paths = {
       responses: { "200": ok("Diff", "DocumentDiff"), ...errors },
     },
   },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/comments": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: {
+      operationId: "listDocumentComments",
+      summary: "Comments on a document, oldest first, with their quotes and outdated and resolved states",
+      responses: { "200": ok("Comments", "DocumentCommentList"), ...errors },
+    },
+    post: {
+      operationId: "addDocumentComment",
+      summary:
+        "Comment on a document, or on a fragment of it (quote: text in the current version; top-level comments only). Mentions, the author replied to, the document's author and the thread are notified",
+      requestBody: body("CreateDocumentCommentInput"),
+      responses: { "201": ok("Created comment", "DocumentComment"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/comments/{commentId}": {
+    parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("commentId", "Comment id")],
+    patch: {
+      operationId: "resolveDocumentComment",
+      summary: "Mark a thread (a top-level comment) resolved, or reopen it; a repeat changes nothing",
+      requestBody: body("ResolveDocumentCommentInput"),
+      responses: { "200": ok("Comment", "DocumentComment"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/inbox": {
     parameters: [orgSlug],
     get: {
@@ -1149,7 +1295,8 @@ const paths = {
           name: "kinds",
           in: "query",
           schema: { type: "string" },
-          description: "Comma-separated kinds to return (mention, assigned, comment, reply, rules); default: all but rules",
+          description:
+            "Comma-separated kinds to return (mention, assigned, comment, reply, rules, document_mention, document_comment, document_reply); default: the task kinds (all but rules and document_*)",
         },
       ],
       responses: { "200": ok("Inbox items", "InboxList"), ...errors },

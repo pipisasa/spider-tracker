@@ -738,6 +738,37 @@ withDb("SDK and client-declared source", () => {
     expect(await client.views.list(slug, "NOPE").catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
+  test("repos and apps through the SDK: add by URL, attach, apps; 409, 400 and 404 (ST-92)", async () => {
+    const client = sdk();
+    const repo = await client.repos.create(slug, { url: "https://github.com/pipisasa/spider-tracker.git", projects: ["SPI"] });
+    expect(repo).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"], apps: [] });
+    expect(await client.repos.create(slug, { url: "pipisasa/Spider-Tracker" }).catch((e: unknown) => e)).toMatchObject({ status: 409 });
+    expect(await client.repos.create(slug, { url: "https://gitlab.com/a/b" }).catch((e: unknown) => e)).toMatchObject({ status: 400 });
+
+    const web = await client.repos.apps.create(slug, "pipisasa/spider-tracker", {
+      name: "web",
+      path: "web/app",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
+    expect(web).toMatchObject({ repo: "pipisasa/spider-tracker", name: "web", environments: ["staging", "prod"] });
+    expect((await client.repos.apps.update(slug, "pipisasa/spider-tracker", "web", { sharedPaths: ["packages/core"] })).sharedPaths).toEqual([
+      "packages/core",
+    ]);
+    expect((await client.repos.get(slug, "PIPISASA/spider-tracker")).apps.map((a) => a.name)).toEqual(["web"]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items.map((r) => r.fullName)).toEqual(["pipisasa/spider-tracker"]);
+
+    expect((await client.repos.detach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual([]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items).toEqual([]);
+    expect((await client.repos.attach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual(["SPI"]);
+    expect(await client.repos.update(slug, "pipisasa/spider-tracker", { defaultBranch: "trunk" })).toMatchObject({ defaultBranch: "trunk" });
+
+    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web")).toBeUndefined();
+    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(await client.repos.delete(slug, "pipisasa/spider-tracker")).toBeUndefined();
+    expect(await client.repos.get(slug, "pipisasa/spider-tracker").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
   test("API-key clients declare their source; unknown values fall back to api", async () => {
     const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", { title: "From the CLI" });
     const raw = await app.request(`/v1/orgs/${slug}/projects/SPI/tasks`, {
@@ -926,6 +957,35 @@ withDb("comments and inbox API", () => {
     // The loop guard surfaces as 429.
     for (let i = 0; i < 4; i++) await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: `note ${i}` });
     expect((await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "too much" })).status).toBe(429);
+  });
+
+  test("document comments (ST-118): a review stays on the document and reaches its author", async () => {
+    const cookie = await signIn(email);
+    const asOwner = (method: string, path: string, body?: unknown) =>
+      app.request(`/v1/orgs/${slug}${path}`, {
+        method,
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const doc = (await (await asOwner("POST", "/documents", { title: "Spec", project: "SPI", content: "Ship **it** today." })).json()) as { id: string };
+    const before = (await (await asOwner("GET", "/inbox?kinds=document_comment,document_reply")).json()) as { items: unknown[] };
+    expect(before.items).toEqual([]);
+
+    // Commenting on a fragment that isn't there is a 400; one that is, a 201.
+    expect((await asOwner("POST", `/documents/${doc.id}/comments`, { body: "?", quote: "tomorrow" })).status).toBe(400);
+    const posted = await asOwner("POST", `/documents/${doc.id}/comments`, { body: "Why today?", quote: "Ship it today" });
+    expect(posted.status).toBe(201);
+    const root = (await posted.json()) as { id: string };
+    expect(root).toMatchObject({ documentId: doc.id, quote: "Ship it today", outdated: false, documentVersion: 1, resolvedAt: null });
+
+    const listed = (await (await asOwner("GET", `/documents/${doc.id}/comments`)).json()) as { items: { id: string }[] };
+    expect(listed.items.map((c) => c.id)).toEqual([root.id]);
+
+    const resolved = await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, { resolved: true });
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({ resolvedAt: expect.any(String) });
+    expect((await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, {})).status).toBe(400);
+    expect((await asOwner("GET", `/documents/${crypto.randomUUID()}/comments`)).status).toBe(404);
   });
 });
 

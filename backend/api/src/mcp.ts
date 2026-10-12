@@ -16,6 +16,10 @@ import {
   DomainError,
   MAX_BULK_TASKS,
   addComment,
+  addDocumentComment,
+  listDocumentComments,
+  resolveDocumentComment,
+  documentCommentView,
   archiveProject,
   authenticateApiKey,
   createDocument,
@@ -43,6 +47,14 @@ import {
   listMembers,
   listProjects,
   createTag,
+  attachRepo,
+  createApp,
+  createRepo,
+  detachRepo,
+  getRepo,
+  listRepos,
+  updateApp,
+  updateRepo,
   listComments,
   addRelation,
   markDuplicate,
@@ -395,6 +407,106 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         // DeleteStatusResponse, as `spider project status delete --json`.
         return { ...result, project: describeProject(result.project) };
       }),
+  );
+
+  // Repos and apps (ST-92): RepoDto and AppDto as the API returns them, as `spider repo … --json` prints them.
+  const repoInput = z.string().describe('The repo: "owner/name" (e.g. "pipisasa/spider-tracker") or its GitHub URL');
+  const repoPathInput = z.string().describe('A folder in the repo, e.g. "web/app" ("." for the whole repo)');
+  const appInput = {
+    sharedPaths: z.array(z.string()).max(20).optional().describe('Shared packages the app depends on, e.g. ["packages/core"]'),
+    versioning: z.enum(["date", "semver"]).optional().describe('"date" (2026.10.12) or "semver" (1.4.0)'),
+    environments: z
+      .array(z.string())
+      .max(10)
+      .optional()
+      .describe('Deploy order, e.g. ["staging", "prod"]; [] when a release is the only deploy (a CLI)'),
+  };
+
+  server.registerTool(
+    "list_repos",
+    {
+      description: "List the organization's git repos with their apps (path, versioning, environments) and the projects they're attached to.",
+      inputSchema: { project: z.string().optional().describe('Only the repos attached to this project key, e.g. "ST"') },
+    },
+    ({ project }) => run(async () => ({ items: await listRepos(db, ctx, { project }) })),
+  );
+
+  server.registerTool(
+    "get_repo",
+    { description: "Get a repo with its apps and projects.", inputSchema: { repo: repoInput } },
+    ({ repo }) => run(async () => getRepo(db, ctx, repo)),
+  );
+
+  server.registerTool(
+    "add_repo",
+    {
+      description:
+        "Add a git repo by its GitHub remote URL (https or ssh) or owner/name, optionally attached to projects. Owners, admins and their agents only.",
+      inputSchema: {
+        url: z.string().describe('"https://github.com/owner/name.git", "git@github.com:owner/name.git" or "owner/name"'),
+        defaultBranch: z.string().optional().describe('Default "main"'),
+        projects: z.array(z.string()).max(50).optional().describe("Project keys to attach it to"),
+      },
+    },
+    ({ url, defaultBranch, projects }) => run(async () => createRepo(db, ctx, { url, defaultBranch, projects })),
+  );
+
+  server.registerTool(
+    "update_repo",
+    {
+      description: "Change a repo's remote (after a rename on GitHub) or default branch. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        url: z.string().optional().describe("The new remote URL or owner/name"),
+        defaultBranch: z.string().optional(),
+      },
+    },
+    ({ repo, url, defaultBranch }) => run(async () => updateRepo(db, ctx, repo, { url, defaultBranch })),
+  );
+
+  server.registerTool(
+    "attach_repo",
+    {
+      description:
+        "Attach a repo to a project (detach: true removes it). Doing it twice changes nothing. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        detach: z.boolean().optional().describe("Detach the repo from the project instead"),
+      },
+    },
+    ({ repo, projectKey, detach }) =>
+      run(async () => (detach ? detachRepo(db, ctx, projectKey, repo) : attachRepo(db, ctx, projectKey, { repo }))),
+  );
+
+  server.registerTool(
+    "add_app",
+    {
+      description:
+        "Add an app (a deployable part, e.g. web, api, cli) to a repo: its folder, the shared packages it depends on, versioning (default semver) and environments in deploy order. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        name: z.string().describe('Lower-case, e.g. "web"'),
+        path: repoPathInput,
+        ...appInput,
+      },
+    },
+    ({ repo, ...input }) => run(async () => createApp(db, ctx, repo, input)),
+  );
+
+  server.registerTool(
+    "update_app",
+    {
+      description: "Rename an app or change its folder, shared packages, versioning or environments. Owners, admins and their agents only.",
+      inputSchema: {
+        repo: repoInput,
+        app: z.string().describe('The app\'s current name, e.g. "web"'),
+        name: z.string().optional().describe("A new name"),
+        path: repoPathInput.optional(),
+        ...appInput,
+      },
+    },
+    ({ repo, app, ...input }) => run(async () => updateApp(db, ctx, repo, app, input)),
   );
 
   server.registerTool(
@@ -891,6 +1003,58 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   );
 
   server.registerTool(
+    "list_document_comments",
+    {
+      description:
+        "Read the comments on a document, oldest first, with author handles. A comment with a quote is about that fragment of the text; outdated means the fragment has changed since. resolvedAt marks a resolved thread; replies have parentId.",
+      inputSchema: { id: z.string().describe("Document id") },
+    },
+    ({ id }) =>
+      run(async () => {
+        const comments = await listDocumentComments(db, ctx, id);
+        const actors = await actorRefs();
+        // { items } of DocumentCommentView, as `spider doc comments --json`.
+        return { items: comments.map((c) => documentCommentView(c, actors)) };
+      }),
+  );
+
+  server.registerTool(
+    "add_document_comment",
+    {
+      description:
+        "Comment on a document (Markdown): reviews and feedback on a document belong here, not in task comments. Pass quote (exact text from the current version) to comment on a fragment; set parent_id to reply in a thread. @handle mentions notify people and agents; the document's author and the thread are notified too. Agents may post at most 5 comments per document per minute.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        body: z.string().min(1).describe("Comment text (Markdown). Never include secrets"),
+        quote: z.string().optional().describe("The fragment of the document the comment is about (top-level comments only)"),
+        parent_id: z.string().optional().describe("Id of the comment you are replying to"),
+      },
+    },
+    ({ id, body, quote, parent_id }) =>
+      run(async () => {
+        const comment = await addDocumentComment(db, ctx, id, { body, quote: quote ?? null, parentId: parent_id ?? null });
+        return documentCommentView(comment, await actorRefs());
+      }),
+  );
+
+  server.registerTool(
+    "resolve_document_comment",
+    {
+      description: "Mark a document comment thread (its first comment) resolved, or reopen it with resolved: false.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        comment_id: z.string().describe("Id of the thread's first comment"),
+        resolved: z.boolean().optional().describe("Default true; false reopens the thread"),
+      },
+    },
+    ({ id, comment_id, resolved }) =>
+      run(async () => {
+        const comment = await resolveDocumentComment(db, ctx, id, comment_id, { resolved: resolved ?? true });
+        return documentCommentView(comment, await actorRefs());
+      }),
+  );
+
+  server.registerTool(
     "get_task_activity",
     {
       description:
@@ -944,7 +1108,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_inbox",
     {
       description:
-        "Your notifications: mentions, assignments, comments and replies on your tasks, and changed rules of your projects (kind \"rules\": read them with get_project), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
+        "Your notifications: mentions, assignments, comments and replies on your tasks, changed rules of your projects (kind \"rules\": read them with get_project), and comments on documents (kinds document_mention, document_reply, document_comment: read the thread with list_document_comments, answer with add_document_comment), oldest first. Pass `after` (the last id you saw) for only newer items, and `wait_seconds` to wait for new ones.",
       inputSchema: {
         unread_only: z.boolean().optional().describe("Only items not marked read (default true)"),
         after: z.number().int().nonnegative().optional().describe("Only items with a larger id"),
@@ -969,7 +1133,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           kind: i.kind,
           ...(i.task ? { task: i.task.key, title: i.task.title } : {}),
           ...(i.document
-            ? { project: i.document.projectKey, rulesDocument: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) } }
+            ? {
+                project: i.document.projectKey,
+                [i.kind === "rules" ? "rulesDocument" : "document"]: { id: i.document.id, title: i.document.title, url: urls.document(i.document.id) },
+              }
             : {}),
           from: i.from.handle,
           comment: i.comment ? { id: i.comment.id, body: i.comment.body } : null,

@@ -31,13 +31,13 @@ activity (append-only log for everything)
 | **Task** | A unit of work of a kind (`task`, `release` or `milestone`, ST-90); supports sub-tasks, relations, assignees, tags and custom fields |
 | **Tag** | An organization-wide label |
 | **Custom field definition** | A user-defined field at organization or project scope |
-| **Repo** | A linked Git/GitHub repository |
-| **App** | A deployable product, linked to repos and projects |
+| **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; the GitHub App (ST-82) later sets its installation |
+| **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
 | **Git link** | A branch, commit or pull request linked to a task |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
-| **Comment** | A threaded Markdown comment on a task |
-| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task, or (`rules`, about a document instead of a task) changed rules of their project; its id is a cursor for waiting clients |
+| **Comment** | A threaded Markdown comment on a task or (ST-118) a document; a document comment may quote the fragment it is about and its thread can be resolved |
+| **Inbox item** | A notification for one actor: mention, assignment, reply or comment on their task; or, about a document instead of a task, changed rules of their project (`rules`) or a comment on a document (`document_mention`, `document_reply`, `document_comment`); its id is a cursor for waiting clients |
 | **Device code** | A pending `spider login` (RFC 8628): hashed device code, user code, approver, expiry |
 | **Activity** | Append-only audit log of every change |
 | **Agent run** | One execution of an agent on a task |
@@ -259,21 +259,35 @@ create table custom_field_defs (
 );
 
 -- ── repos, apps, git ─────────────────────────────────
+-- Built in ST-92: repos added by remote URL; ST-82 fills github_installation_id on existing rows.
 create table repos (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations on delete cascade,
-  provider text not null default 'github', installation_id bigint,
-  full_name text not null, default_branch text not null default 'main',
-  unique (org_id, provider, full_name)
+  owner text not null, name text not null,             -- the GitHub remote owner/name, casing as given
+  default_branch text not null default 'main',
+  github_installation_id bigint,                       -- GitHub App installation (ST-82); null when added by URL
+  created_by uuid references actors on delete set null,
+  created_at timestamptz not null default now()
 );
+create unique index repos_org_remote_key on repos (org_id, lower(owner), lower(name));
+create table project_repos (
+  project_id uuid not null references projects on delete cascade,
+  repo_id uuid not null references repos on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (project_id, repo_id)
+);
+-- An app belongs to one repo; which tasks touch it comes from their commits' paths (ST-93/95).
 create table apps (
   id uuid primary key default uuidv7(),
-  org_id uuid not null references organizations on delete cascade,
-  name text not null, description text, links jsonb not null default '{}'
+  repo_id uuid not null references repos on delete cascade,
+  name text not null,                                  -- lower-case, part of release tags (web-2026.10.12)
+  path text not null,                                  -- e.g. web/app; '.' for the whole repo
+  shared_paths text[] not null default '{}',           -- shared packages it depends on, e.g. {packages/core}
+  versioning text not null check (versioning in ('date', 'semver')),
+  environments text[] not null default '{}',           -- deploy order, e.g. {staging,prod}; {} for a CLI
+  created_at timestamptz not null default now(),
+  unique (repo_id, name)
 );
-create table app_repos     (app_id uuid references apps on delete cascade,         repo_id uuid references repos on delete cascade, primary key (app_id, repo_id));
-create table project_repos (project_id uuid references projects on delete cascade, repo_id uuid references repos on delete cascade, primary key (project_id, repo_id));
-create table project_apps  (project_id uuid references projects on delete cascade, app_id uuid references apps on delete cascade,   primary key (project_id, app_id));
 
 create table git_links (
   id uuid primary key default uuidv7(),
@@ -334,12 +348,18 @@ create table files (
 create table comments (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations,
-  task_id uuid not null references tasks on delete cascade,
+  task_id uuid references tasks on delete cascade,          -- exactly one of task_id
+  document_id uuid references documents on delete cascade,  -- and document_id (ST-118)
   parent_id uuid references comments,
   author_id uuid not null references actors,
   body text not null,
+  quote text,                    -- document comments: the fragment it is about (top-level only)
+  document_version int,          -- document comments: the version it was posted on
+  resolved_at timestamptz, resolved_by uuid references actors,   -- a resolved thread
   run_id uuid,
-  created_at timestamptz not null default now(), edited_at timestamptz, deleted_at timestamptz
+  created_at timestamptz not null default now(), edited_at timestamptz, deleted_at timestamptz,
+  check ((task_id is null) <> (document_id is null)),
+  check (quote is null or document_id is not null)
 );
 
 create table activity (

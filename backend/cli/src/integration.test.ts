@@ -410,6 +410,21 @@ withDb("spider CLI against the API", () => {
     expect((await spider("project", "update", "SPI", "--rules", "", "--json")).json()).toMatchObject({ rulesDocumentId: null });
     expect((await asOwner("DELETE", `/documents/${rulesDoc.id}`, {})).status).toBeLessThan(300);
 
+    // Document comments (ST-118): a mention on a document is pushed with its document_id; the reply goes there.
+    const spec = (await (await asOwner("POST", "/documents", { title: "Spec", project: "SPI", content: "Plan" })).json()) as { id: string };
+    const asked = (await (await asOwner("POST", `/documents/${spec.id}/comments`, { body: "@cli-bot review this?" })).json()) as { id: string };
+    for (let i = 0; i < 50 && pushed.length < 3; i++) await Bun.sleep(100);
+    expect(pushed[2]?.meta).toMatchObject({ kind: "document_mention", project: "SPI", document_id: spec.id, comment_id: asked.id });
+    expect(pushed[2]?.meta).not.toHaveProperty("task");
+    expect(pushed[2]?.content).toContain('mentioned you in a comment on document "Spec"');
+    const docReply = await session.callTool({ name: "reply", arguments: { document_id: spec.id, text: "Reviewed", reply_to: asked.id } });
+    expect(docReply.isError).toBeFalsy();
+    const docThread = await session.callTool({ name: "get_comments", arguments: { document_id: spec.id } });
+    expect(JSON.stringify(docThread.content)).toContain("Reviewed");
+    const both = await session.callTool({ name: "reply", arguments: { task: "SPI-1", document_id: spec.id, text: "?" } });
+    expect(both).toMatchObject({ isError: true, content: [{ text: "Pass either task or document_id" }] });
+    expect((await asOwner("DELETE", `/documents/${spec.id}`, {})).status).toBeLessThan(300);
+
     stop.abort();
     await pumping;
     await session.close();
@@ -958,7 +973,74 @@ withDb("spider CLI against the API", () => {
     await spider("project", "archive", "WFC");
   });
 
-  test("CLI --json and MCP return tasks, documents, comments and projects in the same shape (ST-107)", async () => {
+  test("repos and apps: spider-tracker attached to ST, with apps web, api (staging, prod) and cli (semver, no environments) (ST-92)", async () => {
+    expect((await spider("project", "create", "--key", "ST", "--name", "Spider Tracker")).code).toBe(0);
+    const added = await spider("repo", "add", "https://github.com/pipisasa/spider-tracker.git", "--project", "ST", "--json");
+    expect(added.code).toBe(0);
+    expect(added.json()).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["ST"], apps: [] });
+    const again = await spider("repo", "add", "git@github.com:pipisasa/spider-tracker.git");
+    expect(again).toMatchObject({ code: 2, stderr: "spider: Repo pipisasa/spider-tracker already exists\n" });
+    expect((await spider("repo", "add", "https://gitlab.com/a/b")).code).toBe(2);
+
+    const web = await spider(
+      "app", "add", "web", "--repo", "pipisasa/spider-tracker", "--path", "web/app",
+      "--shared", "packages/core,packages/sdk", "--versioning", "date", "--env", "staging,prod", "--json",
+    );
+    expect(web.code).toBe(0);
+    expect(web.json()).toMatchObject({ repo: "pipisasa/spider-tracker", name: "web", path: "web/app", versioning: "date", environments: ["staging", "prod"] });
+    expect(
+      (
+        await spider(
+          "app", "add", "api", "--repo", "https://github.com/pipisasa/spider-tracker", "--path", "./backend/api/",
+          "--shared", "packages/core", "--shared", "packages/db", "--versioning", "date", "--env", "staging", "--env", "prod",
+        )
+      ).stdout,
+    ).toBe("Added pipisasa/spider-tracker  api  backend/api (+ packages/core, packages/db)  date  staging → prod\n");
+    // Without --repo, the origin remote of the current folder.
+    Bun.spawnSync({ cmd: ["git", "remote", "add", "origin", "git@github.com:pipisasa/spider-tracker.git"], cwd: repo });
+    const cli = await spider("app", "add", "cli", "--path", "backend/cli", "--shared", "packages/core,packages/sdk", "--versioning", "semver", "--json");
+    expect(cli.json()).toMatchObject({ name: "cli", versioning: "semver", environments: [] });
+    expect((await spider("app", "add", "x", "--path", "x", "--versioning", "calver")).code).toBe(2);
+
+    const view = (await spider("repo", "view", "--json")).json() as unknown as { projects: string[]; apps: Record<string, unknown>[] };
+    expect(view.projects).toEqual(["ST"]);
+    expect(view.apps.map((a) => [a.name, a.path, a.sharedPaths, a.versioning, a.environments])).toEqual([
+      ["api", "backend/api", ["packages/core", "packages/db"], "date", ["staging", "prod"]],
+      ["cli", "backend/cli", ["packages/core", "packages/sdk"], "semver", []],
+      ["web", "web/app", ["packages/core", "packages/sdk"], "date", ["staging", "prod"]],
+    ]);
+    expect((await spider("repo", "list", "--project", "ST")).stdout).toBe(
+      [
+        "pipisasa/spider-tracker  main  ST",
+        "  api  backend/api (+ packages/core, packages/db)  date  staging → prod",
+        "  cli  backend/cli (+ packages/core, packages/sdk)  semver  no environments",
+        "  web  web/app (+ packages/core, packages/sdk)  date  staging → prod",
+        "",
+      ].join("\n"),
+    );
+    expect((await spider("repo", "list", "--project", "SPI")).stdout).toBe("No repos\n");
+    expect((await spider("app", "list", "--json")).json().items).toHaveLength(3);
+
+    // Attach to a second project and back; apps change and go.
+    expect((await spider("repo", "attach", "pipisasa/spider-tracker", "ops", "--json")).json()).toMatchObject({ projects: ["OPS", "ST"] });
+    expect((await spider("repo", "detach", "pipisasa/spider-tracker", "OPS", "--json")).json()).toMatchObject({ projects: ["ST"] });
+    expect((await spider("app", "update", "web", "--env", "prod", "--shared", "", "--json")).json()).toMatchObject({
+      environments: ["prod"],
+      sharedPaths: [],
+    });
+    expect((await spider("app", "update", "web", "--env", "staging,prod", "--shared", "packages/core,packages/sdk")).code).toBe(0);
+    expect((await spider("app", "update", "web")).code).toBe(2);
+    expect((await spider("app", "add", "tmp", "--path", ".")).code).toBe(0);
+    expect((await spider("app", "remove", "tmp", "--json")).json()).toEqual({ repo: "pipisasa/spider-tracker", app: "tmp", removed: true });
+    expect((await spider("app", "remove", "tmp")).code).toBe(3);
+    expect((await spider("repo", "update", "pipisasa/spider-tracker", "--default-branch", "main", "--json")).json()).toMatchObject({
+      defaultBranch: "main",
+    });
+    expect((await spider("repo", "view", "nobody/nothing")).code).toBe(3);
+    expect((await spider("repo", "view", "not a repo")).code).toBe(2);
+  });
+
+  test("CLI --json and MCP return tasks, documents, comments, document comments and projects in the same shape (ST-107)", async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${env.API_ORIGIN}/mcp`), {
       fetch: async (url, init) => app.request(url, init),
       requestInit: { headers: { Authorization: `Bearer ${token}` } },
@@ -1008,6 +1090,15 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("get_document", { id: doc?.id, version: 1 })).toEqual(await cli("doc", "view", doc?.id ?? "", "--rev", "1"));
       expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(await cli("doc", "diff", doc?.id ?? "", "--from", "1"));
       expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(await cli("comments", "SPI-1"));
+      // Document comments (ST-118), with a quoted fragment, a reply and a resolved thread.
+      const docComment = (await cli("doc", "comment", doc?.id ?? "", "Parity review")) as { id: string };
+      await cli("doc", "comment", doc?.id ?? "", "Agreed", "--reply-to", docComment.id);
+      await cli("doc", "resolve", doc?.id ?? "", docComment.id);
+      const listedText = (await spider("doc", "comments", doc?.id ?? "")).stdout;
+      expect(listedText).toContain(`${docComment.id} (resolved by @`);
+      expect(listedText).toMatch(/\n {2}@[\w-]+ · .*\n {2}Agreed/);
+      expect((await spider("doc", "comment", doc?.id ?? "", "x", "--quote", "a", "--reply-to", docComment.id)).code).toBe(2);
+      expect(await mcp("list_document_comments", { id: doc?.id })).toEqual(await cli("doc", "comments", doc?.id ?? ""));
       // Backlinks and the documents graph (ST-101), with a document that mentions SPI-1.
       stdin = "Mentions [[SPI-1]]";
       await cli("doc", "create", "--title", "Parity links", "--project", "SPI", "--file", "-");
@@ -1036,12 +1127,32 @@ withDb("spider CLI against the API", () => {
         workflows: Object.fromEntries(Object.entries(view.workflows).map(([kind, statuses]) => [kind, uncounted(statuses)])),
       });
 
+      // Repos and apps (ST-92): RepoDto and AppDto on both sides.
+      expect(await mcp("list_repos")).toEqual(await cli("repo", "list"));
+      expect(await mcp("get_repo", { repo: "pipisasa/spider-tracker" })).toEqual(await cli("repo", "view", "pipisasa/spider-tracker"));
+      expect(await mcp("attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "ST" })).toEqual(
+        await cli("repo", "attach", "pipisasa/spider-tracker", "ST"),
+      );
+      expect(shape(await mcp("add_app", { repo: "pipisasa/spider-tracker", name: "docs", path: "docs" }))).toEqual(
+        shape(await cli("app", "add", "site", "--repo", "pipisasa/spider-tracker", "--path", "site")),
+      );
+      expect(await mcp("update_app", { repo: "pipisasa/spider-tracker", app: "docs", versioning: "date" })).toEqual(
+        await cli("app", "update", "docs", "--repo", "pipisasa/spider-tracker", "--versioning", "date"),
+      );
+
       // Writes return the same fields.
       expect(shape(await mcp("update_task", { key: "SPI-1", priority: 1 }))).toEqual(shape(await cli("task", "update", "SPI-1", "--priority", "2")));
       expect(shape(await mcp("update_task", { key: "SPI-1", startDate: "2020-01-01", targetDate: "2020-02-01" }))).toEqual(
         shape(await cli("task", "update", "SPI-1", "--start", "2020-01-02", "--target", "2020-02-02")),
       );
       expect(shape(await mcp("add_comment", { key: "SPI-1", body: "From MCP" }))).toEqual(shape(await cli("comment", "SPI-1", "From CLI")));
+      expect(shape(await mcp("add_document_comment", { id: doc?.id, body: "From MCP" }))).toEqual(
+        shape(await cli("doc", "comment", doc?.id ?? "", "From CLI")),
+      );
+      await mcp("resolve_document_comment", { id: doc?.id, comment_id: docComment.id, resolved: false });
+      expect(shape(await mcp("resolve_document_comment", { id: doc?.id, comment_id: docComment.id }))).toEqual(
+        shape(await cli("doc", "resolve", doc?.id ?? "", docComment.id)),
+      );
       expect(shape(await mcp("update_tasks", { keys: ["SPI-1", "SPI-999"], priority: 3 }))).toEqual(
         shape(await spider("task", "update", "SPI-1", "SPI-999", "--priority", "3", "--json").then((r) => r.json())),
       );

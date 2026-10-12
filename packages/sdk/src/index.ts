@@ -8,6 +8,7 @@ import type {
   ApiErrorBody,
   CommentDto,
   DeleteStatusResponse,
+  DocumentCommentDto,
   AgentInviteDto,
   CreatedAgentInviteDto,
   CreatedApiKeyDto,
@@ -27,6 +28,8 @@ import type {
   Priority,
   ProjectDto,
   RelationDto,
+  AppDto,
+  RepoDto,
   SavedViewDto,
   TagDto,
   SubtaskDto,
@@ -41,11 +44,16 @@ import type {
   CreateAgentInviteInput,
   CreateAgentInput,
   CreateCommentInput,
+  CreateDocumentCommentInput,
   CreateDocumentInput,
   CreateProjectInput,
   CreateSavedViewInput,
   CreateStatusInput,
   CreateTagInput,
+  CreateAppInput,
+  CreateRepoInput,
+  UpdateAppInput,
+  UpdateRepoInput,
   CreateTaskInput,
   MarkDuplicateInput,
   RelationInput,
@@ -163,6 +171,8 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
 
   const org = (slug: string) => `/v1/orgs/${encodeURIComponent(slug)}`;
   const seg = encodeURIComponent;
+  /** "owner/name" as the two path segments /:owner/:name. */
+  const repoPath = (repo: string) => repo.trim().split("/").map(seg).join("/");
 
   return {
     /** The agent an API key acts as, and its organization. */
@@ -265,6 +275,40 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       delete: (orgSlug: string, tagId: string) => request<void>("DELETE", `${org(orgSlug)}/tags/${seg(tagId)}`),
     },
 
+    /**
+     * Git repos and their apps (ST-92). A repo is named by "owner/name" (`create` also takes a
+     * remote URL). Everyone reads them; owners, admins and their agents manage them.
+     */
+    repos: {
+      /** By name; only those attached to `project` when given. */
+      list: (orgSlug: string, query: { project?: string } = {}) =>
+        request<ListResponse<RepoDto>>(
+          "GET",
+          `${org(orgSlug)}/repos${query.project ? `?${new URLSearchParams({ project: query.project })}` : ""}`,
+        ),
+      get: (orgSlug: string, repo: string) => request<RepoDto>("GET", `${org(orgSlug)}/repos/${repoPath(repo)}`),
+      /** Added by its remote URL (or "owner/name"); 409 if it exists. */
+      create: (orgSlug: string, input: CreateRepoInput) => request<RepoDto>("POST", `${org(orgSlug)}/repos`, input),
+      update: (orgSlug: string, repo: string, input: UpdateRepoInput) =>
+        request<RepoDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}`, input),
+      /** With its apps and project links. */
+      delete: (orgSlug: string, repo: string) => request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}`),
+      /** Attaching again changes nothing. */
+      attach: (orgSlug: string, projectKey: string, repo: string) =>
+        request<RepoDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/repos`, { repo }),
+      /** Detaching one that isn't attached changes nothing. */
+      detach: (orgSlug: string, projectKey: string, repo: string) =>
+        request<RepoDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/repos/${repoPath(repo)}`),
+      apps: {
+        create: (orgSlug: string, repo: string, input: CreateAppInput) =>
+          request<AppDto>("POST", `${org(orgSlug)}/repos/${repoPath(repo)}/apps`, input),
+        update: (orgSlug: string, repo: string, app: string, input: UpdateAppInput) =>
+          request<AppDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`, input),
+        delete: (orgSlug: string, repo: string, app: string) =>
+          request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`),
+      },
+    },
+
     comments: {
       list: (orgSlug: string, taskKey: string) =>
         request<ListResponse<CommentDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/comments`),
@@ -275,7 +319,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     inbox: {
       /**
        * Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items.
-       * `kinds` defaults to the task kinds; ask for "rules" to get project rules changes too.
+       * `kinds` defaults to the task kinds; ask for "rules" and the "document_*" kinds to get project rules changes and document comments too.
        */
       list: (
         orgSlug: string,
@@ -323,6 +367,17 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
           request<ListResponse<DocumentVersionSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions`),
         get: (orgSlug: string, id: string, version: number) =>
           request<DocumentVersionDto>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions/${version}`),
+      },
+      /** Comments on a document (ST-118): on the whole document or on a quoted fragment, with replies. */
+      comments: {
+        /** Oldest first, with `outdated` (the quote is gone from the current content) and resolved state. */
+        list: (orgSlug: string, id: string) =>
+          request<ListResponse<DocumentCommentDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/comments`),
+        create: (orgSlug: string, id: string, input: CreateDocumentCommentInput) =>
+          request<DocumentCommentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/comments`, input),
+        /** Resolves or reopens a thread (a top-level comment). */
+        resolve: (orgSlug: string, id: string, commentId: string, resolved = true) =>
+          request<DocumentCommentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}/comments/${seg(commentId)}`, { resolved }),
       },
       /** A line diff of two saved versions; without `to`, against the current one. 404 for a missing version. */
       diff: (orgSlug: string, id: string, { from, to }: DocumentDiffQuery) => {

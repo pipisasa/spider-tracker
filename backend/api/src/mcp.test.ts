@@ -5,6 +5,7 @@ import type { ActorContext, ProjectDetailDto } from "@repo/core";
 import {
   MIN_CLI_VERSION,
   addComment,
+  addDocumentComment,
   createAgent,
   createApiKey,
   createDocument,
@@ -12,6 +13,7 @@ import {
   createProject,
   createTask,
   deleteAgent,
+  listInbox,
   updateProject,
 } from "@repo/core";
 import { createDb, schema } from "@repo/db";
@@ -113,8 +115,16 @@ withDb("MCP server", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "add_app",
         "add_comment",
+        "add_document_comment",
+        "add_repo",
         "archive_project",
+        "attach_repo",
+        "get_repo",
+        "list_repos",
+        "update_app",
+        "update_repo",
         "assign_to_me",
         "create_document",
         "diff_document",
@@ -135,6 +145,8 @@ withDb("MCP server", () => {
         "get_inbox",
         "get_task_activity",
         "list_comments",
+        "list_document_comments",
+        "resolve_document_comment",
         "mark_inbox_read",
         "get_project",
         "get_task",
@@ -518,6 +530,36 @@ withDb("MCP server", () => {
     expect(JSON.parse((await call(client, "get_inbox", {})).text)).toEqual([]);
   });
 
+  test("document comments (ST-118): the agent reviews a fragment, the author is notified, replies reach the agent", async () => {
+    const owner = ownerCtxs[0];
+    if (!owner) throw new Error("no owner");
+    const doc = await createDocument(db, owner, { title: "Review me", project: "SPI", content: "# Plan\n\nMigrate the **database** first." });
+
+    const review = await call(client, "add_document_comment", { id: doc.id, body: "Risky order", quote: "Migrate the database first" });
+    expect(review.isError).toBeFalsy();
+    const comment = review.json() as { id: string };
+    expect(comment).toMatchObject({ documentId: doc.id, quote: "Migrate the database first", outdated: false, author: "claude-code", resolver: null });
+    expect((await listInbox(db, owner, { kinds: "document_comment" })).map((i) => i.comment?.id)).toEqual([comment.id]);
+    const bad = await call(client, "add_document_comment", { id: doc.id, body: "?", quote: "not there" });
+    expect(bad).toMatchObject({ isError: true, text: "The quoted text isn't in the document's current version" });
+
+    await addDocumentComment(db, owner, doc.id, { body: "@claude-code what order then?", parentId: comment.id });
+    const inbox = JSON.parse((await call(client, "get_inbox", { wait_seconds: 2 })).text) as Record<string, unknown>[];
+    expect(inbox.find((i) => i.kind === "document_mention")).toMatchObject({
+      project: "SPI",
+      document: { id: doc.id, title: "Review me", url: expect.stringContaining(doc.id) },
+      comment: { body: "@claude-code what order then?" },
+    });
+
+    const resolved = await call(client, "resolve_document_comment", { id: doc.id, comment_id: comment.id });
+    expect(resolved.json()).toMatchObject({ resolvedAt: expect.any(String), resolver: "claude-code" });
+    const thread = (await call(client, "list_document_comments", { id: doc.id })).json() as { items: { author: string }[] };
+    expect(thread.items.map((c) => c.author)).toEqual(["claude-code", expect.any(String)]);
+    // Another organization's agent can't see it.
+    expect((await call(otherClient, "list_document_comments", { id: doc.id })).isError).toBe(true);
+    await call(client, "mark_inbox_read", { up_to: 1_000_000_000 });
+  });
+
   test("unknown statuses and handles are tool errors that list the valid options", async () => {
     const badStatus = await call(client, "update_task", { key: "SPI-1", status: "Shipped" });
     expect(badStatus.isError).toBe(true);
@@ -681,6 +723,49 @@ withDb("MCP server", () => {
     expect(await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: "nope" })).toMatchObject({
       isError: true,
     });
+  });
+
+  test("repos and apps (ST-92): add by URL, apps, attach and detach, recorded with source mcp", async () => {
+    const repo = await call(client, "add_repo", { url: "git@github.com:pipisasa/spider-tracker.git", projects: ["SPI"] });
+    expect(repo.json()).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"] });
+    expect(await call(client, "add_repo", { url: "pipisasa/spider-tracker" })).toMatchObject({
+      isError: true,
+      text: "Repo pipisasa/spider-tracker already exists",
+    });
+    expect(await call(client, "add_repo", { url: "https://gitlab.com/a/b" })).toMatchObject({ isError: true });
+
+    const app = await call(client, "add_app", {
+      repo: "pipisasa/spider-tracker",
+      name: "api",
+      path: "backend/api",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
+    expect(app.json()).toMatchObject({ repo: "pipisasa/spider-tracker", name: "api", versioning: "date", environments: ["staging", "prod"] });
+    expect(
+      (await call(client, "update_app", { repo: "https://github.com/pipisasa/spider-tracker", app: "api", sharedPaths: ["packages/db"] })).json(),
+    ).toMatchObject({ name: "api", sharedPaths: ["packages/db"] });
+
+    expect((await call(client, "attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "SPI", detach: true })).json()).toMatchObject({
+      projects: [],
+    });
+    expect((await call(client, "list_repos", { project: "SPI" })).json()).toEqual({ items: [] });
+    expect((await call(client, "attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "SPI" })).json()).toMatchObject({
+      projects: ["SPI"],
+    });
+    expect((await call(client, "update_repo", { repo: "pipisasa/spider-tracker", defaultBranch: "trunk" })).json()).toMatchObject({
+      defaultBranch: "trunk",
+    });
+    const listed = (await call(client, "list_repos")).json() as { items: { apps: { name: string }[] }[] };
+    expect(listed.items.map((r) => r.apps.map((a) => a.name))).toEqual([["api"]]);
+    expect((await call(client, "get_repo", { repo: "pipisasa/spider-tracker" })).json() as unknown).toEqual(listed.items[0]);
+    expect(await call(otherClient, "get_repo", { repo: "pipisasa/spider-tracker" })).toMatchObject({ isError: true });
+
+    const sources = await db
+      .select({ source: schema.activity.source })
+      .from(schema.activity)
+      .where(and(eq(schema.activity.entityType, "repo"), eq(schema.activity.entityId, (repo.json() as { id: string }).id)));
+    expect(new Set(sources.map((s) => s.source))).toEqual(new Set(["mcp"]));
   });
 
   test("a key from another organization can't see this one's tasks", async () => {

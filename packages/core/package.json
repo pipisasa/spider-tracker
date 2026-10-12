@@ -14,6 +14,7 @@
     "./events": "./src/events.ts",
     "./version": "./src/version.ts",
     "./links": "./src/links.ts",
+    "./anchors": "./src/anchors.ts",
     "./urls": "./src/urls.ts",
     "./views": "./src/views.ts"
   },

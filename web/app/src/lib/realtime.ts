@@ -50,6 +50,7 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
     });
     on("project.changed", () => void qc.invalidateQueries({ queryKey: keys.projects(orgSlug) }));
+    on("repos.changed", () => void qc.invalidateQueries({ queryKey: keys.repos(orgSlug) }));
     on("tags.changed", () => {
       void qc.invalidateQueries({ queryKey: keys.tags(orgSlug) });
       // Deleting a tag removes it from tasks.
@@ -62,6 +63,9 @@ export function useOrgEvents(orgSlug: string) {
       // Also refreshes its version history.
       void qc.invalidateQueries({ queryKey: keys.document(orgSlug, e.documentId) });
     });
+    on("document.commented", (e) =>
+      void qc.invalidateQueries({ queryKey: keys.documentComments(orgSlug, e.documentId) }),
+    );
     on("document.deleted", (e) => {
       void qc.invalidateQueries({ queryKey: keys.documentLists(orgSlug) });
       qc.removeQueries({ queryKey: keys.document(orgSlug, e.documentId) });

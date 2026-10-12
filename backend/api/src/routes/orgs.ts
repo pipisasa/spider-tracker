@@ -7,7 +7,20 @@ import {
   revokeAgentInvite,
   scopedProjectKeys,
   addComment,
+  addDocumentComment,
+  listDocumentComments,
+  resolveDocumentComment,
   createTag,
+  attachRepo,
+  createApp,
+  createRepo,
+  deleteApp,
+  deleteRepo,
+  detachRepo,
+  getRepo,
+  listRepos,
+  updateApp,
+  updateRepo,
   createSavedView,
   deleteSavedView,
   listSavedViews,
@@ -199,6 +212,43 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     await deleteTag(db, c.get("actor"), c.req.param("tagId"));
     return c.body(null, 204);
   });
+
+  // Repos and their apps (ST-92); a repo is addressed as /repos/:owner/:name.
+  const repoRef = (c: C) => `${c.req.param("owner")}/${c.req.param("name")}`;
+
+  // GET /repos?project=ST: only the repos attached to ST.
+  app.get("/repos", async (c) => c.json(list(await listRepos(db, c.get("actor"), { project: c.req.query("project") }))));
+
+  app.post("/repos", async (c) => c.json(await createRepo(db, c.get("actor"), await body(c)), 201));
+
+  app.get("/repos/:owner/:name", async (c) => c.json(await getRepo(db, c.get("actor"), repoRef(c))));
+
+  app.patch("/repos/:owner/:name", async (c) => c.json(await updateRepo(db, c.get("actor"), repoRef(c), await body(c))));
+
+  app.delete("/repos/:owner/:name", async (c) => {
+    await deleteRepo(db, c.get("actor"), repoRef(c));
+    return c.body(null, 204);
+  });
+
+  app.post("/repos/:owner/:name/apps", async (c) => c.json(await createApp(db, c.get("actor"), repoRef(c), await body(c)), 201));
+
+  app.patch("/repos/:owner/:name/apps/:app", async (c) =>
+    c.json(await updateApp(db, c.get("actor"), repoRef(c), c.req.param("app"), await body(c))),
+  );
+
+  app.delete("/repos/:owner/:name/apps/:app", async (c) => {
+    await deleteApp(db, c.get("actor"), repoRef(c), c.req.param("app"));
+    return c.body(null, 204);
+  });
+
+  // POST { repo: "owner/name" }: attach a repo to the project; again changes nothing.
+  app.post("/projects/:projectKey/repos", async (c) =>
+    c.json(await attachRepo(db, c.get("actor"), c.req.param("projectKey"), await body(c))),
+  );
+
+  app.delete("/projects/:projectKey/repos/:owner/:name", async (c) =>
+    c.json(await detachRepo(db, c.get("actor"), c.req.param("projectKey"), repoRef(c))),
+  );
 
   // GET /projects?archived=true includes archived projects.
   app.get("/projects", async (c) =>
@@ -401,6 +451,22 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
 
   app.get("/documents/:documentId/versions/:version", async (c) =>
     c.json(await getDocumentVersion(db, c.get("actor"), c.req.param("documentId"), c.req.param("version"))),
+  );
+
+  // Comments on a document (ST-118): on the whole document, or on a fragment ({ quote }).
+  app.get("/documents/:documentId/comments", async (c) =>
+    c.json(list(await listDocumentComments(db, c.get("actor"), c.req.param("documentId")))),
+  );
+
+  app.post("/documents/:documentId/comments", async (c) =>
+    c.json(await addDocumentComment(db, c.get("actor"), c.req.param("documentId"), await body(c)), 201),
+  );
+
+  // PATCH { resolved: true | false }: resolve or reopen a thread (a top-level comment).
+  app.patch("/documents/:documentId/comments/:commentId", async (c) =>
+    c.json(
+      await resolveDocumentComment(db, c.get("actor"), c.req.param("documentId"), c.req.param("commentId"), await body(c)),
+    ),
   );
 
   // GET ?from=3&to=5: a line diff of two versions; without `to`, against the current one (ST-117).
