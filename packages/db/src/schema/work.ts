@@ -133,7 +133,11 @@ export const activity = pgTable(
     source: text("source").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("activity_entity_idx").on(t.entityType, t.entityId, t.createdAt)],
+  (t) => [
+    index("activity_entity_idx").on(t.entityType, t.entityId, t.createdAt),
+    // Agent presence (ST-70) reads an org's activity of the last few minutes.
+    index("activity_org_created_idx").on(t.orgId, t.createdAt),
+  ],
 );
 
 // Organization-wide labels for tasks (ST-8).
