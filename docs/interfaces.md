@@ -208,6 +208,8 @@ with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temp
 
 `--permission-mode` is always passed: `spider claude --permission-mode`, else the agent's saved `permissionMode` (`spider agents permission-mode <agent> [mode] [--clear]`, `--json`: `{ agent, permissionMode, effective }`), else `auto`; it is left out when the claude args already give `--permission-mode` or `--dangerously-skip-permissions`, and giving both that and the spider option is a usage error. Before starting, stderr gets `Permission mode: <mode> (<where from>)`, a note that Claude Code will ask to confirm the development channel (unless `--no-channel`), and a warning for each hook in the user's or project's Claude Code settings that runs a missing script ([agents.md](./agents.md#saved-agents-on-a-machine)).
 
+**A team in tmux:** `spider claude <agent>… --tmux <session>` or `spider claude --all [--project <key>] [--server <name>] --tmux <session>` opens one detached tmux window per agent, named by handle, each running `<this CLI> claude <server/org/handle> [--no-channel] [--permission-mode <mode>] [-- claude args…]` (shell-quoted) in the current directory, with `SPIDER_CONFIG_DIR` passed on (`-e`, tmux 3.0+). `--all` takes every saved agent, `--project` those whose saved scope names the project (unscoped agents are left out), `--server` those on that server. Agents whose window already exists in the session are skipped, so reruns don't duplicate. `--dry-run` prints the plan (and works without tmux); otherwise a missing tmux exits 1 with an install hint. Two agents with one handle, an invalid session name (`:`, `.`, spaces) or `--all`/`--project`/`--dry-run` without `--tmux` are usage errors. Tests inject the tmux runner (`RunOptions.tmux`, `src/tmux.ts`).
+
 ### Login (device flow, RFC 8628)
 1. `spider login [--name MacBook] [--no-browser]` calls `POST /device/code` and prints `https://tracker.batele.plus/device` with a short code (instructions on stderr), opening the browser at a terminal.
 2. The person signs in, checks the code, picks the organization and approves (`/device` page → `POST /v1/device/:code/approve`, or `/deny`).
@@ -228,6 +230,7 @@ spider agents default <agent>
 spider agents remove <agent> [--revoke] [--claude]   # local only unless --revoke; --claude deletes its Claude Code agent
 spider agents permission-mode <agent> [mode] [--clear]   # the mode spider claude starts it in (default auto)
 spider claude [agent] [--no-channel] [--permission-mode <mode>] [-- claude args…]
+spider claude <agent>… | --all [--project <key>] --tmux <session> [--dry-run]   # a window per agent; running ones skipped
 spider mcp-headers [--server prod]  # {"Authorization": "Bearer …"} for Claude Code's headersHelper; with --server, {} unless the key is that server's
 spider whoami                       # also names the saved agent in use
 spider <command> --as <agent>       # any command, as a saved agent
