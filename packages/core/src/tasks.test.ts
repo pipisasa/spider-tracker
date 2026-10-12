@@ -88,6 +88,26 @@ run("projects and tasks", () => {
     await expect(updateTask(db, ctx, "SPI-1", { parentId: self.id })).rejects.toMatchObject({ code: "validation" });
   });
 
+  test("a deactivated assignee stays assigned without blocking updates, but can't be newly assigned", async () => {
+    const [gone] = await db
+      .insert(schema.actors)
+      .values({ orgId: ctx.orgId, type: "agent", name: "Gone", handle: `gone-${Date.now()}`, role: "member" })
+      .returning();
+    if (!gone) throw new Error("insert failed");
+    const task = await createTask(db, ctx, "SPI", { title: "Inherited", assigneeIds: [gone.id] });
+    await db.update(schema.actors).set({ deactivatedAt: new Date() }).where(eq(schema.actors.id, gone.id));
+
+    // What start_task / assign_to_me send: the current assignees plus the caller.
+    const taken = await updateTask(db, ctx, task.key, { assigneeIds: [gone.id, ctx.actorId], statusId: statusIds.in_progress });
+    expect(taken.assigneeIds).toEqual([gone.id, ctx.actorId]);
+
+    const dropped = await updateTask(db, ctx, task.key, { assigneeIds: [ctx.actorId] });
+    expect(dropped.assigneeIds).toEqual([ctx.actorId]);
+    await expect(updateTask(db, ctx, task.key, { assigneeIds: [ctx.actorId, gone.id] })).rejects.toMatchObject({
+      code: "validation",
+    });
+  });
+
   test("guests can read but not write; deleted tasks disappear", async () => {
     await expect(createTask(db, { ...ctx, role: "guest" }, "SPI", { title: "nope" })).rejects.toMatchObject({
       code: "forbidden",
