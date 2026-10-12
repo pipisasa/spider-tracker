@@ -91,7 +91,8 @@ export function NewTaskDialog({
           <DialogHeader>
             <DialogTitle>New task in {project.name}</DialogTitle>
           </DialogHeader>
-          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+          {/* -ml-7 pl-7: keep the editor gutter (drag handle, +) inside the scroll box */}
+          <div className="-ml-7 flex min-h-0 flex-col gap-4 overflow-y-auto pl-7">
             <Input
               autoFocus
               placeholder="Task title"
@@ -106,7 +107,7 @@ export function NewTaskDialog({
                 label="Description"
                 placeholder="Add a description… type '/' for commands"
                 autofocus={false}
-                className="-ml-7 min-h-32 pb-2"
+                className="min-h-32 pb-2"
               />
             </Suspense>
             <div className="grid grid-cols-3 gap-2">
