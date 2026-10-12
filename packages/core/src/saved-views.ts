@@ -75,9 +75,13 @@ export async function createSavedView(db: Db, ctx: ActorContext, projectKey: str
   return toDto(row, project.key);
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** A view the actor can see in a project they can see; its owner or an owner/admin may change it. */
 async function findEditable(db: Db, ctx: ActorContext, projectKey: string, viewId: string) {
   assertCanWrite(ctx);
+  // A malformed id would otherwise reach Postgres as an invalid uuid (500).
+  if (!UUID.test(viewId)) throw new DomainError("not_found", "View not found");
   const project = await findProject(db, ctx, projectKey);
   const [row] = await db
     .select()

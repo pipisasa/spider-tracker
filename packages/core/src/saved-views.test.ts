@@ -80,6 +80,7 @@ run("saved views", () => {
     await deleteSavedView(db, owner, "SPI", view.id);
     expect(await listSavedViews(db, owner, "SPI")).toEqual([]);
     await expect(deleteSavedView(db, owner, "SPI", view.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(updateSavedView(db, owner, "SPI", "not-a-uuid", { name: "x" })).rejects.toMatchObject({ code: "not_found" });
   });
 
   test("guests can't create; personal views are private, shared ones visible; only owners and admins edit others'", async () => {
