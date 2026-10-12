@@ -12,6 +12,7 @@ import type {
   WhoAmIResponse,
 } from "@repo/core/contracts";
 import { normalizeHandle, parseTaskKey } from "@repo/core/schemas";
+import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import type {
   BulkUpdateTasksInput,
@@ -1669,6 +1670,27 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         shown.content,
       ].join("\n"),
     );
+  });
+
+  withJson(
+    doc
+      .command("diff")
+      .description("show what changed between two versions of a document, as a unified diff of its lines")
+      .argument("<id>")
+      .requiredOption("--from <n>", "the older version")
+      .option("--to <n>", "the newer version (default: the current one)"),
+  ).action(async (id: string, opts: JsonOption & { from: string; to?: string }) => {
+    const { sdk, org } = conn();
+    const from = parseVersion(opts.from);
+    const to = opts.to === undefined ? undefined : parseVersion(opts.to);
+    const diff = await (await sdk()).documents.diff(await org(), id, { from, to });
+    output(opts, diff, () => {
+      const label = (v: typeof diff.from) => `${v.title} (v${v.version})`;
+      const text = formatUnifiedDiff(diff.hunks, label(diff.from), label(diff.to));
+      if (text) return text;
+      const renamed = diff.from.title !== diff.to.title ? ` (title: ${diff.from.title} → ${diff.to.title})` : "";
+      return `No changes in content between version ${diff.from.version} and ${diff.to.version}${renamed}`;
+    });
   });
 
   withJson(

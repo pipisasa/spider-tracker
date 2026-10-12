@@ -21,6 +21,7 @@ import { nameOf } from "@/lib/assignees";
 import { useWikiLinks } from "@/lib/use-wiki-links";
 import {
   documentBacklinksQuery,
+  documentDiffQuery,
   documentQuery,
   documentVersionQuery,
   documentVersionsQuery,
@@ -29,7 +30,12 @@ import {
   useDeleteDocument,
   useUpdateDocument,
 } from "@/lib/work";
-import type { DocumentDto, DocumentFormat } from "@repo/core/contracts";
+import type {
+  DiffHunkDto,
+  DiffLineDto,
+  DocumentDto,
+  DocumentFormat,
+} from "@repo/core/contracts";
 import {
   useQuery,
   useQueryClient,
@@ -42,6 +48,7 @@ import {
   LinkIcon,
   EyeIcon,
   FolderInputIcon,
+  GitCompareIcon,
   HistoryIcon,
   PencilIcon,
   RotateCcwIcon,
@@ -51,17 +58,25 @@ import {
 import { lazy, Suspense, useState } from "react";
 import { toast } from "sonner";
 
-type Search = { edit?: boolean; version?: number };
+/** `compare` shows what changed from that version to `version` (or the current one), ST-117. */
+type Search = { edit?: boolean; version?: number; compare?: number };
+
+const positiveInt = (value: unknown) => {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 // Tiptap is only loaded once someone edits a Markdown document.
 const RichEditor = lazy(() => import("@/components/editor/rich-editor"));
 
 export const Route = createFileRoute("/_authed/$orgSlug/docs/$documentId")({
   validateSearch: (search: Record<string, unknown>): Search => {
-    const version = Number(search.version);
+    const version = positiveInt(search.version);
+    const compare = positiveInt(search.compare);
     return {
       ...(search.edit === true || search.edit === "true" ? { edit: true } : {}),
-      ...(Number.isInteger(version) && version > 0 ? { version } : {}),
+      ...(version ? { version } : {}),
+      ...(compare ? { compare } : {}),
     };
   },
   loader: ({ context, params }) =>
@@ -73,12 +88,14 @@ export const Route = createFileRoute("/_authed/$orgSlug/docs/$documentId")({
 
 function DocumentPage() {
   const { orgSlug, documentId } = Route.useParams();
-  const { edit = false, version } = Route.useSearch();
+  const { edit = false, version, compare } = Route.useSearch();
   const { membership } = Route.useRouteContext();
   const { data: doc } = useSuspenseQuery(documentQuery(orgSlug, documentId));
   const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
   const [moving, setMoving] = useState(false);
-  const [showHistory, setShowHistory] = useState(version !== undefined);
+  const [showHistory, setShowHistory] = useState(
+    version !== undefined || compare !== undefined,
+  );
   // Bumped to restart the editor from the latest saved version.
   const [session, setSession] = useState(0);
   const navigate = useNavigate({ from: Route.fullPath });
@@ -90,6 +107,14 @@ function DocumentPage() {
 
   const viewingOld = version !== undefined && version !== doc.version;
   const setSearch = (search: Search) => navigate({ search, replace: true });
+  /** Compares two versions, older first; the current one stays out of the URL. */
+  const showDiff = (a: number, b: number) => {
+    const [from, to] = a < b ? [a, b] : [b, a];
+    setSearch({
+      compare: from,
+      ...(to === doc.version ? {} : { version: to }),
+    });
+  };
 
   async function reload() {
     await qc.refetchQueries({
@@ -216,12 +241,22 @@ function DocumentPage() {
                 </>
               )}
             </div>
-            {viewingOld ? (
+            {compare !== undefined ? (
+              <VersionDiff
+                orgSlug={orgSlug}
+                doc={doc}
+                from={compare}
+                to={version ?? doc.version}
+                onChange={showDiff}
+                onClose={() => setSearch(viewingOld ? { version } : {})}
+              />
+            ) : viewingOld ? (
               <OldVersion
                 orgSlug={orgSlug}
                 doc={doc}
                 version={version}
                 canWrite={canWrite}
+                onCompare={() => showDiff(version, doc.version)}
                 onClose={() => setSearch({})}
               />
             ) : (
@@ -255,6 +290,7 @@ function DocumentPage() {
             doc={doc}
             selected={viewingOld ? version : doc.version}
             onSelect={(v) => setSearch(v === doc.version ? {} : { version: v })}
+            onCompare={(v) => showDiff(v, viewingOld ? version : doc.version)}
           />
         </aside>
       )}
@@ -307,11 +343,14 @@ function VersionHistory({
   doc,
   selected,
   onSelect,
+  onCompare,
 }: {
   orgSlug: string;
   doc: DocumentDto;
   selected: number;
   onSelect: (version: number) => void;
+  /** Compares this version with the selected one. */
+  onCompare: (version: number) => void;
 }) {
   const { data: versions = [] } = useQuery(
     documentVersionsQuery(orgSlug, doc.id),
@@ -326,12 +365,12 @@ function VersionHistory({
         {versions.map((v) => {
           const author = members.find((m) => m.id === v.authorId);
           return (
-            <li key={v.version}>
+            <li key={v.version} className="group flex items-start gap-1">
               <button
                 type="button"
                 onClick={() => onSelect(v.version)}
                 aria-current={v.version === selected}
-                className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted aria-[current=true]:bg-muted"
+                className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted aria-[current=true]:bg-muted"
               >
                 <span className="font-medium">
                   Version {v.version}
@@ -346,6 +385,18 @@ function VersionHistory({
                   {nameOf(author, "Unknown")} · {formatDateTime(v.createdAt)}
                 </span>
               </button>
+              {v.version !== selected && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="mt-1 opacity-60 group-hover:opacity-100"
+                  aria-label={`Compare version ${v.version} with version ${selected}`}
+                  title={`Compare with version ${selected}`}
+                  onClick={() => onCompare(v.version)}
+                >
+                  <GitCompareIcon />
+                </Button>
+              )}
             </li>
           );
         })}
@@ -360,12 +411,14 @@ function OldVersion({
   doc,
   version,
   canWrite,
+  onCompare,
   onClose,
 }: {
   orgSlug: string;
   doc: DocumentDto;
   version: number;
   canWrite: boolean;
+  onCompare: () => void;
   onClose: () => void;
 }) {
   const { data: old, error } = useQuery(
@@ -403,6 +456,10 @@ function OldVersion({
           Viewing version {version} of {doc.version}
           {old && old.title !== doc.title && <> · titled “{old.title}”</>}
         </span>
+        <Button size="sm" variant="outline" onClick={onCompare}>
+          <GitCompareIcon />
+          Compare with current
+        </Button>
         {canWrite && (
           <Button
             size="sm"
@@ -421,6 +478,129 @@ function OldVersion({
       {error && <p className="text-sm text-destructive">{error.message}</p>}
       {old && <DocumentContent format={old.format} content={old.content} />}
     </>
+  );
+}
+
+/** What changed between two versions, line by line (ST-117), with pickers for both ends. */
+function VersionDiff({
+  orgSlug,
+  doc,
+  from,
+  to,
+  onChange,
+  onClose,
+}: {
+  orgSlug: string;
+  doc: DocumentDto;
+  from: number;
+  to: number;
+  onChange: (from: number, to: number) => void;
+  onClose: () => void;
+}) {
+  const { data: versions = [] } = useQuery(
+    documentVersionsQuery(orgSlug, doc.id),
+  );
+  const { data: diff, error } = useQuery(
+    documentDiffQuery(orgSlug, doc.id, from, to),
+  );
+  const picker = (value: number, label: string, set: (v: number) => void) => (
+    <Select value={String(value)} onValueChange={(v) => set(Number(v))}>
+      <SelectTrigger size="sm" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {versions.map((v) => (
+          <SelectItem key={v.version} value={String(v.version)}>
+            Version {v.version}
+            {v.version === doc.version ? " (current)" : ""}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+        <span>Comparing</span>
+        {picker(from, "Older version", (v) => onChange(v, to))}
+        <span aria-hidden>→</span>
+        {picker(to, "Newer version", (v) => onChange(from, v))}
+        {diff && (
+          <span className="flex-1 text-muted-foreground">
+            <span className="text-emerald-700 dark:text-emerald-400">
+              +{diff.added}
+            </span>{" "}
+            <span className="text-red-700 dark:text-red-400">
+              −{diff.removed}
+            </span>
+          </span>
+        )}
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+      {error && <p className="text-sm text-destructive">{error.message}</p>}
+      {diff && diff.from.title !== diff.to.title && (
+        <p className="text-sm text-muted-foreground">
+          Title: “{diff.from.title}” → “{diff.to.title}”
+        </p>
+      )}
+      {diff &&
+        (diff.hunks.length ? (
+          <div className="overflow-x-auto rounded-lg border font-mono text-xs">
+            {diff.hunks.map((hunk, i) => (
+              <DiffHunk key={i} hunk={hunk} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No changes in content between version {diff.from.version} and{" "}
+            {diff.to.version}.
+          </p>
+        ))}
+    </>
+  );
+}
+
+const DIFF_LINE_STYLES: Record<DiffLineDto["kind"], string> = {
+  context: "",
+  added: "bg-emerald-500/10 text-emerald-900 dark:text-emerald-200",
+  removed: "bg-red-500/10 text-red-900 dark:text-red-200",
+};
+
+const DIFF_MARKS: Record<DiffLineDto["kind"], string> = {
+  context: " ",
+  added: "+",
+  removed: "−",
+};
+
+function DiffHunk({ hunk }: { hunk: DiffHunkDto }) {
+  return (
+    <div className="border-b last:border-b-0">
+      <div className="bg-muted/60 px-3 py-1 text-muted-foreground">
+        @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
+      </div>
+      {hunk.lines.map((line, i) => (
+        <div key={i} className={`flex ${DIFF_LINE_STYLES[line.kind]}`}>
+          <span className="w-10 shrink-0 select-none px-1 text-right text-muted-foreground">
+            {line.oldLine ?? ""}
+          </span>
+          <span className="w-10 shrink-0 select-none px-1 text-right text-muted-foreground">
+            {line.newLine ?? ""}
+          </span>
+          <span className="w-4 shrink-0 select-none text-center" aria-hidden>
+            {DIFF_MARKS[line.kind]}
+          </span>
+          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words pr-3">
+            <span className="sr-only">
+              {line.kind === "context" ? "" : `${line.kind}: `}
+            </span>
+            {line.text || " "}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

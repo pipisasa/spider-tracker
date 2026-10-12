@@ -41,7 +41,7 @@ See [git-integration.md](./git-integration.md).
 - Markdown and HTML documents at organization, project or task level
 - A project page lists its docs (with its tasks'); the documents page filters by project; documents move between projects or to the organization, keeping their history (a task document leaves its task)
 - Rich editor with a Markdown source toggle and live HTML preview
-- Version history and diffs
+- Version history and diffs (ST-117): line-by-line comparison of any two versions in the history panel (compare icon per version, "Compare with current" on an older one, pickers for both ends), `spider doc diff`, MCP `diff_document` and `GET …/documents/:id/diff`, so you can check what an agent changed
 - Mentions of tasks, actors and other documents
 - Obsidian-style links (ST-100): `[[Title]]`, `[[Title|label]]` and `[[ST-12]]` (typing `[[` suggests documents; plain task keys count as mentions); "Linked from" backlinks on each document; opening a missing title creates it. A title containing `[`, `]`, `|` or `#` can't be linked to (the suggestions leave it out)
 - Graph view (`/docs/graph`): documents, their tasks and projects, and links as a force-directed graph; zoom, pan, drag, hover to light up neighbours, click to open; toggle tasks, projects, unresolved titles and orphans

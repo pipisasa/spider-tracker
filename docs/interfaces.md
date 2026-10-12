@@ -55,6 +55,7 @@ See [auth.md](./auth.md) for all flows.
 - `GET /v1/orgs/:org/documents/graph` — every document the caller can see, the tasks and projects they sit in or link to (`{ key, title, projectKey, statusCategory }`, `{ key, name }`), and `links: [{ from, to }]` where `to` is `{ type: "document", id }`, `{ type: "task", key }` or `{ type: "unresolved", title }`. Links come from `[[Title]]`, `[[Title|label]]`, `[[ST-12]]` and plain task keys in the content (code excluded); tasks that don't exist or are out of scope are left out (ST-100).
 - `GET /v1/orgs/:org/documents/:id/backlinks` — documents whose `[[link]]` opens this one, most recently updated first.
 - `GET /v1/orgs/:org/documents/:id/versions[/:version]` — every save is a version (newest first, without content), or one version with its content.
+- `GET /v1/orgs/:org/documents/:id/diff?from=3[&to=5]` — what changed between two versions (ST-117); without `to`, against the current one. A line diff of the content (Markdown or HTML source; shortest edit script, Myers): `{ documentId, from, to, added, removed, hunks: [{ oldStart, oldLines, newStart, newLines, lines: [{ kind: "context" | "added" | "removed", text, oldLine, newLine }] }] }`, with 3 lines of context per hunk as in `diff -u`; `from` and `to` are version summaries (title, format, author, date), so a title change shows there. `from > to` diffs backwards. Readable by whoever can read the document; a missing version is `404`, a missing or non-numeric `from` `400`. The line diff itself is `@repo/core/diff` (browser-safe: `diffLines`, `diffHunks`, `formatUnifiedDiff`).
 
 ### Members and invitations
 - `GET /v1/orgs/:org/members[?all=true]` — active people and agents with their roles. Every actor has `deactivated: boolean` and `ownerId` (for agents, the owning person's actor id, deleted agents too; `null` for people; ST-78); with `all=true` the list also includes deactivated people and deleted agents (`deactivated: true`), for naming past assignees, comment authors and document authors. Use the default list for pickers and mentions.
@@ -117,6 +118,7 @@ Or install the `spider-tracker` Claude Code plugin (`spider setup claude`): it r
 | `mark_inbox_read` | By `ids` or `up_to` an id |
 | `list_documents` | Documents (no content) of a `task`, a `project` (with its tasks') or the whole organization; `get_project` and `get_task` also list theirs |
 | `get_document` | Content and `version` (the `baseVersion` for updates); `version` argument reads an older one |
+| `diff_document` | What changed between versions `from` and `to` (omit `to` for the current one): a unified diff of the lines, `added`/`removed` counts and who saved each side |
 | `move_document` | Move a document to another `project` (key) or organization-wide (`project: null`); keeps its id and versions, a task document leaves its task |
 | `create_document`, `update_document` | Markdown or HTML, organization-wide or in a `project` / `task`; `update_document` replaces the whole content, needs `baseVersion` and fails if someone saved since |
 | `edit_document` | Change part of a document: `edits` of `{ old, new, all? }`, `{ append }` or `{ section: "## Heading", content }`, saved as one new version; `baseVersion` optional (without it, applies to the current version and fails if a fragment or section isn't there) |
@@ -249,6 +251,7 @@ spider comments [ST-12]
 spider inbox [--all] [--wait 25] [--mark-read]
 spider doc list [--project ST] [--task ST-12]
 spider doc view <id> [--rev 3]                 # --rev: an older version
+spider doc diff <id> --from 3 [--to 5]         # unified diff; without --to, against the current version; --json: hunks of changed lines
 spider doc create --title … [--project ST | --task ST-12] [--format md|html] [--file spec.md | --file -]
 spider doc edit <id> --base-version 2 [--title …] [--format …] [--file … | --file -]   # or --force
 spider doc edit <id> --old "text" --new "replacement" [--all]   # partial edits: no --force needed

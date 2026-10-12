@@ -521,6 +521,29 @@ withDb("SDK and client-declared source", () => {
     expect(await client.documents.get(slug, doc.id).catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
+  test("GET /documents/:id/diff compares two versions; a missing version is 404 (ST-117)", async () => {
+    const client = sdk();
+    const doc = await client.documents.create(slug, { title: "Diffable", project: "SPI", content: "a\nb\nc\n" });
+    await client.documents.update(slug, doc.id, { baseVersion: 1, content: "a\nB\nc\n" });
+    await client.documents.update(slug, doc.id, { baseVersion: 2, content: "a\nB\nc\nd\n" });
+
+    const diff = await client.documents.diff(slug, doc.id, { from: 1, to: 2 });
+    expect(diff).toMatchObject({ documentId: doc.id, from: { version: 1 }, to: { version: 2 }, added: 1, removed: 1 });
+    expect(diff.hunks[0]?.lines.map((l) => l.kind)).toEqual(["context", "removed", "added", "context"]);
+    expect(await client.documents.diff(slug, doc.id, { from: 1 })).toMatchObject({ to: { version: 3 }, added: 2, removed: 1 });
+
+    expect(await client.documents.diff(slug, doc.id, { from: 1, to: 7 }).catch((e: unknown) => e)).toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
+    const noFrom = await app.request(`/v1/orgs/${slug}/documents/${doc.id}/diff`, {
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    expect(noFrom.status).toBe(400);
+    await client.documents.delete(slug, doc.id);
+    expect(await client.documents.diff(slug, doc.id, { from: 1 }).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
   test("POST /documents/:id/edit applies partial edits as new versions (ST-116)", async () => {
     const client = sdk();
     const doc = await client.documents.create(slug, { title: "Partial", content: "# P\n\nIntro.\n\n## Decisions\n\nOld.\n" });
