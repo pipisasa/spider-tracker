@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createAgent } from "./agents";
 import { addComment } from "./comments";
 import {
   GITHUB_INSTALL_STATE_TTL_MS,
+  GithubInstallationTakenError,
   createGithubInstallState,
   disconnectGithubInstallation,
   githubBotContext,
@@ -35,6 +36,7 @@ describe("GitHub install state (ST-82)", () => {
       orgId: "org-1",
       userId: "user-1",
       expiresAt: now + GITHUB_INSTALL_STATE_TTL_MS,
+      nonce: expect.any(String),
     });
     expect(verifyGithubInstallState(SECRET, state, now + GITHUB_INSTALL_STATE_TTL_MS)).toBeNull();
   });
@@ -136,29 +138,68 @@ run("GitHub installations (ST-82)", () => {
   });
 
   test("only owners and admins start the install flow; the state names them", async () => {
-    const state = createGithubInstallState(owner, { secret: SECRET, userId });
-    expect(verifyGithubInstallState(SECRET, state)).toMatchObject({ orgId: owner.orgId, userId });
-    expect(() => createGithubInstallState(member, { secret: SECRET, userId })).toThrow("Your role can't connect GitHub");
+    const state = await createGithubInstallState(db, owner, { secret: SECRET, userId });
+    const verified = verifyGithubInstallState(SECRET, state);
+    expect(verified).toMatchObject({ orgId: owner.orgId, userId });
+    // Its nonce is recorded, to be used once.
+    const [row] = await db.select().from(schema.githubInstallStates).where(eq(schema.githubInstallStates.nonce, verified?.nonce ?? ""));
+    expect(row).toMatchObject({ orgId: owner.orgId, userId });
+    await expect(createGithubInstallState(db, member, { secret: SECRET, userId })).rejects.toThrow("Your role can't connect GitHub");
   });
 
   test("the setup callback accepts the state only for the person who started it, while they may connect", async () => {
-    const state = createGithubInstallState(owner, { secret: SECRET, userId });
-    const resolved = await resolveGithubSetup(db, { secret: SECRET, state, userId });
-    expect(resolved).toEqual({ ctx: { ...owner, source: "ui" }, orgSlug: slugs[0] ?? "" });
-
+    const state = await createGithubInstallState(db, owner, { secret: SECRET, userId });
     const someone = await addPerson("admin", "someone");
+    // Someone else's session neither uses the state nor uses it up.
     await expect(resolveGithubSetup(db, { secret: SECRET, state, userId: someone.userId })).rejects.toMatchObject({ code: "forbidden" });
     await expect(resolveGithubSetup(db, { secret: "another-secret-another-secret-12345", state, userId })).rejects.toMatchObject({
       code: "validation",
     });
+    const resolved = await resolveGithubSetup(db, { secret: SECRET, state, userId });
+    expect(resolved).toEqual({ ctx: { ...owner, source: "ui" }, orgSlug: slugs[0] ?? "" });
 
     // Demoted after starting: refused.
     const admin = await addPerson("admin", "admin");
-    const adminState = createGithubInstallState(admin, { secret: SECRET, userId: admin.userId });
+    const adminState = await createGithubInstallState(db, admin, { secret: SECRET, userId: admin.userId });
     await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, admin.actorId));
     await expect(resolveGithubSetup(db, { secret: SECRET, state: adminState, userId: admin.userId })).rejects.toMatchObject({
       code: "forbidden",
     });
+  });
+
+  test("a state works once, even when two callbacks race (ST-137)", async () => {
+    const state = await createGithubInstallState(db, owner, { secret: SECRET, userId });
+    await resolveGithubSetup(db, { secret: SECRET, state, userId });
+    await expect(resolveGithubSetup(db, { secret: SECRET, state, userId })).rejects.toThrow("already used");
+
+    const raced = await createGithubInstallState(db, owner, { secret: SECRET, userId });
+    const results = await Promise.allSettled([
+      resolveGithubSetup(db, { secret: SECRET, state: raced, userId }),
+      resolveGithubSetup(db, { secret: SECRET, state: raced, userId }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+
+    // Correctly signed but never issued here (no row): refused too.
+    const unissued = signGithubInstallState(SECRET, { orgId: owner.orgId, userId });
+    await expect(resolveGithubSetup(db, { secret: SECRET, state: unissued, userId })).rejects.toMatchObject({ code: "validation" });
+  });
+
+  test("an expired state is refused, and issuing a new one cleans up expired rows", async () => {
+    const past = Date.now() - GITHUB_INSTALL_STATE_TTL_MS - 60_000;
+    const state = await createGithubInstallState(db, owner, { secret: SECRET, userId });
+    const old = await createGithubInstallState(db, owner, { secret: SECRET, userId, now: past });
+    await expect(resolveGithubSetup(db, { secret: SECRET, state: old, userId })).rejects.toMatchObject({ code: "validation" });
+
+    // The row's expiry is checked too, not only the signed one.
+    const nonce = verifyGithubInstallState(SECRET, state)?.nonce ?? "";
+    await db.update(schema.githubInstallStates).set({ expiresAt: new Date(past) }).where(eq(schema.githubInstallStates.nonce, nonce));
+    await expect(resolveGithubSetup(db, { secret: SECRET, state, userId })).rejects.toMatchObject({ code: "validation" });
+
+    const oldNonce = verifyGithubInstallState(SECRET, old, past)?.nonce ?? "";
+    const rows = () => db.select().from(schema.githubInstallStates).where(inArray(schema.githubInstallStates.nonce, [nonce, oldNonce]));
+    expect(await rows()).toHaveLength(2);
+    await createGithubInstallState(db, owner, { secret: SECRET, userId });
+    expect(await rows()).toEqual([]);
   });
 
   test("connecting attaches existing repos, adds the others and creates the hidden GitHub bot", async () => {
@@ -255,7 +296,7 @@ run("GitHub installations (ST-82)", () => {
   test("an installation belongs to one organization", async () => {
     await expect(
       saveGithubInstallation(db, other, { installation: installation(), repositories: [] }),
-    ).rejects.toMatchObject({ code: "conflict" });
+    ).rejects.toBeInstanceOf(GithubInstallationTakenError);
     expect(await listGithubInstallations(db, other)).toEqual([]);
     await expect(disconnectGithubInstallation(db, other, installationId)).rejects.toMatchObject({ code: "not_found" });
   });

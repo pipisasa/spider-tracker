@@ -8,7 +8,7 @@ Identity tables (users, sessions, OAuth clients and tokens) belong to Better Aut
 
 ```
 organizations ─┬─ actors (human | agent | integration) ── agents (1:1 config), api_tokens
-               ├─ tags, custom_field_defs, github_installations, github_deliveries, repos, apps, documents
+               ├─ tags, custom_field_defs, github_installations, github_install_states, github_deliveries, repos, apps, documents
                └─ projects ─┬─ statuses, cycles, custom_field_defs (project-scoped)
                             └─ tasks ─┬─ task_assignees → actors
                                       ├─ task_tags, task_relations, sub-tasks (parent_id)
@@ -292,6 +292,17 @@ create table github_installations (
   updated_at timestamptz not null default now()
 );
 create index github_installations_org_idx on github_installations (org_id);
+
+-- ST-137: install links in flight. The setup callback deletes the row to use the signed state, so it works
+-- once; rows past expires_at are deleted whenever a new link is issued.
+create table github_install_states (
+  nonce text primary key,                              -- the state's random nonce
+  org_id uuid not null references organizations on delete cascade,
+  user_id text not null references "user" on delete cascade,
+  expires_at timestamptz not null,                     -- 15 minutes after it was issued
+  created_at timestamptz not null default now()
+);
+create index github_install_states_expires_at_idx on github_install_states (expires_at);
 
 -- ST-83: GitHub webhook deliveries, by X-GitHub-Delivery. Inserted first (on conflict do nothing) in the
 -- transaction that handles the event, so each delivery is handled once, even when copies arrive together.
