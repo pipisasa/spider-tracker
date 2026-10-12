@@ -114,8 +114,8 @@ function Column({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: columnId(status.id), data: { statusId: status.id } });
   return (
-    <section className="flex w-[85vw] max-w-80 shrink-0 snap-center flex-col gap-2 md:w-72 md:snap-align-none">
-      <header className="flex items-center gap-2 px-1 text-sm font-medium">
+    <section className="flex min-h-0 w-[85vw] max-w-80 shrink-0 snap-center flex-col gap-2 md:w-72 md:snap-align-none">
+      <header className="flex shrink-0 items-center gap-2 px-1 text-sm font-medium">
         <StatusIcon status={status} />
         {status.name}
         <span className="text-muted-foreground">{tasks.length}</span>
@@ -127,7 +127,7 @@ function Column({
       </header>
       <div
         ref={setNodeRef}
-        className={`flex min-h-24 flex-1 flex-col gap-2 rounded-lg p-1 transition-colors ${isOver ? "bg-muted" : "bg-muted/40"}`}
+        className={`flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain rounded-lg p-1 transition-colors ${isOver ? "bg-muted" : "bg-muted/40"}`}
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
@@ -220,7 +220,7 @@ export function Board({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 md:snap-none md:gap-4 md:p-4">
+      <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto overflow-y-hidden p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:snap-none md:gap-4 md:p-4">
         {statuses.map((status) => (
           <Column
             key={status.id}

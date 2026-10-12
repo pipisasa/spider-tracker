@@ -82,7 +82,15 @@ function ProjectPage() {
   });
 
   return (
-    <>
+    // The board fills the viewport below the mobile top bar (2.5rem button + 1px border + safe area) so only its columns scroll;
+    // list and docs keep normal page scrolling.
+    <div
+      className={
+        view === "board"
+          ? "flex h-[calc(100svh-2.5rem-1px-env(safe-area-inset-top))] min-h-0 flex-col overflow-hidden md:h-svh"
+          : "flex flex-1 flex-col"
+      }
+    >
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3 md:px-6">
         <h1 className="min-w-0 truncate font-semibold">{project.name}</h1>
         <span className="text-sm text-muted-foreground">{project.key}</span>
@@ -218,7 +226,7 @@ function ProjectPage() {
         open={newDocumentOpen}
         onOpenChange={setNewDocumentOpen}
       />
-    </>
+    </div>
   );
 }
 
