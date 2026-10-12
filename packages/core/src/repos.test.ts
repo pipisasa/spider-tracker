@@ -188,6 +188,51 @@ run("repos and apps (ST-92)", () => {
     expect((await listRepos(db, owner)).map((r) => r.fullName)).toEqual(["pipisasa/spider-tracker"]);
   });
 
+  test("a project-scoped agent changes a repo and its apps only while no project outside its scope uses it", async () => {
+    const infra = await createRepo(db, opsAgent, { url: "pipisasa/infra", projects: ["OPS"] });
+    // Only in its projects: the agent manages the repo and its apps.
+    await updateRepo(db, opsAgent, "pipisasa/infra", { defaultBranch: "develop" });
+    await createApp(db, opsAgent, "pipisasa/infra", { name: "terraform", path: "tf" });
+    await createApp(db, opsAgent, "pipisasa/infra", { name: "scripts", path: "scripts" });
+    await updateApp(db, opsAgent, "pipisasa/infra", "terraform", { environments: ["prod"] });
+    await deleteApp(db, opsAgent, "pipisasa/infra", "scripts");
+
+    // Shared with ST, which the agent can't see: every change is refused, and nothing changes.
+    await attachRepo(db, owner, "ST", { repo: "pipisasa/infra" });
+    const forbidden = { code: "forbidden", message: "Repo pipisasa/infra is also used by projects you can't see; ask an owner or admin to change it" };
+    await expect(updateRepo(db, opsAgent, "pipisasa/infra", { url: "pipisasa/elsewhere" })).rejects.toMatchObject(forbidden);
+    await expect(updateRepo(db, opsAgent, "pipisasa/infra", { defaultBranch: "main" })).rejects.toMatchObject(forbidden);
+    await expect(createApp(db, opsAgent, "pipisasa/infra", { name: "extra", path: "x" })).rejects.toMatchObject(forbidden);
+    await expect(updateApp(db, opsAgent, "pipisasa/infra", "terraform", { path: "x" })).rejects.toMatchObject(forbidden);
+    await expect(deleteApp(db, opsAgent, "pipisasa/infra", "terraform")).rejects.toMatchObject(forbidden);
+    await expect(deleteRepo(db, opsAgent, "pipisasa/infra")).rejects.toMatchObject(forbidden);
+    expect(await getRepo(db, owner, infra.id)).toMatchObject({
+      fullName: "pipisasa/infra",
+      defaultBranch: "develop",
+      projects: ["OPS", "ST"],
+      apps: [{ name: "terraform", path: "tf", environments: ["prod"] }],
+    });
+    // Unscoped agents and people aren't limited.
+    await updateApp(db, ownersAgent, "pipisasa/infra", "terraform", { path: "infra/tf" });
+
+    await detachRepo(db, owner, "ST", "pipisasa/infra");
+    await deleteApp(db, opsAgent, "pipisasa/infra", "terraform");
+    await deleteRepo(db, opsAgent, "pipisasa/infra");
+  });
+
+  test("a project-scoped agent adding a repo it can't see is told to ask an owner or admin to attach it", async () => {
+    await expect(createRepo(db, opsAgent, { url: "https://github.com/PipiSasa/Spider-Tracker", projects: ["OPS"] })).rejects.toMatchObject({
+      code: "conflict",
+      message: "Repo PipiSasa/Spider-Tracker is already in the organization; ask an owner or admin to attach it to OPS",
+    });
+    await createRepo(db, opsAgent, { url: "pipisasa/runbooks", projects: ["OPS"] });
+    await expect(createRepo(db, opsAgent, { url: "pipisasa/runbooks", projects: ["OPS"] })).rejects.toMatchObject({
+      code: "conflict",
+      message: "Repo pipisasa/runbooks already exists",
+    });
+    await deleteRepo(db, opsAgent, "pipisasa/runbooks");
+  });
+
   test("update a repo's remote and default branch; renames can't collide", async () => {
     await createRepo(db, owner, { url: "pipisasa/old-name" });
     const renamed = await updateRepo(db, owner, "pipisasa/old-name", { url: "https://github.com/pipisasa/new-name.git", defaultBranch: "develop" });
@@ -207,7 +252,10 @@ run("repos and apps (ST-92)", () => {
     });
     const updated = await updateApp(db, owner, "pipisasa/spider-tracker", "Web", { environments: ["prod"], sharedPaths: [] });
     expect(updated).toMatchObject({ name: "web", environments: ["prod"], sharedPaths: [] });
-    await expect(updateApp(db, owner, "pipisasa/spider-tracker", "web", { name: "api" })).rejects.toMatchObject({ code: "conflict" });
+    await expect(updateApp(db, owner, "https://github.com/pipisasa/spider-tracker.git", "web", { name: "api" })).rejects.toMatchObject({
+      code: "conflict",
+      message: "App api already exists in pipisasa/spider-tracker",
+    });
     await expect(updateApp(db, owner, "pipisasa/spider-tracker", "nope", { path: "x" })).rejects.toMatchObject({ code: "not_found" });
     await expect(updateApp(db, member, "pipisasa/spider-tracker", "web", { path: "x" })).rejects.toMatchObject({ code: "forbidden" });
 
