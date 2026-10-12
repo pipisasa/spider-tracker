@@ -44,7 +44,7 @@ Turborepo monorepo with bun workspaces.
 ### Packages
 
 - **`@repo/db`** — Drizzle schema (`src/schema`), `createDb()`, migrations in `migrations/`. Better Auth tables live in `schema/auth.ts`; their property names must match Better Auth's field names. IDs default to Postgres 18 `uuidv7()`.
-- **`@repo/core`** — Domain logic used by api/worker/cli (`createOrganization`, …), shared Zod schemas (`@repo/core/schemas`), API response types (`@repo/core/contracts`) and task keys in git (`@repo/core/git`: `taskKeyFromBranch`, `taskKeysIn`, `closingKeysIn`, `branchNameFor`). The web app imports only db-free subpaths (`schemas`, `contracts`, `git`, …), never the root (it pulls in the database).
+- **`@repo/core`** — Domain logic used by api/worker/cli (`createOrganization`, …), shared Zod schemas (`@repo/core/schemas`), API response types (`@repo/core/contracts`) task keys in git (`@repo/core/git`: `taskKeyFromBranch`, `taskKeysIn`, `closingKeysIn`, `branchNameFor`) and the output shapes the CLI `--json` and MCP share (`@repo/core/views`: `taskView`, `commentView`, `documentVersionView`). The web app imports only db-free subpaths (`schemas`, `contracts`, `git`, …), never the root (it pulls in the database).
 
 - **`@repo/sdk`** — Typed API client: `createClient({ baseUrl, token?, source?, fetch? })` with `whoami`, `members`, `projects`, `tasks`; throws `SpiderApiError` on non-2xx. Imports only the `@repo/core/contracts` and `/schemas` subpaths, so it runs in browsers. API tests drive it against the app with `fetch: (input, init) => app.request(input, init)`.
 

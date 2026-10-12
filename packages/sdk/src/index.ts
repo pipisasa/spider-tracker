@@ -124,7 +124,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     });
     if (!res.ok) {
       const error = (await res.json().catch(() => null)) as ApiErrorBody | null;
-      throw new SpiderApiError(res.status, error?.error?.code ?? "unknown", error?.error?.message ?? res.statusText);
+      // HTTP/2 has no status text, and proxies answer with HTML: never an empty message.
+      throw new SpiderApiError(
+        res.status,
+        error?.error?.code ?? "unknown",
+        error?.error?.message || `${method} ${path} failed with HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`,
+      );
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { ActorContext, DocumentSummaryDto, ProjectDetailDto, StatusDto, TaskDto } from "@repo/core";
+import type { ActorContext, ActorRef, DocumentSummaryDto, ProjectDetailDto, ProjectDto, StatusDto, TaskDto } from "@repo/core";
 import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
@@ -36,7 +36,15 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  actorHandle,
+  commentView,
+  documentVersionView,
+  relationView,
+  taskView,
   webUrls,
+  withDocumentUrl,
+  withProjectUrl,
+  withTaskUrl,
 } from "@repo/core";
 import type { Db, schema } from "@repo/db";
 import { Hono } from "hono";
@@ -46,8 +54,6 @@ import type { AppEnv } from "./types";
 
 type ActorRow = typeof schema.actors.$inferSelect;
 type Key = NonNullable<AppEnv["Variables"]["apiKey"]>;
-
-const PRIORITY_NAMES = ["none", "urgent", "high", "medium", "low"];
 
 const priority = z
   .number()
@@ -95,11 +101,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   const loadActors = () => (actorRows ??= listMembers(db, ctx.orgId, { includeDeactivated: true }));
   const loadMembers = async () => (await loadActors()).filter((m) => !m.deactivatedAt);
 
-  const handleOf = async (actorId: string) => {
-    const actor = (await loadActors()).find((m) => m.id === actorId);
-    if (!actor) return actorId;
-    return actor.deactivatedAt ? `${actor.handle} (deactivated)` : actor.handle;
-  };
+  const actorRefs = async (): Promise<ActorRef[]> =>
+    (await loadActors()).map((a) => ({ id: a.id, handle: a.handle, deactivated: a.deactivatedAt !== null }));
+  const handleOf = async (actorId: string) => actorHandle(await actorRefs(), actorId);
 
   const resolveAssignees = async (handles: string[]) => {
     const rows = await loadMembers();
@@ -142,42 +146,22 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       return tag.id;
     });
   };
-  const tagNames = async (ids: string[]) => {
-    const rows = await listTags(db, ctx.orgId);
-    return ids.map((id) => rows.find((t) => t.id === id)?.name ?? id);
-  };
+  let tagRows: ReturnType<typeof listTags> | undefined;
+  const loadTags = () => (tagRows ??= listTags(db, ctx.orgId));
 
   const projectOfTask = (taskKey: string) => getProject(db, ctx, taskKey.split("-")[0] ?? "");
 
-  /** A task as the model sees it: names and handles instead of ids. */
-  const describeTask = async (task: TaskDto, project: ProjectDetailDto, detail = false) => ({
-    key: task.key,
-    title: task.title,
-    status: project.statuses.find((s) => s.id === task.statusId)?.name ?? task.statusId,
-    priority: PRIORITY_NAMES[task.priority],
-    assignees: await Promise.all(task.assigneeIds.map(handleOf)),
-    tags: await tagNames(task.tagIds),
-    parent: task.parentKey,
-    url: urls.task(task.key),
-    ...(detail
-      ? {
-          description: task.description,
-          creator: await handleOf(task.creatorId),
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-          completedAt: task.completedAt,
-        }
-      : {}),
-  });
+  // Output shapes are the API DTOs, as the CLI prints them with --json (ST-107; see @repo/core/views).
 
-  const describeProject = (project: ProjectDetailDto) => ({
-    key: project.key,
-    name: project.name,
-    description: project.description,
-    archived: project.archivedAt !== null,
-    statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
-    url: urls.project(project.key),
-  });
+  /** A task with its status, assignee handles and tag names (TaskView). */
+  const describeTask = async (task: TaskDto, project: ProjectDetailDto) => {
+    const [actors, tags] = await Promise.all([actorRefs(), task.tagIds.length ? loadTags() : []]);
+    return withTaskUrl(urls, taskView(task, { statuses: project.statuses, actors, tags }));
+  };
+
+  const describeProject = <T extends ProjectDto>(project: T) => withProjectUrl(urls, project);
+
+  const describeDocument = <T extends DocumentSummaryDto>(d: T) => withDocumentUrl(urls, d);
 
   const server = new McpServer({ name: "spider-tracker", version: "0.1.0" });
 
@@ -196,12 +180,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     { description: "List the organization's projects (key, name, description).", inputSchema: {} },
     () =>
       run(async () =>
-        (await listProjects(db, ctx)).map((p) => ({
-          key: p.key,
-          name: p.name,
-          description: p.description,
-          url: urls.project(p.key),
-        })),
+        ({ items: (await listProjects(db, ctx)).map(describeProject) }),
       ),
   );
 
@@ -216,10 +195,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const documents = await listDocuments(db, ctx, { project: project.key });
-        return {
-          ...describeProject(project),
-          documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey, url: urls.document(d.id) })),
-        };
+        return { ...describeProject(project), documents: documents.map(describeDocument) };
       }),
   );
 
@@ -303,8 +279,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         });
         const shown = tasks.slice(0, limit ?? 50);
         return {
+          items: await Promise.all(shown.map((t) => describeTask(t, project))),
           total: tasks.length,
-          tasks: await Promise.all(shown.map((t) => describeTask(t, project))),
         };
       }),
   );
@@ -325,16 +301,12 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           listRelations(db, ctx, task.key),
           listDocuments(db, ctx, { task: task.key }),
         ]);
+        // TaskDetailView, as `spider task view --json`.
         return {
-          relations: relations.map((r) => ({ kind: r.kind, task: r.task.key, title: r.task.title })),
-          documents: documents.map((d) => ({ id: d.id, title: d.title, url: urls.document(d.id) })),
-          ...(await describeTask(task, await projectOfTask(task.key), true)),
-          subtasks: await Promise.all(
-            subtasks.map(async (t) => {
-              const { key, title, status } = await describeTask(t, await projectOfTask(t.key));
-              return { key, title, status };
-            }),
-          ),
+          ...(await describeTask(task, await projectOfTask(task.key))),
+          subtasks: await Promise.all(subtasks.map(async (t) => describeTask(t, await projectOfTask(t.key)))),
+          relations: relations.map(relationView),
+          documents: documents.map(describeDocument),
         };
       }),
   );
@@ -366,7 +338,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent ? (await getTask(db, ctx, parent)).id : undefined,
         });
-        return describeTask(task, project, true);
+        return describeTask(task, project);
       }),
   );
 
@@ -397,7 +369,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
         });
-        return describeTask(task, project, true);
+        return describeTask(task, project);
       }),
   );
 
@@ -462,14 +434,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           return project;
         };
         return {
-          dryRun: result.dryRun,
-          summary: result.summary,
+          ...result,
           results: await Promise.all(
-            result.results.map(async ({ key: taskKey, outcome, task, error }) =>
-              task
-                ? { outcome, ...(await describeTask(task, await projectOf(task.key))) }
-                : { key: taskKey, outcome, error: error?.message },
-            ),
+            result.results.map(async (r) => ({ ...r, task: r.task && (await describeTask(r.task, await projectOf(r.task.key))) })),
           ),
         };
       }),
@@ -490,7 +457,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       : [...current.assigneeIds, ctx.actorId];
     const task = await updateTask(db, ctx, current.key, { assigneeIds, statusId });
     await realtime.presence.touch(ctx, task.key);
-    return describeTask(task, project, true);
+    return describeTask(task, project);
   };
 
   server.registerTool(
@@ -541,19 +508,6 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey, kind, task }) => run(async () => ((await removeRelation(db, ctx, taskKey, { kind, task })), { removed: true })),
   );
 
-  /** A document as the model sees it: scope keys and the author's handle. */
-  const describeDocument = async (d: DocumentSummaryDto) => ({
-    id: d.id,
-    title: d.title,
-    format: d.format,
-    project: d.projectKey,
-    task: d.taskKey,
-    version: d.version,
-    updatedBy: await handleOf(d.authorId),
-    updatedAt: d.updatedAt,
-    url: urls.document(d.id),
-  });
-
   server.registerTool(
     "list_documents",
     {
@@ -565,7 +519,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       },
     },
     ({ project, task }) =>
-      run(async () => Promise.all((await listDocuments(db, ctx, { project, task })).map(describeDocument))),
+      run(async () => ({ items: (await listDocuments(db, ctx, { project, task })).map(describeDocument) })),
   );
 
   server.registerTool(
@@ -581,21 +535,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ id, version }) =>
       run(async () => {
         const document = await getDocument(db, ctx, id);
-        if (version === undefined || version === document.version) {
-          return { ...(await describeDocument(document)), content: document.content };
-        }
-        const old = await getDocumentVersion(db, ctx, id, version);
-        return {
-          id: document.id,
-          title: old.title,
-          format: old.format,
-          version: old.version,
-          currentVersion: document.version,
-          savedBy: old.authorId ? await handleOf(old.authorId) : null,
-          savedAt: old.createdAt,
-          url: urls.document(document.id),
-          content: old.content,
-        };
+        if (version === undefined || version === document.version) return describeDocument(document);
+        return documentVersionView(describeDocument(document), await getDocumentVersion(db, ctx, id, version));
       }),
   );
 
@@ -692,15 +633,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       run(async () => {
         const comments = await listComments(db, ctx, taskKey);
         await realtime.presence.touch(ctx, taskKey);
-        return Promise.all(
-          comments.map(async (c) => ({
-            id: c.id,
-            author: await handleOf(c.authorId),
-            body: c.body,
-            parentId: c.parentId,
-            createdAt: c.createdAt,
-          })),
-        );
+        const actors = await actorRefs();
+        return { items: comments.map((c) => commentView(c, actors)) };
       }),
   );
 
@@ -750,7 +684,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ key: taskKey, body, parent_id }) =>
       run(async () => {
         const comment = await addComment(db, ctx, taskKey, { body, parentId: parent_id ?? null });
-        return { id: comment.id, task: comment.taskKey, createdAt: comment.createdAt };
+        return commentView(comment, await actorRefs());
       }),
   );
 

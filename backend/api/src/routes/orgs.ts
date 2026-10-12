@@ -277,7 +277,10 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   });
 
   // Several tasks at once, by keys or a filter; per-task outcomes, 200 even when some fail (ST-106).
-  app.post("/tasks/bulk-update", async (c) => c.json(await updateTasks(db, c.get("actor"), await body(c))));
+  app.post("/tasks/bulk-update", async (c) => {
+    const result = await updateTasks(db, c.get("actor"), await body(c));
+    return c.json({ ...result, results: result.results.map((r) => ({ ...r, task: r.task && task(c, r.task) })) });
+  });
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(task(c, await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
