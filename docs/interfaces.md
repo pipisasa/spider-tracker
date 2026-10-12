@@ -30,9 +30,9 @@ See [auth.md](./auth.md) for all flows.
 - **Activity source:** browser sessions record `source = ui`. API-key clients record `api` by default and may declare `X-Spider-Source: cli | mcp | api`; other values are ignored.
 
 ### Projects
-- `GET|POST /v1/orgs/:org/projects[?archived=true]` — active projects, oldest first (archived ones too with `archived=true`); `{ key, name, description? }` to create one with the default statuses (owners and admins).
-- `GET|PATCH /v1/orgs/:org/projects/:key` — a project with its statuses and `archivedAt` (archived ones too); `PATCH { name?, description? }` (owners and admins; the key can't change, `description: null` clears it).
-- `POST|DELETE /v1/orgs/:org/projects/:key/archive` — archive (left out of lists, new tasks get `400 "Project ST is archived"`; its tasks stay readable and editable) or restore (owners and admins). Both return the project; repeating one changes nothing.
+- `GET|POST /v1/orgs/:org/projects[?archived=true]` — active projects, oldest first (archived ones too with `archived=true`); `{ key, name, description? }` to create one with the default statuses (owners, admins and their agents).
+- `GET|PATCH /v1/orgs/:org/projects/:key` — a project with its statuses and `archivedAt` (archived ones too); `PATCH { name?, description? }` (owners, admins and their agents; the key can't change, `description: null` clears it).
+- `POST|DELETE /v1/orgs/:org/projects/:key/archive` — archive (left out of lists, new tasks get `400 "Project ST is archived"`; its tasks stay readable and editable) or restore (owners, admins and their agents). Both return the project; repeating one changes nothing.
 
 ### Tasks
 - `GET /v1/orgs/:org/projects/:key/tasks[?status=&assignee=&tag=&tagMatch=&priority=&q=]` — the project's tasks in board order. Repeat a parameter for several values (`?tag=bug&tag=ui&priority=1&priority=2`). `status`: id, name or category; `assignee`: actor id or handle (deactivated ones too, so orphaned assignments can be found), `me`, `mine` or `none`; `tag`: name, case-insensitive; `priority`: `0`–`4`; `q`: text in the title, case-insensitive. Statuses, assignees and priorities match **any** of their values; a task must carry **all** the tags, or at least one with `tagMatch=any` (`all` is the default everywhere: API, MCP, CLI and web); parameters combine with AND. A leading `@` and case are ignored in assignee handles, `me`, `mine` and `none` included; all three are reserved and can't be taken as handles. `mine` (ST-76) is "me and my agents": for a person, themselves plus every agent they own; for an agent key, its owner plus all the owner's agents (itself included); deleted agents count too. It is resolved on the server, in one subquery within the organization. A missing or out-of-scope project is `404` whether or not filters are given; the filters are checked after that, and unknown statuses, members and tags are `400` with the valid options. The filters live in `listTasks` (`taskListFilters` in `@repo/core/schemas`), shared by the API, MCP and CLI; SDK: `tasks.list(org, key, { status, assignee, tags, tagMatch, priority, q })`.
@@ -97,8 +97,8 @@ Or install the `spider-tracker` Claude Code plugin (`spider setup claude`): it r
 |---|---|
 | `whoami` | The agent and organization the key acts as |
 | `list_projects`, `get_project` | Active projects; a project's description, `archived` flag and statuses in board order, with categories |
-| `create_project`, `update_project` | Owners and admins: key (fixed once created), name, description (null on update clears it) |
-| `archive_project` | Owners and admins: archive a project (out of `list_projects`, no new tasks); `undo: true` restores it |
+| `create_project`, `update_project` | Owners, admins and their agents (an agent acts with its owner's rights here; a project-scoped agent gets access to the projects it creates): key (fixed once created), name, description (null on update clears it) |
+| `archive_project` | Owners, admins and their agents: archive a project (out of `list_projects`, no new tasks); `undo: true` restores it |
 | `list_tasks` | Tasks in a project; filters: `status` (id, name or category; one or an array, any of them), `assignee` (`me`, `mine` — the agent's owner and all the owner's agents —, `none` or a handle, deactivated ones too; one or an array), `tags` (names; all of them, or any with `tagMatch: "any"`), `priority` (list of 0–4; any of them), `query` (title text), `limit` |
 | `get_task` | One task by key, with status name, assignee handles, tags, parent and sub-tasks |
 | `create_task`, `update_task` | Status by name, priority 0–4, assignees as handles or `me`, `parent` as a task key (null on update makes it top-level); `update_task` replaces the assignee list |
@@ -217,7 +217,7 @@ spider mcp-headers [--server prod]  # {"Authorization": "Bearer …"} for Claude
 spider whoami                       # also names the saved agent in use
 spider <command> --as <agent>       # any command, as a saved agent
 spider projects [--archived]
-spider project create --key OPS --name "Operations" [--description …]   # owners and admins (also update/archive)
+spider project create --key OPS --name "Operations" [--description …]   # owners, admins and their agents (also update/archive)
 spider project view <KEY>                      # statuses with task counts, description, archived state
 spider project update <KEY> [--name …] [--description …]   # the key can't change; --description "" clears it
 spider project archive <KEY> [--undo]          # archived: out of `spider projects`, no new tasks

@@ -534,46 +534,58 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "move", id, "--project", "NOPE")).code).toBe(3);
   });
 
-  test("projects: a member agent is refused; an admin creates, views, updates, archives and restores", async () => {
-    const refused = await spider("project", "create", "--key", "OPS", "--name", "Ops", "--json");
-    expect(refused.code).toBe(4);
-    expect(JSON.parse(refused.stderr)).toEqual({ error: { code: "forbidden", message: "Your role can't create projects" } });
-
-    await db.update(schema.actors).set({ role: "admin" }).where(eq(schema.actors.id, agentId));
+  test("projects: an agent acts with its owner's rights; refused when the owner is a member", async () => {
+    const [ownerActor] = await db
+      .select({ id: schema.actors.id })
+      .from(schema.agents)
+      .innerJoin(schema.actors, eq(schema.actors.id, schema.agents.ownerId))
+      .where(eq(schema.agents.actorId, agentId));
+    const ownerId = ownerActor?.id ?? "";
+    await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, ownerId));
     try {
-      const created = await spider("project", "create", "--key", "ops", "--name", "Ops", "--description", "Runbooks", "--json");
-      expect(created.code).toBe(0);
-      expect(created.json()).toMatchObject({ key: "OPS", name: "Ops", description: "Runbooks", archivedAt: null });
-      expect((await spider("project", "create", "--key", "OPS", "--name", "Again")).code).toBe(2);
-      expect((await spider("task", "create", "--project", "OPS", "--title", "Rotate keys")).code).toBe(0);
-
-      const view = await spider("project", "view", "ops", "--json");
-      expect(view.json()).toMatchObject({ key: "OPS", archivedAt: null });
-      const counts = (view.json().statuses as { name: string; taskCount: number }[]).map((s) => [s.name, s.taskCount]);
-      expect(counts).toEqual([["Backlog", 0], ["Todo", 1], ["In Progress", 0], ["In Review", 0], ["Done", 0], ["Canceled", 0]]);
-      const human = (await spider("project", "view", "OPS")).stdout;
-      expect(human).toStartWith("OPS  Ops\n");
-      expect(human).toContain("  Todo         1\n");
-      expect(human).toEndWith("\nRunbooks\n");
-
-      const updated = await spider("project", "update", "OPS", "--name", "Operations", "--description", "", "--json");
-      expect(updated.json()).toMatchObject({ key: "OPS", name: "Operations", description: null });
-      expect((await spider("project", "update", "OPS")).code).toBe(2);
-
-      expect((await spider("project", "archive", "OPS")).stdout).toBe("Archived OPS  Operations\n");
-      expect((await spider("projects")).stdout).toBe("SPI  Spider\n");
-      expect((await spider("projects", "--archived")).stdout).toBe("SPI  Spider\nOPS  Operations  (archived)\n");
-      expect((await spider("project", "view", "OPS", "--json")).json().archivedAt).not.toBeNull();
-      const late = await spider("task", "create", "--project", "OPS", "--title", "Too late");
-      expect(late).toMatchObject({ code: 2, stderr: "spider: Project OPS is archived\n" });
-
-      const restored = await spider("project", "archive", "OPS", "--undo", "--json");
-      expect(restored.json()).toMatchObject({ key: "OPS", archivedAt: null });
-      expect((await spider("projects", "--json")).json().items).toMatchObject([{ key: "SPI" }, { key: "OPS" }]);
-      expect((await spider("project", "view", "NOPE")).code).toBe(3);
+      const refused = await spider("project", "create", "--key", "OPS", "--name", "Ops", "--json");
+      expect(refused.code).toBe(4);
+      expect(JSON.parse(refused.stderr)).toEqual({ error: { code: "forbidden", message: "Your role can't create projects" } });
     } finally {
-      await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, agentId));
+      await db.update(schema.actors).set({ role: "owner" }).where(eq(schema.actors.id, ownerId));
     }
+
+    const created = await spider("project", "create", "--key", "ops", "--name", "Ops", "--description", "Runbooks", "--json");
+    expect(created.code).toBe(0);
+    expect(created.json()).toMatchObject({ key: "OPS", name: "Ops", description: "Runbooks", archivedAt: null });
+    expect((await spider("project", "create", "--key", "OPS", "--name", "Again")).code).toBe(2);
+    expect((await spider("task", "create", "--project", "OPS", "--title", "Rotate keys")).code).toBe(0);
+
+    const view = await spider("project", "view", "ops", "--json");
+    expect(view.json()).toMatchObject({ key: "OPS", archivedAt: null });
+    const counts = (view.json().statuses as { name: string; taskCount: number }[]).map((s) => [s.name, s.taskCount]);
+    expect(counts).toEqual([["Backlog", 0], ["Todo", 1], ["In Progress", 0], ["In Review", 0], ["Done", 0], ["Canceled", 0]]);
+    const human = (await spider("project", "view", "OPS")).stdout;
+    expect(human).toStartWith("OPS  Ops\n");
+    expect(human).toContain("  Todo         1\n");
+    expect(human).toEndWith("\nRunbooks\n");
+
+    const updated = await spider("project", "update", "OPS", "--name", "Operations", "--description", "", "--json");
+    expect(updated.json()).toMatchObject({ key: "OPS", name: "Operations", description: null });
+    expect((await spider("project", "update", "OPS")).code).toBe(2);
+
+    expect((await spider("project", "archive", "OPS")).stdout).toBe("Archived OPS  Operations\n");
+    expect((await spider("projects")).stdout).toBe("SPI  Spider\n");
+    expect((await spider("projects", "--archived")).stdout).toBe("SPI  Spider\nOPS  Operations  (archived)\n");
+    expect((await spider("project", "view", "OPS", "--json")).json().archivedAt).not.toBeNull();
+    const late = await spider("task", "create", "--project", "OPS", "--title", "Too late");
+    expect(late).toMatchObject({ code: 2, stderr: "spider: Project OPS is archived\n" });
+
+    const restored = await spider("project", "archive", "OPS", "--undo", "--json");
+    expect(restored.json()).toMatchObject({ key: "OPS", archivedAt: null });
+    expect((await spider("projects", "--json")).json().items).toMatchObject([{ key: "SPI" }, { key: "OPS" }]);
+    expect((await spider("project", "view", "NOPE")).code).toBe(3);
+
+    // ST-40's "done when": then a doc in the agent's new project.
+    stdin = "# Runbook";
+    const doc = await spider("doc", "create", "--title", "Runbook", "--project", "OPS", "--file", "-", "--json");
+    expect(doc.code).toBe(0);
+    expect(doc.json()).toMatchObject({ projectKey: "OPS", title: "Runbook" });
   });
 
 });

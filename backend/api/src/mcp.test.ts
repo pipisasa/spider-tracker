@@ -310,32 +310,53 @@ withDb("MCP server", () => {
     expect(missing).toMatchObject({ isError: true, text: "Task SPI-999 not found" });
   });
 
-  test("projects: members are refused; admins create, update, archive and restore", async () => {
-    const refused = await call(client, "create_project", { key: "OPS", name: "Ops" });
-    expect(refused).toMatchObject({ isError: true, text: "Your role can't create projects" });
-
-    const agentId = agentIds[0] ?? "";
-    await db.update(schema.actors).set({ role: "admin" }).where(eq(schema.actors.id, agentId));
+  test("projects: an agent acts with its owner's rights; a member's agent is refused", async () => {
+    const owner = ownerCtxs[0];
+    if (!owner) throw new Error("no owner");
+    await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, owner.actorId));
     try {
-      expect((await call(client, "create_project", { key: "ops", name: "Ops", description: "Runbooks" })).json()).toMatchObject({
-        key: "OPS",
-        name: "Ops",
-        description: "Runbooks",
-        archived: false,
-        statuses: ["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"].map((name) => ({ name })),
-      });
-      const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
-      expect(updated.json()).toMatchObject({ name: "Operations", description: null });
-      expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
-      expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([{ key: "SPI", name: "Spider", description: null }]);
-      expect((await call(client, "get_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
-      expect(await call(client, "create_task", { projectKey: "OPS", title: "x" })).toMatchObject({
-        isError: true,
-        text: "Project OPS is archived",
-      });
-      expect((await call(client, "archive_project", { projectKey: "OPS", undo: true })).json()).toMatchObject({ archived: false });
+      const refused = await call(client, "create_project", { key: "OPS", name: "Ops" });
+      expect(refused).toMatchObject({ isError: true, text: "Your role can't create projects" });
     } finally {
-      await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, agentId));
+      await db.update(schema.actors).set({ role: "owner" }).where(eq(schema.actors.id, owner.actorId));
+    }
+
+    expect((await call(client, "create_project", { key: "ops", name: "Ops", description: "Runbooks" })).json()).toMatchObject({
+      key: "OPS",
+      name: "Ops",
+      description: "Runbooks",
+      archived: false,
+      statuses: ["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"].map((name) => ({ name })),
+    });
+    const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
+    expect(updated.json()).toMatchObject({ name: "Operations", description: null });
+    expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
+    expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([{ key: "SPI", name: "Spider", description: null }]);
+    expect((await call(client, "get_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
+    expect(await call(client, "create_task", { projectKey: "OPS", title: "x" })).toMatchObject({
+      isError: true,
+      text: "Project OPS is archived",
+    });
+    expect((await call(client, "archive_project", { projectKey: "OPS", undo: true })).json()).toMatchObject({ archived: false });
+    expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
+  });
+
+  test("projects: a project-scoped agent gets access to the project it creates", async () => {
+    const agentId = agentIds[0] ?? "";
+    const [spi] = await db
+      .select({ id: schema.projects.id })
+      .from(schema.projects)
+      .where(and(eq(schema.projects.orgId, ownerCtxs[0]?.orgId ?? ""), eq(schema.projects.key, "SPI")));
+    await db.update(schema.agents).set({ scoped: true }).where(eq(schema.agents.actorId, agentId));
+    await db.insert(schema.agentProjects).values({ agentId, projectId: spi?.id ?? "" });
+    try {
+      expect((await call(client, "create_project", { key: "SCP", name: "Scoped" })).json()).toMatchObject({ key: "SCP" });
+      expect((await call(client, "get_project", { projectKey: "SCP" })).json()).toMatchObject({ key: "SCP" });
+      expect((await call(client, "create_task", { projectKey: "SCP", title: "First" })).json()).toMatchObject({ key: "SCP-1" });
+      expect((await call(client, "archive_project", { projectKey: "SCP" })).json()).toMatchObject({ archived: true });
+    } finally {
+      await db.delete(schema.agentProjects).where(eq(schema.agentProjects.agentId, agentId));
+      await db.update(schema.agents).set({ scoped: false }).where(eq(schema.agents.actorId, agentId));
     }
   });
 

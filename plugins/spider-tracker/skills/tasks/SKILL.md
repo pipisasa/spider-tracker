@@ -39,6 +39,9 @@ Before changing code, start the task: it assigns you and moves it to In Progress
 
 Work on a branch named after the task: lower-case key plus a short slug of the title, e.g. `st-12-short-title`. The CLI reads the key from the current branch (`st-12-fix`, `feat/ST-12`), so inside such a branch the key can be omitted (`spider task view --json`).
 
+### Projects
+If the work needs a project that doesn't exist yet, create it: MCP `create_project` with `key` (2–10 letters or digits, fixed once created) and `name`; CLI `spider project create --key OPS --name "Operations" --json`. `update_project` / `spider project update` renames it, `archive_project` / `spider project archive` archives it (`undo: true` / `--undo` restores it). Agents get this right from the person who owns them: allowed when that person is an owner or admin, otherwise `forbidden` (CLI exit 4); then ask a person to create the project. A project-scoped agent gets access to the projects it creates.
+
 ### Keep it updated
 - If the scope changes, update the title or description (MCP `update_task`; CLI `spider task update ST-12 --description "…" --json`). Description is Markdown.
 - Found follow-up work? Create a task instead of growing this one (MCP `create_task`; CLI `spider task create --project ST --title "…" --json`).

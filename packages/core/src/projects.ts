@@ -1,7 +1,7 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
-import { assertRole, inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
+import { assertCanManageProjects, inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto } from "./contracts";
@@ -9,7 +9,7 @@ import { DomainError } from "./errors";
 import { createProjectInput, updateProjectInput } from "./schemas";
 import { parseInput } from "./validate";
 
-const { projects, statuses } = schema;
+const { agentProjects, projects, statuses } = schema;
 
 export const DEFAULT_STATUSES: { name: string; category: StatusCategory; color: string }[] = [
   { name: "Backlog", category: "backlog", color: "#a1a1aa" },
@@ -39,10 +39,11 @@ export function toStatusDto(row: StatusRow): StatusDto {
 }
 
 export async function createProject(db: Db, ctx: ActorContext, input: unknown): Promise<ProjectDetailDto> {
-  assertRole(ctx, ["owner", "admin"], "create projects");
+  await assertCanManageProjects(db, ctx, "create projects");
   const { name, key, description } = parseInput(createProjectInput, input);
+  const scope = await projectScope(db, ctx);
 
-  return db.transaction(async (tx) => {
+  const created = await db.transaction(async (tx) => {
     const [project] = await tx
       .insert(projects)
       .values({ orgId: ctx.orgId, key, name, description: description || null })
@@ -50,10 +51,13 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
       .returning();
     if (!project) throw new DomainError("conflict", `Project key "${key}" is already used`);
 
-    const created = await tx
+    const rows = await tx
       .insert(statuses)
       .values(DEFAULT_STATUSES.map((s, position) => ({ ...s, projectId: project.id, position })))
       .returning();
+
+    // A project-scoped agent gets access to the project it creates.
+    if (scope) await tx.insert(agentProjects).values({ agentId: ctx.actorId, projectId: project.id });
 
     await recordActivity(tx, ctx, {
       entityType: "project",
@@ -63,8 +67,11 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
     });
 
     await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
-    return { ...toProjectDto(project), statuses: created.sort((a, b) => a.position - b.position).map(toStatusDto) };
+    return { ...toProjectDto(project), statuses: rows.sort((a, b) => a.position - b.position).map(toStatusDto) };
   });
+  // The scope is cached per request; keep it in step once the project exists.
+  scope?.add(created.id);
+  return created;
 }
 
 /** Active projects; archived ones too with `includeArchived`. */
@@ -120,7 +127,7 @@ async function withStatuses(tx: Tx, project: ProjectRow): Promise<ProjectDetailD
 
 /** Renames a project or changes its description; the key stays. */
 export async function updateProject(db: Db, ctx: ActorContext, key: string, input: unknown): Promise<ProjectDetailDto> {
-  assertRole(ctx, ["owner", "admin"], "change projects");
+  await assertCanManageProjects(db, ctx, "change projects");
   const data = parseInput(updateProjectInput, input);
 
   return db.transaction(async (tx) => {
@@ -144,7 +151,7 @@ export async function updateProject(db: Db, ctx: ActorContext, key: string, inpu
 
 /** Archives a project (hidden from lists, no new tasks) or restores it; archiving twice changes nothing. */
 export async function archiveProject(db: Db, ctx: ActorContext, key: string, archived: boolean): Promise<ProjectDetailDto> {
-  assertRole(ctx, ["owner", "admin"], archived ? "archive projects" : "restore projects");
+  await assertCanManageProjects(db, ctx, archived ? "archive projects" : "restore projects");
 
   return db.transaction(async (tx) => {
     const current = await findProjectForUpdate(tx, ctx, key);

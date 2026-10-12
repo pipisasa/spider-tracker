@@ -1089,7 +1089,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     output(opts, { items }, () => items.map(projectLine).join("\n"));
   });
 
-  const projectCommand = program.command("project").description("manage projects (create, change, archive: owners and admins)");
+  const projectCommand = program.command("project").description("manage projects (create, change, archive: owners, admins and their agents)");
 
   withJson(
     projectCommand

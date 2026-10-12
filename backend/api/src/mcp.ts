@@ -217,7 +217,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "create_project",
     {
       description:
-        "Create a project with the default statuses (Backlog, Todo, In Progress, In Review, Done, Canceled). Owners and admins only.",
+        "Create a project with the default statuses (Backlog, Todo, In Progress, In Review, Done, Canceled). Owners, admins and their agents only.",
       inputSchema: {
         key: z
           .string()
@@ -233,7 +233,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   server.registerTool(
     "update_project",
     {
-      description: "Change a project's name or description (the key can't change). Owners and admins only.",
+      description: "Change a project's name or description (the key can't change). Owners, admins and their agents only.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         name: projectName.optional(),
@@ -248,7 +248,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "archive_project",
     {
       description:
-        "Archive a project: it leaves list_projects and takes no new tasks; its tasks stay readable. undo: true restores it. Owners and admins only.",
+        "Archive a project: it leaves list_projects and takes no new tasks; its tasks stay readable. undo: true restores it. Owners, admins and their agents only.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         undo: z.boolean().optional().describe("Restore an archived project"),

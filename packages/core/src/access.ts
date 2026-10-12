@@ -33,6 +33,24 @@ export function assertRole(ctx: ActorContext, allowed: ActorRole[], action: stri
   if (!allowed.includes(ctx.role)) throw new DomainError("forbidden", `Your role can't ${action}`);
 }
 
+/**
+ * Projects are created, changed and archived by owners and admins, and by agents whose owner is an
+ * active owner or admin: such an agent acts with its owner's rights here (ST-61). Agents of members don't.
+ */
+export async function assertCanManageProjects(db: Db | Tx, ctx: ActorContext, action: string) {
+  if (ctx.role === "owner" || ctx.role === "admin") return;
+  if (ctx.role === "member") {
+    const [owner] = await db
+      .select({ role: actors.role })
+      .from(agents)
+      .innerJoin(actors, eq(actors.id, agents.ownerId))
+      .where(and(eq(agents.actorId, ctx.actorId), eq(actors.orgId, ctx.orgId), isNull(actors.deactivatedAt)))
+      .limit(1);
+    if (owner?.role === "owner" || owner?.role === "admin") return;
+  }
+  throw new DomainError("forbidden", `Your role can't ${action}`);
+}
+
 /** Guests can read; everyone else can work on tasks. */
 export function assertCanWrite(ctx: ActorContext) {
   assertRole(ctx, ["owner", "admin", "member"], "make changes");

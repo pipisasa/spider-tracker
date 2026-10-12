@@ -619,7 +619,7 @@ const paths = {
     },
     post: {
       operationId: "createProject",
-      summary: "Create a project with the default statuses (owners and admins)",
+      summary: "Create a project with the default statuses (owners, admins and their agents)",
       requestBody: body("CreateProjectInput"),
       responses: { "201": ok("Created project", "ProjectDetail"), ...errors },
     },
@@ -633,7 +633,7 @@ const paths = {
     },
     patch: {
       operationId: "updateProject",
-      summary: "Change a project's name or description (owners and admins); the key can't change",
+      summary: "Change a project's name or description (owners, admins and their agents); the key can't change",
       requestBody: body("UpdateProjectInput"),
       responses: { "200": ok("Updated project", "ProjectDetail"), ...errors },
     },
@@ -642,12 +642,12 @@ const paths = {
     parameters: [orgSlug, projectKey],
     post: {
       operationId: "archiveProject",
-      summary: "Archive a project: hidden from lists, no new tasks (owners and admins)",
+      summary: "Archive a project: hidden from lists, no new tasks (owners, admins and their agents)",
       responses: { "200": ok("Archived project", "ProjectDetail"), ...errors },
     },
     delete: {
       operationId: "unarchiveProject",
-      summary: "Restore an archived project (owners and admins)",
+      summary: "Restore an archived project (owners, admins and their agents)",
       responses: { "200": ok("Restored project", "ProjectDetail"), ...errors },
     },
   },
