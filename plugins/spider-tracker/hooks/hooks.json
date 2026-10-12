@@ -1,0 +1,17 @@
+{
+  "description": "Tell the session when the spider CLI, this plugin or your agent files are out of date",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v spider >/dev/null 2>&1 && spider update --check --hook || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
