@@ -1,5 +1,6 @@
 import { TagChips } from "@/components/tags";
-import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
+import { AvatarStack } from "@/components/avatar-stack";
+import { PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { assigneesOf } from "@/lib/assignees";
 import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
 import { ListChecksIcon } from "lucide-react";
@@ -61,13 +62,7 @@ export function TaskList({
                     </span>
                   )}
                   <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
-                  <span className="flex -space-x-1.5">
-                    {assigneesOf(task.assigneeIds, memberMap)
-                      .slice(0, 3)
-                      .map((m) => (
-                        <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-background" />
-                      ))}
-                  </span>
+                  <AvatarStack actors={assigneesOf(task.assigneeIds, memberMap)} />
                   <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
                     {dateFormat.format(new Date(task.createdAt))}
                   </span>

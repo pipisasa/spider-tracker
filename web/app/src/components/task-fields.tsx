@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AvatarStack } from "@/components/avatar-stack";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -11,6 +12,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { actorLabel, assigneeOptions, toggleAssignee } from "@/lib/assignees";
+import { actorAvatarSrc } from "@/lib/generated-avatar";
 import { cn } from "@/lib/utils";
 import type { ActorDto, Priority, StatusCategory, StatusDto } from "@repo/core/contracts";
 import {
@@ -67,7 +69,16 @@ export function PriorityIcon({ priority, className }: { priority: Priority; clas
   );
 }
 
-export function ActorAvatar({ actor, className }: { actor: ActorDto; className?: string }) {
+/** `title={false}` drops the native tooltip (an enclosing AvatarStack provides its own). */
+export function ActorAvatar({
+  actor,
+  className,
+  title,
+}: {
+  actor: ActorDto;
+  className?: string;
+  title?: string | false;
+}) {
   const initials = actor.name
     .split(/[\s@.]+/)
     .filter(Boolean)
@@ -75,8 +86,8 @@ export function ActorAvatar({ actor, className }: { actor: ActorDto; className?:
     .map((part) => part[0]?.toUpperCase())
     .join("");
   return (
-    <Avatar className={cn(className ?? "size-6", actor.deactivated && "opacity-50 grayscale")} title={actorLabel(actor)}>
-      {actor.avatarUrl && <AvatarImage src={actor.avatarUrl} alt="" />}
+    <Avatar className={cn(className ?? "size-6", actor.deactivated && "opacity-50 grayscale")} title={title === false ? undefined : (title ?? actorLabel(actor))}>
+      <AvatarImage src={actorAvatarSrc(actor)} alt="" />
       <AvatarFallback className="text-[10px]">
         {actor.type === "agent" ? <BotIcon className="size-3" /> : initials || "?"}
       </AvatarFallback>
@@ -154,11 +165,7 @@ export function AssigneePicker({
             </>
           ) : (
             <>
-              <span className="flex -space-x-1.5">
-                {selected.slice(0, 3).map((m) => (
-                  <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-background" />
-                ))}
-              </span>
+              <AvatarStack actors={selected} />
               <span className="truncate">
                 {selected.map((m, i) => (
                   <span key={m.id} className={m.deactivated ? "text-muted-foreground" : undefined} title={actorLabel(m)}>
