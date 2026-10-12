@@ -191,7 +191,7 @@ const schemas: Record<string, JsonSchema> = {
     projects: {
       type: ["array", "null"],
       items: ref("ProjectRef"),
-      description: "Projects the agent is limited to; null when it sees every project",
+      description: "Projects the agent is limited to (empty once they are all deleted); null when it sees every project",
     },
   }),
   AgentList: listOf("Agent"),

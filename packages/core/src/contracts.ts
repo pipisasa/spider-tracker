@@ -118,7 +118,7 @@ export interface AgentDto {
   canManage: boolean;
   /** Key metadata; empty unless `canManage`. */
   keys: ApiKeyDto[];
-  /** Projects the agent is limited to; null when it sees every project. */
+  /** Projects the agent is limited to (empty once they are all deleted); null when it sees every project. */
   projects: ProjectRefDto[] | null;
 }
 

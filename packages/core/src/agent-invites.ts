@@ -127,7 +127,7 @@ export async function createAgentInvite(
     }
     if (!actor)
       throw new Error("Failed to pick a handle for the pending agent");
-    await tx.insert(agents).values({ actorId: actor.id, ownerId: ctx.actorId });
+    await tx.insert(agents).values({ actorId: actor.id, ownerId: ctx.actorId, scoped: true });
     await tx
       .insert(agentProjects)
       .values(found.map((p) => ({ agentId: actor.id, projectId: p.id })));

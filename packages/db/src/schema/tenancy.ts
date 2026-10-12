@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   index,
   integer,
@@ -59,6 +60,9 @@ export const agents = pgTable("agents", {
     .notNull()
     .references(() => actors.id, { onDelete: "cascade" }),
   description: text("description"),
+  // Limited to its agent_projects rows (ST-52): stays set when those rows cascade away with
+  // deleted projects, so a scoped agent then sees no project rather than all of them.
+  scoped: boolean("scoped").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

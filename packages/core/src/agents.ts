@@ -126,11 +126,11 @@ async function queryAgents(db: Db, ctx: ActorContext, agentActorId?: string) {
     description: agent.description,
     canManage: manageable.includes(actor.id),
     keys: keys.filter((k) => k.actorId === actor.id).map(toApiKeyDto),
-    projects: scopes.get(actor.id) ?? null,
+    projects: scopes.get(actor.id) ?? (agent.scoped ? [] : null),
   }));
 }
 
-/** Project keys and names each agent is limited to; agents without rows are absent (unscoped). */
+/** Project keys and names each agent is limited to; agents without rows are absent. */
 export async function agentProjectRefs(db: Db | Tx, agentActorIds: string[]) {
   const map = new Map<string, ProjectRefDto[]>();
   if (agentActorIds.length === 0) return map;

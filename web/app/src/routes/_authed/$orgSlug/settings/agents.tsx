@@ -335,7 +335,11 @@ function AgentCard({
       </div>
       {agent.description && <p className="text-sm text-muted-foreground">{agent.description}</p>}
       <p className="text-xs text-muted-foreground">
-        {agent.projects ? `Projects: ${agent.projects.map((p) => p.key).join(", ")}` : "All projects"}
+        {!agent.projects
+          ? "All projects"
+          : agent.projects.length > 0
+            ? `Projects: ${agent.projects.map((p) => p.key).join(", ")}`
+            : "No projects (its projects were deleted)"}
       </p>
       {agent.canManage &&
         (active.length > 0 ? (
