@@ -38,7 +38,8 @@ describe("public routes", () => {
   });
 
   test("/v1 responses carry the oldest supported CLI version, errors included", async () => {
-    const res = await app.request("/v1/me", { headers: { Authorization: "Bearer spt_nope" } });
+    // No credentials: refused before any database lookup, so this runs without TEST_DATABASE_URL.
+    const res = await app.request("/v1/me");
     expect(res.status).toBe(401);
     expect(res.headers.get("X-Spider-Min-Cli")).toBe(MIN_CLI_VERSION);
   });
