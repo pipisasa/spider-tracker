@@ -2,7 +2,16 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ActorContext } from "@repo/core";
-import { MIN_CLI_VERSION, addComment, createAgent, createApiKey, createOrganization, createProject } from "@repo/core";
+import {
+  MIN_CLI_VERSION,
+  addComment,
+  createAgent,
+  createApiKey,
+  createOrganization,
+  createProject,
+  createTask,
+  deleteAgent,
+} from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { createApp } from "./app";
@@ -64,6 +73,7 @@ withDb("MCP server", () => {
   let client: Client;
   let otherClient: Client;
   const agentIds: string[] = [];
+  const ownerCtxs: ActorContext[] = [];
 
   /** Creates an org with a project and an agent key; returns the key's secret. */
   async function setUpOrg(i: number) {
@@ -75,6 +85,7 @@ withDb("MCP server", () => {
       { name: "MCP Org", slug: slugs[i] },
     );
     const ctx: ActorContext = { orgId: organization.id, actorId: actor.id, role: "owner", source: "ui" };
+    ownerCtxs[i] = ctx;
     await createProject(db, ctx, { name: "Spider", key: "SPI" });
     const agent = await createAgent(db, ctx, { name: "Claude Code" });
     agentIds[i] = agent.actor.id;
@@ -310,7 +321,21 @@ withDb("MCP server", () => {
     }
   });
 
-  test("a key from another organization can't see this one's tasks", async () => {
+  test("a deleted agent stays shown as a deactivated assignee but can't be assigned", async () => {
+    const ctx = ownerCtxs[0];
+    if (!ctx) throw new Error("no owner");
+    const { actor: gone } = await createAgent(db, ctx, { name: "Gone", handle: "gone" });
+    const task = await createTask(db, ctx, "SPI", { title: "Orphaned", assigneeIds: [gone.id] });
+    await deleteAgent(db, ctx, gone.id);
+
+    expect((await call(client, "get_task", { key: task.key })).json()).toMatchObject({ assignees: ["gone (deactivated)"] });
+    const reassigned = await call(client, "update_task", { key: task.key, assignees: ["gone"] });
+    expect(reassigned.isError).toBe(true);
+    expect(reassigned.text).toBe('Unknown member "gone". Valid handles: me, claude-code, owner-0');
+    expect((await call(client, "list_members")).text).not.toContain("gone");
+  });
+
+    test("a key from another organization can't see this one's tasks", async () => {
     expect(await call(otherClient, "get_task", { key: "SPI-1" })).toMatchObject({ isError: true });
     expect((await call(otherClient, "list_tasks", { projectKey: "SPI" })).json()).toMatchObject({ total: 0 });
     expect((await call(otherClient, "whoami")).json()).toMatchObject({ organization: { slug: slugs[1] } });

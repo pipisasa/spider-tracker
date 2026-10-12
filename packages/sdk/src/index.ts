@@ -138,7 +138,9 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     },
 
     members: {
-      list: (orgSlug: string) => request<ListResponse<ActorDto>>("GET", `${org(orgSlug)}/members`),
+      /** Active members; deactivated ones too with `all: true` (they have `deactivated: true`). */
+      list: (orgSlug: string, query: { all?: boolean } = {}) =>
+        request<ListResponse<ActorDto>>("GET", `${org(orgSlug)}/members${query.all ? "?all=true" : ""}`),
     },
 
     /** Anyone but guests creates agents; the owner (or an org owner/admin) manages them and their keys. */

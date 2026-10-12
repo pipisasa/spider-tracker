@@ -12,6 +12,7 @@ export function toActorDto(actor: ActorRow): ActorDto {
     handle: actor.handle,
     avatarUrl: actor.avatarUrl,
     role: actor.role,
+    deactivated: actor.deactivatedAt !== null,
   };
 }
 

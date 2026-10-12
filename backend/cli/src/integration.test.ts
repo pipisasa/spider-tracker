@@ -399,6 +399,24 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "update", key, "--tag", "", "--json")).json()).toMatchObject({ tags: [] });
   });
 
+  test("a deactivated assignee is shown by handle, not id", async () => {
+    const [org] = await db.select().from(schema.organizations).where(eq(schema.organizations.slug, slug));
+    if (!org) throw new Error("no org");
+    const [gone] = await db
+      .insert(schema.actors)
+      .values({ orgId: org.id, type: "agent", name: "Gone", handle: "gone", role: "member" })
+      .returning();
+    if (!gone) throw new Error("insert failed");
+    const created = await spider("task", "create", "--project", "SPI", "--title", "Orphaned", "--assign", "gone", "--json");
+    const key = created.json().key as string;
+    await db.update(schema.actors).set({ deactivatedAt: new Date() }).where(eq(schema.actors.id, gone.id));
+
+    expect((await spider("task", "view", key)).stdout).toContain("@gone (deactivated)");
+    expect((await spider("task", "view", key, "--json")).json()).toMatchObject({ assignees: ["gone (deactivated)"] });
+    expect((await spider("task", "list", "--project", "SPI")).stdout).toContain("@gone (deactivated)");
+    expect((await spider("task", "update", key, "--assign", "gone")).code).not.toBe(0);
+  });
+
   test("sub-tasks: --parent on create, shown by view, cleared with an empty --parent", async () => {
     const child = await spider("task", "create", "--project", "SPI", "--title", "Child", "--parent", "spi-1", "--json");
     expect(child.json()).toMatchObject({ parentKey: "SPI-1" });

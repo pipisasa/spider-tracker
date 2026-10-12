@@ -61,11 +61,14 @@ export async function listMemberships(db: Db, userId: string) {
     .orderBy(organizations.createdAt);
 }
 
-/** Active members (people and agents) of an organization. */
-export async function listMembers(db: Db, orgId: string) {
+/**
+ * Active members (people and agents) of an organization. `includeDeactivated` adds
+ * deactivated ones, so tasks still assigned to them can show who they were.
+ */
+export async function listMembers(db: Db, orgId: string, opts: { includeDeactivated?: boolean } = {}) {
   return db
     .select()
     .from(actors)
-    .where(and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt)))
+    .where(opts.includeDeactivated ? eq(actors.orgId, orgId) : and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt)))
     .orderBy(actors.name);
 }

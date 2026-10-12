@@ -99,8 +99,9 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   const body = (c: { req: { json: () => Promise<unknown> } }) => c.req.json().catch(() => null);
   const list = <T>(items: T[]): ListResponse<T> => ({ items });
 
+  // GET /members?all=true includes deactivated actors, to name the ones still assigned to tasks.
   app.get("/members", async (c) => {
-    const rows = await listMembers(db, c.get("actor").orgId);
+    const rows = await listMembers(db, c.get("actor").orgId, { includeDeactivated: c.req.query("all") === "true" });
     return c.json(list(rows.map(toActorDto)));
   });
 

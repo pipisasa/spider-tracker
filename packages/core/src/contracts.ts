@@ -15,6 +15,8 @@ export interface ActorDto {
   handle: string;
   avatarUrl: string | null;
   role: ActorRole;
+  /** Deactivated people and deleted agents; only listed by `GET /members?all=true` and kept as task assignees. */
+  deactivated: boolean;
 }
 
 export interface MembershipDto {

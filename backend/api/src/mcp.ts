@@ -81,10 +81,16 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     source: "mcp",
   };
 
-  let members: Promise<ActorRow[]> | undefined;
-  const loadMembers = () => (members ??= listMembers(db, ctx.orgId));
+  // Every actor, deactivated ones included, so their past work and assignments still read by handle.
+  let actorRows: Promise<ActorRow[]> | undefined;
+  const loadActors = () => (actorRows ??= listMembers(db, ctx.orgId, { includeDeactivated: true }));
+  const loadMembers = async () => (await loadActors()).filter((m) => !m.deactivatedAt);
 
-  const handleOf = async (actorId: string) => (await loadMembers()).find((m) => m.id === actorId)?.handle ?? actorId;
+  const handleOf = async (actorId: string) => {
+    const actor = (await loadActors()).find((m) => m.id === actorId);
+    if (!actor) return actorId;
+    return actor.deactivatedAt ? `${actor.handle} (deactivated)` : actor.handle;
+  };
 
   const resolveAssignees = async (handles: string[]) => {
     const rows = await loadMembers();

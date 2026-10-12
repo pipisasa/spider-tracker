@@ -265,6 +265,7 @@ function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
 
   let who: Promise<WhoAmIResponse> | undefined;
   let members: Promise<ActorDto[]> | undefined;
+  let actors: Promise<ActorDto[]> | undefined;
   let tagList: Promise<TagDto[]> | undefined;
   const projects = new Map<string, Promise<ProjectDetailDto>>();
 
@@ -272,6 +273,9 @@ function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
   const org = async () => (await whoami()).organization.slug;
   const loadTags = () => (tagList ??= org().then(async (slug) => (await sdk()).tags.list(slug).then((r) => r.items)));
   const loadMembers = () => (members ??= org().then(async (slug) => (await sdk()).members.list(slug).then((r) => r.items)));
+  // Deactivated actors too, for naming assignees and authors; `members` is for resolving handles.
+  const loadActors = () =>
+    (actors ??= org().then(async (slug) => (await sdk()).members.list(slug, { all: true }).then((r) => r.items)));
   const project = (key: string) => {
     const upper = key.toUpperCase();
     let cached = projects.get(upper);
@@ -288,19 +292,19 @@ function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
     const task = { ...raw, tagIds: raw.tagIds ?? [] };
     const [detail, rows, tagRows] = await Promise.all([
       project(projectKeyOf(task.key)),
-      loadMembers(),
+      loadActors(),
       task.tagIds.length ? loadTags() : [],
     ]);
     const status = detail.statuses.find((s) => s.id === task.statusId);
     return {
       ...task,
       status: status ? { id: status.id, name: status.name, category: status.category } : null,
-      assignees: task.assigneeIds.map((id) => rows.find((m) => m.id === id)?.handle ?? id),
+      assignees: task.assigneeIds.map((id) => handleOf(rows, id)),
       tags: task.tagIds.map((id) => tagRows.find((t) => t.id === id)?.name ?? id),
     };
   };
 
-  return { sdk, credentials, whoami, org, members: loadMembers, tags: loadTags, project, describe };
+  return { sdk, credentials, whoami, org, members: loadMembers, actors: loadActors, tags: loadTags, project, describe };
 }
 
 type Api = ReturnType<typeof connect>;
@@ -327,6 +331,13 @@ function taskKey(given: string | undefined, cwd: string): string {
 }
 
 // Human-readable output: one line per item, short enough for an agent's context window.
+
+/** An actor's handle, marked when deactivated; the id if unknown. */
+const handleOf = (rows: ActorDto[], id: string) => {
+  const actor = rows.find((m) => m.id === id);
+  if (!actor) return id;
+  return actor.deactivated ? `${actor.handle} (deactivated)` : actor.handle;
+};
 
 const assigneeList = (task: CliTask) => task.assignees.map((h) => `@${h}`).join(" ");
 
@@ -1259,9 +1270,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(program.command("comments").description("show a task's comments").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
       const resolved = taskKey(key, cwd);
-      const { sdk, org, members } = conn();
-      const [{ items }, rows] = await Promise.all([(await sdk()).comments.list(await org(), resolved), members()]);
-      const handle = (id: string) => rows.find((m) => m.id === id)?.handle ?? id;
+      const { sdk, org, actors } = conn();
+      const [{ items }, rows] = await Promise.all([(await sdk()).comments.list(await org(), resolved), actors()]);
+      const handle = (id: string) => handleOf(rows, id);
       output(opts, { items }, () =>
         items.length === 0
           ? `No comments on ${resolved}`
@@ -1331,14 +1342,14 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       // Not --version: that one prints the CLI's version.
       .option("--rev <n>", "an older version number"),
   ).action(async (id: string, opts: JsonOption & { rev?: string }) => {
-    const { sdk, org, members } = conn();
+    const { sdk, org, actors } = conn();
     const client = await sdk();
     const slug = await org();
     const current = await client.documents.get(slug, id);
     const old = opts.rev === undefined ? undefined : await client.documents.versions.get(slug, id, parseLimit(opts.rev));
     const shown = old ?? { ...current, createdAt: current.updatedAt };
-    const rows = await members();
-    const handle = rows.find((m) => m.id === shown.authorId)?.handle ?? shown.authorId ?? "?";
+    const rows = await actors();
+    const handle = shown.authorId ? handleOf(rows, shown.authorId) : "?";
     const item = old ? { ...old, projectKey: current.projectKey, taskKey: current.taskKey, currentVersion: current.version } : current;
     output(opts, item, () =>
       [
