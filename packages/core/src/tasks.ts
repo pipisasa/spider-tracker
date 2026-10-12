@@ -6,11 +6,13 @@ import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import { notify } from "./inbox";
-import type { Priority, ProjectDetailDto, SubtaskDto, TaskDto } from "./contracts";
+import type { BulkTaskResultDto, BulkUpdateTasksResponse, Priority, ProjectDetailDto, SubtaskDto, TaskDto } from "./contracts";
 import { DomainError } from "./errors";
 import { listMembers } from "./organizations";
 import { getProject } from "./projects";
 import {
+  MAX_BULK_TASKS,
+  bulkUpdateTasksInput,
   createTaskInput,
   normalizeHandle,
   parseTaskKey,
@@ -384,6 +386,13 @@ async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDt
 
   if (data.priority?.length) where.push(inArray(tasks.priority, [...new Set(data.priority)]));
   if (data.q) where.push(sql`strpos(lower(${tasks.title}), ${data.q.toLowerCase()}) > 0`);
+  if (data.parent) {
+    const parent = await findTask(db, viewer, data.parent).catch((err: unknown) => {
+      if (err instanceof DomainError && err.code === "not_found") throw new DomainError("validation", `Unknown parent task "${data.parent}"`);
+      throw err;
+    });
+    where.push(eq(tasks.parentId, parent.task.id));
+  }
   return where;
 }
 
@@ -468,99 +477,206 @@ export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Pro
 export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<TaskDto> {
   assertCanWrite(ctx);
   const data: UpdateTaskInput = parseInput(updateTaskInput, input);
+  return db.transaction(async (tx) => (await applyTaskUpdate(tx, ctx, await findTask(tx, ctx, taskKey), data)).task);
+}
 
-  return db.transaction(async (tx) => {
-    const { task, projectKey } = await findTask(tx, ctx, taskKey);
-    const scope = await projectScope(tx, ctx);
-    const patch: Partial<typeof tasks.$inferInsert> = {};
-    const changes: Record<string, [unknown, unknown]> = {};
-    const track = <K extends keyof TaskRow>(field: K, value: TaskRow[K]) => {
-      if (task[field] === value) return;
-      patch[field] = value;
-      changes[field] = [task[field], value];
-    };
+type FoundTask = Awaited<ReturnType<typeof findTask>>;
 
-    if (data.title !== undefined) track("title", data.title);
-    if (data.description !== undefined) track("description", data.description);
-    if (data.priority !== undefined) track("priority", data.priority);
-    if (data.parentId !== undefined) {
-      if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId, task.id);
-      track("parentId", data.parentId);
+interface TaskUpdateOutcome {
+  task: TaskDto;
+  /** Whether anything was written (a pure re-sort counts). */
+  changed: boolean;
+}
+
+/** Applies a validated update to a task found in `tx`: the body of updateTask, shared with updateTasks. */
+async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, projectKey }: FoundTask, data: UpdateTaskInput): Promise<TaskUpdateOutcome> {
+  const scope = await projectScope(tx, ctx);
+  const patch: Partial<typeof tasks.$inferInsert> = {};
+  const changes: Record<string, [unknown, unknown]> = {};
+  const track = <K extends keyof TaskRow>(field: K, value: TaskRow[K]) => {
+    if (task[field] === value) return;
+    patch[field] = value;
+    changes[field] = [task[field], value];
+  };
+
+  if (data.title !== undefined) track("title", data.title);
+  if (data.description !== undefined) track("description", data.description);
+  if (data.priority !== undefined) track("priority", data.priority);
+  if (data.parentId !== undefined) {
+    if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId, task.id);
+    track("parentId", data.parentId);
+  }
+
+  // A position move wins over a bare status change; both re-sort the task.
+  const targetStatusId = data.position?.statusId ?? data.statusId;
+  if (targetStatusId !== undefined) {
+    const status = await findStatus(tx, task.projectId, targetStatusId);
+    if (status.id !== task.statusId || data.position) {
+      track("statusId", status.id);
+      patch.sortKey = await sortKeyFor(tx, task.projectId, status.id, data.position);
     }
-
-    // A position move wins over a bare status change; both re-sort the task.
-    const targetStatusId = data.position?.statusId ?? data.statusId;
-    if (targetStatusId !== undefined) {
-      const status = await findStatus(tx, task.projectId, targetStatusId);
-      if (status.id !== task.statusId || data.position) {
-        track("statusId", status.id);
-        patch.sortKey = await sortKeyFor(tx, task.projectId, status.id, data.position);
-      }
-      if (status.id !== task.statusId) {
-        const [previous] = await tx.select().from(statuses).where(eq(statuses.id, task.statusId)).limit(1);
-        const wasClosed = previous ? CLOSED.includes(previous.category) : false;
-        const isClosed = CLOSED.includes(status.category);
-        if (isClosed && !wasClosed) patch.completedAt = new Date();
-        if (!isClosed && wasClosed) patch.completedAt = null;
-      }
+    if (status.id !== task.statusId) {
+      const [previous] = await tx.select().from(statuses).where(eq(statuses.id, task.statusId)).limit(1);
+      const wasClosed = previous ? CLOSED.includes(previous.category) : false;
+      const isClosed = CLOSED.includes(status.category);
+      if (isClosed && !wasClosed) patch.completedAt = new Date();
+      if (!isClosed && wasClosed) patch.completedAt = null;
     }
+  }
 
-    const current = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? noLinks;
-    let assigneeIds = current.assigneeIds;
-    if (data.assigneeIds !== undefined) {
-      const next = [...new Set(data.assigneeIds)];
-      const added = next.filter((id) => !assigneeIds.includes(id));
-      // Only new assignees must be active members: a deactivated agent stays assigned
-      // (deleteAgent keeps assignments) without blocking later updates (ST-38).
-      await assertActorsInOrg(tx, ctx.orgId, added);
-      const removed = assigneeIds.filter((id) => !next.includes(id));
-      if (removed.length > 0) {
-        await tx
-          .delete(taskAssignees)
-          .where(and(eq(taskAssignees.taskId, task.id), inArray(taskAssignees.actorId, removed)));
-      }
-      if (added.length > 0) {
-        await tx
-          .insert(taskAssignees)
-          .values(added.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
-        await notify(tx, ctx, task.id, added.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
-      }
-      if (added.length > 0 || removed.length > 0) changes.assigneeIds = [assigneeIds, next];
-      assigneeIds = next;
+  const current = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? noLinks;
+  let assigneeIds = current.assigneeIds;
+  if (data.assigneeIds !== undefined) {
+    const next = [...new Set(data.assigneeIds)];
+    const added = next.filter((id) => !assigneeIds.includes(id));
+    // Only new assignees must be active members: a deactivated agent stays assigned
+    // (deleteAgent keeps assignments) without blocking later updates (ST-38).
+    await assertActorsInOrg(tx, ctx.orgId, added);
+    const removed = assigneeIds.filter((id) => !next.includes(id));
+    if (removed.length > 0) {
+      await tx
+        .delete(taskAssignees)
+        .where(and(eq(taskAssignees.taskId, task.id), inArray(taskAssignees.actorId, removed)));
     }
+    if (added.length > 0) {
+      await tx
+        .insert(taskAssignees)
+        .values(added.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
+      await notify(tx, ctx, task.id, added.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
+    }
+    if (added.length > 0 || removed.length > 0) changes.assigneeIds = [assigneeIds, next];
+    assigneeIds = next;
+  }
 
-    let tagIds = current.tagIds;
-    if (data.tagIds !== undefined) {
-      const next = [...new Set(data.tagIds)];
-      await assertTagsInOrg(tx, ctx.orgId, next);
-      const added = next.filter((id) => !tagIds.includes(id));
-      const removed = tagIds.filter((id) => !next.includes(id));
-      if (removed.length > 0) {
-        await tx.delete(taskTags).where(and(eq(taskTags.taskId, task.id), inArray(taskTags.tagId, removed)));
+  let tagIds = current.tagIds;
+  if (data.tagIds !== undefined) {
+    const next = [...new Set(data.tagIds)];
+    await assertTagsInOrg(tx, ctx.orgId, next);
+    const added = next.filter((id) => !tagIds.includes(id));
+    const removed = tagIds.filter((id) => !next.includes(id));
+    if (removed.length > 0) {
+      await tx.delete(taskTags).where(and(eq(taskTags.taskId, task.id), inArray(taskTags.tagId, removed)));
+    }
+    if (added.length > 0) await tx.insert(taskTags).values(added.map((tagId) => ({ taskId: task.id, tagId })));
+    if (added.length > 0 || removed.length > 0) changes.tagIds = [tagIds, next];
+    tagIds = next;
+  }
+
+  const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined || changes.tagIds !== undefined;
+  if (!touched) {
+    return { task: (await withProgress(tx, scope, [toTaskDto(task, projectKey, { ...current, assigneeIds, tagIds })]))[0]!, changed: false };
+  }
+
+  const [updated] = await tx
+    .update(tasks)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(tasks.id, task.id))
+    .returning();
+  if (!updated) throw new Error("Failed to update task");
+
+  // Pure reordering isn't worth an activity entry.
+  if (Object.keys(changes).length > 0) {
+    await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
+  }
+  await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
+  const links = updated.parentId ? (await linksByTask(tx, scope, [updated.id])).get(updated.id) : undefined;
+  return {
+    task: (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { ...(links ?? noLinks), assigneeIds, tagIds })]))[0]!,
+    changed: true,
+  };
+}
+
+/** Thrown inside a dry run's transaction to roll it back once the outcome is known. */
+const rollback = Symbol("dry run");
+
+/** "spi-2" → "SPI-2"; anything that doesn't parse stays as given (and fails as not found). */
+const normalizeTaskKey = (key: string) => {
+  const parsed = parseTaskKey(key);
+  return parsed ? `${parsed.projectKey}-${parsed.number}` : key;
+};
+
+/**
+ * Updates several tasks at once (ST-106): the tasks named by `keys`, or those matching `filter` in
+ * one project, at most MAX_BULK_TASKS (a filter matching more is a validation error and changes
+ * nothing). Each task is updated in its own transaction with the same checks as updateTask, so
+ * a task that is missing, outside the agent's scope or invalid for the change is reported as an
+ * error without stopping the others. `dryRun` runs every update and rolls it back.
+ */
+export async function updateTasks(db: Db, ctx: ActorContext, input: unknown): Promise<BulkUpdateTasksResponse> {
+  assertCanWrite(ctx);
+  const { keys, filter, set, dryRun = false } = parseInput(bulkUpdateTasksInput, input);
+  const { status, ...changes } = set;
+
+  let targets: string[];
+  if (keys) {
+    targets = [...new Set(keys.map(normalizeTaskKey))];
+  } else if (filter) {
+    const { project, ...filters } = filter;
+    const matched = await listTasks(db, ctx, project, filters);
+    if (matched.length > MAX_BULK_TASKS) {
+      throw new DomainError(
+        "validation",
+        `${matched.length} tasks match; at most ${MAX_BULK_TASKS} can be updated at once. Narrow the filter`,
+      );
+    }
+    targets = matched.map((t) => t.key);
+  } else {
+    throw new DomainError("validation", "Pass either keys or a filter");
+  }
+
+  // Statuses are per project, so a status name is matched in each task's own project.
+  const projectsByKey = new Map<string, Promise<ProjectDetailDto>>();
+  const statusIdIn = async (projectKey: string, value: string) => {
+    let project = projectsByKey.get(projectKey);
+    if (!project) {
+      project = getProject(db, ctx, projectKey);
+      projectsByKey.set(projectKey, project);
+    }
+    const detail = await project;
+    const match = detail.statuses.find((s) => s.id === value) ?? matchStatuses(detail, value)[0];
+    if (!match) {
+      throw new DomainError(
+        "validation",
+        `Unknown status "${value}" in ${detail.key}. Valid statuses: ${detail.statuses.map((s) => s.name).join(", ")}`,
+      );
+    }
+    return match.id;
+  };
+
+  const updateOne = async (tx: Tx, key: string) => {
+    const found = await findTask(tx, ctx, key);
+    const statusId = status === undefined ? undefined : await statusIdIn(found.projectKey, status);
+    return applyTaskUpdate(tx, ctx, found, { ...changes, statusId });
+  };
+
+  const results: BulkTaskResultDto[] = [];
+  for (const key of targets) {
+    try {
+      let outcome: TaskUpdateOutcome | undefined;
+      if (dryRun) {
+        await db
+          .transaction(async (tx) => {
+            outcome = await updateOne(tx, key);
+            throw rollback;
+          })
+          .catch((err: unknown) => {
+            if (err !== rollback) throw err;
+          });
+      } else {
+        outcome = await db.transaction((tx) => updateOne(tx, key));
       }
-      if (added.length > 0) await tx.insert(taskTags).values(added.map((tagId) => ({ taskId: task.id, tagId })));
-      if (added.length > 0 || removed.length > 0) changes.tagIds = [tagIds, next];
-      tagIds = next;
+      if (!outcome) throw new Error("Bulk update produced no outcome");
+      const { task, changed } = outcome;
+      results.push({ key: task.key, outcome: changed ? "changed" : "unchanged", task, error: null });
+    } catch (err) {
+      // Unexpected failures (the database going away) still fail the request.
+      if (!(err instanceof DomainError)) throw err;
+      results.push({ key, outcome: "error", task: null, error: { code: err.code, message: err.message } });
     }
+  }
 
-    const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined || changes.tagIds !== undefined;
-    if (!touched) return (await withProgress(tx, scope, [toTaskDto(task, projectKey, { ...current, assigneeIds, tagIds })]))[0]!;
-
-    const [updated] = await tx
-      .update(tasks)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(tasks.id, task.id))
-      .returning();
-    if (!updated) throw new Error("Failed to update task");
-
-    // Pure reordering isn't worth an activity entry.
-    if (Object.keys(changes).length > 0) {
-      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
-    }
-    await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
-    const links = updated.parentId ? (await linksByTask(tx, scope, [updated.id])).get(updated.id) : undefined;
-    return (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { ...(links ?? noLinks), assigneeIds, tagIds })]))[0]!;
-  });
+  const count = (outcome: BulkTaskResultDto["outcome"]) => results.filter((r) => r.outcome === outcome).length;
+  return { dryRun, summary: { changed: count("changed"), unchanged: count("unchanged"), failed: count("error") }, results };
 }
 
 export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Promise<void> {

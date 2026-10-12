@@ -93,6 +93,26 @@ export interface TaskDto {
   subtasks: { done: number; total: number } | null;
 }
 
+/** What a bulk update did to one task (ST-106); in a dry run, "changed" means it would change. */
+export type BulkTaskOutcome = "changed" | "unchanged" | "error";
+
+export interface BulkTaskResultDto {
+  /** The task's key; for an error, the key as given (normalized when it parses). */
+  key: string;
+  outcome: BulkTaskOutcome;
+  /** The task after the change (as it would be, in a dry run); null on error. */
+  task: TaskDto | null;
+  /** Why this task wasn't changed: a domain error code ("not_found", "validation", …) and message. */
+  error: { code: string; message: string } | null;
+}
+
+export interface BulkUpdateTasksResponse {
+  dryRun: boolean;
+  summary: { changed: number; unchanged: number; failed: number };
+  /** One per task, in the order of the keys given or, for a filter, in board order. */
+  results: BulkTaskResultDto[];
+}
+
 /** An agent working on a task right now (ST-67): it acted on or read the task within the last 10 minutes. */
 export interface PresenceDto {
   taskKey: string;

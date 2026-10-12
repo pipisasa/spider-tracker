@@ -8,7 +8,8 @@ import { createOrganization } from "./organizations";
 import { archiveProject, createProject, getProject, listProjects, updateProject } from "./projects";
 import { listTaskActivity } from "./activity-feed";
 import { createTag } from "./tags";
-import { createTask, deleteTask, getTask, listTasks, updateTask } from "./tasks";
+import { MAX_BULK_TASKS } from "./schemas";
+import { createTask, deleteTask, getTask, listTasks, updateTask, updateTasks } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -237,6 +238,122 @@ run("projects and tasks", () => {
     const theirsCtx: ActorContext = { ...ctx, actorId: theirs.actor.id, role: "member" };
     expect(await titles(theirsCtx, { assignee: ["mine"] })).toEqual(["Other's", "Theirs"]);
     await expect(listTasks(db, ctx.orgId, "MIN", { assignee: ["mine"] })).rejects.toMatchObject({ code: "validation" });
+  });
+
+  test("bulk update by keys: per-task outcomes, statuses matched in each task's project, errors don't stop the rest", async () => {
+    await createProject(db, ctx, { name: "Bulk A", key: "BKA" });
+    await createProject(db, ctx, { name: "Bulk B", key: "BKB" });
+    const a1 = await createTask(db, ctx, "BKA", { title: "A one" });
+    const a2 = await createTask(db, ctx, "BKA", { title: "A two" });
+    const b1 = await createTask(db, ctx, "BKB", { title: "B one" });
+    await updateTask(db, ctx, a2.key, { statusId: (await getProject(db, ctx, "BKA")).statuses.find((s) => s.category === "done")?.id });
+
+    const result = await updateTasks(db, ctx, { keys: ["bka-1", a2.key, b1.key, "BKA-99", "nope", "BKA-1"], set: { status: "Done" } });
+    expect(result.dryRun).toBe(false);
+    expect(result.summary).toEqual({ changed: 2, unchanged: 1, failed: 2 });
+    expect(result.results.map((r) => [r.key, r.outcome])).toEqual([
+      ["BKA-1", "changed"],
+      ["BKA-2", "unchanged"],
+      ["BKB-1", "changed"],
+      ["BKA-99", "error"],
+      ["nope", "error"],
+    ]);
+    expect(result.results[3]?.error).toEqual({ code: "not_found", message: "Task BKA-99 not found" });
+    const bkb = await getProject(db, ctx, "BKB");
+    const doneIn = (p: typeof bkb) => p.statuses.find((s) => s.category === "done")?.id;
+    expect((await getTask(db, ctx, b1.key)).statusId).toBe(doneIn(bkb) ?? "");
+    expect((await getTask(db, ctx, a1.key)).completedAt).not.toBeNull();
+    const log = await listTaskActivity(db, ctx.orgId, a1.key);
+    expect(log.map((e) => e.action)).toEqual(["task.created", "task.updated"]);
+
+    // A status missing in one task's project fails that task only.
+    await db.update(schema.statuses).set({ name: "Shipped" }).where(eq(schema.statuses.id, doneIn(bkb) ?? ""));
+    const mixed = await updateTasks(db, ctx, { keys: [a1.key, b1.key], set: { status: "Todo", priority: 2 } });
+    expect(mixed.results.map((r) => r.outcome)).toEqual(["changed", "changed"]);
+    const renamed = await updateTasks(db, ctx, { keys: [a1.key, b1.key], set: { status: "Shipped" } });
+    expect(renamed.results.map((r) => r.outcome)).toEqual(["error", "changed"]);
+    expect(renamed.results[0]?.error?.message).toStartWith('Unknown status "Shipped" in BKA');
+  });
+
+  test("bulk update by filter, dry run, batch limit and bad input", async () => {
+    await createProject(db, ctx, { name: "Bulk F", key: "BKF" });
+    const parent = await createTask(db, ctx, "BKF", { title: "Parent" });
+    for (const title of ["Kid 1", "Kid 2", "Kid 3"]) await createTask(db, ctx, "BKF", { title, parentId: parent.id });
+    await createTask(db, ctx, "BKF", { title: "Loose" });
+    const backlogOf = async () => (await getProject(db, ctx, "BKF")).statuses.find((s) => s.category === "backlog")?.id;
+
+    const filter = { project: "bkf", parent: parent.key, status: ["todo"] };
+    expect((await listTasks(db, ctx, "BKF", { parent: parent.key })).map((t) => t.title)).toEqual(["Kid 1", "Kid 2", "Kid 3"]);
+
+    const preview = await updateTasks(db, ctx, { filter, set: { status: "Backlog" }, dryRun: true });
+    expect(preview).toMatchObject({ dryRun: true, summary: { changed: 3, unchanged: 0, failed: 0 } });
+    expect(preview.results[0]?.task?.statusId).toBe((await backlogOf()) ?? "");
+    // Nothing was written.
+    expect((await listTasks(db, ctx, "BKF", { status: ["backlog"] })).length).toBe(0);
+    expect((await listTaskActivity(db, ctx.orgId, "BKF-2")).map((e) => e.action)).toEqual(["task.created"]);
+
+    const applied = await updateTasks(db, ctx, { filter, set: { status: "Backlog" } });
+    expect(applied.results.map((r) => [r.key, r.outcome])).toEqual([
+      ["BKF-2", "changed"],
+      ["BKF-3", "changed"],
+      ["BKF-4", "changed"],
+    ]);
+    expect((await listTasks(db, ctx, "BKF", { status: ["backlog"] })).map((t) => t.title)).toEqual(["Kid 1", "Kid 2", "Kid 3"]);
+    expect((await updateTasks(db, ctx, { filter, set: { status: "Backlog" } })).results).toEqual([]);
+
+    await expect(updateTasks(db, ctx, { filter: { project: "BKF", parent: "BKF-99" }, set: { priority: 1 } })).rejects.toMatchObject({
+      code: "validation",
+    });
+    await expect(updateTasks(db, ctx, { filter: { project: "NOPE" }, set: { priority: 1 } })).rejects.toMatchObject({ code: "not_found" });
+    for (const input of [
+      { keys: ["BKF-1"], set: {} },
+      { set: { priority: 1 } },
+      { keys: ["BKF-1"], filter: { project: "BKF" }, set: { priority: 1 } },
+      { keys: Array.from({ length: MAX_BULK_TASKS + 1 }, (_, i) => `BKF-${i + 1}`), set: { priority: 1 } },
+    ]) {
+      await expect(updateTasks(db, ctx, input)).rejects.toMatchObject({ code: "validation" });
+    }
+    await expect(updateTasks(db, { ...ctx, role: "guest" }, { keys: ["BKF-1"], set: { priority: 1 } })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+
+    // A filter matching more than the limit changes nothing.
+    await db.insert(schema.tasks).values(
+      Array.from({ length: MAX_BULK_TASKS }, (_, i) => ({
+        orgId: ctx.orgId,
+        projectId: parent.projectId,
+        number: 1000 + i,
+        title: `Filler ${i}`,
+        statusId: parent.statusId,
+        sortKey: `z${String(i).padStart(4, "0")}`,
+        creatorId: ctx.actorId,
+      })),
+    );
+    await expect(updateTasks(db, ctx, { filter: { project: "BKF" }, set: { priority: 3 } })).rejects.toThrow(
+      `at most ${MAX_BULK_TASKS} can be updated at once`,
+    );
+    expect((await listTasks(db, ctx, "BKF", { priority: [3] })).length).toBe(0);
+  });
+
+  test("bulk update checks a scoped agent's projects per task", async () => {
+    await createProject(db, ctx, { name: "In scope", key: "BKS" });
+    const hidden = await createProject(db, ctx, { name: "Out of scope", key: "BKH" });
+    const visible = await createTask(db, ctx, "BKS", { title: "Visible" });
+    const secret = await createTask(db, ctx, "BKH", { title: "Secret" });
+    const bot = await createAgent(db, ctx, { name: "Scoped bot", handle: `scoped-${Date.now()}` });
+    const scoped = await getProject(db, ctx, "BKS");
+    await db.insert(schema.agentProjects).values({ agentId: bot.actor.id, projectId: scoped.id });
+    const botCtx: ActorContext = { ...ctx, actorId: bot.actor.id, role: "member" };
+
+    const result = await updateTasks(db, botCtx, { keys: [visible.key, secret.key], set: { priority: 1 } });
+    expect(result.results.map((r) => [r.key, r.outcome, r.error?.code ?? null])).toEqual([
+      [visible.key, "changed", null],
+      [secret.key, "error", "not_found"],
+    ]);
+    expect((await getTask(db, ctx, secret.key)).priority).toBe(0);
+    await expect(updateTasks(db, botCtx, { filter: { project: hidden.key }, set: { priority: 1 } })).rejects.toMatchObject({
+      code: "not_found",
+    });
   });
 
   test("a missing project is not_found, filtered or not, before the filters are checked", async () => {
