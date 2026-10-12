@@ -1,5 +1,5 @@
 import type { AuthProvider } from "@repo/core";
-import { isEmailAllowed, isSignupAllowed, parseAllowlist } from "@repo/core";
+import { isSignupAllowed, mayReceiveMagicLink, parseAllowlist } from "@repo/core";
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { betterAuth } from "better-auth";
@@ -25,12 +25,24 @@ export function enabledAuthProviders(env: Env): AuthProvider[] {
  */
 export const CLIENT_IP_HEADER = "x-spider-client-ip";
 
+/** Sends magic-link email after the response: logs failures, never the link or the key. */
+export function sendInBackground(task: Promise<void>): void {
+  task.catch((err: unknown) => console.error("[mail] sending a magic link failed:", err));
+}
+
 export function createAuth(
   db: Db,
   env: Env,
   mailer: Mailer,
-  /** Better Auth's own rate limits; on in production by default. */
-  { rateLimit = env.NODE_ENV === "production" }: { rateLimit?: boolean } = {},
+  {
+    rateLimit = env.NODE_ENV === "production",
+    background = sendInBackground,
+  }: {
+    /** Better Auth's own rate limits; on in production by default. */
+    rateLimit?: boolean;
+    /** Runs the email send without holding the response open; tests may replace it. */
+    background?: (task: Promise<void>) => void;
+  } = {},
 ) {
   const github =
     env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
@@ -59,13 +71,12 @@ export function createAuth(
     plugins: [
       magicLink({
         sendMagicLink: async ({ email, url }) => {
-          // Don't send links that could only end in a refused sign-up; the response stays the
-          // same either way, so the form doesn't reveal who is allowed.
-          if (!isEmailAllowed(email, allowlist)) {
-            const [existing] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, email.toLowerCase())).limit(1);
-            if (!existing) return;
-          }
-          await mailer.sendMagicLink(email, url);
+          // Don't send links that could only end in a refused sign-up. Both paths do the same
+          // lookup and the email goes out in the background, so neither the response nor its
+          // timing reveals who is allowed (ST-56).
+          const [existing] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, email.toLowerCase())).limit(1);
+          if (!mayReceiveMagicLink({ email, allowlist, userExists: existing !== undefined })) return;
+          background(mailer.sendMagicLink(email, url));
         },
       }),
       ...bateleId,

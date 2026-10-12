@@ -20,3 +20,19 @@ export function isSignupAllowed(user: { email: string; emailVerified: boolean },
   if (allowlist.length === 0) return true;
   return user.emailVerified && isEmailAllowed(user.email, allowlist);
 }
+
+/**
+ * Magic links go to existing users and to addresses that could sign up; anything else could only
+ * end in a refused sign-up (ST-17). Callers look the user up on every path so timing stays equal (ST-56).
+ */
+export function mayReceiveMagicLink({
+  email,
+  allowlist,
+  userExists,
+}: {
+  email: string;
+  allowlist: string[];
+  userExists: boolean;
+}): boolean {
+  return userExists || isEmailAllowed(email, allowlist);
+}

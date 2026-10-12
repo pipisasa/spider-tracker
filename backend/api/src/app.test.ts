@@ -698,6 +698,33 @@ withDb("sign-up allowlist", () => {
     expect(blocked).toBeUndefined();
   });
 
+  test("the response doesn't wait for the email, and refused addresses trigger no send", async () => {
+    const started: string[] = [];
+    let release = () => {};
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const slowAuth = createAuth(db, gated, {
+      async sendMagicLink(email) {
+        started.push(email);
+        await released;
+      },
+    });
+    const slowApp = createApp({ db, auth: slowAuth, env: gated });
+    const send = (email: string) =>
+      slowApp.request("/api/auth/sign-in/magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: gated.WEB_ORIGIN },
+        body: JSON.stringify({ email, callbackURL: `${gated.WEB_ORIGIN}/` }),
+      });
+
+    // Answers while the mailer is still pending.
+    expect((await send(`slow-${stamp}@allowed-domain.test`)).status).toBe(200);
+    expect(started).toEqual([`slow-${stamp}@allowed-domain.test`]);
+
+    expect((await send(refused)).status).toBe(200);
+    expect(started).toHaveLength(1);
+    release();
+  });
+
   test("validateUserInfo refuses new users outside the list, for any sign-in method", async () => {
     const hook = gatedAuth.options.user?.validateUserInfo;
     if (!hook) throw new Error("validateUserInfo is not configured");
