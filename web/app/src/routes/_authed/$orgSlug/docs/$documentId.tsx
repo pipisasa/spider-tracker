@@ -3,6 +3,7 @@ import {
   DocumentIcon,
   FORMAT_LABELS,
   formatDateTime,
+  MoveDocumentDialog,
 } from "@/components/documents";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,7 @@ import {
   ChevronRightIcon,
   CodeIcon,
   EyeIcon,
+  FolderInputIcon,
   HistoryIcon,
   PencilIcon,
   RotateCcwIcon,
@@ -70,6 +72,7 @@ function DocumentPage() {
   const { membership } = Route.useRouteContext();
   const { data: doc } = useSuspenseQuery(documentQuery(orgSlug, documentId));
   const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
+  const [moving, setMoving] = useState(false);
   const [showHistory, setShowHistory] = useState(version !== undefined);
   // Bumped to restart the editor from the latest saved version.
   const [session, setSession] = useState(0);
@@ -186,6 +189,14 @@ function DocumentPage() {
                     Edit
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMoving(true)}
+                  >
+                    <FolderInputIcon />
+                    Move to…
+                  </Button>
+                  <Button
                     variant="ghost"
                     size="icon-sm"
                     className="text-destructive hover:text-destructive"
@@ -212,6 +223,16 @@ function DocumentPage() {
           </>
         )}
       </main>
+
+      {canWrite && (
+        <MoveDocumentDialog
+          key={`${doc.projectKey}-${doc.taskKey}`}
+          orgSlug={orgSlug}
+          doc={doc}
+          open={moving}
+          onOpenChange={setMoving}
+        />
+      )}
 
       {showHistory && !edit && (
         <aside className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto border-l p-4">

@@ -37,6 +37,7 @@ See [git-integration.md](./git-integration.md).
 ## Documents
 
 - Markdown and HTML documents at organization, project or task level
+- A project page lists its docs (with its tasks'); the documents page filters by project; documents move between projects or to the organization, keeping their history (a task document leaves its task)
 - Rich editor with a Markdown source toggle and live HTML preview
 - Version history and diffs
 - Mentions of tasks, actors and other documents
