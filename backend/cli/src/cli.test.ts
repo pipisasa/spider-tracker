@@ -222,6 +222,56 @@ describe("saved agents", () => {
     }
   });
 
+  test("mcp-headers --server only gives a key for that server", async () => {
+    const { env, cleanup } = savedAgents();
+    const headers = async (argv: string[], extra: Record<string, string> = {}) => {
+      const result = await cli(argv, { env: { ...env, ...extra } });
+      expect(result.code).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, string>;
+    };
+    try {
+      // The default (prod/acme/reviewer) is on prod.
+      expect(await headers(["mcp-headers", "--server", "prod"])).toEqual({ Authorization: "Bearer spt_rev" });
+      expect(await headers(["mcp-headers", "--server", "https://api.test"])).toEqual({ Authorization: "Bearer spt_rev" });
+      expect(await headers(["mcp-headers", "--server", "local"])).toEqual({});
+      // A local agent in use (spider claude local/…, or a local default) sends nothing to prod.
+      expect(await headers(["mcp-headers", "--server", "prod"], { SPIDER_AGENT: "local/acme/writer" })).toEqual({});
+      expect(await headers(["mcp-headers", "--server", "prod", "--as", "local/acme/writer"])).toEqual({});
+      expect(await headers(["mcp-headers", "--server", "local"], { SPIDER_AGENT: "local/acme/writer" })).toEqual({
+        Authorization: "Bearer spt_local",
+      });
+      expect((await cli(["agents", "default", "local/acme/writer"], { env })).code).toBe(0);
+      const none = await cli(["mcp-headers", "--server", "prod"], { env });
+      expect(none.stdout).toBe("{}\n");
+      expect(none.stdout + none.stderr).not.toContain("spt_");
+      // Without --server, the default is still used, wherever it is.
+      expect(await headers(["mcp-headers"])).toEqual({ Authorization: "Bearer spt_local" });
+      // SPIDER_TOKEN only when SPIDER_API_URL is that server (unset = prod).
+      expect(await headers(["mcp-headers", "--server", "prod"], { SPIDER_TOKEN: "spt_env" })).toEqual({
+        Authorization: "Bearer spt_env",
+      });
+      expect(
+        await headers(["mcp-headers", "--server", "prod"], { SPIDER_TOKEN: "spt_env", SPIDER_API_URL: "http://localhost:4000" }),
+      ).toEqual({});
+      expect(
+        await headers(["mcp-headers", "--server", "local"], { SPIDER_TOKEN: "spt_env", SPIDER_API_URL: "http://localhost:4000/" }),
+      ).toEqual({ Authorization: "Bearer spt_env" });
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("mcp-headers --server with nothing saved prints no headers", async () => {
+    const home = mkdtempSync(join(tmpdir(), "spider-home-"));
+    try {
+      const result = await cli(["mcp-headers", "--server", "prod"], { env: { HOME: home, SPIDER_CONFIG_DIR: join(home, "config") } });
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe("{}\n");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("whoami names the saved agent and talks to its server", async () => {
     const { env, cleanup } = savedAgents();
     try {
@@ -304,7 +354,7 @@ describe("saved agents", () => {
           spider: {
             type: "http",
             url: "https://api.test/mcp",
-            headersHelper: "/usr/local/bin/bun /repo/backend/cli/src/index.ts mcp-headers --as prod/acme/reviewer",
+            headersHelper: "/usr/local/bin/bun /repo/backend/cli/src/index.ts mcp-headers --as prod/acme/reviewer --server prod",
           },
           "spider-channel": {
             type: "stdio",

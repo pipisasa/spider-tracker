@@ -143,6 +143,17 @@ export function resolveServer(
   return { key: nameFromUrl(value), server: { url: trimUrl(value) } };
 }
 
+/** Whether the server saved as `key` with API `url` is `target` (same name or same API origin). */
+export function isServer(
+  target: { key: string; server: Server },
+  key: string,
+  url: string,
+): boolean {
+  if (key === target.key) return true;
+  const a = origin(url);
+  return a !== undefined && a === origin(target.server.url);
+}
+
 /** The server an invite link points at (its web or API origin), if the CLI knows it. */
 export function serverForLink(
   store: Store,

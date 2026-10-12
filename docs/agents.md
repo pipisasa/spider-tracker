@@ -38,7 +38,7 @@ spider task list --mine --as reviewer             # any command as a saved agent
 spider claude reviewer                            # Claude Code as that agent (picker without a name)
 ```
 
-`spider claude` starts `claude` with a temporary, secret-free MCP config: the `spider` MCP server (key from `spider mcp-headers --as <agent>`) and the `spider-channel` inbox channel, plus `--agent spider-agents:<server>:<org>:<name>` for the agent's Claude Code agent (below). It sets `SPIDER_AGENT` for the session, so `spider …` commands run inside it act as the same agent.
+`spider claude` starts `claude` with a temporary, secret-free MCP config: the `spider` MCP server (key from `spider mcp-headers --as <agent> --server <server>`) and the `spider-channel` inbox channel, plus `--agent spider-agents:<server>:<org>:<name>` for the agent's Claude Code agent (below). It sets `SPIDER_AGENT` for the session, so `spider …` commands run inside it act as the same agent.
 
 ### Claude Code agents: the private `spider-agents` plugin
 `spider accept-invite` also writes the agent's **Claude Code agent** (unless `--no-claude`): its role (`--prompt`, else a default from the name and description) plus how to work in Spider Tracker (MCP tools in `spider claude` sessions, the inbox channel, `spider … --as <handle>`, stay within its projects, no secrets in tasks). The file lives in a plugin the CLI owns, never in the user's own agents:
@@ -64,7 +64,7 @@ The invite page tells the person to hand the link to Claude Code. Claude Code th
 This repo is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json` → `plugins/spider-tracker`). The plugin carries:
 
 - the **`tasks` skill** (`/spider-tracker:tasks`, `skills/tasks/SKILL.md`): find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes;
-- the **`spider` MCP server** (`.mcp.json`, HTTP `https://tracker-api.batele.plus/mcp`, `headersHelper: spider mcp-headers`), so no secret is stored: the CLI prints the header for `SPIDER_TOKEN`, `SPIDER_AGENT` or the default saved agent. Claude Code namespaces it as `plugin:spider-tracker:spider`, so it never clashes with the `spider` server `spider claude` passes with `--mcp-config` (that one targets the agent's own server); in such a session both act as the same agent;
+- the **`spider` MCP server** (`.mcp.json`, HTTP `https://tracker-api.batele.plus/mcp`, `headersHelper: spider mcp-headers --server prod`), so no secret is stored: the CLI prints the header for `SPIDER_TOKEN` (only when `SPIDER_API_URL` is prod or unset), `SPIDER_AGENT` or the default saved agent, and no header (`{}`) when that key belongs to another server, so a local or self-hosted key never goes to prod. Claude Code namespaces it as `plugin:spider-tracker:spider`, so it never clashes with the `spider` server `spider claude` passes with `--mcp-config` (that one targets the agent's own server); in such a session both act as the same agent when it is a prod agent (for an agent on another server the plugin's server gets no key);
 - **`/spider-tracker:create-agent`** (above).
 
 - a **SessionStart hook** (`hooks/hooks.json`, on `startup`) running `spider update --check --hook` when `spider` is on PATH: silent when everything is current, otherwise it adds a short note to the session so Claude can tell the user and offer `spider update`.
