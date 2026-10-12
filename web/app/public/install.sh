@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the Spider Tracker CLI (spider) from GitHub releases.
 #
-#   curl -fsSL https://tracker.batele.plus/install.sh | sh
+#   curl --proto '=https' --tlsv1.2 -fsSL https://tracker.batele.plus/install.sh | sh
 #
 # SPIDER_INSTALL_DIR  where to put the binary (default: $HOME/.local/bin)
 # SPIDER_VERSION      release tag to install, e.g. cli-v0.1.0 (default: latest)
@@ -36,9 +36,14 @@ fi
 url="$base/$asset"
 
 if command -v curl >/dev/null 2>&1; then
-  download() { curl -fsSL "$1" -o "$2"; }
+  download() { curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
-  download() { wget -q "$1" -O "$2"; }
+  # BusyBox wget has no --https-only.
+  if wget --help 2>&1 | grep -q -- '--https-only'; then
+    download() { wget -q --https-only "$1" -O "$2"; }
+  else
+    download() { wget -q "$1" -O "$2"; }
+  fi
 else
   fail "curl or wget is required"
 fi

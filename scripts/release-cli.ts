@@ -53,6 +53,13 @@ if (!dryRun) {
     );
     process.exit(1);
   }
+  // GitHub creates the tag at HEAD, so HEAD must already be pushed (as far as the last fetch knows).
+  if ((await output(["git", "branch", "-r", "--contains", head])) === "") {
+    console.error(
+      `HEAD (${head.slice(0, 7)}) is not on any remote branch. Push it first (or run git fetch if it is).`,
+    );
+    process.exit(1);
+  }
   if ((await run(["gh", "auth", "status"], true)) !== 0) {
     console.error("gh is not signed in. Run `gh auth login` first.");
     process.exit(1);

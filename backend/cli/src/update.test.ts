@@ -362,7 +362,10 @@ describe("spider update", () => {
       env,
       httpFetch: github({ tag: `cli-v${NEWER}` }).fetch,
       runClaude,
-      selfUpdate: async (version) => updated.push(version),
+      selfUpdate: async (version) => {
+        updated.push(version);
+        return undefined;
+      },
     });
     expect(result.code).toBe(0);
     expect(updated).toEqual([NEWER]);
@@ -381,6 +384,59 @@ describe("spider update", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  test("after replacing the binary, the new one updates the plugin and agent files", async () => {
+    const { env } = home("0.2.0");
+    const path = withAgent(env, "0.0.1");
+    const claude: string[][] = [];
+    const spawned: string[][] = [];
+    const result = await cli(["update", "--json"], {
+      env,
+      httpFetch: github({ tag: `cli-v${NEWER}` }).fetch,
+      runClaude: async (args) => {
+        claude.push(args);
+        return { exitCode: 0, output: "" };
+      },
+      selfUpdate: async () => "/opt/bin/spider",
+      spawn: async (argv) => {
+        spawned.push(argv);
+        return 3;
+      },
+    });
+    expect(spawned).toEqual([
+      ["/opt/bin/spider", "update", "--updated-from", CLI_VERSION, "--json"],
+    ]);
+    expect(result).toEqual({ code: 3, stdout: "", stderr: "" });
+    // Left to the new binary.
+    expect(claude).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(agentFile("0.0.1"));
+  });
+
+  test("--updated-from skips the binary and reports the update it finishes", async () => {
+    const { env } = home();
+    const path = withAgent(env, "0.0.1");
+    const gh = github({ tag: `cli-v${NEWER}` });
+    const result = await cli(["update", "--updated-from", "0.0.1", "--json"], {
+      env,
+      httpFetch: gh.fetch,
+      selfUpdate: async () => {
+        throw new Error("must not replace the binary again");
+      },
+    });
+    expect(result.code).toBe(0);
+    expect(gh.urls).toEqual([]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      cli: {
+        from: "0.0.1",
+        to: CLI_VERSION,
+        updated: true,
+        note: `Updated spider 0.0.1 → ${CLI_VERSION}`,
+      },
+      agents: { refreshed: [path] },
+      restart: true,
+    });
+    expect(readFileSync(path, "utf8")).toBe(agentFile(CLI_VERSION));
   });
 
   test("from source it says to git pull; without claude it skips the plugin", async () => {
@@ -415,7 +471,10 @@ describe("spider update", () => {
       env,
       httpFetch: github().fetch,
       runClaude: async () => ({ exitCode: 0, output: "" }),
-      selfUpdate: async (version) => updated.push(version),
+      selfUpdate: async (version) => {
+        updated.push(version);
+        return undefined;
+      },
     });
     expect(updated).toEqual([]);
     expect(result.stdout).toContain(`spider ${CLI_VERSION} is up to date`);

@@ -98,5 +98,10 @@ process.exitCode = await run(process.argv.slice(2), {
   isInteractive: !!process.stderr.isTTY,
   confirm: interactive ? confirm : undefined,
   binaryPath: isCompiled() ? process.execPath : undefined,
-  selfUpdate: isCompiled() ? (version) => replaceBinary(version, (input, init) => fetch(input, init)) : undefined,
+  selfUpdate: isCompiled()
+    ? (version) =>
+        replaceBinary(version, (input, init) => fetch(input, init), {
+          warn: (message) => process.stderr.write(`spider update: warning: ${message}\n`),
+        })
+    : undefined,
 });
