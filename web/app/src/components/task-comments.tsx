@@ -66,19 +66,25 @@ export function describeActivity(
   return parts.join(", ") || null;
 }
 
-/** "added bug, removed ui tags"; ids of deleted tags read "a deleted tag". */
+/** "added tag bug", "added tags bug, ui and removed 1 deleted tag". */
 function describeTagChange(from: unknown, to: unknown, tags: Map<string, string>): string {
   const before = Array.isArray(from) ? from.map(String) : [];
   const after = Array.isArray(to) ? to.map(String) : [];
-  const name = (id: string) => tags.get(id) ?? "a deleted tag";
-  const added = after.filter((id) => !before.includes(id)).map(name);
-  const removed = before.filter((id) => !after.includes(id)).map(name);
+  const phrase = (verb: string, ids: string[]) => {
+    if (ids.length === 0) return null;
+    const names = ids.flatMap((id) => tags.get(id) ?? []);
+    const gone = ids.length - names.length;
+    const parts = [
+      names.length > 0 ? `${names.length > 1 ? "tags" : "tag"} ${names.join(", ")}` : null,
+      gone > 0 ? `${gone} deleted ${gone > 1 ? "tags" : "tag"}` : null,
+    ].filter((part) => part !== null);
+    return `${verb} ${parts.join(" and ")}`;
+  };
   const bits = [
-    added.length > 0 ? `added ${added.join(", ")}` : null,
-    removed.length > 0 ? `removed ${removed.join(", ")}` : null,
+    phrase("added", after.filter((id) => !before.includes(id))),
+    phrase("removed", before.filter((id) => !after.includes(id))),
   ].filter((bit) => bit !== null);
-  if (bits.length === 0) return "changed tags";
-  return `${bits.join(", ")} ${added.length + removed.length > 1 ? "tags" : "tag"}`;
+  return bits.length > 0 ? bits.join(", ") : "changed tags";
 }
 
 type TimelineItem =

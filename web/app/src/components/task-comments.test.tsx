@@ -17,8 +17,9 @@ const tags = new Map([
 
 test("tag edits name the added and removed tags", () => {
   const describe = (from: string[], to: string[]) => describeActivity(update({ tagIds: [from, to] }), [], new Map(), tags);
-  expect(describe([], ["t1"])).toBe("added bug tag");
-  expect(describe(["t1"], ["t2"])).toBe("added ui, removed bug tags");
-  expect(describe(["t1", "gone"], [])).toBe("removed bug, a deleted tag tags");
+  expect(describe([], ["t1"])).toBe("added tag bug");
+  expect(describe([], ["t1", "t2"])).toBe("added tags bug, ui");
+  expect(describe(["t1"], ["t2"])).toBe("added tag ui, removed tag bug");
+  expect(describe(["t1", "gone"], [])).toBe("removed tag bug and 1 deleted tag");
   expect(describe(["t1"], ["t1"])).toBe("changed tags");
 });
