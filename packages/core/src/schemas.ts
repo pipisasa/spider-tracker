@@ -193,9 +193,9 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
 
 /**
  * Words with a meaning in assignee filters ("me" the viewer, "mine" the viewer's person and their
- * agents, "none" unassigned); no actor may take them.
+ * agents, "none" unassigned), and "github", the GitHub bot's handle (ST-82); no other actor may take them.
  */
-export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none"];
+export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none", "github"];
 
 /** A handle as typed in a filter or a command: trimmed, without a leading "@", lowercase. */
 export const normalizeHandle = (value: string) => value.trim().replace(/^@/, "").toLowerCase();
@@ -207,7 +207,7 @@ const agentHandle = z
   .toLowerCase()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
   .max(32)
-  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine" and "none" are reserved`);
+  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine", "none" and "github" are reserved`);
 
 export const createAgentInput = z.object({
   name: agentName,

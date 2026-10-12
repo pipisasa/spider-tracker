@@ -82,6 +82,8 @@ import type { Db } from "@repo/db";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { toActorDto } from "../dto";
+import type { GithubApp } from "../github";
+import { githubOrgRoutes } from "./github";
 import type { Realtime } from "../realtime";
 import type { AppEnv } from "../types";
 
@@ -98,8 +100,16 @@ const MAX_INBOX_WAIT_SECONDS = 25;
 const INBOX_RECHECK_MS = 5000;
 const SSE_HEARTBEAT_MS = 20_000;
 
-/** Organization-scoped routes, mounted at /v1/orgs/:orgSlug; `webOrigin` builds the `url` fields. */
-export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
+/**
+ * Organization-scoped routes, mounted at /v1/orgs/:orgSlug; `webOrigin` builds the `url` fields.
+ * `github` is the GitHub App (null when not configured) and the secret that signs its install state.
+ */
+export function orgRoutes(
+  db: Db,
+  realtime: Realtime,
+  webOrigin: string,
+  github: { app: GithubApp | null; stateSecret: string },
+) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -209,6 +219,9 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     await deleteTag(db, c.get("actor"), c.req.param("tagId"));
     return c.body(null, 204);
   });
+
+  // The GitHub App (ST-82): Settings → GitHub.
+  app.route("/github", githubOrgRoutes(db, github.app, github.stateSecret));
 
   // Repos and their apps (ST-92); a repo is addressed as /repos/:owner/:name.
   const repoRef = (c: C) => `${c.req.param("owner")}/${c.req.param("name")}`;

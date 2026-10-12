@@ -53,6 +53,8 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 ### API
 
 - Repos and apps (ST-92): `GET|POST /v1/orgs/{org}/repos`, `GET|PATCH|DELETE /v1/orgs/{org}/repos/{owner}/{name}`, `POST …/apps`, `PATCH|DELETE …/apps/{app}`, and `POST /v1/orgs/{org}/projects/{key}/repos` / `DELETE …/repos/{owner}/{name}` to attach and detach. SDK: `repos.*`. Web: Settings → Repos.
+- GitHub App (ST-82): `GET /v1/orgs/{org}/github`, `POST …/github/install`, `POST …/github/installations/{id}/sync`, `DELETE …/github/installations/{id}`, and the `/github/setup` callback. Connecting an installation links the organization's existing repos (same `owner/name`) and adds the others. Off unless the server sets all `GITHUB_APP_*` variables (`configured: false`, `503`). Web: Settings → GitHub.
+- Actors can have `type: "integration"`: the per-organization GitHub bot (`@github`, now a reserved handle). `GET /members` leaves it out; `?all=true` includes it, so clients that switch on `type` should expect a third value.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
 

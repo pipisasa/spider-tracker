@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { aliasedTable, and, asc, desc, eq, exists, inArray, isNull, lt, not, or, sql, type SQL } from "drizzle-orm";
+import { aliasedTable, and, asc, desc, eq, exists, inArray, isNull, lt, ne, not, or, sql, type SQL } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
@@ -158,7 +158,9 @@ async function assertActorsInOrg(tx: Tx, orgId: string, actorIds: string[]) {
   const rows = await tx
     .select({ id: actors.id })
     .from(actors)
-    .where(and(eq(actors.orgId, orgId), inArray(actors.id, unique), isNull(actors.deactivatedAt)));
+    .where(
+      and(eq(actors.orgId, orgId), inArray(actors.id, unique), isNull(actors.deactivatedAt), ne(actors.type, "integration")),
+    );
   if (rows.length !== unique.length) throw new DomainError("validation", "Assignees must be members of this organization");
 }
 

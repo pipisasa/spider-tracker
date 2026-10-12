@@ -120,6 +120,8 @@ Production uses `railway` because `tracker-api` is a DNS-only (grey cloud) recor
 
 Check progress with `railway domain status 85cd76b1-5729-478c-9941-b52346e5840e`.
 
+**GitHub App:** the six `GITHUB_APP_*` variables (all or none) turn on Settings → GitHub; how to create the App and set them is in [git-integration.md](./git-integration.md#manual-checklist-a-person).
+
 **Email:** magic links are sent with [Resend](https://resend.com) when `RESEND_API_KEY` is set (`railway variable set RESEND_API_KEY --stdin -s api`), from `MAIL_FROM` (default `Spider Tracker <noreply@batele.plus>`; the `batele.plus` domain must be verified in Resend). Without the key the API logs a warning at startup and magic links only appear in `railway logs -s api`.
 
 ## Private access: Cloudflare Access

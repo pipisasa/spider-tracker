@@ -67,7 +67,10 @@ const schemas: Record<string, JsonSchema> = {
   Organization: object({ id: string({ format: "uuid" }), slug: string(), name: string() }),
   Actor: object({
     id: string({ format: "uuid" }),
-    type: string({ enum: ["human", "agent"] }),
+    type: string({
+      enum: ["human", "agent", "integration"],
+      description: "integration: a per-organization bot such as GitHub (listed only with ?all=true)",
+    }),
     name: string(),
     handle: string(),
     avatarUrl: nullable("string"),
@@ -225,6 +228,24 @@ const schemas: Record<string, JsonSchema> = {
     createdAt: string({ format: "date-time" }),
   }),
   RepoList: listOf("Repo"),
+  GithubInstallation: object({
+    id: { type: "integer", description: "GitHub's installation id" },
+    account: string({ description: "The GitHub user or organization the App is installed on" }),
+    accountType: string({ enum: ["User", "Organization"] }),
+    repositorySelection: string({ enum: ["all", "selected"] }),
+    suspended: { type: "boolean" },
+    repos: { type: "array", items: string(), description: '"owner/name" of the repos it grants (a project-scoped agent: its projects\' only)' },
+    settingsUrl: string({ format: "uri", description: "Where the installation is configured or uninstalled on GitHub" }),
+    connectedBy: nullable("string", { format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+    updatedAt: string({ format: "date-time" }),
+  }),
+  GithubStatus: object({
+    configured: { type: "boolean", description: "False when the server has no GITHUB_APP_* settings: install and sync answer 503" },
+    appSlug: nullable("string"),
+    installations: { type: "array", items: ref("GithubInstallation") },
+  }),
+  GithubInstallUrl: object({ url: string({ format: "uri" }) }),
   CreateRepoInput: fromZod(createRepoInput),
   UpdateRepoInput: fromZod(updateRepoInput),
   AttachRepoInput: fromZod(attachRepoInput),
@@ -520,6 +541,8 @@ const errors = {
   "409": { description: "Conflict: already exists, or a document saved since your baseVersion", ...json("Error") },
   "429": { description: "Rate-limited (agent comment loop guards, per-IP limits on public endpoints)", ...json("Error") },
 };
+const githubOff = { description: "The server has no GitHub App configured (not_configured)", ...json("Error") };
+const githubDown = { description: "GitHub couldn't be reached or refused the request (github_unavailable)", ...json("Error") };
 const rateLimited = (description: string) => ({ "429": { description, ...json("Error") } });
 const invitationLimits = rateLimited(
   "Rate-limited: more than 20 invitation requests a minute from this client IP, or 10 from this user",
@@ -536,6 +559,7 @@ const projectKey = pathParam("projectKey", 'Project key, e.g. "SPI"');
 const repoOwner = pathParam("owner", 'GitHub owner of the repo, e.g. "pipisasa"');
 const repoName = pathParam("name", 'Repo name, e.g. "spider-tracker"');
 const taskKey = pathParam("taskKey", 'Task key, e.g. "SPI-12"');
+const installationId = pathParam("installationId", "GitHub's installation id");
 const userCode = pathParam("userCode", 'Code shown by spider login, e.g. "WDJB-MJHT"');
 const body = (schema: string) => ({ required: true, ...json(schema) });
 /** RFC 8628 endpoints accept JSON or form-encoded bodies. */
@@ -577,6 +601,27 @@ const paths = {
       responses: {
         "200": ok("The device agent's key", "DeviceToken"),
         "400": { description: "Pending, slowed down, denied, expired or invalid (RFC 8628 error)", ...json("DeviceTokenError") },
+      },
+    },
+  },
+  "/github/setup": {
+    get: {
+      operationId: "githubSetup",
+      summary:
+        "Where GitHub returns after installing the App (browser, session cookie). Checks the signed state against the signed-in person and, with the OAuth code, that they can access the installation; then connects it and redirects to Settings → GitHub (?connected= or ?error=)",
+      security: [{ sessionCookie: [] }],
+      parameters: [
+        { name: "installation_id", in: "query", schema: { type: "string" } },
+        { name: "setup_action", in: "query", schema: { type: "string", enum: ["install", "update", "request"] } },
+        { name: "state", in: "query", schema: { type: "string" } },
+        { name: "code", in: "query", schema: { type: "string" }, description: "OAuth code (Request user authorization during installation)" },
+      ],
+      responses: {
+        "302": { description: "Back to the web app" },
+        "400": { description: "Invalid or expired state" },
+        "401": { description: "Not signed in" },
+        "403": { description: "Started by someone else, or no longer an owner or admin" },
+        "503": githubOff,
       },
     },
   },
@@ -1106,6 +1151,40 @@ const paths = {
       operationId: "detachRepo",
       summary: "Detach a repo from the project; detaching one that isn't attached changes nothing",
       responses: { "200": ok("The repo", "Repo"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/github": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "getGithub",
+      summary: "Whether this server has a GitHub App, and the organization's installations (ST-82)",
+      responses: { "200": ok("GitHub status", "GithubStatus"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/github/install": {
+    parameters: [orgSlug],
+    post: {
+      operationId: "startGithubInstall",
+      summary:
+        "The GitHub page that installs the App, with a signed state valid for 15 minutes (owners and admins, browser sessions only). GitHub returns to /github/setup",
+      responses: { "200": ok("Install URL", "GithubInstallUrl"), ...errors, "503": githubOff },
+    },
+  },
+  "/v1/orgs/{orgSlug}/github/installations/{installationId}/sync": {
+    parameters: [orgSlug, installationId],
+    post: {
+      operationId: "syncGithubInstallation",
+      summary:
+        "Fetch the installation and its repositories from GitHub again: attach repos the organization has, add new ones, release those no longer granted (owners, admins and their unscoped agents)",
+      responses: { "200": ok("The installation", "GithubInstallation"), ...errors, "502": githubDown, "503": githubOff },
+    },
+  },
+  "/v1/orgs/{orgSlug}/github/installations/{installationId}": {
+    parameters: [orgSlug, installationId],
+    delete: {
+      operationId: "disconnectGithubInstallation",
+      summary: "Forget an installation; its repos stay, without it. The App stays installed on GitHub (see settingsUrl)",
+      responses: { "204": { description: "Disconnected" }, ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/documents": {

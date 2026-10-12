@@ -35,3 +35,4 @@ export * from "./version";
 export * from "./saved-views";
 export * from "./repos";
 export * from "./remotes";
+export * from "./github";

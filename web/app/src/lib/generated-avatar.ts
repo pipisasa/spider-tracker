@@ -32,6 +32,6 @@ export function actorAvatarSrc(
 ): string {
   return (
     actor.avatarUrl ||
-    generatedAvatarUri(actor.type === "agent" ? "agent" : "human", actor.id)
+    generatedAvatarUri(actor.type === "human" ? "human" : "agent", actor.id)
   );
 }

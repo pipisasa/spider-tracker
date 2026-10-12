@@ -14,7 +14,9 @@ import {
 } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 
-export const actorType = pgEnum("actor_type", ["human", "agent"]);
+// "integration": a per-org bot such as the GitHub one (ST-82) that git-driven changes are
+// attributed to; it has no user, no agents row and no API keys, and is hidden from pickers.
+export const actorType = pgEnum("actor_type", ["human", "agent", "integration"]);
 export const memberRole = pgEnum("member_role", ["owner", "admin", "member", "guest"]);
 
 export const organizations = pgTable("organizations", {
