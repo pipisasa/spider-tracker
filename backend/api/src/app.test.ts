@@ -449,6 +449,19 @@ withDb("SDK and client-declared source", () => {
     await client.documents.delete(slug, doc.id);
   });
 
+  test("saved views through the SDK: create, list, rename, delete; bad filters are a 400", async () => {
+    const client = sdk();
+    const view = await client.views.create(slug, "SPI", { name: "Mine", filters: { assignee: ["me"], priority: [1, 2] }, view: "list" });
+    expect(view).toMatchObject({ projectKey: "SPI", ownerActorId: agentId, shared: false, view: "list", filters: { assignee: ["me"], priority: [1, 2] } });
+    expect((await client.views.list(slug, "SPI")).items.map((v) => v.id)).toEqual([view.id]);
+    expect((await client.views.update(slug, "SPI", view.id, { name: "Renamed", shared: true })).name).toBe("Renamed");
+    const bad = await client.views.create(slug, "SPI", { name: "Bad", filters: { priority: [7 as 1] } }).catch((e: unknown) => e);
+    expect(bad).toMatchObject({ status: 400, code: "validation" });
+    expect(await client.views.delete(slug, "SPI", view.id)).toBeUndefined();
+    expect((await client.views.list(slug, "SPI")).items).toEqual([]);
+    expect(await client.views.list(slug, "NOPE").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
   test("API-key clients declare their source; unknown values fall back to api", async () => {
     const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", { title: "From the CLI" });
     const raw = await app.request(`/v1/orgs/${slug}/projects/SPI/tasks`, {

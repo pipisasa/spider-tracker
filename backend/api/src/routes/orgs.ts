@@ -8,6 +8,10 @@ import {
   scopedProjectKeys,
   addComment,
   createTag,
+  createSavedView,
+  deleteSavedView,
+  listSavedViews,
+  updateSavedView,
   deleteTag,
   listTags,
   addRelation,
@@ -204,6 +208,23 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   app.post("/projects/:projectKey/tasks", async (c) =>
     c.json(await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c)), 201),
   );
+
+  app.get("/projects/:projectKey/views", async (c) =>
+    c.json(list(await listSavedViews(db, c.get("actor"), c.req.param("projectKey")))),
+  );
+
+  app.post("/projects/:projectKey/views", async (c) =>
+    c.json(await createSavedView(db, c.get("actor"), c.req.param("projectKey"), await body(c)), 201),
+  );
+
+  app.patch("/projects/:projectKey/views/:viewId", async (c) =>
+    c.json(await updateSavedView(db, c.get("actor"), c.req.param("projectKey"), c.req.param("viewId"), await body(c))),
+  );
+
+  app.delete("/projects/:projectKey/views/:viewId", async (c) => {
+    await deleteSavedView(db, c.get("actor"), c.req.param("projectKey"), c.req.param("viewId"));
+    return c.body(null, 204);
+  });
 
   app.get("/tasks/:taskKey", async (c) => c.json(await getTask(db, c.get("actor"), c.req.param("taskKey"))));
 

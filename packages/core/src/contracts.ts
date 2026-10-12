@@ -1,5 +1,7 @@
 // Response shapes of the public API, shared with clients.
 
+import type { ViewFilters } from "./schemas";
+
 export type ActorRole = "owner" | "admin" | "member" | "guest";
 
 export interface OrganizationDto {
@@ -98,6 +100,19 @@ export interface TagDto {
   id: string;
   name: string;
   color: string | null;
+}
+
+/** A saved filter set of a project's board or list (ST-15). */
+export interface SavedViewDto {
+  id: string;
+  projectKey: string;
+  ownerActorId: string;
+  name: string;
+  filters: ViewFilters;
+  shared: boolean;
+  view: "board" | "list";
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ListResponse<T> {
