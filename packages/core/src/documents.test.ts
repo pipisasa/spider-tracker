@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
 import { and, eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
+import { acceptAgentInvite, createAgentInvite } from "./agent-invites";
+import { createAgent } from "./agents";
 import {
   createDocument,
   deleteDocument,
@@ -240,5 +242,73 @@ run("documents", () => {
     expect(
       (await listDocuments(db, ctx.orgId)).map((d) => d.title),
     ).not.toContain("On gone task");
+  });
+
+  test("scoped agents read only organization-wide documents and their projects", async () => {
+    const otherTask = await createTask(db, ctx, "OTH", { title: "Hidden" });
+    const orgDoc = await createDocument(db, ctx, { title: "Scope org" });
+    const inScope = await createDocument(db, ctx, {
+      title: "Scope SPI",
+      project: "SPI",
+    });
+    const outProject = await createDocument(db, ctx, {
+      title: "Scope OTH",
+      project: "OTH",
+    });
+    const outTask = await createDocument(db, ctx, {
+      title: "Scope OTH task",
+      task: otherTask.key,
+    });
+
+    const { invite } = await createAgentInvite(db, ctx, {
+      projectKeys: ["SPI"],
+    });
+    const { actor } = await acceptAgentInvite(db, { code: invite.code });
+    const agent = (): ActorContext => ({
+      orgId: ctx.orgId,
+      actorId: actor.id,
+      role: "member",
+      source: "api",
+    });
+
+    const titles = (await listDocuments(db, agent())).map((d) => d.title);
+    expect(titles).toContain(orgDoc.title);
+    expect(titles).toContain(inScope.title);
+    expect(titles).not.toContain(outProject.title);
+    expect(titles).not.toContain(outTask.title);
+    await expect(
+      listDocuments(db, agent(), { project: "OTH" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      listDocuments(db, agent(), { task: otherTask.key }),
+    ).rejects.toMatchObject({ code: "not_found" });
+
+    for (const hidden of [outProject, outTask]) {
+      await expect(getDocument(db, agent(), hidden.id)).rejects.toMatchObject({
+        code: "not_found",
+      });
+      await expect(
+        listDocumentVersions(db, agent(), hidden.id),
+      ).rejects.toMatchObject({ code: "not_found" });
+      await expect(
+        getDocumentVersion(db, agent(), hidden.id, 1),
+      ).rejects.toMatchObject({ code: "not_found" });
+    }
+    for (const visible of [orgDoc, inScope]) {
+      expect((await getDocument(db, agent(), visible.id)).id).toBe(visible.id);
+      expect(
+        (await listDocumentVersions(db, agent(), visible.id)).map(
+          (v) => v.version,
+        ),
+      ).toEqual([1]);
+      expect(
+        (await getDocumentVersion(db, agent(), visible.id, 1)).version,
+      ).toBe(1);
+    }
+
+    // An unscoped agent reads everything.
+    const free = await createAgent(db, ctx, { name: "Docs Free Bot" });
+    const freeCtx: ActorContext = { ...agent(), actorId: free.actor.id };
+    expect((await getDocument(db, freeCtx, outTask.id)).id).toBe(outTask.id);
   });
 });

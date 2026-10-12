@@ -1,7 +1,16 @@
 import { randomInt } from "node:crypto";
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import { assertRole, type ActivitySource, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
 import {
@@ -41,6 +50,34 @@ const HANDLE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const LIST_RETENTION_DAYS = 7;
 
 type InviteRow = typeof agentInvites.$inferSelect;
+
+/**
+ * Removes pending agents whose unused invite expired more than LIST_RETENTION_DAYS ago: they are
+ * no longer listed, so nobody could revoke them. Deleting the actor cascades to the invite and
+ * its project rows, like a revoke.
+ */
+async function purgeExpiredPendingAgents(db: Db | Tx, orgId: string) {
+  await db.delete(actors).where(
+    and(
+      eq(actors.type, "agent"),
+      isNotNull(actors.deactivatedAt),
+      inArray(
+        actors.id,
+        db
+          .select({ id: agentInvites.agentId })
+          .from(agentInvites)
+          .where(
+            and(
+              eq(agentInvites.orgId, orgId),
+              isNull(agentInvites.usedAt),
+              isNull(agentInvites.revokedAt),
+              sql`${agentInvites.expiresAt} <= now() - make_interval(days => ${LIST_RETENTION_DAYS})`,
+            ),
+          ),
+      ),
+    ),
+  );
+}
 
 function placeholderHandle(): string {
   let suffix = "";
@@ -95,6 +132,7 @@ export async function createAgentInvite(
   );
 
   return db.transaction(async (tx) => {
+    await purgeExpiredPendingAgents(tx, ctx.orgId);
     const found = await tx
       .select({ id: projects.id, key: projects.key, name: projects.name })
       .from(projects)
@@ -127,7 +165,9 @@ export async function createAgentInvite(
     }
     if (!actor)
       throw new Error("Failed to pick a handle for the pending agent");
-    await tx.insert(agents).values({ actorId: actor.id, ownerId: ctx.actorId });
+    await tx
+      .insert(agents)
+      .values({ actorId: actor.id, ownerId: ctx.actorId, scoped: true });
     await tx
       .insert(agentProjects)
       .values(found.map((p) => ({ agentId: actor.id, projectId: p.id })));
@@ -176,6 +216,7 @@ export async function listAgentInvites(
   ctx: ActorContext,
 ): Promise<AgentInviteDto[]> {
   assertRole(ctx, ["owner", "admin", "member"], "see agent invites");
+  await purgeExpiredPendingAgents(db, ctx.orgId);
   const rows = await db
     .select({
       invite: agentInvites,

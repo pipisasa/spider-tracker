@@ -4,7 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { ActorRole } from "./contracts";
 import { DomainError } from "./errors";
 
-const { actors, agentProjects, organizations } = schema;
+const { actors, agentProjects, agents, organizations } = schema;
 
 export type ActivitySource = "ui" | "api" | "mcp" | "cli" | "git" | "agent_run";
 
@@ -50,16 +50,23 @@ export type ProjectScope = Set<string> | null;
 // One lookup per context object, i.e. per request.
 const scopeCache = new WeakMap<ActorContext, Promise<ProjectScope>>();
 
-/** Agents with agent_projects rows see only those projects; everyone else sees all of them. */
+/**
+ * Scoped agents see only their agent_projects rows (none left once those projects are deleted);
+ * everyone else sees every project. Rows alone also scope an agent, so this fails closed.
+ */
 export function projectScope(db: Db | Tx, viewer: Viewer): Promise<ProjectScope> {
   if (typeof viewer === "string") return Promise.resolve(null);
   let scope = scopeCache.get(viewer);
   if (!scope) {
-    scope = db
-      .select({ projectId: agentProjects.projectId })
-      .from(agentProjects)
-      .where(eq(agentProjects.agentId, viewer.actorId))
-      .then((rows) => (rows.length > 0 ? new Set(rows.map((r) => r.projectId)) : null));
+    scope = Promise.all([
+      db.select({ scoped: agents.scoped }).from(agents).where(eq(agents.actorId, viewer.actorId)).limit(1),
+      db
+        .select({ projectId: agentProjects.projectId })
+        .from(agentProjects)
+        .where(eq(agentProjects.agentId, viewer.actorId)),
+    ]).then(([[agent], rows]) =>
+      agent?.scoped || rows.length > 0 ? new Set(rows.map((r) => r.projectId)) : null,
+    );
     scopeCache.set(viewer, scope);
   }
   return scope;

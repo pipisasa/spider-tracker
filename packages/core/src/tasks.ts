@@ -46,8 +46,8 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
   };
 }
 
-/** Assignees, tags and parent key of each task. */
-async function linksByTask(db: Db | Tx, taskIds: string[]) {
+/** Assignees, tags and parent key of each task; parents outside `scope` have no key. */
+async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) {
   const map = new Map<string, TaskLinks>(taskIds.map((id) => [id, { assigneeIds: [], tagIds: [], parentKey: null }]));
   if (taskIds.length === 0) return map;
   const [assigneeRows, tagRows] = await Promise.all([
@@ -72,7 +72,7 @@ async function linksByTask(db: Db | Tx, taskIds: string[]) {
     .from(tasks)
     .innerJoin(parent, and(eq(tasks.parentId, parent.id), isNull(parent.deletedAt)))
     .innerJoin(projects, eq(parent.projectId, projects.id))
-    .where(inArray(tasks.id, taskIds));
+    .where(and(inArray(tasks.id, taskIds), scope ? inArray(parent.projectId, [...scope]) : undefined));
   for (const row of parentRows) {
     const links = map.get(row.taskId);
     if (links) links.parentKey = `${row.projectKey}-${row.number}`;
@@ -176,7 +176,8 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       .set({ taskSeq: sql`${projects.taskSeq} + 1` })
       .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, projectKey.toUpperCase())))
       .returning({ id: projects.id, key: projects.key, taskSeq: projects.taskSeq });
-    if (!project || !inScope(await projectScope(tx, ctx), project.id)) {
+    const scope = await projectScope(tx, ctx);
+    if (!project || !inScope(scope, project.id)) {
       throw new DomainError("not_found", `Project ${projectKey} not found`);
     }
 
@@ -193,7 +194,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     const tagIds = [...new Set(data.tagIds ?? [])];
     await assertActorsInOrg(tx, ctx.orgId, assigneeIds);
     await assertTagsInOrg(tx, ctx.orgId, tagIds);
-    if (data.parentId) await assertParent(tx, ctx.orgId, await projectScope(tx, ctx), data.parentId);
+    if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId);
 
     const [task] = await tx
       .insert(tasks)
@@ -229,7 +230,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     });
 
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
-    const parentKey = task.parentId ? ((await linksByTask(tx, [task.id])).get(task.id)?.parentKey ?? null) : null;
+    const parentKey = task.parentId ? ((await linksByTask(tx, scope, [task.id])).get(task.id)?.parentKey ?? null) : null;
     return toTaskDto(task, project.key, { assigneeIds, tagIds, parentKey });
   });
 }
@@ -251,6 +252,7 @@ export async function listTasks(db: Db, viewer: Viewer, projectKey: string): Pro
     .orderBy(asc(tasks.sortKey), asc(tasks.id));
   const links = await linksByTask(
     db,
+    scope,
     rows.map((r) => r.task.id),
   );
   return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
@@ -279,7 +281,7 @@ export async function findTask(db: Db | Tx, viewer: Viewer, taskKey: string) {
 
 export async function getTask(db: Db, viewer: Viewer, taskKey: string): Promise<TaskDto> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
-  const links = await linksByTask(db, [task.id]);
+  const links = await linksByTask(db, await projectScope(db, viewer), [task.id]);
   return toTaskDto(task, projectKey, links.get(task.id) ?? noLinks);
 }
 
@@ -295,6 +297,7 @@ export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Pro
     .orderBy(asc(tasks.createdAt));
   const links = await linksByTask(
     db,
+    scope,
     rows.map((r) => r.task.id),
   );
   return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
@@ -306,6 +309,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
 
   return db.transaction(async (tx) => {
     const { task, projectKey } = await findTask(tx, ctx, taskKey);
+    const scope = await projectScope(tx, ctx);
     const patch: Partial<typeof tasks.$inferInsert> = {};
     const changes: Record<string, [unknown, unknown]> = {};
     const track = <K extends keyof TaskRow>(field: K, value: TaskRow[K]) => {
@@ -318,7 +322,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     if (data.description !== undefined) track("description", data.description);
     if (data.priority !== undefined) track("priority", data.priority);
     if (data.parentId !== undefined) {
-      if (data.parentId) await assertParent(tx, ctx.orgId, await projectScope(tx, ctx), data.parentId, task.id);
+      if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId, task.id);
       track("parentId", data.parentId);
     }
 
@@ -339,7 +343,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       }
     }
 
-    const current = (await linksByTask(tx, [task.id])).get(task.id) ?? noLinks;
+    const current = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? noLinks;
     let assigneeIds = current.assigneeIds;
     if (data.assigneeIds !== undefined) {
       const next = [...new Set(data.assigneeIds)];
@@ -392,7 +396,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
     }
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
-    const parentKey = updated.parentId ? ((await linksByTask(tx, [updated.id])).get(updated.id)?.parentKey ?? null) : null;
+    const parentKey = updated.parentId ? ((await linksByTask(tx, scope, [updated.id])).get(updated.id)?.parentKey ?? null) : null;
     return toTaskDto(updated, projectKey, { assigneeIds, tagIds, parentKey });
   });
 }

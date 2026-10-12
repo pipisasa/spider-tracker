@@ -185,7 +185,7 @@ export const taskRelations = pgTable(
   ],
 );
 
-// Projects an agent may see (ST-31). An agent without rows sees every project.
+// Projects an agent may see (ST-31). Agents with `agents.scoped` see only these; others see every project.
 export const agentProjects = pgTable(
   "agent_projects",
   {

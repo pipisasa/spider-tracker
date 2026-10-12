@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import {
   acceptAgentInvite,
@@ -358,5 +358,120 @@ run("agent invites and project scope", () => {
       xy.key,
     );
     expect(await scopedProjectKeys(db, agentCtx(free.actor.id))).toBeNull();
+  });
+
+  test("a scoped agent whose projects are all deleted sees nothing, not everything", async () => {
+    await createProject(db, owner, { name: "Going", key: "GO" });
+    await createTask(db, owner, "GO", { title: "Soon gone" });
+    await createDocument(db, owner, { title: "Still org-wide", content: "x" });
+    const { invite } = await createAgentInvite(db, owner, {
+      projectKeys: ["GO"],
+    });
+    const { actor } = await acceptAgentInvite(db, { code: invite.code });
+    const ctx = () => agentCtx(actor.id);
+    expect((await listProjects(db, ctx())).map((p) => p.key)).toEqual(["GO"]);
+
+    // Cascades to the agent's agent_projects row.
+    await db
+      .delete(schema.projects)
+      .where(
+        and(
+          eq(schema.projects.orgId, owner.orgId),
+          eq(schema.projects.key, "GO"),
+        ),
+      );
+
+    expect(await listProjects(db, ctx())).toEqual([]);
+    expect(await listTasks(db, ctx(), "ST")).toEqual([]);
+    await expect(getProject(db, ctx(), "ST")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await expect(
+      createTask(db, ctx(), "ST", { title: "Nope" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(await scopedProjectKeys(db, ctx())).toEqual(new Set());
+    const docs = (await listDocuments(db, ctx())).map((d) => d.title);
+    expect(docs).toContain("Still org-wide");
+    expect(docs).not.toContain("XY doc");
+    expect(
+      (await listAgents(db, owner)).find((a) => a.actor.id === actor.id)
+        ?.projects,
+    ).toEqual([]);
+
+    // People and unscoped agents still see every project.
+    const free = await createAgent(db, owner, { name: "Still Free Bot" });
+    expect(
+      (await listProjects(db, agentCtx(free.actor.id))).map((p) => p.key),
+    ).toEqual(["ST", "XY"]);
+    expect((await listProjects(db, owner)).map((p) => p.key)).toEqual([
+      "ST",
+      "XY",
+    ]);
+    expect(
+      (await listAgents(db, owner)).find((a) => a.actor.id === free.actor.id)
+        ?.projects,
+    ).toBeNull();
+  });
+
+  test("project rows scope an agent even without the scoped flag", async () => {
+    const { invite } = await createAgentInvite(db, owner, {
+      projectKeys: ["ST"],
+    });
+    const { actor } = await acceptAgentInvite(db, { code: invite.code });
+    await db
+      .update(schema.agents)
+      .set({ scoped: false })
+      .where(eq(schema.agents.actorId, actor.id));
+    expect(
+      (await listProjects(db, agentCtx(actor.id))).map((p) => p.key),
+    ).toEqual(["ST"]);
+  });
+
+  test("a parent outside the agent's scope has no key", async () => {
+    const parent = await createTask(db, owner, "XY", { title: "Out parent" });
+    const child = await createTask(db, owner, "ST", {
+      title: "In child",
+      parentId: parent.id,
+    });
+    expect(child.parentKey).toBe(parent.key);
+    const { invite } = await createAgentInvite(db, owner, {
+      projectKeys: ["ST"],
+    });
+    const { actor } = await acceptAgentInvite(db, { code: invite.code });
+    const ctx = () => agentCtx(actor.id);
+
+    expect((await getTask(db, ctx(), child.key)).parentKey).toBeNull();
+    expect(
+      (await listTasks(db, ctx(), "ST")).find((t) => t.key === child.key)
+        ?.parentKey,
+    ).toBeNull();
+    expect(
+      (await updateTask(db, ctx(), child.key, { title: "Renamed child" }))
+        .parentKey,
+    ).toBeNull();
+    expect((await getTask(db, owner, child.key)).parentKey).toBe(parent.key);
+  });
+
+  test("pending agents whose invite expired over 7 days ago are cleaned up", async () => {
+    const stale = await createAgentInvite(db, owner, { projectKeys: ["ST"] });
+    const recent = await createAgentInvite(db, owner, { projectKeys: ["ST"] });
+    const day = 24 * 60 * 60 * 1000;
+    await db
+      .update(schema.agentInvites)
+      .set({ expiresAt: new Date(Date.now() - 8 * day) })
+      .where(eq(schema.agentInvites.id, stale.invite.id));
+    await db
+      .update(schema.agentInvites)
+      .set({ expiresAt: new Date(Date.now() - day) })
+      .where(eq(schema.agentInvites.id, recent.invite.id));
+
+    const listed = (await listAgentInvites(db, owner)).map((i) => i.id);
+    expect(listed).not.toContain(stale.invite.id);
+    expect(listed).toContain(recent.invite.id);
+    const agentRows = async (id: string) =>
+      db.select().from(schema.actors).where(eq(schema.actors.id, id));
+    expect(await agentRows(stale.agent.id)).toHaveLength(0);
+    expect(await agentRows(recent.agent.id)).toHaveLength(1);
+    await revokeAgentInvite(db, owner, recent.invite.id);
   });
 });
