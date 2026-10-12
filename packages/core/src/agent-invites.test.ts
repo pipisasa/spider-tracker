@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import {
   acceptAgentInvite,
@@ -23,6 +23,11 @@ import { listMembers } from "./organizations";
 import { createOrganization } from "./organizations";
 import { createProject, getProject, listProjects } from "./projects";
 import { addRelation, listRelations } from "./relations";
+import {
+  holdLock,
+  settle,
+  waitForLockWaiters,
+} from "./test-locks.test-utils";
 import {
   createTask,
   getTask,
@@ -194,6 +199,49 @@ run("agent invites and project scope", () => {
     await expect(
       acceptAgentInvite(db, { code: "ZZZZ-ZZZZ" }),
     ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  /** Accepts two invites at once: both pick their handle, then queue on their locked agents. */
+  async function acceptBothAtOnce(input: { name: string; handle?: string }) {
+    const invites = await Promise.all([
+      createAgentInvite(db, owner, { projectKeys: ["ST"] }),
+      createAgentInvite(db, owner, { projectKeys: ["ST"] }),
+    ]);
+    const ids = invites.map((i) => i.agent.id);
+    const release = await holdLock(
+      db,
+      sql`select 1 from ${schema.actors} where ${inArray(schema.actors.id, ids)} for update`,
+    );
+    const accepting = invites.map((i) =>
+      acceptAgentInvite(db, { code: i.invite.code, ...input }),
+    );
+    const results = accepting.map(settle);
+    await waitForLockWaiters(db, '"actors"', 2);
+    await release();
+    const errors = await Promise.all(results);
+    const handles = (
+      await db
+        .select({ handle: schema.actors.handle })
+        .from(schema.actors)
+        .where(inArray(schema.actors.id, ids))
+    ).map((a) => a.handle);
+    return { errors, handles };
+  }
+
+  test("two agents named alike accepting at once get distinct handles", async () => {
+    const { errors, handles } = await acceptBothAtOnce({ name: "Racer Bot" });
+    expect(errors).toEqual([null, null]);
+    expect(handles.sort()).toEqual(["racer-bot", "racer-bot-2"]);
+  });
+
+  test("two agents asking for the same handle at once: one gets a conflict", async () => {
+    const { errors, handles } = await acceptBothAtOnce({
+      name: "Twin Bot",
+      handle: "twin",
+    });
+    expect(errors.filter((e) => e === null)).toHaveLength(1);
+    expect(errors.find((e) => e !== null)).toMatchObject({ code: "conflict" });
+    expect(handles.filter((h) => h === "twin")).toHaveLength(1);
   });
 
   test("expired invites are rejected; revoking removes the pending agent", async () => {

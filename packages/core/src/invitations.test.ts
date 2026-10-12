@@ -11,7 +11,7 @@ import {
   revokeInvitation,
 } from "./invitations";
 import { createOrganization, listMemberships } from "./organizations";
-import { holdLock, settle, waitForLockWaiters } from "./test-locks";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 
 // Integration test: needs a migrated database in TEST_DATABASE_URL.
 const url = process.env.TEST_DATABASE_URL;
@@ -127,7 +127,7 @@ run("invitations", () => {
     const release = await holdLock(db, sql`select 1 from organizations where id = ${ctx.orgId} for update`);
     const joining = Promise.all(racers.map((racer, i) => acceptInvitation(db, racer, { code: codes[i]?.code ?? "" })));
     const settled = settle(joining);
-    await waitForLockWaiters(db, "actors", 2);
+    await waitForLockWaiters(db, '"actors"', 2);
     await release();
     expect(await settled).toBeNull();
     expect((await joining).map((j) => j.actor.handle).sort()).toEqual(["racer", "racer-2"]);

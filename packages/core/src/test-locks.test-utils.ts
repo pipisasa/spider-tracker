@@ -3,7 +3,7 @@ import { sql, type SQL } from "drizzle-orm";
 
 // Test helper: forces two requests to interleave. `holdLock` runs `lock` (e.g. a SELECT … FOR
 // UPDATE) in a transaction kept open until `release`; `waitForLockWaiters` resolves once that
-// many sessions wait on a lock in statements mentioning `table`.
+// many sessions wait on a lock in statements containing one of `fragments` (e.g. `"actors"`).
 
 export async function holdLock(db: Db, lock: SQL) {
   let release!: () => void;
@@ -22,11 +22,20 @@ export async function holdLock(db: Db, lock: SQL) {
   };
 }
 
-export async function waitForLockWaiters(db: Db, table: string, count: number) {
+export async function waitForLockWaiters(
+  db: Db,
+  fragments: string | string[],
+  count: number,
+) {
+  const patterns = [fragments].flat().map((f) => `%${f}%`);
   for (let i = 0; i < 200; i++) {
     const [row] = await db.execute<{ n: number }>(
       sql`select count(*)::int as n from pg_stat_activity
-          where datname = current_database() and wait_event_type = 'Lock' and query ilike ${`%"${table}"%`}`,
+          where datname = current_database() and wait_event_type = 'Lock'
+            and query ilike any(array[${sql.join(
+              patterns.map((p) => sql`${p}`),
+              sql`, `,
+            )}]::text[])`,
     );
     if ((row?.n ?? 0) >= count) return;
     await Bun.sleep(10);
