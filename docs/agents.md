@@ -74,7 +74,7 @@ Install it with `spider setup claude`, or for a team with `spider setup claude -
 ### Updating
 `spider update` brings a machine up to date in one go:
 
-1. **The CLI**: the compiled binary downloads `spider-<os>-<arch>` from the latest `cli-v<version>` GitHub release next to itself, checks that it reports the new version, and renames it over the old one. Run from source, it says to `git pull` instead.
+1. **The CLI**: the compiled binary downloads `spider-<os>-<arch>` from the latest `cli-v<version>` GitHub release, verifies it against the release's `SHA256SUMS` (releases without one get a warning), writes it next to itself, checks that it reports the new version, and renames it over the old one in one step. The new binary then runs the remaining steps (`spider update --updated-from <old version>`), so agent files get its version. Run from source, it says to `git pull` instead.
 2. **The shared plugin**: `claude plugin marketplace update spider-tracker` and `claude plugin update spider-tracker@spider-tracker` (skipped with a note when Claude Code or the plugin isn't installed). The private `spider-agents` plugin is a directory marketplace read in place, so it needs no update.
 3. **Agent files**: every agent file with `spider-agent:` (the private plugin's and older `~/.claude/agents/**` ones) whose generated section is older than the CLI gets that section re-rendered; the frontmatter and role are kept. Files from before the markers are fixed up when they end with a `## Spider Tracker` section; others are listed and left alone.
 

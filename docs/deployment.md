@@ -50,6 +50,8 @@ bun run release:cli --dry-run   # build the four binaries into dist/release only
 bun run release:cli             # build, then gh release create cli-v<version> --latest
 ```
 
+The release (binaries plus `SHA256SUMS`, which `install.sh` and `spider update` verify) is tagged at HEAD, so the script refuses a dirty working tree or a HEAD that is on no remote branch; `--dry-run` skips both checks.
+
 `spider update` and the passive "new spider available" notice look for the release marked latest with a `cli-v*` tag, so keep CLI releases `--latest` (or the CLI falls back to the newest `cli-v*` release in the list).
 
 **Minimum CLI version.** The API sends `X-Spider-Min-Cli` (`MIN_CLI_VERSION` in `packages/core/src/version.ts`). When an API change drops support for older CLIs, first release a CLI that works with it, then raise `MIN_CLI_VERSION` to that version and deploy the API; older CLIs then warn and suggest `spider update`. Bump the shared plugin's `version` (`plugins/spider-tracker/.claude-plugin/plugin.json`) whenever it changes so `claude plugin update` and the update check see it.

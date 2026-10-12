@@ -13,7 +13,7 @@ import { parseTaskKey } from "@repo/core/schemas";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import type { CreateTaskInput, UpdateDocumentInput, UpdateProjectInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -111,8 +111,8 @@ export interface RunOptions {
   httpFetch?: FetchLike;
   /** stderr is a terminal: allows the passive "a new spider is available" notice. */
   isInteractive?: boolean;
-  /** Replaces this compiled binary with release `version`; omitted when running from source. */
-  selfUpdate?: (version: string) => Promise<unknown>;
+  /** Replaces this compiled binary with release `version` and resolves to its path; omitted when running from source. */
+  selfUpdate?: (version: string) => Promise<string | undefined>;
   /** Asks a person yes/no (only at an interactive terminal); `spider uninstall` without --yes. */
   confirm?: (question: string) => Promise<boolean>;
   /** The installed spider binary `spider uninstall` deletes; omitted when running from source. */
@@ -904,8 +904,10 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .command("update")
       .description(`update spider, the ${SHARED_PLUGIN_ID} Claude Code plugin and your agent files`)
       .option("--check", "only report what is out of date")
-      .option("--hook", "with --check: quiet output for a Claude Code SessionStart hook"),
-  ).action(async (opts: JsonOption & { check?: boolean; hook?: boolean }) => {
+      .option("--hook", "with --check: quiet output for a Claude Code SessionStart hook")
+      // Internal: the old binary hands over to the new one after replacing itself.
+      .addOption(new Option("--updated-from <version>", "skip the binary; it was just updated from <version>").hideHelp()),
+  ).action(async (opts: JsonOption & { check?: boolean; hook?: boolean; updatedFrom?: string }) => {
     if (opts.hook) {
       // Runs at every session start: never fails, prints nothing unless something is out of date.
       try {
@@ -918,8 +920,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       }
       return;
     }
-    const info = await checkForUpdates(options.env, httpFetch, { force: true });
     if (opts.check) {
+      const info = await checkForUpdates(options.env, httpFetch, { force: true });
       const report = updateReport(
         info,
         await installedPluginVersion(options.env, options.runClaude),
@@ -934,22 +936,34 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     let restart = false;
 
     // The spider binary.
-    const cli: { from: string; to: string | null; updated: boolean; note?: string } = {
-      from: VERSION,
-      to: info.cli,
-      updated: false,
-    };
-    if (!info.cli) cli.note = "Couldn't find the latest spider release; try again later";
-    else if (!isNewer(info.cli, VERSION)) cli.note = `spider ${VERSION} is up to date`;
-    else if (!options.selfUpdate) cli.note = `spider ${info.cli} is available. Running from source: update with git pull`;
-    else {
-      try {
-        await options.selfUpdate(info.cli);
-        cli.updated = true;
-        cli.note = `Updated spider ${VERSION} → ${info.cli}`;
-      } catch (error) {
-        failed = true;
-        cli.note = `Couldn't update spider: ${error instanceof Error ? error.message : String(error)}`;
+    let cli: { from: string; to: string | null; updated: boolean; note?: string };
+    if (opts.updatedFrom) {
+      cli = { from: opts.updatedFrom, to: VERSION, updated: true, note: `Updated spider ${opts.updatedFrom} → ${VERSION}` };
+    } else {
+      const info = await checkForUpdates(options.env, httpFetch, { force: true });
+      cli = { from: VERSION, to: info.cli, updated: false };
+      let replaced: string | undefined;
+      if (!info.cli) cli.note = "Couldn't find the latest spider release; try again later";
+      else if (!isNewer(info.cli, VERSION)) cli.note = `spider ${VERSION} is up to date`;
+      else if (!options.selfUpdate) cli.note = `spider ${info.cli} is available. Running from source: update with git pull`;
+      else {
+        try {
+          replaced = await options.selfUpdate(info.cli);
+          cli.updated = true;
+          cli.note = `Updated spider ${VERSION} → ${info.cli}`;
+        } catch (error) {
+          failed = true;
+          cli.note = `Couldn't update spider: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      // The new binary finishes the job, so the agent files carry its version, not this one's.
+      if (replaced && options.spawn) {
+        const argv = [replaced, "update", "--updated-from", VERSION, ...(opts.json ? ["--json"] : [])];
+        const code = await options.spawn(argv, { env: options.env }).catch(() => undefined);
+        if (code !== undefined) {
+          result.exitCode = code;
+          return;
+        }
       }
     }
     lines.push(cli.note ?? "");
