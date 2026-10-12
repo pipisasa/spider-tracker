@@ -451,4 +451,27 @@ run("agent invites and project scope", () => {
     ).toBeNull();
     expect((await getTask(db, owner, child.key)).parentKey).toBe(parent.key);
   });
+
+  test("pending agents whose invite expired over 7 days ago are cleaned up", async () => {
+    const stale = await createAgentInvite(db, owner, { projectKeys: ["ST"] });
+    const recent = await createAgentInvite(db, owner, { projectKeys: ["ST"] });
+    const day = 24 * 60 * 60 * 1000;
+    await db
+      .update(schema.agentInvites)
+      .set({ expiresAt: new Date(Date.now() - 8 * day) })
+      .where(eq(schema.agentInvites.id, stale.invite.id));
+    await db
+      .update(schema.agentInvites)
+      .set({ expiresAt: new Date(Date.now() - day) })
+      .where(eq(schema.agentInvites.id, recent.invite.id));
+
+    const listed = (await listAgentInvites(db, owner)).map((i) => i.id);
+    expect(listed).not.toContain(stale.invite.id);
+    expect(listed).toContain(recent.invite.id);
+    const agentRows = async (id: string) =>
+      db.select().from(schema.actors).where(eq(schema.actors.id, id));
+    expect(await agentRows(stale.agent.id)).toHaveLength(0);
+    expect(await agentRows(recent.agent.id)).toHaveLength(1);
+    await revokeAgentInvite(db, owner, recent.invite.id);
+  });
 });
