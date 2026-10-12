@@ -98,6 +98,33 @@ export function resolveTags(tags: TagDto[], names: string[]): string[] {
   });
 }
 
+export interface TaskListFilter {
+  statusIds?: string[];
+  /** Actor ids, or "none" for unassigned. */
+  assignee?: string[];
+  /** The task must carry all of these. */
+  tagIds?: string[];
+  priority?: number[];
+}
+
+/**
+ * The task list filters, applied again on the client: an API from before ST-50 ignores the
+ * query parameters and returns every task, which must not reach an agent picking up work.
+ */
+export function matchesTaskFilter(
+  task: { statusId: string; assigneeIds: string[]; tagIds?: string[]; priority: number },
+  filter: TaskListFilter,
+): boolean {
+  if (filter.statusIds && !filter.statusIds.includes(task.statusId)) return false;
+  if (filter.priority && !filter.priority.includes(task.priority)) return false;
+  if (filter.tagIds && !filter.tagIds.every((id) => (task.tagIds ?? []).includes(id))) return false;
+  if (filter.assignee) {
+    const unassigned = filter.assignee.includes("none") && task.assigneeIds.length === 0;
+    if (!unassigned && !task.assigneeIds.some((id) => filter.assignee?.includes(id))) return false;
+  }
+  return true;
+}
+
 const RELATION_KINDS = ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"] as const;
 export type RelationKindInput = (typeof RELATION_KINDS)[number];
 

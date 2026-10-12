@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ActorDto, ProjectDetailDto, StatusDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
 import {
+  matchesTaskFilter,
   EXIT,
   firstStatus,
   fromApiError,
@@ -100,5 +101,24 @@ describe("parsing and error mapping", () => {
   test("API statuses map to exit codes", () => {
     const code = (status: number) => fromApiError(new SpiderApiError(status, "x", "x")).exitCode;
     expect([400, 401, 403, 404, 409, 500].map(code)).toEqual([2, 4, 4, 3, 2, 1]);
+  });
+});
+
+describe("client-side task filter (older servers ignore the query)", () => {
+  const task = { statusId: "s-review", assigneeIds: ["a1"], tagIds: ["t-bug", "t-ui"], priority: 2 };
+  test("matches every given filter, and an empty filter matches all", () => {
+    expect(matchesTaskFilter(task, {})).toBe(true);
+    expect(matchesTaskFilter(task, { statusIds: ["s-review"], assignee: ["a1"], tagIds: ["t-bug"], priority: [1, 2] })).toBe(true);
+  });
+  test("drops tasks outside the filter", () => {
+    expect(matchesTaskFilter(task, { statusIds: ["s-done"] })).toBe(false);
+    expect(matchesTaskFilter(task, { priority: [1] })).toBe(false);
+    expect(matchesTaskFilter(task, { tagIds: ["t-bug", "t-api"] })).toBe(false);
+    expect(matchesTaskFilter(task, { assignee: ["a2"] })).toBe(false);
+  });
+  test("none matches unassigned tasks", () => {
+    expect(matchesTaskFilter({ ...task, assigneeIds: [] }, { assignee: ["none"] })).toBe(true);
+    expect(matchesTaskFilter(task, { assignee: ["none"] })).toBe(false);
+    expect(matchesTaskFilter(task, { assignee: ["none", "a1"] })).toBe(true);
   });
 });

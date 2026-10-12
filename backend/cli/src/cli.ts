@@ -67,6 +67,7 @@ import {
   matchStatuses,
   parseLimit,
   parseVersion,
+  matchesTaskFilter,
   parsePriority,
   parseRelationKind,
   resolveAssignees,
@@ -1185,6 +1186,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       assignee = [...ids, ...(none ? ["none"] : [])];
     }
 
+    // Resolved here too, so the client can re-apply the filter for older servers (see matchesTaskFilter).
+    const tagIds = opts.tag?.length ? resolveTags(await conn().tags(), opts.tag) : undefined;
     const found: TaskDto[] = [];
     const statusNames = new Set<string>();
     let statusKnown = false;
@@ -1199,7 +1202,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         statusKnown = true;
       }
       const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, priority });
-      found.push(...items);
+      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee, tagIds, priority })));
       if (found.length >= limit) break;
     }
     if (opts.status !== undefined && !statusKnown) {
