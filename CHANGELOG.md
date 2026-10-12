@@ -64,7 +64,8 @@ Done means finished, not shipped; releases ship Done tasks.
 - API: `GET /v1/orgs/{org}/tasks/{key}/git` → `TaskGitDto` `{ taskKey, pullRequests, branches, commits }`. SDK: `tasks.git(org, key)`. A new realtime event `task.git` announces changes.
 - MCP: new tool `get_task_git`. CLI: new `spider task git [key]` (default: the current branch's task); `--json` prints the same JSON as the tool.
 - Web: a Development panel on the task page; project settings list the project's repos.
-- Database migration: `git_links` and `pull_requests`.
+- `GET …/release-candidates?release=KEY` (and `spider release candidates --release`) now leaves out tasks whose linked commits and pull requests are all outside the release's repos; tasks without git links are still listed.
+- Database migration `0025_git_links` (`git_links` and `pull_requests`).
 
 ### CLI
 

@@ -720,8 +720,8 @@ export type ReleaseListFilters = z.input<typeof releaseListFilters>;
 
 /**
  * Done tasks that could go into a release: with code, in no release, not shipped. `project` narrows
- * to one project; `release` checks the release exists (and, once commits are linked, step 6 of
- * ST-89, will narrow to the release's repos).
+ * to one project; `release` checks the release exists and, when it has repos, leaves out tasks
+ * whose linked commits and pull requests are all in other repos (ST-84).
  */
 export const releaseCandidatesQuery = z.object({
   project: z.string().trim().min(1).max(10).optional(),
