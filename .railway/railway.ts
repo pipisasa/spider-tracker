@@ -19,7 +19,7 @@ export default defineRailway(() => {
     healthcheckTimeout: 60,
     replicas: { "us-west2": 1 },
     domains: ["tracker-api.batele.plus"],
-    env: { API_ORIGIN: preserve(), BATELE_ID_CLIENT_ID: preserve(), BETTER_AUTH_SECRET: preserve(), DATABASE_URL: preserve(), NODE_ENV: preserve(), SIGNUP_ALLOWLIST: preserve(), WEB_ORIGIN: preserve() },
+    env: { API_ORIGIN: preserve(), BATELE_ID_CLIENT_ID: preserve(), BETTER_AUTH_SECRET: preserve(), DATABASE_URL: preserve(), NODE_ENV: preserve(), SIGNUP_ALLOWLIST: preserve(), TRUSTED_PROXY: "railway", WEB_ORIGIN: preserve() },
   });
 
   return project("spider-tracker", {
