@@ -44,7 +44,7 @@ export const scalarHtml = `<!doctype html>
     <div id="app"></div>
     <script src="${SCALAR_JS}" integrity="${SCALAR_JS_SRI}" crossorigin="anonymous"></script>
     <script>
-      Scalar.createApiReference("#app", { url: "${SPEC_URL}" });
+      Scalar.createApiReference("#app", { url: "${SPEC_URL}", withDefaultFonts: false });
     </script>
   </body>
 </html>
