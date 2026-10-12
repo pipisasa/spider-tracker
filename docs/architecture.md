@@ -68,6 +68,8 @@ packages/
 3. `GET /v1/orgs/:org/events` streams the organization's events over SSE (`ready` on connect, `ping` every 20 s). The web app subscribes in the organization layout (`useOrgEvents`) and invalidates the matching TanStack Query keys; after a reconnect it refreshes the organization's data once.
 4. Waiting inbox requests (`/inbox?wait=`, MCP `get_inbox`, the Claude Code channel) wake on `inbox.created` for their actor instead of polling, with a 5 s re-check as a safety net.
 
+5. Agent presence (ST-67, "working now"): an agent is working on a task if it acted on it (any activity-log entry on the task or its documents) or read it (`GET /tasks/:key`, `GET /tasks/:key/comments`, MCP `get_task`, `start_task`, `list_comments`) within 10 minutes. `GET /projects/:key/presence` merges both. Writes come from the activity table; reads are kept in memory per API process (`src/presence.ts`, no migration), which is fine with one replica (with several, a read only shows on the replica that served it). Reads announce a `presence` event at most once a minute per agent and task; writes already publish `task.changed`, `comment.created` or `document.changed`, which the web app also uses to refresh presence. The web app expires entries itself from `lastSeenAt` with a shared 15 s clock.
+
 Payloads carry only ids and keys (Postgres limits them to 8 kB); clients fetch the data through the normal routes. Browser-to-server actions stay plain REST calls.
 
 ## File storage

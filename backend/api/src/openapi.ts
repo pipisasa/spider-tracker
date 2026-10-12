@@ -108,6 +108,11 @@ const schemas: Record<string, JsonSchema> = {
       additionalProperties: false,
     }),
   }),
+  Presence: object({
+    taskKey: string(),
+    actorId: string({ format: "uuid" }),
+    lastSeenAt: string({ format: "date-time", description: "Latest action or read by the agent on the task" }),
+  }),
   Subtask: {
     allOf: [
       ref("Task"),
@@ -256,6 +261,7 @@ const schemas: Record<string, JsonSchema> = {
   ProjectList: listOf("Project"),
   TaskList: listOf("Task"),
   SubtaskList: listOf("Subtask"),
+  PresenceList: listOf("Presence"),
   CreateProjectInput: fromZod(createProjectInput),
   UpdateProjectInput: fromZod(updateProjectInput),
   CreateTaskInput: fromZod(createTaskInput),
@@ -637,6 +643,15 @@ const paths = {
       summary: "Create a task",
       requestBody: body("CreateTaskInput"),
       responses: { "201": ok("Created task", "Task"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/presence": {
+    parameters: [orgSlug, projectKey],
+    get: {
+      operationId: "listPresence",
+      summary:
+        "Agents working on the project's tasks right now: they acted on a task (activity log) or read it through the API, CLI or MCP within the last 10 minutes",
+      responses: { "200": ok("Active agents per task", "PresenceList"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}": {

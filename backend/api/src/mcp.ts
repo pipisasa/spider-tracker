@@ -305,6 +305,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     ({ key: taskKey }) =>
       run(async () => {
         const task = await getTask(db, ctx, taskKey);
+        await realtime.presence.touch(ctx, task.key);
         const [subtasks, relations, documents] = await Promise.all([
           listSubtasks(db, ctx, task.key),
           listRelations(db, ctx, task.key),
@@ -400,6 +401,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       ? current.assigneeIds
       : [...current.assigneeIds, ctx.actorId];
     const task = await updateTask(db, ctx, current.key, { assigneeIds, statusId });
+    await realtime.presence.touch(ctx, task.key);
     return describeTask(task, project, true);
   };
 
@@ -564,17 +566,19 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) =>
-      run(async () =>
-        Promise.all(
-          (await listComments(db, ctx, taskKey)).map(async (c) => ({
+      run(async () => {
+        const comments = await listComments(db, ctx, taskKey);
+        await realtime.presence.touch(ctx, taskKey);
+        return Promise.all(
+          comments.map(async (c) => ({
             id: c.id,
             author: await handleOf(c.authorId),
             body: c.body,
             parentId: c.parentId,
             createdAt: c.createdAt,
           })),
-        ),
-      ),
+        );
+      }),
   );
 
   server.registerTool(

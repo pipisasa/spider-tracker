@@ -27,7 +27,12 @@ export function useOrgEvents(orgSlug: string) {
     // A child's change can alter any parent's sub-task list; those lists are small.
     const refreshSubtasks = () =>
       void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "orgs" && q.queryKey[1] === orgSlug && q.queryKey[4] === "subtasks" });
+    // Agents' writes and reads change who is "working now".
+    const refreshPresence = (taskKey: string) =>
+      void qc.invalidateQueries({ queryKey: keys.presence(orgSlug, taskKey.slice(0, taskKey.lastIndexOf("-"))) });
+    on("presence", (e) => refreshPresence(e.taskKey));
     on("task.changed", (e) => {
+      refreshPresence(e.taskKey);
       refreshSubtasks();
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       void qc.invalidateQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
@@ -40,6 +45,7 @@ export function useOrgEvents(orgSlug: string) {
       qc.removeQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
     });
     on("comment.created", (e) => {
+      refreshPresence(e.taskKey);
       void qc.invalidateQueries({ queryKey: keys.comments(orgSlug, e.taskKey) });
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
     });
@@ -51,6 +57,7 @@ export function useOrgEvents(orgSlug: string) {
     });
 
     on("document.changed", (e) => {
+      if (e.taskKey) refreshPresence(e.taskKey);
       void qc.invalidateQueries({ queryKey: keys.documentLists(orgSlug) });
       // Also refreshes its version history.
       void qc.invalidateQueries({ queryKey: keys.document(orgSlug, e.documentId) });

@@ -13,6 +13,7 @@ export * from "./devices";
 export * from "./comments";
 export * from "./inbox";
 export * from "./events";
+export * from "./presence";
 export * from "./signup";
 export * from "./activity-feed";
 export * from "./tags";

@@ -1,5 +1,5 @@
 import { TagChips } from "@/components/tags";
-import { AvatarStack } from "@/components/avatar-stack";
+import { WorkingAvatars } from "@/components/working-avatars";
 import { PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { assigneesOf } from "@/lib/assignees";
 import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
@@ -62,7 +62,7 @@ export function TaskList({
                     </span>
                   )}
                   <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
-                  <AvatarStack actors={assigneesOf(task.assigneeIds, memberMap)} />
+                  <WorkingAvatars orgSlug={orgSlug} taskKey={task.key} actors={assigneesOf(task.assigneeIds, memberMap)} interactive={false} />
                   <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
                     {dateFormat.format(new Date(task.createdAt))}
                   </span>

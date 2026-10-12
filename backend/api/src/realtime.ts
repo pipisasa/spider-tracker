@@ -1,5 +1,6 @@
 import { EVENTS_CHANNEL, type OrgEvent } from "@repo/core";
 import type { Db } from "@repo/db";
+import { createPresence } from "./presence";
 
 /**
  * Fans committed change events (pg_notify) out to in-process subscribers: SSE streams and
@@ -27,7 +28,12 @@ export function createRealtime(db: Db) {
         throw err;
       }));
 
+  const presence = createPresence(db);
+
   return {
+    /** Agents' reads of tasks (in memory), for "working now" (ST-67). */
+    presence,
+
     /** Calls `fn` for every event until the returned function is called. */
     async subscribe(fn: (event: OrgEvent) => void) {
       subscribers.add(fn);

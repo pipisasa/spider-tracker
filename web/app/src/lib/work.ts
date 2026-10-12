@@ -10,6 +10,7 @@ import type {
   DocumentVersionDto,
   DocumentVersionSummaryDto,
   InvitationDto,
+  PresenceDto,
   RelationDto,
   TagDto,
   CreatedApiKeyDto,
@@ -60,6 +61,8 @@ export const keys = {
     ["orgs", org, "projects", key] as const,
   tasks: (org: string, key: string) =>
     ["orgs", org, "projects", key, "tasks"] as const,
+  presence: (org: string, key: string) =>
+    ["orgs", org, "projects", key, "presence"] as const,
   task: (org: string, taskKey: string) =>
     ["orgs", org, "tasks", taskKey] as const,
   comments: (org: string, taskKey: string) =>
@@ -135,6 +138,19 @@ export const tasksQuery = (org: string, key: string) =>
           `${orgPath(org)}/projects/${key}/tasks`,
         )
       ).items,
+  });
+
+/** Agents working on the project's tasks (refreshed by `presence` events; the client expires entries itself). */
+export const presenceQuery = (org: string, key: string) =>
+  queryOptions({
+    queryKey: keys.presence(org, key),
+    queryFn: async () =>
+      (
+        await api<ListResponse<PresenceDto>>(
+          `${orgPath(org)}/projects/${key}/presence`,
+        )
+      ).items,
+    staleTime: 30_000,
   });
 
 export const taskQuery = (org: string, taskKey: string) =>

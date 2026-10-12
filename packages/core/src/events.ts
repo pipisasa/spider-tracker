@@ -12,6 +12,7 @@ export const EVENTS_CHANNEL = "spider_events";
 export type OrgEvent =
   | { type: "task.changed" | "task.deleted"; orgId: string; projectKey: string; taskKey: string }
   | { type: "comment.created"; orgId: string; taskKey: string }
+  | { type: "presence"; orgId: string; taskKey: string }
   | { type: "inbox.created"; orgId: string; recipientIds: string[] }
   | { type: "project.changed"; orgId: string; projectKey: string }
   | { type: "tags.changed"; orgId: string }
@@ -48,6 +49,7 @@ export function eventInScope(event: OrgEvent, keys: Set<string> | null): boolean
     case "project.changed":
       return keys.has(event.projectKey);
     case "comment.created":
+    case "presence":
       return keys.has(event.taskKey.split("-")[0] ?? "");
     case "document.changed":
     case "document.deleted":

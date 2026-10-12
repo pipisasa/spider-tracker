@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
 import { actorLabel } from "@/lib/assignees";
+import { useWorkingNow } from "@/lib/use-presence";
 import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import type { UpdateTaskInput } from "@repo/core/schemas";
@@ -48,6 +49,9 @@ function TaskPage() {
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
   const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const { membership } = Route.useRouteContext();
+  const working = useWorkingNow(orgSlug, task.key);
+  // Assignees show their own indicator; other agents working on the task are named here.
+  const visitors = actors.filter((a) => working.includes(a.id) && !task.assigneeIds.includes(a.id));
   const update = useUpdateTask(orgSlug);
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
@@ -88,6 +92,12 @@ function TaskPage() {
           )}
           <span>{task.key}</span>
         </nav>
+        {visitors.length > 0 && (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span aria-hidden className="size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
+            Working now: {visitors.map((a) => `@${a.handle}`).join(", ")}
+          </p>
+        )}
         {/* Keyed by task so local edits reset when navigating between tasks. */}
         <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"} />
         <Subtasks
@@ -115,6 +125,7 @@ function TaskPage() {
             members={members}
             actors={actors}
             value={task.assigneeIds}
+            working={working}
             onChange={(assigneeIds) => save({ assigneeIds })}
           />
         </Field>

@@ -145,11 +145,14 @@ export function AssigneePicker({
   actors = [],
   value,
   onChange,
+  working = [],
 }: {
   members: ActorDto[];
   actors?: ActorDto[];
   value: string[];
   onChange: (actorIds: string[]) => void;
+  /** Ids of agents working on the task right now (ST-67). */
+  working?: string[];
 }) {
   const { selected, options } = assigneeOptions(members, actors, value);
   const toggle = (actor: ActorDto) => onChange(toggleAssignee(value, actor));
@@ -165,7 +168,12 @@ export function AssigneePicker({
             </>
           ) : (
             <>
-              <AvatarStack actors={selected} />
+              <AvatarStack
+                actors={selected}
+                interactive={false}
+                isWorking={(a) => working.includes(a.id)}
+                highlight={(a) => (working.includes(a.id) ? "ring-emerald-500" : undefined)}
+              />
               <span className="truncate">
                 {selected.map((m, i) => (
                   <span key={m.id} className={m.deactivated ? "text-muted-foreground" : undefined} title={actorLabel(m)}>
