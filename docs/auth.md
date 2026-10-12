@@ -25,8 +25,9 @@ Spider Tracker is its own **OAuth 2.1 / OpenID Connect (OIDC) provider**: MCP cl
 `SIGNUP_ALLOWLIST` (API env) lists emails and `@domain` entries allowed to **create** an account; empty means anyone. Existing users always sign in.
 
 - Better Auth's `user.validateUserInfo` hook rejects `create-user` for addresses outside the list, for every method (magic link, GitHub, Batele ID). Browser flows land on `/login?error=signup_not_allowed`.
+- The address must also be verified by the sign-in method (`isSignupAllowed` in `@repo/core`): anyone can put a listed address on their provider profile. Magic links verify it by delivery; GitHub only when it reports the email as verified. Batele ID doesn't report verified emails, so while the list is set it can't sign up a listed real address: such users sign up by magic link, then link Batele ID from the home page.
 - Magic links aren't sent to addresses that would be refused (and don't belong to an existing user); the response is the same either way, so the form doesn't reveal the list.
-- Email is optional for Batele ID: users without one get `<sub>@users.batele-id.invalid` and may always sign up (the list only gates real addresses; `.invalid` never receives a magic link).
+- Email is optional for Batele ID: users without one get `<sub>@users.batele-id.invalid` and may always sign up through Batele ID, list or not (the list only gates real addresses; `.invalid` never receives a magic link). Other methods can't use the placeholder domain to bypass the list.
 - The login page shows the email magic-link form only when it is the only sign-in method.
 - Production: set on Railway (`railway variable set SIGNUP_ALLOWLIST=… -s api`).
 
