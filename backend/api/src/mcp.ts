@@ -258,35 +258,30 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "list_tasks",
     {
       description:
-        "List tasks in a project, in board order. Filter by status (a status name or a category such as todo, in_progress, done), assignee and title text.",
+        "List tasks in a project, in board order. Filter by status (a status name or a category such as todo, in_progress, done), assignee, tags, priority and title text; filters combine with AND.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         status: z.string().optional().describe('Status name ("In Progress") or category ("in_progress")'),
-        assignee: z.string().optional().describe('"me" or a member handle'),
+        assignee: z
+          .string()
+          .optional()
+          .describe('"me", "none" (unassigned) or a member handle, deactivated members too'),
+        tags: z.array(z.string()).max(20).optional().describe("Tag names (see list_tags); a task must have all of them"),
+        priority: z.array(priority).max(5).optional().describe("Any of these priorities: 0 none, 1 urgent, 2 high, 3 medium, 4 low"),
         query: z.string().optional().describe("Case-insensitive text to find in titles"),
         limit: z.number().int().min(1).max(200).optional().describe("Maximum tasks to return (default 50)"),
       },
     },
-    ({ projectKey, status, assignee, query, limit }) =>
+    ({ projectKey, status, assignee, tags, priority: priorities, query, limit }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
-        let tasks = await listTasks(db, ctx, project.key);
-        if (status) {
-          const wanted = status.trim().toLowerCase();
-          const ids = project.statuses
-            .filter((s) => s.name.toLowerCase() === wanted || s.category === wanted)
-            .map((s) => s.id);
-          if (ids.length === 0) resolveStatus(project, status);
-          tasks = tasks.filter((t) => ids.includes(t.statusId));
-        }
-        if (assignee) {
-          const [actorId] = await resolveAssignees([assignee]);
-          tasks = tasks.filter((t) => actorId && t.assigneeIds.includes(actorId));
-        }
-        if (query) {
-          const needle = query.toLowerCase();
-          tasks = tasks.filter((t) => t.title.toLowerCase().includes(needle));
-        }
+        const tasks = await listTasks(db, ctx, project.key, {
+          status: status ? [status] : undefined,
+          assignee: assignee ? [assignee] : undefined,
+          tags,
+          priority: priorities,
+          q: query,
+        });
         const shown = tasks.slice(0, limit ?? 50);
         return {
           total: tasks.length,

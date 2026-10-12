@@ -653,7 +653,37 @@ const paths = {
     parameters: [orgSlug, projectKey],
     get: {
       operationId: "listTasks",
-      summary: "List a project's tasks",
+      summary: "List a project's tasks in board order, optionally filtered",
+      description:
+        "Repeat a parameter for several values. Statuses, assignees and priorities match any of their values; " +
+        "a task must carry every `tag`; parameters combine with AND. Unknown statuses, members and tags are 400s.",
+      parameters: [
+        {
+          name: "status",
+          in: "query",
+          schema: { type: "array", items: { type: "string" } },
+          description: 'Status id, name or category ("In Progress", "in_progress"), case-insensitive',
+        },
+        {
+          name: "assignee",
+          in: "query",
+          schema: { type: "array", items: { type: "string" } },
+          description: 'Actor id or handle (deactivated ones too), "me", or "none" for unassigned tasks',
+        },
+        {
+          name: "tag",
+          in: "query",
+          schema: { type: "array", items: { type: "string" } },
+          description: "Tag name, case-insensitive; the task must have all of them",
+        },
+        {
+          name: "priority",
+          in: "query",
+          schema: { type: "array", items: { type: "integer", minimum: 0, maximum: 4 } },
+          description: "0 none, 1 urgent, 2 high, 3 medium, 4 low",
+        },
+        { name: "q", in: "query", schema: { type: "string" }, description: "Case-insensitive text in the title" },
+      ],
       responses: { "200": ok("Tasks", "TaskList"), ...errors },
     },
     post: {

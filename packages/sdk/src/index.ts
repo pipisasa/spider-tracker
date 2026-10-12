@@ -19,6 +19,7 @@ import type {
   ListResponse,
   MeResponse,
   ProjectDetailDto,
+  Priority,
   ProjectDto,
   RelationDto,
   SavedViewDto,
@@ -48,6 +49,19 @@ import type {
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
 // of @repo/core, so it stays free of the database and runs in browsers too.
+
+/** Filters of `tasks.list` (see `taskListFilters` in @repo/core/schemas). */
+export interface TaskListQuery {
+  /** Status ids, names or categories. */
+  status?: string[];
+  /** Actor ids or handles (deactivated ones too), "me" or "none". */
+  assignee?: string[];
+  /** Tag names, case-insensitive; a task must carry all of them. */
+  tags?: string[];
+  priority?: Priority[];
+  /** Text in the title. */
+  q?: string;
+}
 
 /** What the client tells the API it is; recorded as the activity source. */
 export type ClientSource = "api" | "cli" | "mcp";
@@ -257,8 +271,20 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     },
 
     tasks: {
-      list: (orgSlug: string, projectKey: string) =>
-        request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks`),
+      /**
+       * In board order. Statuses, assignees and priorities match any of their values; a task must
+       * carry every tag; filters combine with AND.
+       */
+      list: (orgSlug: string, projectKey: string, query: TaskListQuery = {}) => {
+        const params = new URLSearchParams();
+        for (const value of query.status ?? []) params.append("status", value);
+        for (const value of query.assignee ?? []) params.append("assignee", value);
+        for (const value of query.tags ?? []) params.append("tag", value);
+        for (const value of query.priority ?? []) params.append("priority", String(value));
+        if (query.q) params.set("q", query.q);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks${qs}`);
+      },
       /** Agents working on the project's tasks right now (acted on or read a task in the last 10 minutes). */
       presence: (orgSlug: string, projectKey: string) =>
         request<ListResponse<PresenceDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/presence`),
