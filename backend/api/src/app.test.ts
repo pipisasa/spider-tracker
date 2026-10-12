@@ -76,6 +76,23 @@ describe("public routes", () => {
     }
   });
 
+  test.each([
+    ["/swagger", "swagger-ui-dist@", "SwaggerUIBundle"],
+    ["/scalar", "@scalar/api-reference@", "Scalar.createApiReference"],
+  ])("GET %s serves an API reference page for /openapi.json", async (path, asset, bootstrap) => {
+    const res = await app.request(path);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toStartWith("text/html");
+    const html = await res.text();
+    expect(html).toContain('"/openapi.json"');
+    expect(html).toContain(`https://cdn.jsdelivr.net/npm/${asset}`);
+    expect(html).toContain(bootstrap);
+    // Every CDN asset is pinned and integrity-checked.
+    const external = html.match(/(?:src|href)="https:[^"]+"[^>]*/g) ?? [];
+    expect(external.length).toBeGreaterThan(0);
+    for (const tag of external) expect(tag).toMatch(/@\d+\.\d+\.\d+\/.*integrity="sha384-/);
+  });
+
   test("/v1 requires a session", async () => {
     const res = await app.request("/v1/me");
     expect(res.status).toBe(401);

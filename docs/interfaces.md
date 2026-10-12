@@ -7,7 +7,7 @@ Anything possible in the UI is also possible through these interfaces. The web a
 | Interface | Purpose |
 |---|---|
 | **Web app** | Main UI |
-| **Public API** | REST with an OpenAPI 3.1 spec at `GET /openapi.json`, request bodies generated from the Zod schemas |
+| **Public API** | REST with an OpenAPI 3.1 spec at `GET /openapi.json`, request bodies generated from the Zod schemas; browsable at `/swagger` (Swagger UI) and `/scalar` (Scalar) |
 | **SDK** | `packages/sdk`: typed TypeScript client used by the CLI and external agents |
 | **MCP server** | Native tool access for agents, served over HTTP from `backend/api` |
 | **CLI** | `spider` (`backend/cli`), for people, scripts and agents |
@@ -24,7 +24,7 @@ See [auth.md](./auth.md) for all flows.
 
 ## Public API
 
-- Base path `/v1`; organization-scoped routes under `/v1/orgs/{orgSlug}` (members, projects, tasks). The spec at `/openapi.json` is the reference.
+- Base path `/v1`; organization-scoped routes under `/v1/orgs/{orgSlug}` (members, projects, tasks). The spec at `/openapi.json` is the reference; `/swagger` (Swagger UI) and `/scalar` (Scalar) render it interactively (`backend/api/src/api-docs.ts`, pinned jsDelivr builds with SRI hashes).
 - Errors are `{ "error": { "code", "message" } }` with status 400 / 401 / 403 / 404 / 409.
 - **Minimum CLI version:** `/v1/*` and `/mcp` responses carry `X-Spider-Min-Cli: <version>` (`MIN_CLI_VERSION` in `@repo/core`), the oldest `spider` CLI the server supports; `GET /health` returns it as `minCliVersion`. Older CLIs warn once per run (on stderr) and suggest `spider update`.
 - **Activity source:** browser sessions record `source = ui`. API-key clients record `api` by default and may declare `X-Spider-Source: cli | mcp | api`; other values are ignored.

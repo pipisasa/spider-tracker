@@ -17,6 +17,7 @@ import { sql } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { apiDocsRoutes } from "./api-docs";
 import { enabledAuthProviders, type Auth } from "./auth";
 import { toActorDto, toMembership } from "./dto";
 import type { Env } from "./env";
@@ -77,6 +78,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
 
   const openApi = openApiDocument(env.API_ORIGIN);
   app.get("/openapi.json", (c) => c.json(openApi));
+  app.route("/", apiDocsRoutes());
 
   app.route("/device", deviceRoutes(db, env));
 
