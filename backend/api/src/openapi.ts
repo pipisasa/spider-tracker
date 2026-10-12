@@ -11,6 +11,7 @@ import {
   createOrganizationInput,
   deviceCodeInput,
   relationInput,
+  relationKindSchema,
   createProjectInput,
   createTaskInput,
   createDocumentInput,
@@ -736,7 +737,7 @@ const paths = {
       operationId: "removeRelation",
       summary: "Remove a link",
       parameters: [
-        { name: "kind", in: "query", required: true, schema: { type: "string" } },
+        { name: "kind", in: "query", required: true, schema: { type: "string", enum: relationKindSchema.options } },
         { name: "task", in: "query", required: true, schema: { type: "string" }, description: "The other task's key" },
       ],
       responses: { "204": { description: "Removed" }, ...errors },

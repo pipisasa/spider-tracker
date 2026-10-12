@@ -17,12 +17,21 @@ const { projects, taskRelations, tasks } = schema;
 
 type StoredType = "blocks" | "relates" | "duplicates";
 
-/** Normalises a kind seen from `self` into the stored direction. */
+/** Normalises a kind seen from `self` into the stored direction; `relates` is stored smaller id first. */
 function toStored(kind: RelationKind, self: string, other: string): { from: string; to: string; type: StoredType } {
   if (kind === "blocked_by") return { from: other, to: self, type: "blocks" };
   if (kind === "duplicated_by") return { from: other, to: self, type: "duplicates" };
+  if (kind === "relates") return self < other ? { from: self, to: other, type: kind } : { from: other, to: self, type: kind };
   return { from: self, to: other, type: kind };
 }
+
+const INVERSE: Record<RelationKind, RelationKind> = {
+  blocks: "blocked_by",
+  blocked_by: "blocks",
+  duplicates: "duplicated_by",
+  duplicated_by: "duplicates",
+  relates: "relates",
+};
 
 async function findLink(tx: Tx, from: string, to: string, type: StoredType) {
   const symmetric = type === "relates";
@@ -62,7 +71,13 @@ export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, in
     if (link.type === "blocks" && (await findLink(tx, link.to, link.from, "blocks"))) {
       throw new DomainError("validation", "The other task already blocks this one; two tasks can't block each other");
     }
-    await tx.insert(taskRelations).values({ fromTaskId: link.from, toTaskId: link.to, type: link.type, createdBy: ctx.actorId });
+    const [inserted] = await tx
+      .insert(taskRelations)
+      .values({ fromTaskId: link.from, toTaskId: link.to, type: link.type, createdBy: ctx.actorId })
+      .onConflictDoNothing()
+      .returning({ fromTaskId: taskRelations.fromTaskId });
+    // A concurrent request added the same link.
+    if (!inserted) throw new DomainError("conflict", "These tasks are already linked that way");
 
     const selfKey = `${self.projectKey}-${self.task.number}`;
     const otherFullKey = `${other.projectKey}-${other.task.number}`;
@@ -71,6 +86,12 @@ export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, in
       entityId: self.task.id,
       action: "relation.added",
       changes: { kind, task: otherFullKey },
+    });
+    await recordActivity(tx, ctx, {
+      entityType: "task",
+      entityId: other.task.id,
+      action: "relation.added",
+      changes: { kind: INVERSE[kind], task: selfKey },
     });
     await announce(tx, ctx, { key: selfKey, projectKey: self.projectKey }, { key: otherFullKey, projectKey: other.projectKey });
     return {
@@ -98,6 +119,7 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
           eq(taskRelations.type, link.type),
         ),
       );
+    const selfKey = `${self.projectKey}-${self.task.number}`;
     const otherFullKey = `${other.projectKey}-${other.task.number}`;
     await recordActivity(tx, ctx, {
       entityType: "task",
@@ -105,12 +127,13 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
       action: "relation.removed",
       changes: { kind, task: otherFullKey },
     });
-    await announce(
-      tx,
-      ctx,
-      { key: `${self.projectKey}-${self.task.number}`, projectKey: self.projectKey },
-      { key: otherFullKey, projectKey: other.projectKey },
-    );
+    await recordActivity(tx, ctx, {
+      entityType: "task",
+      entityId: other.task.id,
+      action: "relation.removed",
+      changes: { kind: INVERSE[kind], task: selfKey },
+    });
+    await announce(tx, ctx, { key: selfKey, projectKey: self.projectKey }, { key: otherFullKey, projectKey: other.projectKey });
   });
 }
 

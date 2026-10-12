@@ -1,7 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, desc, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
-import { z } from "zod";
 import {
   assertCanWrite,
   inScope,
@@ -19,6 +18,7 @@ import type {
 } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
+import { isUuid } from "./ids";
 import {
   createDocumentInput,
   documentListQuery,
@@ -36,8 +36,6 @@ const { documents, documentVersions, projects, tasks } = schema;
 
 type DocumentRow = typeof documents.$inferSelect;
 type Scope = { projectKey: string | null; taskKey: string | null };
-
-const isUuid = (value: string) => z.uuid().safeParse(value).success;
 
 function toSummary(row: DocumentRow, scope: Scope): DocumentSummaryDto {
   return {

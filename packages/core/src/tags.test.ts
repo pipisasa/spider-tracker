@@ -43,6 +43,16 @@ run("tags", () => {
     await expect(createTag(db, { ...ctx, role: "guest" }, { name: "nope" })).rejects.toMatchObject({ code: "forbidden" });
   });
 
+  test("names are unique regardless of case; malformed ids are not found", async () => {
+    await expect(createTag(db, ctx, { name: "BUG" })).rejects.toMatchObject({ code: "conflict" });
+    const results = await Promise.allSettled([createTag(db, ctx, { name: "Race" }), createTag(db, ctx, { name: "race" })]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { code: "conflict" } });
+    await expect(deleteTag(db, ctx, "not-a-uuid")).rejects.toMatchObject({ code: "not_found" });
+    const race = (await listTags(db, ctx.orgId)).find((t) => t.name.toLowerCase() === "race");
+    if (race) await deleteTag(db, ctx, race.id);
+  });
+
   test("tasks carry tags; changes are tracked; other orgs' tags are refused; deleting a tag untags", async () => {
     const [agent, bug] = await listTags(db, ctx.orgId);
     if (!agent || !bug) throw new Error("expected the tags from the previous test");

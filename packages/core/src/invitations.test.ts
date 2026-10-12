@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import {
   acceptInvitation,
@@ -11,6 +11,7 @@ import {
   revokeInvitation,
 } from "./invitations";
 import { createOrganization, listMemberships } from "./organizations";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks";
 
 // Integration test: needs a migrated database in TEST_DATABASE_URL.
 const url = process.env.TEST_DATABASE_URL;
@@ -34,7 +35,8 @@ run("invitations", () => {
   const joiner = user("Sam");
   const twin = { ...user("Sam"), name: "Sam Two" };
   const third = user("Third");
-  const users = [owner, joiner, twin, third];
+  const racers = [user("Racer"), { ...user("Racer"), name: "Racer Two" }];
+  const users = [owner, joiner, twin, third, ...racers];
   let ctx: ActorContext;
 
   beforeAll(async () => {
@@ -117,6 +119,22 @@ run("invitations", () => {
       useCount: 2,
       status: "used_up",
     });
+  });
+
+  test("two people with the same handle joining at once get distinct handles", async () => {
+    const codes = await Promise.all([createInvitation(db, ctx, {}), createInvitation(db, ctx, {})]);
+    // Both pick "racer", then queue on the foreign-key check of the locked organization.
+    const release = await holdLock(db, sql`select 1 from organizations where id = ${ctx.orgId} for update`);
+    const joining = Promise.all(racers.map((racer, i) => acceptInvitation(db, racer, { code: codes[i]?.code ?? "" })));
+    const settled = settle(joining);
+    await waitForLockWaiters(db, "actors", 2);
+    await release();
+    expect(await settled).toBeNull();
+    expect((await joining).map((j) => j.actor.handle).sort()).toEqual(["racer", "racer-2"]);
+  });
+
+  test("malformed invitation ids are not found", async () => {
+    await expect(revokeInvitation(db, ctx, "not-a-uuid")).rejects.toMatchObject({ code: "not_found" });
   });
 
   test("revoked, expired and unknown codes are refused alike", async () => {

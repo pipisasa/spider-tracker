@@ -13,6 +13,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -147,7 +148,8 @@ export const tags = pgTable(
     color: text("color"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [unique("tags_org_name_key").on(t.orgId, t.name)],
+  // Unique regardless of case (ST-49).
+  (t) => [uniqueIndex("tags_org_lower_name_key").on(t.orgId, sql`lower(${t.name})`)],
 );
 
 export const taskTags = pgTable(
@@ -182,6 +184,8 @@ export const taskRelations = pgTable(
     primaryKey({ columns: [t.fromTaskId, t.toTaskId, t.type] }),
     index("task_relations_to_idx").on(t.toTaskId),
     check("task_relations_not_self", sql`${t.fromTaskId} <> ${t.toTaskId}`),
+    // `relates` is symmetric: stored smaller id first, so A-B and B-A can't both exist (ST-49).
+    check("task_relations_relates_ordered", sql`${t.type} <> 'relates' or ${t.fromTaskId} < ${t.toTaskId}`),
   ],
 );
 
