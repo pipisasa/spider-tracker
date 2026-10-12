@@ -4,6 +4,7 @@ import type {
   PresenceDto,
   ActorDto,
   AgentDto,
+  BulkUpdateTasksResponse,
   ApiErrorBody,
   CommentDto,
   AgentInviteDto,
@@ -31,6 +32,7 @@ import type {
 } from "@repo/core/contracts";
 import type {
   AcceptAgentInviteInput,
+  BulkUpdateTasksInput,
   CreateAgentInviteInput,
   CreateAgentInput,
   CreateCommentInput,
@@ -64,6 +66,8 @@ export interface TaskListQuery {
   priority?: Priority[];
   /** Text in the title. */
   q?: string;
+  /** Direct sub-tasks of this task key. */
+  parent?: string;
 }
 
 /** What the client tells the API it is; recorded as the activity source. */
@@ -291,6 +295,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         if (query.tagMatch) params.set("tagMatch", query.tagMatch);
         for (const value of query.priority ?? []) params.append("priority", String(value));
         if (query.q) params.set("q", query.q);
+        if (query.parent) params.set("parent", query.parent);
         const qs = params.size ? `?${params}` : "";
         return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks${qs}`);
       },
@@ -302,6 +307,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<TaskDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks`, input),
       update: (orgSlug: string, taskKey: string, input: UpdateTaskInput) =>
         request<TaskDto>("PATCH", `${org(orgSlug)}/tasks/${seg(taskKey)}`, input),
+      /**
+       * Several tasks by `keys` or a `filter` (one project), at most 100; one result per task
+       * (changed, unchanged or error), and an error on one task doesn't stop the others.
+       */
+      bulkUpdate: (orgSlug: string, input: BulkUpdateTasksInput) =>
+        request<BulkUpdateTasksResponse>("POST", `${org(orgSlug)}/tasks/bulk-update`, input),
       delete: (orgSlug: string, taskKey: string) =>
         request<void>("DELETE", `${org(orgSlug)}/tasks/${seg(taskKey)}`),
       relations: {

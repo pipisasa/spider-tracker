@@ -470,6 +470,40 @@ withDb("SDK and client-declared source", () => {
     expect(error).toMatchObject({ status: 404, code: "not_found" });
   });
 
+  test("bulk updates through the SDK: keys or a filter, per-task outcomes, dry run, 400 on bad input (ST-106)", async () => {
+    const client = sdk();
+    const parent = await client.tasks.create(slug, "SPI", { title: "Bulk parent" });
+    const kids = [];
+    for (const title of ["Bulk kid 1", "Bulk kid 2"]) kids.push(await client.tasks.create(slug, "SPI", { title, parentId: parent.id }));
+    const keys = kids.map((t) => t.key);
+
+    const byKeys = await client.tasks.bulkUpdate(slug, { keys: [...keys, "SPI-999"], set: { status: "in_review", priority: 2 } });
+    expect(byKeys.summary).toEqual({ changed: 2, unchanged: 0, failed: 1 });
+    expect(byKeys.results.map((r) => r.outcome)).toEqual(["changed", "changed", "error"]);
+    expect(byKeys.results[2]).toMatchObject({ key: "SPI-999", task: null, error: { code: "not_found" } });
+    expect((await client.tasks.list(slug, "SPI", { parent: parent.key, status: ["in_review"] })).items).toHaveLength(2);
+
+    const filter = { project: "SPI", parent: parent.key, status: ["in_review"] };
+    const preview = await client.tasks.bulkUpdate(slug, { filter, set: { status: "Backlog" }, dryRun: true });
+    expect(preview).toMatchObject({ dryRun: true, summary: { changed: 2 } });
+    expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(0);
+    const applied = await client.tasks.bulkUpdate(slug, { filter, set: { status: "Backlog" } });
+    expect(applied.results.map((r) => r.key)).toEqual(keys);
+    expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(2);
+
+    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, kids[0]?.id ?? ""));
+    expect(log.map((e) => e.action)).toEqual(["task.created", "task.updated", "task.updated"]);
+
+    const bad = await client.tasks.bulkUpdate(slug, { keys, filter, set: { priority: 1 } }).catch((e: unknown) => e);
+    expect(bad).toMatchObject({ status: 400, code: "validation" });
+    const tooMany = await client.tasks
+      .bulkUpdate(slug, { keys: Array.from({ length: 101 }, (_, i) => `SPI-${i + 1}`), set: { priority: 1 } })
+      .catch((e: unknown) => e);
+    expect(tooMany).toMatchObject({ status: 400 });
+    const nothing = await client.tasks.bulkUpdate(slug, { keys, set: {} }).catch((e: unknown) => e);
+    expect(nothing).toMatchObject({ status: 400 });
+  });
+
   test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
     const client = sdk();
     const doc = await client.documents.create(slug, { title: "Spec", project: "SPI", content: "v1" });

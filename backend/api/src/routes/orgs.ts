@@ -55,6 +55,7 @@ import {
   revokeApiKey,
   updateProject,
   updateTask,
+  updateTasks,
 } from "@repo/core";
 import type { Db } from "@repo/db";
 import { Hono } from "hono";
@@ -215,6 +216,7 @@ export function orgRoutes(db: Db, realtime: Realtime) {
       tagMatch: c.req.query("tagMatch"),
       priority: query.priority,
       q: c.req.query("q"),
+      parent: c.req.query("parent"),
     };
     return c.json(list(await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)));
   });
@@ -256,6 +258,9 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     if (c.get("apiKey")) await realtime.presence.touch(actor, task.key);
     return c.json(task);
   });
+
+  // Several tasks at once, by keys or a filter; per-task outcomes, 200 even when some fail (ST-106).
+  app.post("/tasks/bulk-update", async (c) => c.json(await updateTasks(db, c.get("actor"), await body(c))));
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
