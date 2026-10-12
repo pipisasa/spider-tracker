@@ -51,8 +51,8 @@ function LoginPage() {
 
   const { data } = useQuery(authProvidersQuery);
   const providers = data?.providers ?? [];
-  // Email links are hidden when another method exists; development keeps them (links print to the API console).
-  const showEmail = providers.includes("magic-link") && (import.meta.env.DEV || providers.length === 1);
+  // Email links are offered only when no other sign-in method is configured.
+  const showEmail = providers.includes("magic-link") && providers.length === 1;
 
   async function signInWith(provider: Extract<AuthProvider, "github" | "batele-id">) {
     setError(null);
