@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { run, type RunOptions } from "./cli";
 import { claudeAgentMarkdown } from "./claude-agents";
+import type { AgentEntry } from "./credentials";
 import {
   PLUGIN_MANIFEST_URL,
   RELEASES_API,
@@ -251,11 +252,15 @@ describe("spider update", () => {
         agent: "bot",
         ref: "prod/acme/bot",
         serverUrl: "",
+        orgName: "Acme",
         saved: {
           token: "",
-          actor: { id: "", name: "Bot", handle: "bot", type: "agent" },
+          actor: { id: "", name: "Bot", handle: "bot" },
+          projects: null,
+          source: "invite",
+          createdAt: "",
         },
-      } as never,
+      } satisfies AgentEntry,
       "bot",
       { description: "d", prompt: "You review.", projects: null },
       version,
