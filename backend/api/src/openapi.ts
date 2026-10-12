@@ -1469,7 +1469,7 @@ const paths = {
     post: {
       operationId: "createRepo",
       summary:
-        "Add a repo by its GitHub remote (URL or owner/name), optionally attached to projects (owners, admins and their agents; a project-scoped agent must attach it to one of its projects). 409 if it exists",
+        "Add a repo by its GitHub remote (URL or owner/name), optionally attached to projects (owners, admins and their agents; a project-scoped agent must attach it to one of its projects). 409 if it exists; a project-scoped agent that can't see it is told to ask an owner or admin to attach it",
       requestBody: body("CreateRepoInput"),
       responses: { "201": ok("Created repo", "Repo"), ...errors },
     },
@@ -1479,13 +1479,13 @@ const paths = {
     get: { operationId: "getRepo", summary: "A repo with its apps and projects", responses: { "200": ok("Repo", "Repo"), ...errors } },
     patch: {
       operationId: "updateRepo",
-      summary: "Change a repo's remote (after a rename) or default branch (owners, admins and their agents)",
+      summary: "Change a repo's remote (after a rename) or default branch (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
       requestBody: body("UpdateRepoInput"),
       responses: { "200": ok("Updated repo", "Repo"), ...errors },
     },
     delete: {
       operationId: "deleteRepo",
-      summary: "Remove a repo with its apps and project links (owners, admins and their agents)",
+      summary: "Remove a repo with its apps and project links (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
       responses: { "204": { description: "Removed" }, ...errors },
     },
   },
@@ -1493,7 +1493,7 @@ const paths = {
     parameters: [orgSlug, repoOwner, repoName],
     post: {
       operationId: "createApp",
-      summary: "Add an app to a repo: folder, shared packages, versioning (default semver), environments in deploy order. 409 if the name is taken",
+      summary: "Add an app to a repo: folder, shared packages, versioning (default semver), environments in deploy order (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403). 409 if the name is taken",
       requestBody: body("CreateAppInput"),
       responses: { "201": ok("Created app", "App"), ...errors },
     },
@@ -1502,11 +1502,11 @@ const paths = {
     parameters: [orgSlug, repoOwner, repoName, pathParam("app", 'App name, e.g. "web"')],
     patch: {
       operationId: "updateApp",
-      summary: "Rename an app or change its paths, versioning or environments",
+      summary: "Rename an app or change its paths, versioning or environments (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
       requestBody: body("UpdateAppInput"),
       responses: { "200": ok("Updated app", "App"), ...errors },
     },
-    delete: { operationId: "deleteApp", summary: "Remove an app", responses: { "204": { description: "Removed" }, ...errors } },
+    delete: { operationId: "deleteApp", summary: "Remove an app (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)", responses: { "204": { description: "Removed" }, ...errors } },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/repos": {
     parameters: [orgSlug, projectKey],
