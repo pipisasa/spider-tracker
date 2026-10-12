@@ -1,6 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { GITHUB_WEBHOOK_MAX_BYTES, createOrganization, listRepos, saveGithubInstallation, type ActorContext } from "@repo/core";
+import {
+  GITHUB_WEBHOOK_MAX_BYTES,
+  createAgent,
+  createApiKey,
+  createOrganization,
+  createProject,
+  createRepo,
+  createTask,
+  listRepos,
+  saveGithubInstallation,
+  type ActorContext,
+} from "@repo/core";
 import { createDb, schema } from "@repo/db";
+import { createClient } from "@repo/sdk";
 import { eq, inArray } from "drizzle-orm";
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { createApp } from "./app";
@@ -143,5 +155,76 @@ withDb("POST /webhooks/github: deliveries (ST-83)", () => {
     const statuses = await Promise.all(responses.map(async (r) => ((await r.json()) as { status: string }).status));
     expect(statuses.sort()).toEqual(["duplicate", "duplicate", "duplicate", "processed"]);
     expect((await listRepos(db, owner)).map((r) => [r.fullName, r.githubInstallationId])).toEqual([["acme/web", installationId]]);
+  });
+});
+
+withDb("GitHub links on tasks (ST-84)", () => {
+  const stamp = Date.now();
+  const slug = `gh-links-api-${stamp}`;
+  const userId = `test-${crypto.randomUUID()}`;
+  const installationId = stamp + 300;
+  let token = "";
+
+  beforeAll(async () => {
+    await db.insert(schema.user).values({ id: userId, name: "Owner", email: `${userId}@example.com` });
+    const created = await createOrganization(db, { id: userId, name: "Owner", email: "o@example.com" }, { name: "Links API", slug });
+    const owner: ActorContext = { orgId: created.organization.id, actorId: created.actor.id, role: "owner", source: "ui" };
+    await createProject(db, owner, { name: "Spider", key: "ST" });
+    await createTask(db, owner, "ST", { title: "Ship it" });
+    await createRepo(db, owner, { url: "acme/web", projects: ["ST"] });
+    await saveGithubInstallation(db, owner, {
+      installation: { id: installationId, account: "acme", accountType: "Organization", repositorySelection: "selected", suspended: false },
+      repositories: [{ owner: "acme", name: "web", defaultBranch: "main" }],
+    });
+    const agent = await createAgent(db, owner, { name: "Reader" });
+    token = (await createApiKey(db, owner, agent.actor.id, { name: "test" })).secret;
+  });
+
+  afterAll(async () => {
+    await db.delete(schema.githubDeliveries).where(inArray(schema.githubDeliveries.id, deliveries));
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db.delete(schema.user).where(eq(schema.user.id, userId));
+  });
+
+  test("signed push and pull_request events link to the task; GET /tasks/:key/git lists them", async () => {
+    const installation = { id: installationId };
+    const repository = { name: "web", owner: { login: "acme" } };
+    const push = JSON.stringify({
+      ref: "refs/heads/st-1-ship-it",
+      installation,
+      repository,
+      commits: [{ id: "f".repeat(40), message: "Start ST-1", timestamp: "2026-10-12T10:00:00Z", author: { name: "Ann", username: "ann" } }],
+    });
+    const pushed = await post(push, { event: "push" });
+    expect(await pushed.json()).toEqual({ status: "processed" });
+    const pr = JSON.stringify({
+      action: "opened",
+      number: 3,
+      installation,
+      repository,
+      pull_request: {
+        number: 3,
+        title: "Ship it",
+        body: "Fixes ST-1",
+        state: "open",
+        draft: false,
+        merged: false,
+        updated_at: "2026-10-12T11:00:00Z",
+        head: { ref: "st-1-ship-it" },
+        base: { ref: "main" },
+        user: { login: "ann" },
+      },
+    });
+    expect(await (await post(pr, { event: "pull_request" })).json()).toEqual({ status: "processed" });
+
+    const client = createClient({ baseUrl: env.API_ORIGIN, token, fetch: (input, init) => app.request(input, init) });
+    const git = await client.tasks.git(slug, "st-1");
+    expect(git).toMatchObject({
+      taskKey: "ST-1",
+      pullRequests: [{ repo: "acme/web", number: 3, state: "open", via: "closing", url: "https://github.com/acme/web/pull/3" }],
+      branches: [{ name: "st-1-ship-it", deleted: false }],
+      commits: [{ sha: "f".repeat(40), message: "Start ST-1", via: "branch", author: "ann" }],
+    });
+    await expect(client.tasks.git(slug, "ST-99")).rejects.toMatchObject({ status: 404 });
   });
 });

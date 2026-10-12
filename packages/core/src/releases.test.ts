@@ -9,7 +9,7 @@ import type { TaskDto } from "./contracts";
 import { createOrganization } from "./organizations";
 import { createProject, getProject } from "./projects";
 import { addToRelease, createRelease, getRelease, listReleaseCandidates, listReleases, removeFromRelease, updateRelease } from "./releases";
-import { createApp, createRepo } from "./repos";
+import { createApp, createRepo, getRepo } from "./repos";
 import { firstStatusOf } from "./statuses";
 import { createTask, deleteTask, getTask, listTasks, updateTask, updateTasks } from "./tasks";
 
@@ -229,5 +229,44 @@ run("releases (ST-93)", () => {
     expect(await getTask(db, opsAgent, mixed.key)).toMatchObject({ releaseId: null, shipping: { state: "in_release", release: null } });
     expect(shippingLabel((await getTask(db, opsAgent, mixed.key)).shipping)).toBe("in a release");
     expect(firstStatusOf(await getProject(db, owner, "ST"), "done", "release")?.name).toBe("Released");
+  });
+
+  test("candidates for a release with repos leave out tasks whose commits are all in other repos (ST-84)", async () => {
+    const [inRepo, elsewhere, both, unlinked] = [
+      await doneTask("ST", "Commits in spider-tracker"),
+      await doneTask("ST", "Commits in site only"),
+      await doneTask("ST", "Commits in both"),
+      await doneTask("ST", "No commits linked"),
+    ];
+    const tracker = await getRepo(db, owner, "pipisasa/spider-tracker");
+    const site = await getRepo(db, owner, "pipisasa/site");
+    let n = 0;
+    const link = async (task: TaskDto | undefined, repoId: string, kind: "commit" | "branch" = "commit") =>
+      db.insert(schema.gitLinks).values({
+        orgId: owner.orgId,
+        taskId: task?.id ?? "",
+        repoId,
+        kind,
+        ref: kind === "commit" ? String(++n).padStart(40, "0") : "st-branch",
+        via: kind === "commit" ? "message" : "branch",
+      });
+    await link(inRepo, tracker.id);
+    await link(elsewhere, site.id);
+    // A branch alone isn't code in another repo.
+    await link(unlinked, site.id, "branch");
+    await link(both, site.id);
+    await link(both, tracker.id);
+
+    const keys = async (release?: string) => (await listReleaseCandidates(db, owner, { release })).map((t) => t.key);
+    const withRepo = await createRelease(db, owner, "ST", { title: "2026.10.20", repos: ["pipisasa/spider-tracker"] });
+    const forRelease = await keys(withRepo.key);
+    expect(forRelease).toEqual(expect.arrayContaining([inRepo, both, unlinked].map((t) => t?.key)));
+    expect(forRelease).not.toContain(elsewhere?.key);
+
+    // Without repos (or without a release), every Done task with code is a candidate.
+    const bare = await createRelease(db, owner, "ST", { title: "2026.10.21" });
+    for (const list of [await keys(bare.key), await keys()]) {
+      expect(list).toEqual(expect.arrayContaining([inRepo, elsewhere, both, unlinked].map((t) => t?.key)));
+    }
   });
 });

@@ -1,6 +1,7 @@
 import type {
   AcceptedAgentInviteDto,
   ActivityDto,
+  TaskGitDto,
   PresenceDto,
   ActorDto,
   AgentDto,
@@ -486,6 +487,8 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       /** The task's history (created, updated fields, comments), oldest first. */
       activity: (orgSlug: string, taskKey: string) =>
         request<ListResponse<ActivityDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/activity`),
+      /** Branches, commits and pull requests linked to the task from GitHub, most recent first. */
+      git: (orgSlug: string, taskKey: string) => request<TaskGitDto>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/git`),
     },
   };
 }

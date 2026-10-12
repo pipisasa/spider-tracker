@@ -58,6 +58,15 @@ Done means finished, not shipped; releases ship Done tasks.
 - API: `GET|POST /v1/orgs/{org}/documents/{id}/comments` and `PATCH …/comments/{commentId}` (`{ resolved }`). `GET /inbox` returns `document_*` items only when `kinds` asks for them, so older CLIs are unaffected; inbox items' `document.projectKey` can now be null (an organization-wide document).
 - Database migration `0019_document_comments` (`comments.task_id` nullable, new `document_id`, `quote`, `document_version`, `resolved_at`, `resolved_by`, and two check constraints).
 
+### Branches, commits and pull requests on tasks (ST-84)
+
+- GitHub `create`, `delete`, `push` and `pull_request` webhooks link branches named after a task, commits that mention it (or were pushed to its branch) and pull requests that name it in their branch, title or body. Only keys of tasks in projects attached to the repo count. Each link says how it was found (`via`: `closing`, `branch`, `title`, `body`, `message`). A `pull_request` event older than the stored PR changes nothing, and a merged PR stays merged. Subscribe the GitHub App to Create, Delete, Push and Pull request ([git-integration.md](docs/git-integration.md#linking-work-to-tasks-st-84)).
+- API: `GET /v1/orgs/{org}/tasks/{key}/git` → `TaskGitDto` `{ taskKey, pullRequests, branches, commits }`. SDK: `tasks.git(org, key)`. A new realtime event `task.git` announces changes.
+- MCP: new tool `get_task_git`. CLI: new `spider task git [key]` (default: the current branch's task); `--json` prints the same JSON as the tool.
+- Web: a Development panel on the task page; project settings list the project's repos.
+- `GET …/release-candidates?release=KEY` (and `spider release candidates --release`) now leaves out tasks whose linked commits and pull requests are all outside the release's repos; tasks without git links are still listed.
+- Database migration `0025_git_links` (`git_links` and `pull_requests`).
+
 ### CLI
 
 - New `spider repo list|view|add|update|remove|attach|detach` and `spider app list|add|update|remove` (ST-92): the organization's GitHub repos, added by remote URL and attached to projects, and their apps (folder, shared packages, `date`/`semver` versioning, environments in deploy order). `repo add` and `--repo` default to the current folder's `origin` remote. MCP has `list_repos`, `get_repo`, `add_repo`, `update_repo`, `attach_repo`, `add_app` and `update_app`, returning the same JSON as `--json`.

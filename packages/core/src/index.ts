@@ -40,3 +40,4 @@ export * from "./releases";
 export * from "./board";
 export * from "./github";
 export * from "./github-webhooks";
+export * from "./git-links";

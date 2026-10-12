@@ -11,6 +11,8 @@ export const EVENTS_CHANNEL = "spider_events";
 
 export type OrgEvent =
   | { type: "task.changed" | "task.deleted"; orgId: string; projectKey: string; taskKey: string }
+  /** A branch, commit or pull request was linked to the task, or changed (ST-84). */
+  | { type: "task.git"; orgId: string; projectKey: string; taskKey: string }
   | { type: "comment.created"; orgId: string; taskKey: string }
   | { type: "presence"; orgId: string; taskKey: string }
   | { type: "inbox.created"; orgId: string; recipientIds: string[] }
@@ -48,6 +50,7 @@ export function eventInScope(event: OrgEvent, keys: Set<string> | null): boolean
   switch (event.type) {
     case "task.changed":
     case "task.deleted":
+    case "task.git":
     case "project.changed":
       return keys.has(event.projectKey);
     case "comment.created":

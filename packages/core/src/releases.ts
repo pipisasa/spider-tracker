@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, isNull, not, notInArray, sql, type SQL } from "drizzle-orm";
 import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { ReleaseAppDto, ReleaseDto, ReleaseTaskDto, TaskDto } from "./contracts";
@@ -28,7 +28,7 @@ import { parseInput } from "./validate";
 // Released ships them (see shipping.ts). Members and their agents manage releases like other tasks;
 // a project-scoped agent sees and adds only tasks of its own projects.
 
-const { apps, projectRepos, projects, releaseApps, releaseRepos, repos, statuses, tasks } = schema;
+const { apps, gitLinks, projectRepos, projects, releaseApps, releaseRepos, repos, statuses, tasks } = schema;
 
 type TaskRow = typeof tasks.$inferSelect;
 
@@ -404,10 +404,30 @@ export async function listReleaseCandidates(db: Db, viewer: Viewer, query: unkno
   const data = parseInput(releaseCandidatesQuery, query);
   const scope = await projectScope(db, viewer);
   const projectId = data.project ? (await getProject(db, viewer, data.project)).id : undefined;
+  let elsewhere: SQL | undefined;
   if (data.release) {
-    await findRelease(db, viewer, data.release);
-    // Seam for step 6 of ST-89 (ST-84): once commits are linked to tasks, narrow the candidates to
-    // those with commits on the release's repos (release_repos) here. Until then every Done task with code qualifies.
+    const release = await findRelease(db, viewer, data.release);
+    // Git links (ST-84): when the release has repos, leave out tasks whose commits and pull
+    // requests are all in other repos. Tasks without any (GitHub not connected, or not linked yet)
+    // stay candidates; the manual noCode mark still decides "no code".
+    const codeLink = (inReleaseRepos: boolean) =>
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(gitLinks)
+          .where(
+            and(
+              eq(gitLinks.taskId, tasks.id),
+              inArray(gitLinks.kind, ["commit", "pull_request"]),
+              (inReleaseRepos ? inArray : notInArray)(
+                gitLinks.repoId,
+                db.select({ id: releaseRepos.repoId }).from(releaseRepos).where(eq(releaseRepos.releaseId, release.task.id)),
+              ),
+            ),
+          ),
+      );
+    const [hasRepos] = await db.select({ id: releaseRepos.repoId }).from(releaseRepos).where(eq(releaseRepos.releaseId, release.task.id)).limit(1);
+    if (hasRepos) elsewhere = and(codeLink(false), not(codeLink(true)));
   }
   if (scope && scope.size === 0) return [];
   const rows = await db
@@ -426,6 +446,7 @@ export async function listReleaseCandidates(db: Db, viewer: Viewer, query: unkno
         isNull(tasks.deletedAt),
         projectId ? eq(tasks.projectId, projectId) : undefined,
         scope ? inArray(tasks.projectId, [...scope]) : undefined,
+        elsewhere ? not(elsewhere) : undefined,
       ),
     )
     .orderBy(sql`${tasks.completedAt} desc nulls last`, desc(tasks.id))

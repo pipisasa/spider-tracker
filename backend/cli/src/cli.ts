@@ -13,6 +13,7 @@ import type {
   RepoDto,
   TagDto,
   TaskDto,
+  TaskGitDto,
   TaskKind,
   WhoAmIResponse,
 } from "@repo/core/contracts";
@@ -616,6 +617,32 @@ const documentScope = (d: DocumentSummaryDto) => d.taskKey ?? d.projectKey ?? "o
 function documentLines(docs: DocumentSummaryDto[]): string {
   const scopeWidth = Math.max(0, ...docs.map((d) => documentScope(d).length));
   return docs.map((d) => `${d.id}  ${documentScope(d).padEnd(scopeWidth)}  v${d.version}  ${d.title}`).join("\n");
+}
+
+/** A task's pull requests, branches and commits, one per line. */
+function taskGitLines(git: TaskGitDto): string {
+  const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
+  const sections = [
+    git.pullRequests.length
+      ? [
+          "Pull requests:",
+          ...git.pullRequests.map(
+            (p) =>
+              `  ${p.repo}#${p.number}  ${p.draft && p.state === "open" ? "draft" : p.state}  ${p.title}  (${p.headBranch} → ${p.baseBranch}${p.author ? `, @${p.author}` : ""})`,
+          ),
+        ]
+      : [],
+    git.branches.length
+      ? ["Branches:", ...git.branches.map((b) => `  ${b.repo}  ${b.name}${b.deleted ? "  (deleted)" : ""}`)]
+      : [],
+    git.commits.length
+      ? [
+          "Commits:",
+          ...git.commits.map((c) => `  ${c.sha.slice(0, 7)}  ${day(c.committedAt)}  ${c.message}${c.author ? `  (${c.author})` : ""}`),
+        ]
+      : [],
+  ].filter((lines) => lines.length);
+  return sections.length ? sections.map((lines) => lines.join("\n")).join("\n\n") : `Nothing linked to ${git.taskKey} in git yet`;
 }
 
 function parseFormat(value: string): DocumentFormat {
@@ -2017,6 +2044,18 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       );
     },
   );
+
+  withJson(
+    task
+      .command("git")
+      .description("show the pull requests, branches and commits linked to a task from GitHub (default: the current branch's)")
+      .argument("[key]"),
+  ).action(async (key: string | undefined, opts: JsonOption) => {
+    const resolved = taskKey(key, cwd, git);
+    const { sdk, org } = conn();
+    const found = await (await sdk()).tasks.git(await org(), resolved);
+    output(opts, found, () => taskGitLines(found));
+  });
 
   taskOptions(
     task
