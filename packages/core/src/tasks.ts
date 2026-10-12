@@ -480,16 +480,19 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
   return db.transaction(async (tx) => (await applyTaskUpdate(tx, ctx, await findTask(tx, ctx, taskKey), data)).task);
 }
 
-type FoundTask = Awaited<ReturnType<typeof findTask>>;
+export type FoundTask = Awaited<ReturnType<typeof findTask>>;
 
-interface TaskUpdateOutcome {
+export interface TaskUpdateOutcome {
   task: TaskDto;
   /** Whether anything was written (a pure re-sort counts). */
   changed: boolean;
 }
 
-/** Applies a validated update to a task found in `tx`: the body of updateTask, shared with updateTasks. */
-async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, projectKey }: FoundTask, data: UpdateTaskInput): Promise<TaskUpdateOutcome> {
+/**
+ * Applies a validated update to a task found in `tx`: the body of updateTask, shared with updateTasks
+ * and markDuplicate (core only; callers check write access and parse the input).
+ */
+export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, projectKey }: FoundTask, data: UpdateTaskInput): Promise<TaskUpdateOutcome> {
   const scope = await projectScope(tx, ctx);
   const patch: Partial<typeof tasks.$inferInsert> = {};
   const changes: Record<string, [unknown, unknown]> = {};

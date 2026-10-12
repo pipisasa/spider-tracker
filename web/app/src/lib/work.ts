@@ -33,6 +33,7 @@ import type {
   CreateSavedViewInput,
   CreateTagInput,
   CreateTaskInput,
+  MarkDuplicateInput,
   UpdateAgentInput,
   UpdateProjectInput,
   UpdateSavedViewInput,
@@ -329,6 +330,28 @@ export function useDeleteTask(org: string) {
         (old) => old?.filter((t) => t.key !== taskKey),
       );
       qc.removeQueries({ queryKey: keys.task(org, taskKey) });
+    },
+  });
+}
+
+/** Links as a duplicate, cancels and comments in one call (ST-114); refreshes the task, its links and comments. */
+export function useMarkDuplicate(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskKey, input }: { taskKey: string; input: MarkDuplicateInput }) =>
+      api<TaskDto>(`${orgPath(org)}/tasks/${taskKey}/duplicate`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (task, { input }) => {
+      qc.setQueryData<TaskDto[]>(keys.tasks(org, projectKeyOf(task.key)), (old) =>
+        old?.map((t) => (t.id === task.id ? task : t)),
+      );
+      qc.setQueryData(keys.task(org, task.key), task);
+      // The task's comments, links and activity, and the original's links.
+      void qc.invalidateQueries({ queryKey: keys.task(org, task.key), predicate: (q) => q.queryKey.length > 4 });
+      void qc.invalidateQueries({ queryKey: keys.relations(org, input.of.toUpperCase()) });
+      if (task.parentId) refreshProgress(qc, org);
     },
   });
 }

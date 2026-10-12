@@ -1648,6 +1648,21 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   );
 
   withJson(
+    task
+      .command("duplicate")
+      .description("mark as a duplicate in one step: link it (duplicates), cancel it and comment; a repeat changes nothing")
+      .argument("[key]", "the duplicate (default: the current branch's task)")
+      .requiredOption("--of <key>", "the original task, e.g. ST-9")
+      .option("--comment <text>", "added below the automatic \"Duplicate of …\" comment"),
+  ).action(async (key: string | undefined, opts: JsonOption & { of: string; comment?: string }) => {
+    const resolved = taskKey(key, cwd, git);
+    const original = taskKey(opts.of, cwd, git);
+    const { sdk, org, describe } = conn();
+    const marked = await describe(await (await sdk()).tasks.markDuplicate(await org(), resolved, { of: original, comment: opts.comment }));
+    output(opts, marked, () => `Marked ${marked.key} as a duplicate of ${original}\n${taskLines([marked])}`);
+  });
+
+  withJson(
     program
       .command("comment")
       .description("comment on a task; @handle mentions notify people and agents")

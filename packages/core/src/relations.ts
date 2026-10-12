@@ -7,7 +7,7 @@ import type { RelationDto, RelationKind } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { relationInput } from "./schemas";
-import { findTask } from "./tasks";
+import { findTask, type FoundTask } from "./tasks";
 import { parseInput } from "./validate";
 
 // Task relations (ST-10). One row per link, stored as "from <type> to"; each side sees it
@@ -30,7 +30,7 @@ function toStored(kind: RelationKind, self: string, other: string): { from: stri
 }
 
 /** Serialises link changes between two tasks, so checks like "the other already blocks this one" see concurrent inserts. */
-async function lockPair(tx: Tx, a: string, b: string) {
+export async function lockPair(tx: Tx, a: string, b: string) {
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext('relation:' || least(${a}::uuid, ${b}::uuid)::text || ':' || greatest(${a}::uuid, ${b}::uuid)::text))`,
   );
@@ -76,41 +76,71 @@ export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, in
     const other = await findTask(tx, ctx, otherKey);
     if (self.task.id === other.task.id) throw new DomainError("validation", "A task can't be related to itself");
     await lockPair(tx, self.task.id, other.task.id);
-
-    const link = toStored(kind, self.task.id, other.task.id);
-    if (await findLink(tx, link.from, link.to, link.type)) throw new DomainError("conflict", "These tasks are already linked that way");
-    // "A blocks B" and "B blocks A" together would be a deadlock.
-    if (link.type === "blocks" && (await findLink(tx, link.to, link.from, "blocks"))) {
-      throw new DomainError("validation", "The other task already blocks this one; two tasks can't block each other");
-    }
-    const [inserted] = await tx
-      .insert(taskRelations)
-      .values({ fromTaskId: link.from, toTaskId: link.to, type: link.type, createdBy: ctx.actorId })
-      .onConflictDoNothing()
-      .returning({ fromTaskId: taskRelations.fromTaskId });
-    // A concurrent request added the same link.
-    if (!inserted) throw new DomainError("conflict", "These tasks are already linked that way");
-
-    const selfKey = `${self.projectKey}-${self.task.number}`;
-    const otherFullKey = `${other.projectKey}-${other.task.number}`;
-    await recordActivity(tx, ctx, {
-      entityType: "task",
-      entityId: self.task.id,
-      action: "relation.added",
-      changes: { kind, task: otherFullKey },
-    });
-    await recordActivity(tx, ctx, {
-      entityType: "task",
-      entityId: other.task.id,
-      action: "relation.added",
-      changes: { kind: INVERSE[kind], task: selfKey },
-    });
-    await announce(tx, ctx, { key: selfKey, projectKey: self.projectKey }, { key: otherFullKey, projectKey: other.projectKey });
-    return {
-      kind,
-      task: { id: other.task.id, key: otherFullKey, title: other.task.title, statusId: other.task.statusId },
-    };
+    return linkTasks(tx, ctx, self, other, kind);
   });
+}
+
+/**
+ * Whether `from` already duplicates `to`, directly or through a chain of `duplicates` links
+ * (deleted tasks break the chain). Linking `to` as a duplicate of `from` would close a cycle.
+ */
+export async function duplicatesChain(tx: Tx, from: string, to: string): Promise<boolean> {
+  const rows = await tx.execute(sql`
+    with recursive chain(id) as (
+      select to_task_id from task_relations where from_task_id = ${from}::uuid and type = 'duplicates'
+      union
+      select r.to_task_id from task_relations r
+      join chain c on r.from_task_id = c.id
+      join tasks t on t.id = c.id and t.deleted_at is null
+      where r.type = 'duplicates'
+    )
+    select 1 from chain where id = ${to}::uuid limit 1
+  `);
+  return rows.length > 0;
+}
+
+/**
+ * The body of addRelation for two different tasks found in `tx` whose pair is locked (lockPair):
+ * refuses an existing link, mutual blocking and duplicate cycles, then records and announces it.
+ */
+export async function linkTasks(tx: Tx, ctx: ActorContext, self: FoundTask, other: FoundTask, kind: RelationKind): Promise<RelationDto> {
+  const link = toStored(kind, self.task.id, other.task.id);
+  if (await findLink(tx, link.from, link.to, link.type)) throw new DomainError("conflict", "These tasks are already linked that way");
+  // "A blocks B" and "B blocks A" together would be a deadlock.
+  if (link.type === "blocks" && (await findLink(tx, link.to, link.from, "blocks"))) {
+    throw new DomainError("validation", "The other task already blocks this one; two tasks can't block each other");
+  }
+  // "A duplicates B" when B already duplicates A (directly or through other tasks) would be a cycle.
+  if (link.type === "duplicates" && (await duplicatesChain(tx, link.to, link.from))) {
+    throw new DomainError("validation", "That would make a cycle of duplicates: the original is already a duplicate of this task");
+  }
+  const [inserted] = await tx
+    .insert(taskRelations)
+    .values({ fromTaskId: link.from, toTaskId: link.to, type: link.type, createdBy: ctx.actorId })
+    .onConflictDoNothing()
+    .returning({ fromTaskId: taskRelations.fromTaskId });
+  // A concurrent request added the same link.
+  if (!inserted) throw new DomainError("conflict", "These tasks are already linked that way");
+
+  const selfKey = `${self.projectKey}-${self.task.number}`;
+  const otherFullKey = `${other.projectKey}-${other.task.number}`;
+  await recordActivity(tx, ctx, {
+    entityType: "task",
+    entityId: self.task.id,
+    action: "relation.added",
+    changes: { kind, task: otherFullKey },
+  });
+  await recordActivity(tx, ctx, {
+    entityType: "task",
+    entityId: other.task.id,
+    action: "relation.added",
+    changes: { kind: INVERSE[kind], task: selfKey },
+  });
+  await announce(tx, ctx, { key: selfKey, projectKey: self.projectKey }, { key: otherFullKey, projectKey: other.projectKey });
+  return {
+    kind,
+    task: { id: other.task.id, key: otherFullKey, title: other.task.title, statusId: other.task.statusId },
+  };
 }
 
 export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string, input: unknown) {

@@ -19,6 +19,7 @@ import {
   createInvitationInput,
   invitationCodeInput,
   markInboxReadInput,
+  markDuplicateInput,
   updateAgentInput,
   updateDocumentInput,
   editDocumentInput,
@@ -191,6 +192,7 @@ const schemas: Record<string, JsonSchema> = {
   }),
   RelationList: listOf("Relation"),
   RelationInput: fromZod(relationInput),
+  MarkDuplicateInput: fromZod(markDuplicateInput),
   CommentList: listOf("Comment"),
   InboxList: listOf("InboxItem"),
   MarkedCount: object({ updated: { type: "integer" } }),
@@ -912,6 +914,16 @@ const paths = {
         { name: "task", in: "query", required: true, schema: { type: "string" }, description: "The other task's key" },
       ],
       responses: { "204": { description: "Removed" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/duplicate": {
+    parameters: [orgSlug, taskKey],
+    post: {
+      operationId: "markDuplicate",
+      summary:
+        "Mark as a duplicate of another task in one step: link it (duplicates), move it to the project's first canceled status and comment \"Duplicate of KEY\". A repeat changes nothing; self, cycles and a second original are refused",
+      requestBody: body("MarkDuplicateInput"),
+      responses: { "200": ok("The task, canceled", "Task"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/activity": {

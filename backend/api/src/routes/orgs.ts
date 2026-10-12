@@ -15,6 +15,7 @@ import {
   deleteTag,
   listTags,
   addRelation,
+  markDuplicate,
   listRelations,
   listSubtasks,
   removeRelation,
@@ -298,6 +299,11 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
 
   app.post("/tasks/:taskKey/relations", async (c) =>
     c.json(await addRelation(db, c.get("actor"), c.req.param("taskKey"), await body(c)), 201),
+  );
+
+  // Link as a duplicate, cancel and comment in one step; a repeat changes nothing (ST-114).
+  app.post("/tasks/:taskKey/duplicate", async (c) =>
+    c.json(task(c, await markDuplicate(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
   );
 
   // DELETE /tasks/ST-1/relations?kind=blocks&task=ST-2
