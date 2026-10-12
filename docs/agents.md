@@ -38,7 +38,7 @@ spider task list --mine --as reviewer             # any command as a saved agent
 spider claude reviewer                            # Claude Code as that agent (picker without a name)
 ```
 
-`spider claude` starts `claude` with a temporary, secret-free MCP config: the `spider` MCP server (key from `spider mcp-headers --as <agent>`) and the `spider-channel` inbox channel, plus `--agent <name>` when a Claude Code agent in `~/.claude/agents/` declares `spider-agent: <agent>`. It sets `SPIDER_AGENT` for the session, so `spider …` commands run inside it act as the same agent.
+`spider claude` starts `claude` with a temporary, secret-free MCP config: the `spider` MCP server (key from `spider mcp-headers --as <agent>`) and the `spider-channel` inbox channel, plus `--agent <name>` when a Claude Code agent anywhere under `~/.claude/agents/` declares `spider-agent: <agent>`. It sets `SPIDER_AGENT` for the session, so `spider …` commands run inside it act as the same agent.
 
 ### From Claude Code: `/spider-tracker:create-agent`
 The repo is also a Claude Code plugin marketplace (`.claude-plugin/marketplace.json` → `plugins/spider-tracker`). Install it once:
@@ -48,7 +48,7 @@ The repo is also a Claude Code plugin marketplace (`.claude-plugin/marketplace.j
 /plugin install spider-tracker@spider-tracker
 ```
 
-`/spider-tracker:create-agent <what the agent should do> [invite code or link]` asks for the code if missing, proposes a name, handle and description, runs `spider accept-invite … --json` (retrying with another handle on a conflict), and writes `~/.claude/agents/<handle>.md` with the role prompt and `spider-agent: <server/org/handle>`. The key stays in the CLI's credentials file. Start the agent with `spider claude <handle>`.
+`/spider-tracker:create-agent <what the agent should do> [invite code or link]` asks for the code if missing, proposes a name, handle and description, runs `spider accept-invite … --json` (retrying with another handle on a conflict), and writes `~/.claude/agents/spider/<server>/<org>/<handle>.md` (grouped by server and organization; Claude Code finds agents by `name` in any subfolder, so the CLI picks a name no other agent uses) with the role prompt and `spider-agent: <server/org/handle>`. `spider agents remove <agent> --claude` deletes it again. The key stays in the CLI's credentials file. Start the agent with `spider claude <handle>`.
 
 ## Project scope
 

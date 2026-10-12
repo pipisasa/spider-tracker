@@ -12,7 +12,7 @@ import { parseTaskKey } from "@repo/core/schemas";
 import type { CreateTaskInput, UpdateDocumentInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError } from "commander";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import {
@@ -28,6 +28,7 @@ import {
   type AgentEntry,
   type Store,
 } from "./credentials";
+import { claudeAgentFor, claudeAgentTarget, linkedClaudeAgents, removeClaudeAgents, scanClaudeAgents } from "./claude-agents";
 import { currentBranch, taskKeyFromBranch } from "./git";
 import {
   CliError,
@@ -188,35 +189,6 @@ export function claudeMcpConfig(entry: AgentEntry, self: string[], channel: bool
         : {}),
     },
   };
-}
-
-/**
- * The Claude Code agent (~/.claude/agents/*.md) for a saved agent: one whose frontmatter says
- * `spider-agent: <ref, org/handle or handle>`, else the file named after the handle.
- */
-async function claudeAgentFor(home: string | undefined, entry: AgentEntry): Promise<string | undefined> {
-  if (!home) return undefined;
-  const dir = join(home, ".claude", "agents");
-  const files = await readdir(dir).then(
-    (names) => names.filter((n) => n.endsWith(".md")).sort(),
-    () => [] as string[],
-  );
-  const refs = new Set([entry.ref, `${entry.org}/${entry.agent}`, entry.agent]);
-  const read = async (name: string) => {
-    const text = await readFile(join(dir, name), "utf8").catch(() => "");
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
-    const field = (key: string) => new RegExp(`^${key}:[ \\t]*["']?(.*?)["']?[ \\t]*$`, "m").exec(front)?.[1] || undefined;
-    return { name: field("name") ?? name.slice(0, -3), spider: field("spider-agent") };
-  };
-  for (const name of files) {
-    const agent = await read(name);
-    if (agent.spider && refs.has(agent.spider)) return agent.name;
-  }
-  if (files.includes(`${entry.agent}.md`)) {
-    const agent = await read(`${entry.agent}.md`);
-    if (!agent.spider) return agent.name;
-  }
-  return undefined;
 }
 
 function connect(options: RunOptions, globals: Globals) {
@@ -457,7 +429,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       // Keep an implicit default (the only agent so far) once there are two.
       store.default = isDefault ? { server: key, org: organization.slug, agent: actor.handle } : previous && { server: previous.server, org: previous.org, agent: previous.agent };
       await writeStore(options.env, store);
-      output(opts, { agent: ref, actor, organization, projects, owner }, () =>
+      // Where /spider-tracker:create-agent should write its Claude Code agent, with a free name.
+      const claudeAgent = await claudeAgentTarget(options.env.HOME, findAgent(store, ref));
+      output(opts, { agent: ref, actor, organization, projects, owner, claudeAgent: claudeAgent ?? null }, () =>
         [
           `You are @${actor.handle} (${actor.name}) in ${organization.name}, set up by @${owner.handle}.`,
           `Projects: ${projects.length ? projects.map((p) => `${p.key} ${p.name}`).join(", ") : "all"}`,
@@ -597,17 +571,26 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .command("remove")
       .description("forget a saved agent on this machine")
       .argument("<agent>")
-      .option("--revoke", "also revoke its key on the server"),
-  ).action(async (ref: string, opts: JsonOption & { revoke?: boolean }) => {
+      .option("--revoke", "also revoke its key on the server")
+      .option("--claude", "also delete its Claude Code agent files (~/.claude/agents, linked by spider-agent)"),
+  ).action(async (ref: string, opts: JsonOption & { revoke?: boolean; claude?: boolean }) => {
     const store = await readStore(options.env);
     const entry = findAgent(store, ref);
     if (opts.revoke) await revoke(entry);
+    const deleted = opts.claude ? await removeClaudeAgents(options.env.HOME, entry) : [];
+    const kept = opts.claude ? [] : linkedClaudeAgents(await scanClaudeAgents(options.env.HOME), entry).map((f) => f.path);
     removeAgent(store, entry);
     await writeStore(options.env, store);
-    output(opts, { removed: entry.ref, revoked: !!opts.revoke }, () =>
-      opts.revoke
-        ? `Removed ${entry.ref} and revoked its key`
-        : `Removed ${entry.ref}. Its key still works on the server: revoke it in the web app (Settings → Agents), or next time use --revoke`,
+    output(opts, { removed: entry.ref, revoked: !!opts.revoke, claudeAgentsDeleted: deleted, claudeAgentsKept: kept }, () =>
+      [
+        opts.revoke
+          ? `Removed ${entry.ref} and revoked its key`
+          : `Removed ${entry.ref}. Its key still works on the server: revoke it in the web app (Settings → Agents), or next time use --revoke`,
+        ...deleted.map((path) => `Deleted Claude Code agent ${path}`),
+        ...(kept.length
+          ? [`Its Claude Code agent is still there (delete it, or next time use --claude):`, ...kept.map((path) => `  ${path}`)]
+          : []),
+      ].join("\n"),
     );
   });
 
