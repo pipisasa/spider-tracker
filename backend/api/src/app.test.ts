@@ -996,8 +996,9 @@ withDb("members manage their own agents", () => {
 
     const created = await send(alice, "POST", agents, { name: "Alice Bot" });
     expect(created.status).toBe(201);
-    const agent = (await created.json()) as { actor: { id: string }; canManage: boolean };
+    const agent = (await created.json()) as { actor: { id: string; ownerId: string | null }; ownerId: string; canManage: boolean };
     expect(agent.canManage).toBe(true);
+    expect(agent.actor.ownerId).toBe(agent.ownerId);
     expect((await send(guest, "POST", agents, { name: "Guest Bot" })).status).toBe(403);
 
     const keyRes = await send(alice, "POST", `${agents}/${agent.actor.id}/keys`, { name: "laptop" });
@@ -1020,15 +1021,20 @@ withDb("members manage their own agents", () => {
     expect(renamed.status).toBe(200);
     expect(await renamed.json()).toMatchObject({ actor: { name: "Renamed", handle: "renamed" }, canManage: true });
 
-    expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(200);
+    const whoami = await send({ token: secret }, "GET", "/v1/whoami");
+    expect(whoami.status).toBe(200);
+    expect(await whoami.json()).toMatchObject({ actor: { id: agent.actor.id, ownerId: agent.ownerId } });
     expect((await send(alice, "DELETE", `${agents}/${agent.actor.id}`)).status).toBe(204);
     expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(401);
     const members = (await (await send(alice, "GET", `/v1/orgs/${slug}/members`)).json()) as { items: { id: string }[] };
     expect(members.items.map((m) => m.id)).not.toContain(agent.actor.id);
     const all = (await (await send(alice, "GET", `/v1/orgs/${slug}/members?all=true`)).json()) as {
-      items: { id: string; handle: string; deactivated: boolean }[];
+      items: { id: string; type: string; handle: string; deactivated: boolean; ownerId: string | null }[];
     };
-    expect(all.items.find((m) => m.id === agent.actor.id)).toMatchObject({ handle: "renamed", deactivated: true });
+    // A deleted agent still says whose it was; people have no owner.
+    expect(all.items.find((m) => m.id === agent.actor.id)).toMatchObject({ handle: "renamed", deactivated: true, ownerId: agent.ownerId });
+    expect(all.items.find((m) => m.id === agent.ownerId)).toMatchObject({ type: "human", ownerId: null });
+    expect(all.items.filter((m) => m.type === "human").every((m) => m.ownerId === null)).toBe(true);
     expect(all.items.filter((m) => !m.deactivated)).toHaveLength(members.items.length);
   });
 });

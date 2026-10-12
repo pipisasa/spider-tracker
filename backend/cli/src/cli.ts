@@ -1196,7 +1196,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const me = (await whoami()).actor;
       const ids = others.length ? resolveAssignees(await actors(), me.id, others) : [];
       assignee = [...ids, ...(none ? ["none"] : []), ...(mine ? ["mine"] : [])];
-      const mineIds = mine ? mineActorIds(me, (await (await sdk()).agents.list(slug)).items, await actors()) : [];
+      const mineIds = mine ? mineActorIds(me, await actors()) : [];
       assigneeCheck = [...ids, ...(none ? ["none"] : []), ...mineIds];
     }
 

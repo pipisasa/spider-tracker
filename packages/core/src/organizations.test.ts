@@ -45,6 +45,9 @@ run("organizations", () => {
     const all = await listMembers(db, org.id, { includeDeactivated: true });
     expect(all.find((m) => m.id === gone.id)?.deactivatedAt).toBeInstanceOf(Date);
     expect(all.find((m) => m.id === owner.id)?.deactivatedAt).toBeNull();
+    // Agents carry their owner, deleted ones too; people have none.
+    expect(all.find((m) => m.id === gone.id)?.ownerId).toBe(owner.id);
+    expect(all.find((m) => m.id === owner.id)?.ownerId).toBeNull();
   });
 
   test("rejects a taken slug", async () => {

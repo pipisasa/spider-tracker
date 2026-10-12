@@ -105,6 +105,8 @@ export type DevicePollResult =
       status: "approved";
       secret: string;
       actor: typeof actors.$inferSelect;
+      /** The approver, who owns the device's agent. */
+      ownerId: string;
       organization: typeof organizations.$inferSelect;
     };
 
@@ -193,6 +195,6 @@ export async function pollDeviceToken(db: Db, deviceCode: string): Promise<Devic
 
     const { secret } = await issueApiKey(tx, ctx, agent.id, `spider login · ${now.toISOString().slice(0, 10)}`);
     await tx.update(deviceCodes).set({ status: "consumed" }).where(eq(deviceCodes.id, row.id));
-    return { status: "approved", secret, actor: agent, organization };
+    return { status: "approved", secret, actor: agent, ownerId: approver.id, organization };
   });
 }

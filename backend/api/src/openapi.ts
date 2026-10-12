@@ -60,6 +60,7 @@ const schemas: Record<string, JsonSchema> = {
     avatarUrl: nullable("string"),
     role: string({ enum: ["owner", "admin", "member", "guest"] }),
     deactivated: { type: "boolean" },
+    ownerId: nullable("string", { format: "uuid", description: "For agents, the owning person's actor id; null for people" }),
   }),
   Membership: object({ organization: ref("Organization"), actor: ref("Actor") }),
   Me: object({

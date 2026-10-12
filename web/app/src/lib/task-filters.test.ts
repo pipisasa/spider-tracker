@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, TaskDto } from "@repo/core/contracts";
+import type { ActorDto, TaskDto } from "@repo/core/contracts";
 import {
   activeFilterCount,
   applyFilters,
@@ -109,13 +109,42 @@ describe("applyFilters", () => {
     expect(keys({ assignee: ["none", id(101)] })).toEqual(["SPI-2", "SPI-3", "SPI-4"]);
   });
 
-  test("assignee mine: the viewer and the agents they own, not other people's", () => {
-    const agent = (n: number, ownerId: string) => ({ actor: { id: id(n) }, ownerId }) as AgentDto;
-    const mine = mineActorIds(ME, [agent(102, ME), agent(103, id(101))]);
-    expect(mine).toEqual([ME, id(102)]);
-    const all = [...tasks, task(5, { assigneeIds: [id(102)] }), task(6, { assigneeIds: [id(103)] })];
-    expect(applyFilters(all, { assignee: ["mine"] }, ME, mine).map((t) => t.key)).toEqual(["SPI-1", "SPI-4", "SPI-5"]);
-    expect(applyFilters(all, { assignee: ["mine", "none"] }, ME, mine).map((t) => t.key)).toEqual(["SPI-1", "SPI-3", "SPI-4", "SPI-5"]);
+  test("assignee mine: the viewer and the agents they own (deleted ones too), not other people's", () => {
+    const actor = (n: number, type: ActorDto["type"], ownerId: string | null, deactivated = false): ActorDto => ({
+      id: id(n),
+      type,
+      name: `Actor ${n}`,
+      handle: `actor-${n}`,
+      avatarUrl: null,
+      role: "member",
+      deactivated,
+      ownerId,
+    });
+    const actors = [
+      actor(100, "human", null),
+      actor(101, "human", null),
+      actor(102, "agent", ME),
+      actor(103, "agent", id(101)),
+      actor(104, "agent", ME, true),
+      actor(105, "agent", id(101), true),
+    ];
+    const mine = mineActorIds(ME, actors);
+    expect(mine).toEqual([ME, id(102), id(104)]);
+    const all = [
+      ...tasks,
+      task(5, { assigneeIds: [id(102)] }),
+      task(6, { assigneeIds: [id(103)] }),
+      task(7, { assigneeIds: [id(104)] }),
+      task(8, { assigneeIds: [id(105)] }),
+    ];
+    expect(applyFilters(all, { assignee: ["mine"] }, ME, mine).map((t) => t.key)).toEqual(["SPI-1", "SPI-4", "SPI-5", "SPI-7"]);
+    expect(applyFilters(all, { assignee: ["mine", "none"] }, ME, mine).map((t) => t.key)).toEqual([
+      "SPI-1",
+      "SPI-3",
+      "SPI-4",
+      "SPI-5",
+      "SPI-7",
+    ]);
     // Without the agents (not loaded yet), mine is just the viewer.
     expect(applyFilters(all, { assignee: ["mine"] }, ME).map((t) => t.key)).toEqual(["SPI-1", "SPI-4"]);
   });

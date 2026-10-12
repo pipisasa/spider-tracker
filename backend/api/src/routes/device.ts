@@ -48,7 +48,7 @@ export function deviceRoutes(db: Db, env: Env) {
     const body: DeviceTokenResponse = {
       access_token: result.secret,
       token_type: "Bearer",
-      actor: toActorDto(result.actor),
+      actor: toActorDto(result.actor, result.ownerId),
       organization: { id: result.organization.id, slug: result.organization.slug, name: result.organization.name },
     };
     return c.json(body);

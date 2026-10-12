@@ -1,4 +1,4 @@
-import type { AgentDto, TaskDto } from "@repo/core/contracts";
+import type { ActorDto, TaskDto } from "@repo/core/contracts";
 import { viewFiltersSchema, type ViewFilters } from "@repo/core/schemas";
 
 // Filters of the project page (ST-15): they live in the URL search params, so links can be
@@ -84,13 +84,12 @@ export function toggleValue<T>(values: T[] | undefined, value: T): T[] {
 }
 
 /**
- * What `assignee=mine` stands for in the web: the viewer and the agents they own. The agents list
- * holds active agents only, so tasks left with a deleted agent of theirs don't match here (the API's
- * `?assignee=mine` includes them).
+ * What `assignee=mine` stands for in the web: the viewer and the agents they own, deleted ones
+ * included (like the API's `?assignee=mine`); `actors` is every actor (`GET /members?all=true`).
  */
-export const mineActorIds = (meId: string, agents: AgentDto[]): string[] => [
+export const mineActorIds = (meId: string, actors: ActorDto[]): string[] => [
   meId,
-  ...agents.filter((a) => a.ownerId === meId).map((a) => a.actor.id),
+  ...actors.filter((a) => a.ownerId === meId).map((a) => a.id),
 ];
 
 /**

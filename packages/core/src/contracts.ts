@@ -19,6 +19,8 @@ export interface ActorDto {
   role: ActorRole;
   /** Deactivated people and deleted agents; only listed by `GET /members?all=true` and kept as task assignees. */
   deactivated: boolean;
+  /** For agents, the actor id of the person who owns them (deleted agents too); null for people. */
+  ownerId: string | null;
 }
 
 export interface MembershipDto {
