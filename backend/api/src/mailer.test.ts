@@ -26,6 +26,7 @@ describe("mailer", () => {
     const [call] = calls;
     expect(call?.url).toBe("https://api.resend.com/emails");
     expect(call?.init.method).toBe("POST");
+    expect(call?.init.signal).toBeInstanceOf(AbortSignal);
     expect(new Headers(call?.init.headers).get("Authorization")).toBe("Bearer re_test");
     const body = JSON.parse(String(call?.init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({ from: "Spider Tracker <noreply@batele.plus>", to: ["ada@example.com"], subject: "Sign in to Spider Tracker" });
