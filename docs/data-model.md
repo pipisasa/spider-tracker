@@ -113,7 +113,7 @@ create table agent_invites (                   -- one-time setup codes for a pen
   created_at timestamptz not null default now()
 );
 
-create table agent_projects (                  -- projects an agent may see; no rows = all projects
+create table agent_projects (                  -- projects a scoped agent may see (agents.scoped: no rows left = nothing; unscoped = all)
   agent_id uuid references actors on delete cascade,
   project_id uuid references projects on delete cascade,
   primary key (agent_id, project_id)
@@ -123,6 +123,7 @@ create table agents (
   actor_id uuid primary key references actors on delete cascade,
   kind text not null check (kind in ('hosted','external')),
   owner_id uuid not null references actors,
+  scoped boolean not null default false,      -- limited to agent_projects; stays set when those rows go
   provider text, model text, system_prompt text,
   tools jsonb not null default '[]',
   limits jsonb not null default '{}',         -- {max_cost_usd, max_tokens, require_approval:[...]}

@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  archivedProjectsQuery,
   documentsQuery,
   membersQuery,
   projectsQuery,
@@ -263,7 +264,17 @@ export function MoveDocumentDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
+  const { data: projects = [], isSuccess } = useQuery(projectsQuery(orgSlug));
+  // Only active projects are listed; a document in an archived one still shows where it is.
+  const archivedKey =
+    isSuccess && doc.projectKey && !projects.some((p) => p.key === doc.projectKey)
+      ? doc.projectKey
+      : null;
+  const { data: archived = [] } = useQuery({
+    ...archivedProjectsQuery(orgSlug),
+    enabled: open && archivedKey !== null,
+  });
+  const archivedProject = archived.find((p) => p.key === archivedKey);
   const [target, setTarget] = useState(doc.projectKey ?? ORG_VALUE);
   const move = useMoveDocument(orgSlug, doc.id);
   const unchanged = target === (doc.projectKey ?? ORG_VALUE) && !doc.taskKey;
@@ -303,6 +314,14 @@ export function MoveDocumentDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ORG_VALUE}>Organization-wide</SelectItem>
+                {archivedKey && (
+                  <SelectItem value={archivedKey} disabled>
+                    {archivedProject
+                      ? `${archivedProject.name} (${archivedKey})`
+                      : archivedKey}{" "}
+                    (archived)
+                  </SelectItem>
+                )}
                 {projects.map((p) => (
                   <SelectItem key={p.key} value={p.key}>
                     {p.name} ({p.key})

@@ -365,6 +365,30 @@ run("documents", () => {
     expect(await moveDocument(db, scoped, inSpi.id, { project: null })).toMatchObject({ projectKey: null });
   });
 
+  test("a scoped agent with no projects left fails closed when moving", async () => {
+    const [agent] = await db
+      .insert(schema.actors)
+      .values({ orgId: ctx.orgId, type: "agent", name: "Emptied", handle: `emptied-${Date.now()}` })
+      .returning();
+    if (!agent) throw new Error("no agent");
+    await db.insert(schema.agents).values({ actorId: agent.id, ownerId: ctx.actorId, scoped: true });
+    const scoped: ActorContext = { ...ctx, actorId: agent.id, role: "member", source: "mcp" };
+
+    const orgWide = await createDocument(db, ctx, { title: "Shared" });
+    await expect(moveDocument(db, scoped, orgWide.id, { project: "SPI" })).rejects.toMatchObject({ code: "not_found" });
+    expect(await moveDocument(db, scoped, orgWide.id, { project: null })).toMatchObject({
+      id: orgWide.id,
+      projectKey: null,
+      taskKey: null,
+      version: 1,
+    });
+    const moves = await db
+      .select()
+      .from(schema.activity)
+      .where(and(eq(schema.activity.entityId, orgWide.id), eq(schema.activity.action, "document.moved")));
+    expect(moves).toHaveLength(0);
+  });
+
   test("documents can't be created or moved into an archived project, but can leave one", async () => {
     await createProject(db, ctx, { name: "Old", key: "OLD" });
     const inOld = await createDocument(db, ctx, { title: "Legacy", project: "OLD" });

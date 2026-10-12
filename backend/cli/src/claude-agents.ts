@@ -202,7 +202,7 @@ const yamlString = (value: string) =>
 export interface SectionSubject {
   agent: string;
   org: string;
-  /** "ST (Spider Tracker), WEB (Web)" or "all projects". */
+  /** "ST (Spider Tracker), WEB (Web)", "all projects" or "no projects". */
   projects: string;
 }
 
@@ -235,9 +235,12 @@ export function claudeAgentMarkdown(
   role: AgentRole,
   version = CLI_VERSION,
 ): string {
-  const projects = role.projects?.length
-    ? role.projects.map((p) => `${p.key} (${p.name})`).join(", ")
-    : "all projects";
+  // null: every project; []: a scoped agent with none left.
+  const projects = !role.projects
+    ? "all projects"
+    : role.projects.length
+      ? role.projects.map((p) => `${p.key} (${p.name})`).join(", ")
+      : "no projects";
   return [
     "---",
     `name: ${name}`,

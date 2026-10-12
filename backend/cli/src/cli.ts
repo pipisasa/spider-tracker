@@ -230,8 +230,12 @@ function savedAgentFor(store: Store, options: RunOptions, globals: Globals) {
   return named ? findAgent(store, named) : defaultAgent(store);
 }
 
-const scopeOf = (entry: AgentEntry) =>
-  entry.saved.projects?.length ? entry.saved.projects.map((p) => p.key).join(", ") : "all projects";
+/** null: all projects (unscoped, or unknown); []: a scoped agent whose projects are all gone. */
+const scopeOf = (entry: AgentEntry) => {
+  const { projects } = entry.saved;
+  if (!projects) return "all projects";
+  return projects.length ? projects.map((p) => p.key).join(", ") : "no projects";
+};
 
 /** Quotes a word for a shell command line (Claude Code runs headersHelper through a shell). */
 const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
@@ -588,7 +592,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
             prompt:
               opts.prompt?.trim() ||
               `You are ${actor.name}${opts.description?.trim() ? `: ${opts.description.trim()}` : ""}. Work on the Spider Tracker tasks assigned to you or that mention you, keep them updated, and hand off finished work for review.`,
-            projects: projects.length ? projects : null,
+            projects,
           })
         : undefined;
       const note = claudeAgent ? await ensureAgentsPlugin() : undefined;
@@ -597,7 +601,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         [
           `You are @${actor.handle} (${actor.name}) in ${organization.name}.`,
           `Owner: @${owner.handle} (${owner.name}), who sent the invite and can manage this agent.`,
-          `Projects: ${projects.length ? projects.map((p) => `${p.key} ${p.name}`).join(", ") : "all"}`,
+          `Projects: ${projects.length ? projects.map((p) => `${p.key} ${p.name}`).join(", ") : "none"}`,
           `Saved as ${ref}${isDefault ? " (default)" : ""}.`,
           ...(claudeAgent ? [`Claude Code agent: ${claudeAgent.qualifiedName} (${claudeAgent.path})`] : []),
           ...(note ? [note] : []),

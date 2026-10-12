@@ -194,6 +194,20 @@ describe("Claude Code agents for saved agents", () => {
   });
 });
 
+test("the agent prompt names its projects: null is all, [] is none", () => {
+  const md = (projects: { key: string; name: string }[] | null) =>
+    claudeAgentMarkdown(entry("prod", "acme", "bot"), "bot", {
+      description: "d",
+      prompt: "p",
+      projects,
+    });
+  expect(md(null)).toContain("working in: all projects.");
+  expect(md([])).toContain("working in: no projects.");
+  expect(md([{ key: "ST", name: "Spider" }])).toContain(
+    "working in: ST (Spider).",
+  );
+});
+
 describe("refreshing generated agent sections", () => {
   const role = {
     description: "Reviews code",

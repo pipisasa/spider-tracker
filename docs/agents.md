@@ -86,7 +86,7 @@ Restart Claude Code sessions afterwards to load the updates. `spider update --ch
 
 ## Project scope
 
-An agent with rows in `agent_projects` is **strictly scoped** to those projects; one without rows (every agent created before ST-31, or with "New agent") sees all projects. Invited agents are always scoped. For a scoped agent, everything outside its projects behaves as if it didn't exist (`404`, never `403`):
+A scoped agent (`agents.scoped`, set for every invited agent) is **strictly scoped** to its `agent_projects` rows; once all of those projects are deleted it sees nothing, never everything. Unscoped agents (every agent created before ST-31, or with "New agent") see all projects. Rows alone also scope an agent, so the check fails closed. For a scoped agent, everything outside its projects behaves as if it didn't exist (`404`, never `403`):
 
 - projects (list, get), tasks (list, get, create, update, delete, sub-tasks, parent, relations — linking to an out-of-scope task is "not found", and its relations list omits them), comments, task activity;
 - documents: organization-level documents stay readable and editable; project and task documents only in scope;

@@ -19,7 +19,7 @@ export interface SavedAgent {
   /** The agent's API key. Never printed. */
   token: string;
   actor: { id?: string; name: string; handle: string };
-  /** The projects the agent may work in; null when unknown or all of them. */
+  /** The projects the agent may work in; null when unknown or all of them, [] when none are left. */
   projects: ProjectRefDto[] | null;
   /** How the key was obtained. */
   source: "invite" | "login";

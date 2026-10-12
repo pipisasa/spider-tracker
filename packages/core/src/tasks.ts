@@ -22,9 +22,11 @@ interface TaskLinks {
   assigneeIds: string[];
   tagIds: string[];
   parentKey: string | null;
+  /** The parent is outside the viewer's scope: neither its key nor its id is shown. */
+  parentHidden: boolean;
 }
 
-function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, parentKey }: TaskLinks): TaskDto {
+function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, parentKey, parentHidden }: TaskLinks): TaskDto {
   return {
     id: row.id,
     key: `${projectKey}-${row.number}`,
@@ -34,7 +36,7 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
     description: row.description,
     statusId: row.statusId,
     priority: row.priority as Priority,
-    parentId: row.parentId,
+    parentId: parentHidden ? null : row.parentId,
     parentKey: row.parentId ? parentKey : null,
     sortKey: row.sortKey,
     assigneeIds,
@@ -47,9 +49,11 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
   };
 }
 
-/** Assignees, tags and parent key of each task; parents outside `scope` have no key. */
+/** Assignees, tags and parent key of each task; parents outside `scope` are hidden (no key, no id). */
 async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) {
-  const map = new Map<string, TaskLinks>(taskIds.map((id) => [id, { assigneeIds: [], tagIds: [], parentKey: null }]));
+  const map = new Map<string, TaskLinks>(
+    taskIds.map((id) => [id, { assigneeIds: [], tagIds: [], parentKey: null, parentHidden: false }]),
+  );
   if (taskIds.length === 0) return map;
   const [assigneeRows, tagRows] = await Promise.all([
     db
@@ -69,14 +73,16 @@ async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) 
 
   const parent = aliasedTable(tasks, "parent");
   const parentRows = await db
-    .select({ taskId: tasks.id, number: parent.number, projectKey: projects.key })
+    .select({ taskId: tasks.id, number: parent.number, projectId: parent.projectId, projectKey: projects.key })
     .from(tasks)
     .innerJoin(parent, and(eq(tasks.parentId, parent.id), isNull(parent.deletedAt)))
     .innerJoin(projects, eq(parent.projectId, projects.id))
-    .where(and(inArray(tasks.id, taskIds), scope ? inArray(parent.projectId, [...scope]) : undefined));
+    .where(inArray(tasks.id, taskIds));
   for (const row of parentRows) {
     const links = map.get(row.taskId);
-    if (links) links.parentKey = `${row.projectKey}-${row.number}`;
+    if (!links) continue;
+    if (inScope(scope, row.projectId)) links.parentKey = `${row.projectKey}-${row.number}`;
+    else links.parentHidden = true;
   }
   return map;
 }
@@ -108,7 +114,7 @@ async function withProgress(db: Db | Tx, scope: ProjectScope, dtos: TaskDto[]): 
   return dtos.map((t) => ({ ...t, subtasks: byParent.get(t.id) ?? null }));
 }
 
-const noLinks: TaskLinks = { assigneeIds: [], tagIds: [], parentKey: null };
+const noLinks: TaskLinks = { assigneeIds: [], tagIds: [], parentKey: null, parentHidden: false };
 
 async function assertTagsInOrg(tx: Tx, orgId: string, tagIds: string[]) {
   if (tagIds.length === 0) return;
@@ -263,8 +269,8 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     });
 
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
-    const parentKey = task.parentId ? ((await linksByTask(tx, scope, [task.id])).get(task.id)?.parentKey ?? null) : null;
-    return toTaskDto(task, project.key, { assigneeIds, tagIds, parentKey });
+    const links = task.parentId ? (await linksByTask(tx, scope, [task.id])).get(task.id) : undefined;
+    return toTaskDto(task, project.key, { ...(links ?? noLinks), assigneeIds, tagIds });
   });
 }
 
@@ -426,7 +432,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     }
 
     const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined || changes.tagIds !== undefined;
-    if (!touched) return (await withProgress(tx, scope, [toTaskDto(task, projectKey, { assigneeIds, tagIds, parentKey: current.parentKey })]))[0]!;
+    if (!touched) return (await withProgress(tx, scope, [toTaskDto(task, projectKey, { ...current, assigneeIds, tagIds })]))[0]!;
 
     const [updated] = await tx
       .update(tasks)
@@ -440,8 +446,8 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
       await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
     }
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
-    const parentKey = updated.parentId ? ((await linksByTask(tx, scope, [updated.id])).get(updated.id)?.parentKey ?? null) : null;
-    return (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { assigneeIds, tagIds, parentKey })]))[0]!;
+    const links = updated.parentId ? (await linksByTask(tx, scope, [updated.id])).get(updated.id) : undefined;
+    return (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { ...(links ?? noLinks), assigneeIds, tagIds })]))[0]!;
   });
 }
 

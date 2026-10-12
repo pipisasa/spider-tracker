@@ -413,6 +413,32 @@ run("agent invites and project scope", () => {
     ).toBeNull();
   });
 
+  test("an invite whose projects were all deleted can't be accepted", async () => {
+    await createProject(db, owner, { name: "Vanishing", key: "VN" });
+    const { invite } = await createAgentInvite(db, owner, {
+      projectKeys: ["VN"],
+    });
+    await db
+      .delete(schema.projects)
+      .where(
+        and(
+          eq(schema.projects.orgId, owner.orgId),
+          eq(schema.projects.key, "VN"),
+        ),
+      );
+    await expect(
+      acceptAgentInvite(db, { code: invite.code }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The projects this invite was for no longer exist; ask for a new invite",
+    });
+    // Still unused, so it can be revoked.
+    expect((await listAgentInvites(db, owner)).map((i) => i.id)).toContain(
+      invite.id,
+    );
+    await revokeAgentInvite(db, owner, invite.id);
+  });
+
   test("project rows scope an agent even without the scoped flag", async () => {
     const { invite } = await createAgentInvite(db, owner, {
       projectKeys: ["ST"],
@@ -440,16 +466,31 @@ run("agent invites and project scope", () => {
     const { actor } = await acceptAgentInvite(db, { code: invite.code });
     const ctx = () => agentCtx(actor.id);
 
-    expect((await getTask(db, ctx(), child.key)).parentKey).toBeNull();
+    expect(await getTask(db, ctx(), child.key)).toMatchObject({
+      parentKey: null,
+      parentId: null,
+    });
     expect(
-      (await listTasks(db, ctx(), "ST")).find((t) => t.key === child.key)
-        ?.parentKey,
-    ).toBeNull();
+      (await listTasks(db, ctx(), "ST")).find((t) => t.key === child.key),
+    ).toMatchObject({ parentKey: null, parentId: null });
     expect(
-      (await updateTask(db, ctx(), child.key, { title: "Renamed child" }))
-        .parentKey,
-    ).toBeNull();
-    expect((await getTask(db, owner, child.key)).parentKey).toBe(parent.key);
+      await updateTask(db, ctx(), child.key, { title: "Renamed child" }),
+    ).toMatchObject({ parentKey: null, parentId: null });
+    expect(await getTask(db, owner, child.key)).toMatchObject({
+      parentKey: parent.key,
+      parentId: parent.id,
+    });
+
+    // A parent in scope keeps both.
+    const inParent = await createTask(db, owner, "ST", { title: "In parent" });
+    const inChild = await createTask(db, owner, "ST", {
+      title: "In child 2",
+      parentId: inParent.id,
+    });
+    expect(await getTask(db, ctx(), inChild.key)).toMatchObject({
+      parentKey: inParent.key,
+      parentId: inParent.id,
+    });
   });
 
   test("pending agents whose invite expired over 7 days ago are cleaned up", async () => {
@@ -470,8 +511,26 @@ run("agent invites and project scope", () => {
     expect(listed).toContain(recent.invite.id);
     const agentRows = async (id: string) =>
       db.select().from(schema.actors).where(eq(schema.actors.id, id));
+    // Listing only hides it; the next invite removes it and records who did.
+    expect(await agentRows(stale.agent.id)).toHaveLength(1);
+    const next = await createAgentInvite(db, owner, { projectKeys: ["ST"] });
     expect(await agentRows(stale.agent.id)).toHaveLength(0);
     expect(await agentRows(recent.agent.id)).toHaveLength(1);
+    const purged = await db
+      .select()
+      .from(schema.activity)
+      .where(
+        and(
+          eq(schema.activity.entityId, stale.agent.id),
+          eq(schema.activity.action, "agent_invite.purged"),
+        ),
+      );
+    expect(purged).toHaveLength(1);
+    expect(purged[0]).toMatchObject({
+      actorId: owner.actorId,
+      changes: { inviteId: stale.invite.id },
+    });
     await revokeAgentInvite(db, owner, recent.invite.id);
+    await revokeAgentInvite(db, owner, next.invite.id);
   });
 });
