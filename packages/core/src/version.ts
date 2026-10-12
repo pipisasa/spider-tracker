@@ -3,5 +3,5 @@
  * responses; older CLIs warn and suggest `spider update`. Raise it only after releasing a CLI
  * at least this new.
  */
-export const MIN_CLI_VERSION = "0.1.0";
+export const MIN_CLI_VERSION = "0.1.3";
 export const MIN_CLI_HEADER = "X-Spider-Min-Cli";
