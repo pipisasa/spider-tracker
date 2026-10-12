@@ -1,3 +1,4 @@
+import { CommandPalette } from "@/components/command-palette";
 import { meQuery } from "@/lib/queries";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
@@ -9,5 +10,15 @@ export const Route = createFileRoute("/_authed")({
     if (!me) throw redirect({ to: "/login", search: { redirect: location.href } });
     return { me };
   },
-  component: Outlet,
+  component: AuthedLayout,
 });
+
+function AuthedLayout() {
+  const { me } = Route.useRouteContext();
+  return (
+    <>
+      <Outlet />
+      <CommandPalette me={me} />
+    </>
+  );
+}

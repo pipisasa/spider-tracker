@@ -6,6 +6,8 @@ import { ProjectSettingsDialog } from "@/components/project-settings";
 import { SavedViewsMenu } from "@/components/saved-views";
 import { TaskFilterBar } from "@/components/task-filter-bar";
 import { Button } from "@/components/ui/button";
+import { useAppAction } from "@/lib/app-events";
+import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { actorsQuery, documentsQuery, membersQuery, projectQuery, tagsQuery, tasksQuery, useArchiveProject } from "@/lib/work";
 import { applyFilters, filtersToSearch, isEmptyFilters, normalizeFilters, parseFilters, type TaskFilters } from "@/lib/task-filters";
@@ -71,6 +73,14 @@ function ProjectPage() {
     setNewTaskOpen(true);
   };
 
+  // Palette and keyboard shortcuts (ST-16): `c` and "New document" arrive here.
+  useAppAction(["new-task", "new-document"], (action) => {
+    if (membership.actor.role === "guest") return void toast.error("Guests can't create content.");
+    if (archived) return void toast.error("This project is archived. Restore it first.");
+    if (action === "new-task") openNewTask();
+    else setNewDocumentOpen(true);
+  });
+
   return (
     <>
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3 md:px-6">
@@ -128,10 +138,15 @@ function ProjectPage() {
               <TooltipContent>This project is archived. Restore it to create tasks.</TooltipContent>
             </Tooltip>
           ) : (
-            <Button size="sm" className="ml-2 max-md:h-10" onClick={() => openNewTask()}>
-              <PlusIcon />
-              <span className="max-sm:sr-only">New task</span>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" className="ml-2 max-md:h-10" onClick={() => openNewTask()}>
+                  <PlusIcon />
+                  <span className="max-sm:sr-only">New task</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>New task (c)</TooltipContent>
+            </Tooltip>
           )}
           {canManage && (
             <Button variant="ghost" size="icon" className="max-md:size-10" aria-label="Project settings" onClick={() => setSettingsOpen(true)}>
