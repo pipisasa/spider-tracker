@@ -1,0 +1,13 @@
+{
+  "name": "spider-tracker",
+  "owner": {
+    "name": "Spider Tracker"
+  },
+  "plugins": [
+    {
+      "name": "spider-tracker",
+      "source": "./plugins/spider-tracker",
+      "description": "Set up Spider Tracker agents from Claude Code"
+    }
+  ]
+}
