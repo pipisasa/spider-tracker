@@ -25,7 +25,7 @@ import { applyDocumentEdits } from "./document-edits";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
-import { normalizeTitle, outgoingLinksIn, resolveTitle } from "./links";
+import { documentIdLink, normalizeTitle, outgoingLinksIn, resolveDocumentLink, resolveTitle } from "./links";
 import {
   createDocumentInput,
   documentDiffQuery,
@@ -154,12 +154,16 @@ async function findDocument(
   return { document: row.document, scope: scopeOf(row) };
 }
 
-/** Rewrites what a document links to from its current content (ST-100). */
+/**
+ * Rewrites what a document links to from its current content (ST-100). Links by id are stored as
+ * `doc:<id>` document targets (ST-115), next to titles.
+ */
 async function writeLinks(tx: Tx, documentId: string, content: string) {
   await tx.delete(documentLinks).where(eq(documentLinks.documentId, documentId));
   const links = outgoingLinksIn(content);
   const rows = [
     ...links.documents.map((target) => ({ documentId, kind: "document" as const, target })),
+    ...links.documentIds.map((id) => ({ documentId, kind: "document" as const, target: documentIdLink(id) })),
     ...links.tasks.map((target) => ({ documentId, kind: "task" as const, target })),
   ];
   if (rows.length) await tx.insert(documentLinks).values(rows);
@@ -560,29 +564,31 @@ export async function diffDocumentVersions(
 }
 
 /**
- * The documents linking to this one with `[[its title]]`, most recently updated first. A link
- * counts when it resolves here: with several documents of the same title, a link opens one
- * of them (see resolveTitle), and only that one lists it.
+ * The documents linking to this one with `[[its title]]` or `[[doc:<its id>]]`, most recently
+ * updated first. A title link counts when it resolves here: with several documents of the same
+ * title, a link opens one of them (see resolveTitle), and only that one lists it.
  */
 export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise<DocumentSummaryDto[]> {
   const { document } = await findDocument(db, viewer, id);
   const visible = await listDocuments(db, viewer);
+  const byId = documentIdLink(document.id);
   const rows = await db
-    .select({ documentId: documentLinks.documentId })
+    .select({ documentId: documentLinks.documentId, target: documentLinks.target })
     .from(documentLinks)
     .where(
       and(
         eq(documentLinks.kind, "document"),
-        // Served by the (kind, lower(target)) index.
-        sql`lower(${documentLinks.target}) = ${normalizeTitle(document.title)}`,
+        // Served by the (kind, lower(target)) index; `doc:<id>` targets are stored lower-case.
+        sql`lower(${documentLinks.target}) in (${normalizeTitle(document.title)}, ${byId})`,
       ),
     );
-  const linking = new Set(rows.map((r) => r.documentId));
+  const byIdLinks = new Set(rows.filter((r) => r.target === byId).map((r) => r.documentId));
+  const byTitleLinks = new Set(rows.filter((r) => r.target !== byId).map((r) => r.documentId));
   return visible.filter(
     (source) =>
       source.id !== document.id &&
-      linking.has(source.id) &&
-      resolveTitle(visible, document.title, source.projectKey)?.id === document.id,
+      (byIdLinks.has(source.id) ||
+        (byTitleLinks.has(source.id) && resolveTitle(visible, document.title, source.projectKey)?.id === document.id)),
   );
 }
 
@@ -628,7 +634,7 @@ export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<Document
       if (knownTasks.has(r.target) && r.target !== source.taskKey) add({ from: source.id, to: { type: "task", key: r.target } });
       continue;
     }
-    const target = resolveTitle(docs, r.target, source.projectKey);
+    const target = resolveDocumentLink(docs, r.target, source.projectKey);
     if (target?.id === source.id) continue;
     add({
       from: source.id,

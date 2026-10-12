@@ -38,6 +38,7 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  webUrls,
 } from "@repo/core";
 import type { Db, schema } from "@repo/db";
 import { Hono } from "hono";
@@ -81,13 +82,15 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 }
 
 /** Tracker tools for one request, acting as the key's agent inside its organization. */
-function createMcpServer(db: Db, key: Key, realtime: Realtime) {
+function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string) {
   const ctx: ActorContext = {
     orgId: key.organization.id,
     actorId: key.actor.id,
     role: key.actor.role,
     source: "mcp",
   };
+  // Tasks, projects and documents carry their web page's address (ST-115).
+  const urls = webUrls(webOrigin, key.organization.slug);
 
   // Every actor, deactivated ones included, so their past work and assignments still read by handle.
   let actorRows: Promise<ActorRow[]> | undefined;
@@ -157,6 +160,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     assignees: await Promise.all(task.assigneeIds.map(handleOf)),
     tags: await tagNames(task.tagIds),
     parent: task.parentKey,
+    url: urls.task(task.key),
     ...(detail
       ? {
           description: task.description,
@@ -174,6 +178,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     description: project.description,
     archived: project.archivedAt !== null,
     statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
+    url: urls.project(project.key),
   });
 
   const server = new McpServer({ name: "spider-tracker", version: "0.1.0" });
@@ -193,7 +198,12 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     { description: "List the organization's projects (key, name, description).", inputSchema: {} },
     () =>
       run(async () =>
-        (await listProjects(db, ctx)).map((p) => ({ key: p.key, name: p.name, description: p.description })),
+        (await listProjects(db, ctx)).map((p) => ({
+          key: p.key,
+          name: p.name,
+          description: p.description,
+          url: urls.project(p.key),
+        })),
       ),
   );
 
@@ -210,7 +220,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         const documents = await listDocuments(db, ctx, { project: project.key });
         return {
           ...describeProject(project),
-          documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey })),
+          documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey, url: urls.document(d.id) })),
         };
       }),
   );
@@ -319,7 +329,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         ]);
         return {
           relations: relations.map((r) => ({ kind: r.kind, task: r.task.key, title: r.task.title })),
-          documents: documents.map((d) => ({ id: d.id, title: d.title })),
+          documents: documents.map((d) => ({ id: d.id, title: d.title, url: urls.document(d.id) })),
           ...(await describeTask(task, await projectOfTask(task.key), true)),
           subtasks: await Promise.all(
             subtasks.map(async (t) => {
@@ -543,6 +553,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     version: d.version,
     updatedBy: await handleOf(d.authorId),
     updatedAt: d.updatedAt,
+    url: urls.document(d.id),
   });
 
   server.registerTool(
@@ -584,6 +595,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           currentVersion: document.version,
           savedBy: old.authorId ? await handleOf(old.authorId) : null,
           savedAt: old.createdAt,
+          url: urls.document(document.id),
           content: old.content,
         };
       }),
@@ -625,7 +637,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "create_document",
     {
       description:
-        "Create a document: organization-wide, in a project, or on a task (the task's project is implied). Markdown by default. Link other documents with [[Title]] or [[Title|label]] and tasks with [[ST-12]]; they show as backlinks and in the documents graph.",
+        "Create a document: organization-wide, in a project, or on a task (the task's project is implied). Markdown by default. Link other documents with [[Title]] or [[Title|label]], by id with [[doc:<id>]] (survives renames, shows the current title) and tasks with [[ST-12]]; they show as backlinks and in the documents graph. The result's url is the document's web page.",
       inputSchema: {
         title: z.string(),
         content: z.string().optional().describe("Markdown (or HTML with format html); at most 1 MB"),
@@ -859,7 +871,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
  * transport, so there are no session ids and any instance can serve any request.
  * Only agent API keys are accepted; browser sessions are not.
  */
-export function mcpRoutes(db: Db, realtime: Realtime) {
+export function mcpRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -877,7 +889,7 @@ export function mcpRoutes(db: Db, realtime: Realtime) {
   app.post("/", async (c) => {
     const key = c.get("apiKey");
     if (!key) throw new Error("API key middleware didn't run");
-    const server = createMcpServer(db, key, realtime);
+    const server = createMcpServer(db, key, realtime, webOrigin);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     await server.connect(transport);
     try {

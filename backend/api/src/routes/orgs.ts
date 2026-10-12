@@ -58,9 +58,13 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  webUrls,
+  withDocumentUrl,
+  withProjectUrl,
+  withTaskUrl,
 } from "@repo/core";
 import type { Db } from "@repo/db";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { toActorDto } from "../dto";
 import type { Realtime } from "../realtime";
@@ -79,8 +83,8 @@ const MAX_INBOX_WAIT_SECONDS = 25;
 const INBOX_RECHECK_MS = 5000;
 const SSE_HEARTBEAT_MS = 20_000;
 
-/** Organization-scoped routes, mounted at /v1/orgs/:orgSlug. */
-export function orgRoutes(db: Db, realtime: Realtime) {
+/** Organization-scoped routes, mounted at /v1/orgs/:orgSlug; `webOrigin` builds the `url` fields. */
+export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -104,11 +108,17 @@ export function orgRoutes(db: Db, realtime: Realtime) {
       // Browser sessions are always "ui"; key clients (CLI, MCP) may say what they are.
       source: key ? clientSource(c.req.header("X-Spider-Source")) : "ui",
     });
+    c.set("urls", webUrls(webOrigin, membership.organization.slug));
     await next();
   });
 
   const body = (c: { req: { json: () => Promise<unknown> } }) => c.req.json().catch(() => null);
   const list = <T>(items: T[]): ListResponse<T> => ({ items });
+  // Projects, tasks and documents carry their web page's address (ST-115).
+  type C = Context<AppEnv>;
+  const project = <T extends { key: string }>(c: C, p: T) => withProjectUrl(c.get("urls"), p);
+  const task = <T extends { key: string }>(c: C, t: T) => withTaskUrl(c.get("urls"), t);
+  const document = <T extends { id: string }>(c: C, d: T) => withDocumentUrl(c.get("urls"), d);
 
   // GET /members?all=true includes deactivated actors, to name the ones still assigned to tasks.
   app.get("/members", async (c) => {
@@ -187,25 +197,31 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   // GET /projects?archived=true includes archived projects.
   app.get("/projects", async (c) =>
-    c.json(list(await listProjects(db, c.get("actor"), { includeArchived: c.req.query("archived") === "true" }))),
+    c.json(
+      list(
+        (await listProjects(db, c.get("actor"), { includeArchived: c.req.query("archived") === "true" })).map((p) =>
+          project(c, p),
+        ),
+      ),
+    ),
   );
 
-  app.post("/projects", async (c) => c.json(await createProject(db, c.get("actor"), await body(c)), 201));
+  app.post("/projects", async (c) => c.json(project(c, await createProject(db, c.get("actor"), await body(c))), 201));
 
   app.get("/projects/:projectKey", async (c) =>
-    c.json(await getProject(db, c.get("actor"), c.req.param("projectKey"))),
+    c.json(project(c, await getProject(db, c.get("actor"), c.req.param("projectKey")))),
   );
 
   app.patch("/projects/:projectKey", async (c) =>
-    c.json(await updateProject(db, c.get("actor"), c.req.param("projectKey"), await body(c))),
+    c.json(project(c, await updateProject(db, c.get("actor"), c.req.param("projectKey"), await body(c)))),
   );
 
   app.post("/projects/:projectKey/archive", async (c) =>
-    c.json(await archiveProject(db, c.get("actor"), c.req.param("projectKey"), true)),
+    c.json(project(c, await archiveProject(db, c.get("actor"), c.req.param("projectKey"), true))),
   );
 
   app.delete("/projects/:projectKey/archive", async (c) =>
-    c.json(await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false)),
+    c.json(project(c, await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false))),
   );
 
   // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any; see taskListFilters.
@@ -220,11 +236,11 @@ export function orgRoutes(db: Db, realtime: Realtime) {
       q: c.req.query("q"),
       parent: c.req.query("parent"),
     };
-    return c.json(list(await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)));
+    return c.json(list((await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)).map((t) => task(c, t))));
   });
 
   app.post("/projects/:projectKey/tasks", async (c) =>
-    c.json(await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c)), 201),
+    c.json(task(c, await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
   );
 
   app.get("/projects/:projectKey/views", async (c) =>
@@ -256,20 +272,20 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   // An agent reading a task counts as working on it (not recorded in the activity log).
   app.get("/tasks/:taskKey", async (c) => {
     const actor = c.get("actor");
-    const task = await getTask(db, actor, c.req.param("taskKey"));
-    if (c.get("apiKey")) await realtime.presence.touch(actor, task.key);
-    return c.json(task);
+    const found = await getTask(db, actor, c.req.param("taskKey"));
+    if (c.get("apiKey")) await realtime.presence.touch(actor, found.key);
+    return c.json(task(c, found));
   });
 
   // Several tasks at once, by keys or a filter; per-task outcomes, 200 even when some fail (ST-106).
   app.post("/tasks/bulk-update", async (c) => c.json(await updateTasks(db, c.get("actor"), await body(c))));
 
   app.patch("/tasks/:taskKey", async (c) =>
-    c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
+    c.json(task(c, await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
   );
 
   app.get("/tasks/:taskKey/subtasks", async (c) =>
-    c.json(list(await listSubtasks(db, c.get("actor"), c.req.param("taskKey")))),
+    c.json(list((await listSubtasks(db, c.get("actor"), c.req.param("taskKey"))).map((t) => task(c, t)))),
   );
 
   app.get("/tasks/:taskKey/relations", async (c) =>
@@ -303,33 +319,38 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   );
 
   // GET /documents?project=ST or ?task=ST-12; without either, the whole organization's.
-  app.get("/documents", async (c) => c.json(list(await listDocuments(db, c.get("actor"), c.req.query()))));
+  app.get("/documents", async (c) =>
+    c.json(list((await listDocuments(db, c.get("actor"), c.req.query())).map((d) => document(c, d)))),
+  );
 
-  app.post("/documents", async (c) => c.json(await createDocument(db, c.get("actor"), await body(c)), 201));
+  app.post("/documents", async (c) => c.json(document(c, await createDocument(db, c.get("actor"), await body(c))), 201));
 
   // Registered before /documents/:documentId, which would take "graph" for an id.
-  app.get("/documents/graph", async (c) => c.json(await getDocumentGraph(db, c.get("actor"))));
+  app.get("/documents/graph", async (c) => {
+    const graph = await getDocumentGraph(db, c.get("actor"));
+    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)) });
+  });
 
   app.get("/documents/:documentId/backlinks", async (c) =>
-    c.json(list(await listBacklinks(db, c.get("actor"), c.req.param("documentId")))),
+    c.json(list((await listBacklinks(db, c.get("actor"), c.req.param("documentId"))).map((d) => document(c, d)))),
   );
 
   app.get("/documents/:documentId", async (c) =>
-    c.json(await getDocument(db, c.get("actor"), c.req.param("documentId"))),
+    c.json(document(c, await getDocument(db, c.get("actor"), c.req.param("documentId")))),
   );
 
   app.patch("/documents/:documentId", async (c) =>
-    c.json(await updateDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
+    c.json(document(c, await updateDocument(db, c.get("actor"), c.req.param("documentId"), await body(c)))),
   );
 
   // POST { baseVersion?, edits: [{ old, new, all? } | { append } | { section, content }] }: partial edits (ST-116).
   app.post("/documents/:documentId/edit", async (c) =>
-    c.json(await editDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
+    c.json(document(c, await editDocument(db, c.get("actor"), c.req.param("documentId"), await body(c)))),
   );
 
   // POST { project: "KEY" | null }: move to a project, or make the document organization-wide.
   app.post("/documents/:documentId/move", async (c) =>
-    c.json(await moveDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
+    c.json(document(c, await moveDocument(db, c.get("actor"), c.req.param("documentId"), await body(c)))),
   );
 
   app.delete("/documents/:documentId", async (c) => {

@@ -1632,6 +1632,17 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
 
   const doc = program.command("doc").description("work with documents (Markdown or HTML specs, plans, reports)");
 
+  // The link syntax (ST-100, ST-115), shown under doc create and doc edit.
+  const docLinksHelp = [
+    "",
+    "Links in Markdown content:",
+    "  [[Title]]            another document, by title (the same project's first, then organization-wide)",
+    "  [[Title|label]]      the same, shown as label; [[Title#Heading]] points at a section",
+    "  [[doc:<id>]]         a document by id: survives renames, shows the document's current title",
+    "  [[ST-12]]            a task (plain task keys such as ST-12 count too)",
+    "Links show as backlinks and in the documents graph; links inside code are ignored.",
+  ].join("\n");
+
   withJson(
     doc
       .command("list")
@@ -1661,11 +1672,14 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const shown = old ?? { ...current, createdAt: current.updatedAt };
     const rows = await actors();
     const handle = shown.authorId ? handleOf(rows, shown.authorId) : "?";
-    const item = old ? { ...old, projectKey: current.projectKey, taskKey: current.taskKey, currentVersion: current.version } : current;
+    const item = old
+      ? { ...old, projectKey: current.projectKey, taskKey: current.taskKey, currentVersion: current.version, url: current.url }
+      : current;
     output(opts, item, () =>
       [
         `${shown.title}  (${documentScope(current)}, ${shown.format}, v${shown.version}${old ? ` of ${current.version}` : ""})`,
         `Saved by @${handle} · ${shown.createdAt.slice(0, 16).replace("T", " ")}`,
+        ...(current.url ? [current.url] : []),
         "",
         shown.content,
       ].join("\n"),
@@ -1701,7 +1715,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--project <key>", "in this project")
       .option("--task <key>", "on this task (its project is implied)")
       .option("--format <md|html>", "md (default) or html; .html files default to html")
-      .option("--file <path>", 'content from a file, or "-" for standard input'),
+      .option("--file <path>", 'content from a file, or "-" for standard input')
+      .addHelpText("after", docLinksHelp),
   ).action(async (opts: JsonOption & { title: string; project?: string; task?: string; format?: string; file?: string }) => {
     const { sdk, org } = conn();
     const content = opts.file === undefined ? "" : await readContent(opts.file);
@@ -1734,7 +1749,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--section <heading>", 'replace the body of this Markdown section (e.g. "## Decisions") with --text or --file')
       .option("--text <text>", "the text for --append or --section")
       .option("--base-version <n>", "the version your edit is based on (from doc view / doc list)")
-      .option("--force", "without --base-version: save on top of whatever the current version is"),
+      .option("--force", "without --base-version: save on top of whatever the current version is")
+      .addHelpText("after", docLinksHelp),
   ).action(async (id: string, opts: DocEditOptions) => {
     const partial = opts.old !== undefined || opts.append === true || opts.section !== undefined;
     if (partial) return editDocumentPart(id, opts);

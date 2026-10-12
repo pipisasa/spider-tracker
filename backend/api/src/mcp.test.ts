@@ -164,6 +164,8 @@ withDb("MCP server", () => {
 
     const task = await call(client, "get_task", { key: "spi-1" });
     expect(task.json()).toMatchObject({ key: "SPI-1", title: "Wire up MCP", status: "In Progress", creator: "claude-code" });
+    // The web page's address (ST-115).
+    expect(task.json()).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1` });
 
     const mine = await call(client, "list_tasks", { projectKey: "SPI", assignee: "me", status: "in progress" });
     expect(mine.json()).toMatchObject({ total: 1, tasks: [{ key: "SPI-1" }] });
@@ -233,11 +235,13 @@ withDb("MCP server", () => {
     expect(created.isError).toBeFalsy();
     const doc = created.json() as { id: string; version: number };
     expect(doc).toMatchObject({ project: "SPI", task: null, version: 1, updatedBy: "claude-code" });
+    expect(created.json()).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${doc.id}` });
 
     const onTask = (await call(client, "create_document", { title: "Notes", task: "SPI-1" })).json() as { id: string };
     expect((await call(client, "get_task", { key: "SPI-1" })).json()).toMatchObject({ documents: [{ id: onTask.id, title: "Notes" }] });
     const project = (await call(client, "get_project", { projectKey: "SPI" })).json() as { documents: { title: string }[] };
     expect(project.documents.map((d) => d.title).sort()).toEqual(["Notes", "Spec"]);
+    expect(project).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI` });
 
     const updated = await call(client, "update_document", { id: doc.id, baseVersion: 1, content: "# v2" });
     expect(updated.json()).toMatchObject({ version: 2 });
@@ -416,7 +420,9 @@ withDb("MCP server", () => {
     const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
     expect(updated.json()).toMatchObject({ name: "Operations", description: null });
     expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
-    expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([{ key: "SPI", name: "Spider", description: null }]);
+    expect(JSON.parse((await call(client, "list_projects")).text)).toEqual([
+      { key: "SPI", name: "Spider", description: null, url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI` },
+    ]);
     expect((await call(client, "get_project", { projectKey: "OPS" })).json()).toMatchObject({ archived: true });
     expect(await call(client, "create_task", { projectKey: "OPS", title: "x" })).toMatchObject({
       isError: true,

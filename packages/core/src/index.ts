@@ -23,6 +23,7 @@ export * from "./documents";
 export * from "./document-edits";
 export * from "./diff";
 export * from "./links";
+export * from "./urls";
 export * from "./invitations";
 export * from "./agent-invites";
 export * from "./version";

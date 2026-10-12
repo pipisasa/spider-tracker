@@ -168,6 +168,14 @@ describe("exit codes", () => {
     expect((await cli(["--version"], { env: {} })).stdout).toBe(`${CLI_VERSION}\n`);
   });
 
+  test("doc create and doc edit help describe the [[link]] syntax (ST-115)", async () => {
+    for (const command of ["create", "edit"]) {
+      const help = await cli(["doc", command, "--help"], { env: {} });
+      expect(help.code).toBe(0);
+      for (const syntax of ["[[Title]]", "[[Title|label]]", "[[doc:<id>]]", "[[ST-12]]"]) expect(help.stdout).toContain(syntax);
+    }
+  });
+
   test("the help subcommand exits 0, but a bare command group is a usage error", async () => {
     expect((await cli(["help"], { env: {} })).code).toBe(0);
     const taskHelp = await cli(["help", "task"], { env: {} });

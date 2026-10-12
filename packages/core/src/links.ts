@@ -1,6 +1,7 @@
 // Links between documents (ST-100), Obsidian style. Browser-safe (no database): the web
 // editor, the Markdown renderer and the server all parse and resolve links the same way.
 import { taskKeysIn } from "./git";
+import { isUuid } from "./ids";
 import { parseTaskKey } from "./schemas";
 
 /** A `[[target]]` or `[[target|label]]` link as written. */
@@ -51,27 +52,52 @@ export function taskKeyTarget(target: string): string | null {
   return parsed ? `${parsed.projectKey}-${parsed.number}` : null;
 }
 
-/** What a document links to: document titles (as first written) and task keys, without repeats. */
+/** The prefix of a link by document id: `[[doc:<id>]]` (ST-115). */
+const DOC_ID_PREFIX = "doc:";
+
+/**
+ * The document id a `[[doc:<id>]]` target names (lower-cased), or null for anything else. A link
+ * by id survives renames and shows the document's current title.
+ */
+export function documentIdTarget(target: string): string | null {
+  const trimmed = target.trim();
+  if (trimmed.slice(0, DOC_ID_PREFIX.length).toLowerCase() !== DOC_ID_PREFIX)
+    return null;
+  const id = trimmed.slice(DOC_ID_PREFIX.length).trim();
+  return isUuid(id) ? id.toLowerCase() : null;
+}
+
+/** How a link by id is written (and stored as a link target): `doc:<id>`. */
+export function documentIdLink(id: string): string {
+  return `${DOC_ID_PREFIX}${id.toLowerCase()}`;
+}
+
+/** What a document links to, without repeats: document titles (as first written), document ids and task keys. */
 export interface OutgoingLinks {
   documents: string[];
+  /** Ids from `[[doc:<id>]]`, lower-cased. */
+  documentIds: string[];
   tasks: string[];
 }
 
 /**
- * The links a document's content makes: `[[Title]]` to documents, `[[ST-12]]` and plain
+ * The links a document's content makes: `[[Title]]` and `[[doc:<id>]]` to documents, `[[ST-12]]` and plain
  * task keys ("see ST-12") to tasks. Code is ignored. Task keys are syntactic only; readers
  * keep the ones that exist.
  */
 export function outgoingLinksIn(content: string): OutgoingLinks {
   // Keyed by the normalized title, keeping the first spelling.
   const documents = new Map<string, string>();
+  const documentIds = new Set<string>();
   const tasks = new Set<string>();
   const text = withoutCode(content);
   for (const match of text.matchAll(WIKI_LINK)) {
     const link = parseWikiLink(match[1] ?? "", match[2]);
     if (!link) continue;
     const key = taskKeyTarget(link.target);
+    const id = documentIdTarget(link.target);
     if (key) tasks.add(key);
+    else if (id) documentIds.add(id);
     else {
       const key = normalizeTitle(link.target);
       if (!documents.has(key)) documents.set(key, link.target.replace(/\s+/g, " "));
@@ -79,7 +105,11 @@ export function outgoingLinksIn(content: string): OutgoingLinks {
   }
   // Plain mentions, outside wiki links (a document titled "ST-1 notes" isn't a mention).
   for (const key of taskKeysIn(text.replace(WIKI_LINK, " "))) tasks.add(key);
-  return { documents: [...documents.values()], tasks: [...tasks] };
+  return {
+    documents: [...documents.values()],
+    documentIds: [...documentIds],
+    tasks: [...tasks],
+  };
 }
 
 /** The fields title resolution needs. */
@@ -112,4 +142,18 @@ export function resolveTitle<T extends LinkCandidate>(
     }
   }
   return best;
+}
+
+/**
+ * The document a `[[target]]` (a title or `doc:<id>`) written in a document of `fromProjectKey`
+ * opens, among `candidates`; null when none matches.
+ */
+export function resolveDocumentLink<T extends LinkCandidate>(
+  candidates: readonly T[],
+  target: string,
+  fromProjectKey: string | null,
+): T | null {
+  const id = documentIdTarget(target);
+  if (id) return candidates.find((doc) => doc.id.toLowerCase() === id) ?? null;
+  return resolveTitle(candidates, target, fromProjectKey);
 }

@@ -1,12 +1,21 @@
 import type { DocumentSummaryDto } from "@repo/core/contracts";
-import { normalizeTitle, resolveTitle, taskKeyTarget } from "@repo/core/links";
+import {
+  documentIdTarget,
+  normalizeTitle,
+  resolveTitle,
+  taskKeyTarget,
+} from "@repo/core/links";
 import type { WikiSuggestion } from "@/components/editor/wiki-link";
 
-/** Where a `[[target]]` written in a document of `fromProjectKey` leads (ST-100). */
+/**
+ * Where a `[[target]]` written in a document of `fromProjectKey` leads (ST-100). A
+ * `[[doc:<id>]]` no visible document has is "unknown": unlike a title, there is nothing to create.
+ */
 export type WikiDestination =
   | { type: "document"; id: string }
   | { type: "task"; key: string }
-  | { type: "missing"; title: string };
+  | { type: "missing"; title: string }
+  | { type: "unknown"; id: string };
 
 export function wikiDestination(
   documents: readonly DocumentSummaryDto[],
@@ -15,9 +24,23 @@ export function wikiDestination(
 ): WikiDestination {
   const key = taskKeyTarget(target);
   if (key) return { type: "task", key };
+  const id = documentIdTarget(target.split("#")[0] ?? "");
+  if (id)
+    return documents.some((d) => d.id === id)
+      ? { type: "document", id }
+      : { type: "unknown", id };
   const title = (target.split("#")[0] ?? "").trim();
   const doc = resolveTitle(documents, title, fromProjectKey);
   return doc ? { type: "document", id: doc.id } : { type: "missing", title };
+}
+
+/** The text a `[[target]]` without a label shows: the document's current title for `[[doc:<id>]]` (ST-115). */
+export function wikiLabel(
+  documents: readonly DocumentSummaryDto[],
+  target: string,
+): string | null {
+  const id = documentIdTarget(target.split("#")[0] ?? "");
+  return id ? (documents.find((d) => d.id === id)?.title ?? null) : null;
 }
 
 /** Characters a `[[link]]` target can't contain: brackets end it, `|` starts a label, `#` a heading. */
