@@ -26,9 +26,9 @@ activity (append-only log for everything)
 | **Agent** | Extra configuration for agent actors (model, prompt, tools, limits) |
 | **API token** | Hashed API keys for external agents and CI |
 | **Project** | A unit of work with a key (`SPI`), workflow and settings |
-| **Status** | A per-project workflow state, mapped to a fixed category |
+| **Status** | A workflow state of one project and task kind (ST-90), mapped to a fixed category |
 | **Cycle** | A sprint or milestone |
-| **Task** | A unit of work; supports sub-tasks, relations, assignees, tags and custom fields |
+| **Task** | A unit of work of a kind (`task`, `release` or `milestone`, ST-90); supports sub-tasks, relations, assignees, tags and custom fields |
 | **Tag** | An organization-wide label |
 | **Custom field definition** | A user-defined field at organization or project scope |
 | **Repo** | A linked Git/GitHub repository |
@@ -51,6 +51,7 @@ activity (append-only log for everything)
 | `org_id` on every main table | Access control is one rule: the row's `org_id` must be in the user's organizations. It also makes per-organization filters fast. |
 | UUIDv7 primary keys + per-project numbers | UUIDv7 IDs sort by creation time and keep indexes efficient. `SPI-123` comes from `projects.task_seq`, incremented in the same transaction that inserts the task. |
 | Statuses belong to projects, each mapped to a fixed category | Projects name their columns freely; automation and reports use the categories. |
+| Statuses are per project **and** task kind (ST-90) | Releases and milestones move through their own workflows (Planned → On staging → Release review → Released; Planned → Active → Ready to close → Done), so `statuses.kind` splits a project's statuses into one workflow per kind; `position` orders a workflow. A task's kind is fixed at creation, and the composite foreign key `tasks (project_id, kind, status_id) → statuses (project_id, kind, id)` makes the database refuse a status of another project or kind. Names are unique per workflow regardless of case (status lookups by name are case-insensitive). Every new project gets the three default workflows (`DEFAULT_WORKFLOWS` in core); the migration gave existing projects the release and milestone ones. A status's category never changes; deleting one moves its tasks to another status of the same workflow first, and each workflow keeps an open and a done status. |
 | Custom field values as JSON, keyed by field definition ID | Renaming a field touches no data. A GIN index keeps filtering fast. The app's `core` package validates values against the definitions. |
 | `sort_key` holds a fractional index | Dragging a card changes one row instead of renumbering the column. |
 | Explicit columns on `documents` (not a generic "attached to" pair) | Foreign keys and cascading deletes keep working. |
@@ -154,13 +155,17 @@ create table projects (
   unique (org_id, key)
 );
 
+create type task_kind as enum ('task','release','milestone');  -- ST-90
+
 create table statuses (
   id uuid primary key default uuidv7(),
   project_id uuid not null references projects on delete cascade,
+  kind task_kind not null default 'task',              -- one workflow per project and kind (ST-90)
   name text not null, category status_category not null,
-  color text, position int not null,
-  unique (project_id, name)
+  color text, position int not null,                   -- order within the kind's workflow
+  unique (project_id, kind, id)                        -- target of tasks_status_fk
 );
+create unique index on statuses (project_id, kind, lower(name));
 
 create table cycles (
   id uuid primary key default uuidv7(),
@@ -175,7 +180,8 @@ create table tasks (
   project_id uuid not null references projects,
   number int not null,
   title text not null, description text,
-  status_id uuid not null references statuses,
+  kind task_kind not null default 'task',              -- fixed at creation (ST-90)
+  status_id uuid not null,
   priority smallint not null default 0 check (priority between 0 and 4),
   parent_id uuid references tasks,
   cycle_id uuid references cycles,
@@ -191,6 +197,8 @@ create table tasks (
   search tsvector generated always as
     (to_tsvector('simple', title || ' ' || coalesce(description, ''))) stored,
   unique (project_id, number),
+  -- The status is one of the workflow of the task's project and kind (ST-90).
+  constraint tasks_status_fk foreign key (project_id, kind, status_id) references statuses (project_id, kind, id),
   constraint tasks_dates_ordered check (start_date is null or target_date is null or start_date <= target_date)
 );
 create index on tasks (project_id, status_id, sort_key) where deleted_at is null;

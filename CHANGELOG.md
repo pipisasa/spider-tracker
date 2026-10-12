@@ -25,6 +25,14 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 
 Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
+### Task kinds and per-project workflows (ST-90)
+
+- **API:** tasks carry `kind` (`task`, `release`, `milestone`; default `task`, fixed at creation). Projects have one workflow per kind: `ProjectDetailDto.workflows` (`{ task, release, milestone }`), statuses gain `kind`, and `statuses` stays the task workflow. New projects get all three default workflows; the migration gives existing projects the release and milestone ones. New `POST …/projects/:key/statuses`, `PATCH|DELETE …/statuses/:id?moveTo=` edit workflows (owners, admins and their agents). `POST …/tasks` takes `kind`; `GET …/tasks?kind=` filters by it. A task's status must be of its own project and kind (create, update, bulk update, duplicates). SDK: `projects.statuses.create|update|delete`, `tasks.list(…, { kind })`.
+- **MCP:** new `create_status`, `update_status` and `delete_status` tools; `list_tasks` and the `update_tasks` filter take `kind`. Status names in `update_task`, `update_tasks`, `start_task` and `mark_duplicate` match the workflow of each task's kind. Output (additive): tasks gain `kind`; `get_project` and the project tools gain `workflows`, and statuses gain `kind`. `list_tasks` with a status name and no `kind` now also matches release and milestone statuses of that name.
+- **CLI:** new `spider project status [list] | add | update | delete` (`--kind`, default task). `task list --kind`. `--status`, `task start` and `task done` use the workflow of the task's kind. `--json` output (additive): tasks gain `kind`; projects gain `workflows` (`project view` with `taskCount` there too) and statuses `kind`. Human `project view` now lists each workflow with categories (`Task workflow:` …) instead of one `Statuses:` list.
+- **Web:** Settings → Projects → Workflows: add, rename, recolor, reorder and delete statuses of each kind's workflow. The board and list show tasks of kind `task`.
+- Database migration (task kinds): `task_kind` enum, `kind` on `statuses` and `tasks`, names unique per workflow regardless of case, and the default release and milestone workflows for existing projects.
+
 ### Start and target dates (ST-91)
 
 - **API:** tasks carry `startDate` and `targetDate` (`YYYY-MM-DD` or `null`); create, update and bulk update take them (start ≤ target). `GET …/projects/:key/tasks?overdue=true` lists open tasks past their target date (today = the server's UTC date). SDK: the same fields and `tasks.list(…, { overdue: true })`.

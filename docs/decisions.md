@@ -171,3 +171,17 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - Changes are inbox items of a new kind `rules` about a document (`inbox_items.task_id` became nullable, with a `document_id`). Clients from before it expect a task on every item, so the API returns `rules` items only when `kinds` asks for them.
 
 **Trade-off:** rules belong to one project; organization-wide rules shared by several projects would need a different shape.
+
+---
+
+## 13. Workflows per project and task kind; `statuses` stays the task workflow
+
+**Decision:** statuses get a `kind` (ST-90), so each project has one workflow per task kind (task, release, milestone), and a task's kind is fixed at creation. The database enforces that a task's status is of its project and kind with a composite foreign key. In API responses, `ProjectDetailDto.statuses` keeps meaning the task workflow, and the new `workflows` field holds every kind's.
+
+**Why:**
+- Releases and milestones need their own steps (On staging, Release review; Active, Ready to close) while code, agents and skills keep using only the fixed categories.
+- Keeping `statuses` as the task workflow means CLIs and scripts from before kinds still resolve "Done" or `in_progress` to the task statuses; mixing every kind into it would make them pick a milestone's Done (its position is lower).
+- A fixed kind means no status remapping when a task changes kind; a composite foreign key makes a wrong-kind status impossible even for writes that bypass core.
+- Deleting a status moves its tasks first (the caller picks the target) instead of refusing while tasks use it, and every workflow keeps an open and a done status so tasks can always start and finish. Categories can't change, so `completedAt` only moves when tasks move.
+
+**Trade-off:** `statuses` and `workflows.task` repeat the same list in every project response. Status names in list filters without a kind match in every workflow (names before categories), so `--status Done` finds done tasks and done milestones.
