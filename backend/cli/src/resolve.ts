@@ -45,6 +45,12 @@ export function parseLimit(value: string): number {
   return n;
 }
 
+export function parseVersion(value: string): number {
+  const n = Number(value);
+  if (!/^\d+$/.test(value.trim()) || n < 1) throw usageError(`Invalid version "${value}". Use a positive integer`);
+  return n;
+}
+
 export { matchStatuses };
 
 const byPosition = (a: StatusDto, b: StatusDto) => a.position - b.position;

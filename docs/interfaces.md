@@ -214,7 +214,7 @@ spider inbox [--all] [--wait 25] [--mark-read]
 spider doc list [--project ST] [--task ST-12]
 spider doc view <id> [--rev 3]                 # --rev: an older version
 spider doc create --title … [--project ST | --task ST-12] [--format md|html] [--file spec.md | --file -]
-spider doc edit <id> [--title …] [--format …] [--file … | --file -]   # saves on top of the current version
+spider doc edit <id> --base-version 2 [--title …] [--format …] [--file … | --file -]   # or --force
 spider channel              # Claude Code channel over stdio (see agents.md)
 ```
 
@@ -222,7 +222,7 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
 - **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
 - **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). `run` never prompts; only the bin passes the `spider claude` picker, and only when stdin and stdout are terminals.
-- **Documents:** `--file -` reads standard input; `.html` files default to `--format html`. `doc edit` fetches the current version and sends it as `baseVersion`, so a concurrent save fails with exit code `2` instead of being overwritten.
+- **Documents:** `--file -` reads standard input; `.html` files default to `--format html`. `doc edit` needs `--base-version <n>`, the version the edit is based on (printed by `doc view` and `doc list`): if someone saved a newer version, it fails with exit code `2` (`conflict`) instead of overwriting it. `--force` instead saves on top of whatever is current.
 - Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin?, select?, spawn?, self? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
 
 ### Planned

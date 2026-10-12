@@ -421,7 +421,7 @@ withDb("spider CLI against the API", () => {
     expect((await spider("link", "SPI-1", "depends", other)).code).toBe(2);
   });
 
-  test("docs: create from a file and stdin, list by scope, view, edit with the current version", async () => {
+  test("docs: create from a file and stdin, list by scope, view, edit from a base version", async () => {
     writeFileSync(join(repo, "spec.html"), "<h1>Spec</h1>");
     const spec = (await spider("doc", "create", "--title", "Spec", "--project", "spi", "--file", "spec.html", "--json")).json();
     expect(spec).toMatchObject({ projectKey: "SPI", taskKey: null, format: "html", content: "<h1>Spec</h1>", version: 1 });
@@ -436,8 +436,18 @@ withDb("spider CLI against the API", () => {
     expect(all.map((d) => d.title).sort()).toEqual(["Notes", "Spec"]);
 
     stdin = "<h1>Spec v2</h1>";
-    expect((await spider("doc", "edit", id, "--file", "-")).stdout).toBe("Saved Spec as version 2\n");
-    expect((await spider("doc", "edit", id, "--title", "Spec")).stdout).toBe("No changes to Spec\n");
+    expect((await spider("doc", "edit", id, "--file", "-", "--base-version", "1")).stdout).toBe("Saved Spec as version 2\n");
+    expect((await spider("doc", "edit", id, "--title", "Spec", "--base-version", "2")).stdout).toBe("No changes to Spec\n");
+
+    // An edit based on version 1 must not overwrite version 2 (ST-21).
+    stdin = "<h1>Stale</h1>";
+    const stale = await spider("doc", "edit", id, "--file", "-", "--base-version", "1", "--json");
+    expect(stale.code).toBe(2);
+    expect(stale.stderr).toContain('"code":"conflict"');
+    // Without a base version the edit is refused unless forced.
+    expect((await spider("doc", "edit", id, "--title", "Spec 2")).code).toBe(2);
+    expect((await spider("doc", "edit", id, "--title", "Spec", "--base-version", "x")).code).toBe(2);
+    expect((await spider("doc", "edit", id, "--title", "Spec", "--force")).stdout).toBe("No changes to Spec\n");
     expect((await spider("doc", "view", id)).stdout).toContain("<h1>Spec v2</h1>");
     expect((await spider("doc", "view", id, "--rev", "1", "--json")).json()).toMatchObject({
       version: 1,
