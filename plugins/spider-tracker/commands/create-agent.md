@@ -9,13 +9,15 @@ The user's request: $ARGUMENTS
 
 ## 1. Check the CLI
 
-Run `spider --version`. If `spider` is not installed, tell the user to install it and stop:
+Run `spider --version`. If `spider` is not installed, install it (show the user the command and what it does: it downloads the `spider` binary from the project's GitHub releases into `~/.local/bin`):
 
 ```bash
 curl -fsSL https://tracker.batele.plus/install.sh | sh
 ```
 
-(Inside the Spider Tracker repository, `bun run spider …` works too.)
+If `~/.local/bin` isn't on `PATH`, add it (e.g. `export PATH="$HOME/.local/bin:$PATH"` in the shell profile) and use `~/.local/bin/spider` for the rest of this session. Then run `spider setup claude`.
+
+Always use the installed `spider`, even inside the Spider Tracker repository: never substitute `bun run spider`. The plugin's MCP server and `spider claude` call the installed binary, so an agent set up through the development version leaves the tracker tools without a key.
 
 ## 2. Read the request
 

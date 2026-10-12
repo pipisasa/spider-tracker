@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run, type RunOptions } from "./cli";
 import type { Store } from "./credentials";
+import { CLI_VERSION } from "./version";
 
 const project = {
   id: "p",
@@ -159,7 +160,7 @@ describe("exit codes", () => {
     const help = await cli(["task", "--help"], { env: {} });
     expect(help.code).toBe(0);
     expect(help.stdout).toContain("start [options] [key]");
-    expect((await cli(["--version"], { env: {} })).stdout).toBe("0.1.0\n");
+    expect((await cli(["--version"], { env: {} })).stdout).toBe(`${CLI_VERSION}\n`);
   });
 
   test("the help subcommand exits 0, but a bare command group is a usage error", async () => {

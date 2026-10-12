@@ -49,7 +49,7 @@ If you are an AI coding assistant (e.g. Claude Code) and the user asked you to s
    curl -fsSL ${origin}/install.sh | sh
    \`\`\`
 
-   The script downloads the \`spider\` binary for this OS and CPU from the project's GitHub releases (github.com/pipisasa/spider-tracker) into \`~/.local/bin\`. If \`~/.local/bin\` is not on \`PATH\`, add it (for example \`export PATH="$HOME/.local/bin:$PATH"\` in the shell profile) or call \`~/.local/bin/spider\` directly. Run \`spider --version\` again to confirm.
+   The script downloads the \`spider\` binary for this OS and CPU from the project's GitHub releases (github.com/pipisasa/spider-tracker) into \`~/.local/bin\`. If \`~/.local/bin\` is not on \`PATH\`, add it (for example \`export PATH="$HOME/.local/bin:$PATH"\` in the shell profile) or call \`~/.local/bin/spider\` directly. Run \`spider --version\` again to confirm. Use this installed binary for every step, even inside a Spider Tracker source checkout (don't substitute \`bun run spider\`): the Claude Code plugin's MCP server calls it to get the agent's key.
 
 2. **Install the Claude Code plugin.** Run \`spider setup claude\`.
 

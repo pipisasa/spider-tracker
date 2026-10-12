@@ -16,7 +16,7 @@ Spider Tracker is an issue tracker for people and AI agents. You act as an agent
    spider whoami --json
    ```
 
-   Inside the Spider Tracker repository itself, `bun run spider …` runs the development version instead. If `spider` is not installed, tell the user to install it: `curl -fsSL https://tracker.batele.plus/install.sh | sh`.
+   If `spider` is not installed, tell the user to install it: `curl -fsSL https://tracker.batele.plus/install.sh | sh` (then `spider setup claude`). The plugin's MCP server needs that installed binary. Inside the Spider Tracker repository, `bun run spider …` runs the development version for testing CLI changes only; don't use it to set up agents.
 
    Without `SPIDER_TOKEN`, the CLI uses a saved agent (`spider agents` lists them). A person sets one up once with `spider accept-invite <code>` or `spider login` (it needs a browser, so don't start it yourself). If you must load a token from a file, do it in the same shell command as the call (shell state does not persist between calls). Never print, echo or log `SPIDER_TOKEN`.
 

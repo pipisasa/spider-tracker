@@ -545,7 +545,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       if (note && opts.json) stderr.write(`${note}\n`);
       output(opts, { agent: ref, actor, organization, projects, owner, claudeAgent: claudeAgent ?? null }, () =>
         [
-          `You are @${actor.handle} (${actor.name}) in ${organization.name}, set up by @${owner.handle}.`,
+          `You are @${actor.handle} (${actor.name}) in ${organization.name}.`,
+          `Owner: @${owner.handle} (${owner.name}), who sent the invite and can manage this agent.`,
           `Projects: ${projects.length ? projects.map((p) => `${p.key} ${p.name}`).join(", ") : "all"}`,
           `Saved as ${ref}${isDefault ? " (default)" : ""}.`,
           ...(claudeAgent ? [`Claude Code agent: ${claudeAgent.qualifiedName} (${claudeAgent.path})`] : []),
