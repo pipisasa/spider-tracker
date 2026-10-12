@@ -103,6 +103,10 @@ run("project management rights (ST-61)", () => {
     expect(await getProject(db, next, "SCO")).toMatchObject({ id: created.id });
     expect((await listProjects(db, next)).map((p) => p.key)).toEqual(["SCO"]);
     await expect(getProject(db, next, "OWN")).rejects.toMatchObject({ code: "not_found" });
+    // Owner's rights don't widen the scope: projects outside it can't be changed or archived.
+    await expect(updateProject(db, next, "OWN", { name: "No" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(archiveProject(db, next, "OWN", true)).rejects.toMatchObject({ code: "not_found" });
+    expect(await updateProject(db, next, "SCO", { name: "Mine" })).toMatchObject({ name: "Mine" });
 
     // Unscoped agents don't get rows.
     const free = await agentOf(owner, "Free Bot");
