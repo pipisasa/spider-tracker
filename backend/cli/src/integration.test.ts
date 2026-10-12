@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./cli";
+import type { Store } from "./credentials";
 
 // Runs the CLI against the real API app (no network), with a fresh org, project and agent key.
 
@@ -202,13 +203,105 @@ withDb("spider CLI against the API", () => {
     expect(who.code).toBe(0);
     expect(JSON.parse(who.stdout)).toMatchObject({ actor: { handle: "cli-test-box" } });
 
-    const { token: saved } = JSON.parse(readFileSync(file, "utf8")) as { token: string };
+    const store = JSON.parse(readFileSync(file, "utf8")) as Store;
+    expect(store.default).toEqual({ server: "local", org: slug, agent: "cli-test-box" });
+    const saved = store.servers.local?.orgs[slug]?.agents["cli-test-box"]?.token ?? "";
+    expect(saved).toStartWith("spt_");
     expect((await as(["logout"])).stdout).toBe("Signed out @cli-test-box\n");
     expect(existsSync(file)).toBe(false);
     expect((await app.request("/v1/whoami", { headers: { Authorization: `Bearer ${saved}` } })).status).toBe(401);
     expect((await as(["whoami"])).code).toBe(4);
     rmSync(configDir, { recursive: true, force: true });
   });
+  test("accept-invite saves agents per server and org; --as switches between them", async () => {
+    await app.request("/api/auth/sign-in/magic-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: env.WEB_ORIGIN },
+      body: JSON.stringify({ email: ownerEmail, callbackURL: `${env.WEB_ORIGIN}/` }),
+    });
+    const link = new URL(links.get(ownerEmail) ?? "");
+    const cookie = (await app.request(link.pathname + link.search, { redirect: "manual" })).headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    const invite = async () => {
+      const res = await app.request(`/v1/orgs/${slug}/agent-invites`, {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ projectKeys: ["SPI"] }),
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { invite: { code: string } }).invite.code;
+    };
+
+    const configDir = mkdtempSync(join(tmpdir(), "spider-config-"));
+    const as = async (argv: string[], extra: Record<string, string> = {}) => {
+      let stdout = "";
+      let stderr = "";
+      const code = await run(argv, {
+        env: { SPIDER_CONFIG_DIR: configDir, ...extra },
+        fetch: (input, init) => app.request(input, init),
+        stdout: { write: (s: string) => (stdout += s) },
+        stderr: { write: (s: string) => (stderr += s) },
+        cwd: repo,
+      });
+      return { code, stdout, stderr };
+    };
+
+    // A bare code goes to --server; the link's web host (localhost:5173) maps to the local API.
+    const first = await as(["accept-invite", (await invite()).toLowerCase(), "--server", "local", "--name", "Reviewer", "--json"]);
+    expect(first.code).toBe(0);
+    expect(JSON.parse(first.stdout)).toMatchObject({
+      agent: `local/${slug}/reviewer`,
+      actor: { handle: "reviewer", name: "Reviewer" },
+      organization: { slug },
+      projects: [{ key: "SPI", name: "Spider" }],
+    });
+    const second = await as([
+      "accept-invite",
+      `${env.WEB_ORIGIN}/agent-invite/${await invite()}`,
+      "--name",
+      "Writer",
+      "--handle",
+      "writer",
+      "--description",
+      "Writes docs",
+    ]);
+    expect(second.code).toBe(0);
+    expect(second.stdout).toContain(`Saved as local/${slug}/writer.`);
+    expect(second.stdout).toContain("spider claude writer");
+    for (const out of [first, second]) expect(out.stdout + out.stderr).not.toContain("spt_");
+
+    // A taken handle is a conflict (exit 2) and leaves the code usable.
+    const code = await invite();
+    expect((await as(["accept-invite", code, "--server", "local", "--handle", "writer"])).code).toBe(2);
+    expect((await as(["accept-invite", code, "--server", "local", "--handle", "editor", "--default"])).code).toBe(0);
+
+    const file = join(configDir, "credentials.json");
+    expect((statSync(file).mode & 0o777).toString(8)).toBe("600");
+    const store = JSON.parse(readFileSync(file, "utf8")) as Store;
+    expect(store.default).toEqual({ server: "local", org: slug, agent: "editor" });
+    expect(Object.keys(store.servers.local?.orgs[slug]?.agents ?? {})).toEqual(["reviewer", "writer", "editor"]);
+    expect(store.servers.local?.orgs[slug]?.agents.reviewer).toMatchObject({ source: "invite", projects: [{ key: "SPI" }] });
+
+    const handleOf = async (argv: string[], extra: Record<string, string> = {}) =>
+      (JSON.parse((await as([...argv, "--json"], extra)).stdout) as { actor: { handle: string }; agent: string | null });
+    expect(await handleOf(["whoami"])).toMatchObject({ actor: { handle: "editor" }, agent: `local/${slug}/editor` });
+    expect((await handleOf(["whoami", "--as", "reviewer"])).actor.handle).toBe("reviewer");
+    expect((await handleOf(["--as", `${slug}/writer`, "whoami"])).actor.handle).toBe("writer");
+    expect((await handleOf(["whoami"], { SPIDER_AGENT: "writer" })).actor.handle).toBe("writer");
+    expect(await handleOf(["whoami"], { SPIDER_TOKEN: token, SPIDER_API_URL: env.API_ORIGIN })).toMatchObject({
+      actor: { handle: "cli-bot" },
+      agent: null,
+    });
+
+    const removed = await as(["agents", "remove", "writer", "--revoke"]);
+    expect(removed.stdout).toBe(`Removed local/${slug}/writer and revoked its key\n`);
+    const writerKey = store.servers.local?.orgs[slug]?.agents.writer?.token ?? "";
+    expect((await app.request("/v1/whoami", { headers: { Authorization: `Bearer ${writerKey}` } })).status).toBe(401);
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
   test("comments, inbox and the Claude Code channel", async () => {
     // The owner, in the browser, mentions the agent (handle "cli-bot") on SPI-1.
     await app.request("/api/auth/sign-in/magic-link", {

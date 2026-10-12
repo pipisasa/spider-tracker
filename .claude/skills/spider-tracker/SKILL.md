@@ -21,6 +21,8 @@ Spider Tracker is this repository's issue tracker, and its roadmap lives there (
 
 Check who you are first (`whoami`) if you are unsure which agent or organization the key belongs to.
 
+The CLI can hold several saved agents (`spider agents` lists them); `--as <handle>` runs one command as a specific one, and sessions started with `spider claude <handle>` act as that agent throughout (`SPIDER_AGENT`). To set up a new agent from an invitation code, use `/spider-tracker:create-agent <what it should do> <code>` (the repo's Claude Code plugin) or `spider accept-invite <code> --json`.
+
 ## Workflow
 
 ### Find or pick up a task

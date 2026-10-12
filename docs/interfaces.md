@@ -105,27 +105,77 @@ Planned: custom fields.
 `backend/cli` (`@repo/cli`): the `spider` command, built on `packages/sdk` with Commander. Every action records `source = cli`.
 
 ```bash
-spider login                              # sign in through the browser (device flow); saves a key for this device
-export SPIDER_TOKEN=spt_…                 # or: an agent API key, which overrides the saved one (CI, agents)
+spider accept-invite ABCD-EFGH --name Reviewer   # set up an invited agent; saves its key on this machine
+spider login                              # or: sign in through the browser (device flow); saves a device agent
+export SPIDER_TOKEN=spt_…                 # or: an agent API key, which overrides the default saved agent (CI)
 export SPIDER_API_URL=https://…           # optional, default https://tracker-api.batele.plus
 bun run spider task list --mine           # from the repo; `bun link` in backend/cli installs `spider`; or build dist/spider
 ```
 
 The organization is the key's (from `whoami`).
 
+### Saved agents
+`~/.config/spider-tracker/credentials.json` (mode 0600 in a 0700 folder; `SPIDER_CONFIG_DIR` overrides the folder) holds any number of agent keys, nested server → organization → agent handle:
+
+```json
+{
+  "version": 2,
+  "default": { "server": "prod", "org": "batele", "agent": "reviewer" },
+  "servers": {
+    "prod": {
+      "name": "Prod tracker", "url": "https://tracker-api.batele.plus", "webUrl": "https://tracker.batele.plus",
+      "orgs": {
+        "batele": {
+          "name": "Batele",
+          "agents": {
+            "reviewer": { "token": "spt_…", "actor": { "id": "…", "name": "Reviewer", "handle": "reviewer" },
+                          "projects": [{ "key": "ST", "name": "Spider Tracker" }], "source": "invite", "createdAt": "…" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+- **Servers** have names: `prod` (`https://tracker-api.batele.plus`, web `https://tracker.batele.plus`) and `local` (`http://localhost:4000`, web `http://localhost:5173`) are built in; other API URLs are named after their host. `--server <name|url>` picks one for `login` and `accept-invite` (else `SPIDER_API_URL`, else `prod`).
+- **Agent references:** `handle` (when unique), `org/handle` or `server/org/handle`; an ambiguous or unknown one is a usage error listing the saved agents.
+- **Which key a command uses:** `--as <agent>` (any command, before or after it) > `SPIDER_TOKEN` (with `SPIDER_API_URL`) > `SPIDER_AGENT=<agent>` > the default agent (the one marked default, else the only one saved).
+- The single-key file from before (`{ apiUrl, token, actor, organization }`) is read as a `login` agent and rewritten in this shape on the next save.
+
+### Accepting an agent invite
+`spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--server …] [--default]` calls `POST /v1/agent-invites/accept` (no key needed), saves the agent under its server and organization, and makes it the default if there was none (or with `--default`). A link's host (the web app, e.g. `https://tracker.batele.plus/agent-invite/ABCD-EFGH`) picks the matching server. It prints who the agent is, its projects and what to run next; `--json` prints `{ agent: "server/org/handle", actor, organization, projects, owner }`. The key itself is never printed. A taken handle exits `2` (`conflict`) and leaves the code usable.
+
+### Starting Claude Code as an agent
+`spider claude [agent] [--no-channel] [-- claude args…]` picks the agent (the argument, `--as`, a picker grouped server → organization when run at a terminal with several agents saved, else `SPIDER_AGENT` or the default) and runs:
+
+```bash
+claude [claude args…] [--agent <name>] --mcp-config <tmp>/mcp.json \
+  --dangerously-load-development-channels server:spider-channel
+```
+
+with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temporary MCP config (0600, deleted when Claude exits) holds no secret: the `spider` HTTP server at `<server>/mcp` with `headersHelper` `<this CLI> mcp-headers --as <agent>`, and the `spider-channel` stdio server (`<this CLI> channel --as <agent>`), where `<this CLI>` is `bun <checkout>/backend/cli/src/index.ts` from source or the compiled `spider` binary. `--agent` is added when `~/.claude/agents/*.md` has an agent whose frontmatter says `spider-agent: <agent>` (or one named after the handle). The exit code is Claude's.
+
 ### Login (device flow, RFC 8628)
 1. `spider login [--name MacBook] [--no-browser]` calls `POST /device/code` and prints `https://tracker.batele.plus/device` with a short code (instructions on stderr), opening the browser at a terminal.
 2. The person signs in, checks the code, picks the organization and approves (`/device` page → `POST /v1/device/:code/approve`, or `/deny`).
 3. The CLI polls `POST /device/token` (`authorization_pending`, `slow_down`, `access_denied`, `expired_token`) and receives an API key for a device agent, **"spider CLI · MacBook"** (`@cli-macbook`), owned by the approver and reused on later logins from the same device name. It acts with at most the approver's role.
-4. The key is saved to `~/.config/spider-tracker/credentials.json` (mode 0600; `SPIDER_CONFIG_DIR` overrides the folder).
+4. The key is saved as a [saved agent](#saved-agents) (server from `--server` / `SPIDER_API_URL`, the approved organization, the device agent's handle), which becomes the default.
 
-`spider logout` revokes that key on the server (`DELETE /v1/api-keys/current`) and deletes the file. Device codes expire after 10 minutes and are single-use; only a hash of the device code is stored, and the key is minted at the moment the approved device collects it.
+`spider logout` revokes the key of the saved agent in use (`--as`, `SPIDER_AGENT` or the default) on the server (`DELETE /v1/api-keys/current`) and forgets it. Device codes expire after 10 minutes and are single-use; only a hash of the device code is stored, and the key is minted at the moment the approved device collects it.
 
 ### Commands (v1)
 ```bash
-spider login [--name …] [--no-browser]
+spider login [--name …] [--no-browser] [--server prod|local|URL]
+spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--server …] [--default]
 spider logout
-spider whoami
+spider agents [list]                # saved agents by server and organization; * marks the default
+spider agents default <agent>
+spider agents remove <agent> [--revoke]   # local only unless --revoke (revokes the key on the server)
+spider claude [agent] [--no-channel] [-- claude args…]
+spider mcp-headers                  # {"Authorization": "Bearer …"} for Claude Code's headersHelper
+spider whoami                       # also names the saved agent in use
+spider <command> --as <agent>       # any command, as a saved agent
 spider projects
 spider task list [--project ST] [--status "In Progress"] [--mine] [--limit 50]
 spider task view [ST-12]
@@ -149,13 +199,13 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 
 - **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
-- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
-- **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). It never prompts.
+- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
+- **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). `run` never prompts; only the bin passes the `spider claude` picker, and only when stdin and stdout are terminals.
 - **Documents:** `--file -` reads standard input; `.html` files default to `--format html`. `doc edit` fetches the current version and sends it as `baseVersion`, so a concurrent save fails with exit code `2` instead of being overwritten.
-- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
+- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin?, select?, spawn?, self? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
 
 ### Planned
-- Keys in the OS keychain instead of a file, `spider org switch`, per-repo defaults in `.spider.json`
+- Keys in the OS keychain instead of a file, per-repo defaults in `.spider.json`
 - `spider pr`, `spider start` creating and checking out the branch
 - `spider agent list|run|logs`, `spider doc pull|push` (sync with local files), `--field` / `--tag`
 - Distribution through npm and standalone binaries for Homebrew and curl installs

@@ -12,10 +12,22 @@ import { parseTaskKey } from "@repo/core/schemas";
 import type { CreateTaskInput, UpdateDocumentInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError } from "commander";
-import { readFile } from "node:fs/promises";
-import { hostname } from "node:os";
-import { resolve as resolvePath } from "node:path";
-import { deleteCredentials, readCredentials, writeCredentials } from "./credentials";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
+import {
+  defaultAgent,
+  findAgent,
+  listAgents,
+  putAgent,
+  readStore,
+  removeAgent,
+  resolveServer,
+  serverForLink,
+  writeStore,
+  type AgentEntry,
+  type Store,
+} from "./credentials";
 import { currentBranch, taskKeyFromBranch } from "./git";
 import {
   CliError,
@@ -31,7 +43,6 @@ import {
   resolveTags,
   resolveStatus,
   usageError,
-  type ExitCode,
 } from "./resolve";
 
 export { EXIT, type ExitCode } from "./resolve";
@@ -58,6 +69,32 @@ export interface RunOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Reads standard input, for `--file -`. */
   stdin?: () => Promise<string>;
+  /** Asks a person to pick one of `choices` (only at an interactive terminal); null when cancelled. */
+  select?: (question: string, choices: Choice[]) => Promise<string | null>;
+  /** Runs a program with inherited stdio and resolves to its exit code (`spider claude`). */
+  spawn?: (argv: string[], options: { env: Record<string, string | undefined> }) => Promise<number>;
+  /** The command that runs this CLI, for the MCP config `spider claude` writes; defaults to the running one. */
+  self?: string[];
+}
+
+export interface Choice {
+  value: string;
+  label: string;
+  /** Choices are shown under their group, e.g. "prod › batele". */
+  group?: string;
+  hint?: string;
+}
+
+/** Program-wide options. */
+interface Globals {
+  as?: string;
+  server?: string;
+}
+
+/** How to run this CLI again: the compiled binary, or bun with this checkout's entry point. */
+export function selfInvocation(): string[] {
+  const compiled = Bun.main.startsWith("/$bunfs/") || /[\\/]~BUN[\\/]/.test(Bun.main);
+  return compiled ? [process.execPath] : [process.execPath, join(import.meta.dir, "index.ts")];
 }
 
 /** A task as the CLI prints it with --json: the API task plus its status and assignee handles. */
@@ -98,17 +135,94 @@ function defaultDeviceName() {
 
 const apiUrlOf = (env: RunOptions["env"]) => env.SPIDER_API_URL?.trim() || DEFAULT_API_URL;
 
-/** SPIDER_TOKEN wins; otherwise the key saved by `spider login`. */
-async function credentialsFor(options: RunOptions) {
-  const token = options.env.SPIDER_TOKEN?.trim();
-  if (token) return { token, baseUrl: apiUrlOf(options.env) };
-  const saved = await readCredentials(options.env);
-  if (saved) return { token: saved.token, baseUrl: options.env.SPIDER_API_URL?.trim() || saved.apiUrl };
-  throw new CliError(EXIT.auth, "Not signed in. Run `spider login`, or set SPIDER_TOKEN to an agent API key", "unauthorized");
+interface Credentials {
+  token: string;
+  baseUrl: string;
+  /** The saved agent in use; undefined for SPIDER_TOKEN. */
+  entry?: AgentEntry;
 }
 
-function connect(options: RunOptions) {
-  const ready = credentialsFor(options).then(({ token, baseUrl }) =>
+/** Which key a command uses: --as, then SPIDER_TOKEN, then SPIDER_AGENT, then the default saved agent. */
+async function credentialsFor(options: RunOptions, globals: Globals): Promise<Credentials> {
+  const store = await readStore(options.env);
+  const saved = (entry: AgentEntry) => ({ token: entry.saved.token, baseUrl: entry.serverUrl, entry });
+  if (globals.as) return saved(findAgent(store, globals.as));
+  const token = options.env.SPIDER_TOKEN?.trim();
+  if (token) return { token, baseUrl: apiUrlOf(options.env) };
+  const named = options.env.SPIDER_AGENT?.trim();
+  if (named) return saved(findAgent(store, named));
+  const fallback = defaultAgent(store);
+  if (fallback) return saved(fallback);
+  const message = listAgents(store).length
+    ? `No default agent. Pass --as <agent> or run \`spider agents default <agent>\` (${agentList(store)})`
+    : "Not signed in. Run `spider accept-invite <code>` or `spider login`, or set SPIDER_TOKEN to an agent API key";
+  throw new CliError(EXIT.auth, message, "unauthorized");
+}
+
+const agentList = (store: Store) => listAgents(store).map((a) => a.ref).join(", ");
+
+/** The saved agent a local-only command (logout, claude) means: --as, SPIDER_AGENT, else the default. */
+function savedAgentFor(store: Store, options: RunOptions, globals: Globals) {
+  const named = globals.as ?? options.env.SPIDER_AGENT?.trim();
+  return named ? findAgent(store, named) : defaultAgent(store);
+}
+
+const scopeOf = (entry: AgentEntry) =>
+  entry.saved.projects?.length ? entry.saved.projects.map((p) => p.key).join(", ") : "all projects";
+
+/** Quotes a word for a shell command line (Claude Code runs headersHelper through a shell). */
+const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
+
+/** The MCP config `spider claude` passes to Claude Code: no secrets, the key comes from mcp-headers. */
+export function claudeMcpConfig(entry: AgentEntry, self: string[], channel: boolean) {
+  const [command = "spider", ...args] = self;
+  return {
+    mcpServers: {
+      spider: {
+        type: "http",
+        url: `${entry.serverUrl}/mcp`,
+        headersHelper: [...self, "mcp-headers", "--as", entry.ref].map(shellQuote).join(" "),
+      },
+      ...(channel
+        ? { "spider-channel": { type: "stdio", command, args: [...args, "channel", "--as", entry.ref] } }
+        : {}),
+    },
+  };
+}
+
+/**
+ * The Claude Code agent (~/.claude/agents/*.md) for a saved agent: one whose frontmatter says
+ * `spider-agent: <ref, org/handle or handle>`, else the file named after the handle.
+ */
+async function claudeAgentFor(home: string | undefined, entry: AgentEntry): Promise<string | undefined> {
+  if (!home) return undefined;
+  const dir = join(home, ".claude", "agents");
+  const files = await readdir(dir).then(
+    (names) => names.filter((n) => n.endsWith(".md")).sort(),
+    () => [] as string[],
+  );
+  const refs = new Set([entry.ref, `${entry.org}/${entry.agent}`, entry.agent]);
+  const read = async (name: string) => {
+    const text = await readFile(join(dir, name), "utf8").catch(() => "");
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
+    const field = (key: string) => new RegExp(`^${key}:[ \\t]*["']?(.*?)["']?[ \\t]*$`, "m").exec(front)?.[1] || undefined;
+    return { name: field("name") ?? name.slice(0, -3), spider: field("spider-agent") };
+  };
+  for (const name of files) {
+    const agent = await read(name);
+    if (agent.spider && refs.has(agent.spider)) return agent.name;
+  }
+  if (files.includes(`${entry.agent}.md`)) {
+    const agent = await read(`${entry.agent}.md`);
+    if (!agent.spider) return agent.name;
+  }
+  return undefined;
+}
+
+function connect(options: RunOptions, globals: Globals) {
+  const credentials = credentialsFor(options, globals);
+  credentials.catch(() => {});
+  const ready = credentials.then(({ token, baseUrl }) =>
     createClient({ baseUrl, token, source: "cli", fetch: options.fetch }),
   );
   // Commands await `sdk()`; this only stops an early failure from being reported as unhandled.
@@ -152,7 +266,7 @@ function connect(options: RunOptions) {
     };
   };
 
-  return { sdk, whoami, org, members: loadMembers, tags: loadTags, project, describe };
+  return { sdk, credentials, whoami, org, members: loadMembers, tags: loadTags, project, describe };
 }
 
 type Api = ReturnType<typeof connect>;
@@ -227,10 +341,13 @@ function parseFormat(value: string): DocumentFormat {
 }
 
 /** Builds the command tree for one run; actions write to the run's streams. */
-function buildProgram(options: RunOptions, cwd: string, json = false) {
+function buildProgram(options: RunOptions, cwd: string, argv: string[], json = false) {
   const { stdout, stderr } = options;
   let api: Api | undefined;
-  const conn = () => (api ??= connect(options));
+  /** Set by commands that run another program (`spider claude`) to its exit code. */
+  const result: { exitCode?: number } = {};
+  const globals = () => program.opts<Globals>();
+  const conn = () => (api ??= connect(options, globals()));
   const print = (text: string) => stdout.write(text.endsWith("\n") || text === "" ? text : `${text}\n`);
   const output = (opts: JsonOption, json: unknown, human: () => string) =>
     print(opts.json ? JSON.stringify(json) : human());
@@ -238,6 +355,8 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
   const program = new Command("spider")
     .description("Spider Tracker from the terminal. Auth: SPIDER_TOKEN (agent API key)")
     .version(VERSION)
+    .option("--as <agent>", "act as this saved agent: handle, org/handle or server/org/handle")
+    .option("--server <name|url>", "server for login and accept-invite: prod, local, a saved name or an API URL")
     .exitOverride()
     .configureOutput({
       writeOut: (s) => stdout.write(s),
@@ -291,7 +410,64 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
   withJson(program.command("whoami").description("show the agent and organization the token acts as")).action(
     async (opts: JsonOption) => {
       const who = await conn().whoami();
-      output(opts, who, () => `@${who.actor.handle} (${who.actor.name}, ${who.actor.role}) in ${who.organization.slug}`);
+      const { entry } = await conn().credentials;
+      output(
+        opts,
+        { ...who, agent: entry?.ref ?? null },
+        () =>
+          `@${who.actor.handle} (${who.actor.name}, ${who.actor.role}) in ${who.organization.slug}${entry ? ` · saved agent ${entry.ref}` : ""}`,
+      );
+    },
+  );
+
+  /** The server login and accept-invite talk to: --server, SPIDER_API_URL, else prod. */
+  const serverFor = (store: Store) => resolveServer(store, globals().server ?? (options.env.SPIDER_API_URL?.trim() || "prod"));
+
+  withJson(
+    program
+      .command("accept-invite")
+      .description("set up an agent from an invitation code; saves its key on this machine")
+      .argument("<code>", "the code (ABCD-EFGH) or the invite link")
+      .option("--name <name>", "what to call the agent")
+      .option("--handle <handle>", "its @handle (default: from the name)")
+      .option("--description <text>", "what it does")
+      .option("--default", "make it the default agent"),
+  ).action(
+    async (code: string, opts: JsonOption & { name?: string; handle?: string; description?: string; default?: boolean }) => {
+      const store = await readStore(options.env);
+      // An invite link names its server; a bare code goes to --server / SPIDER_API_URL / prod.
+      const { key, server } = (!globals().server && serverForLink(store, code)) || serverFor(store);
+      const client = createClient({ baseUrl: server.url, source: "cli", fetch: options.fetch });
+      const accepted = await client.agentInvites.accept({
+        code,
+        name: opts.name,
+        handle: opts.handle,
+        description: opts.description,
+      });
+      const { actor, organization, projects, owner } = accepted;
+      const previous = defaultAgent(store);
+      const isDefault = opts.default || !previous;
+      const ref = putAgent(store, key, server, organization, {
+        token: accepted.token,
+        actor: { id: actor.id, name: actor.name, handle: actor.handle },
+        projects,
+        source: "invite",
+        createdAt: new Date().toISOString(),
+      });
+      // Keep an implicit default (the only agent so far) once there are two.
+      store.default = isDefault ? { server: key, org: organization.slug, agent: actor.handle } : previous && { server: previous.server, org: previous.org, agent: previous.agent };
+      await writeStore(options.env, store);
+      output(opts, { agent: ref, actor, organization, projects, owner }, () =>
+        [
+          `You are @${actor.handle} (${actor.name}) in ${organization.name}, set up by @${owner.handle}.`,
+          `Projects: ${projects.length ? projects.map((p) => `${p.key} ${p.name}`).join(", ") : "all"}`,
+          `Saved as ${ref}${isDefault ? " (default)" : ""}.`,
+          "",
+          "Next:",
+          `  spider claude ${actor.handle}        start Claude Code as this agent`,
+          `  spider whoami --as ${actor.handle}   use it from the CLI`,
+        ].join("\n"),
+      );
     },
   );
 
@@ -302,8 +478,9 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       .option("--name <device>", "what to call this device", defaultDeviceName())
       .option("--no-browser", "print the link instead of opening a browser"),
   ).action(async (opts: JsonOption & { name: string; browser: boolean }) => {
-    const apiUrl = apiUrlOf(options.env);
-    const client = createClient({ baseUrl: apiUrl, fetch: options.fetch });
+    const store = await readStore(options.env);
+    const { key, server } = serverFor(store);
+    const client = createClient({ baseUrl: server.url, fetch: options.fetch });
     const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
     const code = await client.device.start(opts.name);
@@ -319,16 +496,19 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       const result = await client.device.poll(code.device_code);
       if (result.ok) {
         const { token } = result;
-        const path = await writeCredentials(options.env, {
-          apiUrl,
+        const { actor, organization } = token;
+        const ref = putAgent(store, key, server, organization, {
           token: token.access_token,
-          actor: { handle: token.actor.handle, name: token.actor.name },
-          organization: { slug: token.organization.slug, name: token.organization.name },
+          actor: { id: actor.id, name: actor.name, handle: actor.handle },
+          projects: null,
+          source: "login",
           createdAt: new Date().toISOString(),
         });
-        const summary = { actor: token.actor, organization: token.organization, credentials: path };
-        output(opts, summary, () => `Signed in as @${token.actor.handle} in ${token.organization.slug}. Key saved to ${path}`);
-        if (options.env.SPIDER_TOKEN) stderr.write("Note: SPIDER_TOKEN is set and takes precedence over the saved key.\n");
+        store.default = { server: key, org: organization.slug, agent: actor.handle };
+        const path = await writeStore(options.env, store);
+        const summary = { agent: ref, actor, organization, credentials: path };
+        output(opts, summary, () => `Signed in as @${actor.handle} in ${organization.slug}. Saved as ${ref} (default) in ${path}`);
+        if (options.env.SPIDER_TOKEN) stderr.write("Note: SPIDER_TOKEN is set and takes precedence over the saved default agent.\n");
         return;
       }
       if (result.error === "authorization_pending") continue;
@@ -343,21 +523,155 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
     throw new CliError(EXIT.auth, "The login code expired. Run spider login again", "expired_token");
   });
 
-  withJson(program.command("logout").description("revoke and forget the key saved by spider login")).action(
+  /** Revokes a saved agent's key on its server; one already revoked or deleted is fine. */
+  const revoke = (entry: AgentEntry) =>
+    createClient({ baseUrl: entry.serverUrl, token: entry.saved.token, source: "cli", fetch: options.fetch })
+      .keys.revokeCurrent()
+      .catch((err: unknown) => {
+        if (!(err instanceof SpiderApiError) || (err.status !== 401 && err.status !== 404)) throw err;
+      });
+
+  withJson(program.command("logout").description("revoke and forget the saved agent in use (--as, SPIDER_AGENT or the default)")).action(
     async (opts: JsonOption) => {
-      const saved = await readCredentials(options.env);
-      if (saved) {
-        const client = createClient({ baseUrl: saved.apiUrl, token: saved.token, source: "cli", fetch: options.fetch });
-        // Already revoked or deleted on the server: forgetting it locally is still right.
-        await client.keys.revokeCurrent().catch((err: unknown) => {
-          if (!(err instanceof SpiderApiError) || (err.status !== 401 && err.status !== 404)) throw err;
-        });
-        await deleteCredentials(options.env);
+      const store = await readStore(options.env);
+      const entry = savedAgentFor(store, options, globals());
+      if (entry) {
+        await revoke(entry);
+        removeAgent(store, entry);
+        await writeStore(options.env, store);
       }
-      output(opts, { loggedOut: !!saved }, () => (saved ? `Signed out @${saved.actor.handle}` : "Not signed in"));
+      output(opts, { loggedOut: !!entry, agent: entry?.ref ?? null }, () => (entry ? `Signed out @${entry.agent}` : "Not signed in"));
       if (options.env.SPIDER_TOKEN) stderr.write("SPIDER_TOKEN is still set in your environment.\n");
     },
   );
+
+  const agents = program.command("agents").description("the agents saved on this machine");
+
+  withJson(agents.command("list", { isDefault: true }).description("list saved agents by server and organization")).action(
+    async (opts: JsonOption) => {
+      const store = await readStore(options.env);
+      const all = listAgents(store);
+      const current = defaultAgent(store);
+      const items = all.map((a) => ({
+        agent: a.ref,
+        server: a.server,
+        serverUrl: a.serverUrl,
+        org: a.org,
+        orgName: a.orgName,
+        handle: a.agent,
+        name: a.saved.actor.name,
+        projects: a.saved.projects,
+        source: a.saved.source,
+        createdAt: a.saved.createdAt,
+        default: a.ref === current?.ref,
+      }));
+      output(opts, { default: current?.ref ?? null, items }, () => {
+        if (!all.length) return "No saved agents. Run spider accept-invite <code> or spider login";
+        const lines: string[] = [];
+        for (const [server, s] of Object.entries(store.servers)) {
+          lines.push(`${server}  ${s.url}`);
+          for (const [org, o] of Object.entries(s.orgs)) {
+            lines.push(`  ${org}  ${o.name}`);
+            for (const a of all.filter((x) => x.server === server && x.org === org)) {
+              lines.push(`    ${a.ref === current?.ref ? "*" : " "} ${a.agent}  ${a.saved.actor.name} · ${scopeOf(a)}`);
+            }
+          }
+        }
+        return lines.join("\n");
+      });
+    },
+  );
+
+  withJson(agents.command("default").description("make a saved agent the default").argument("<agent>")).action(
+    async (ref: string, opts: JsonOption) => {
+      const store = await readStore(options.env);
+      const entry = findAgent(store, ref);
+      store.default = { server: entry.server, org: entry.org, agent: entry.agent };
+      await writeStore(options.env, store);
+      output(opts, { default: entry.ref }, () => `Default agent: ${entry.ref}`);
+    },
+  );
+
+  withJson(
+    agents
+      .command("remove")
+      .description("forget a saved agent on this machine")
+      .argument("<agent>")
+      .option("--revoke", "also revoke its key on the server"),
+  ).action(async (ref: string, opts: JsonOption & { revoke?: boolean }) => {
+    const store = await readStore(options.env);
+    const entry = findAgent(store, ref);
+    if (opts.revoke) await revoke(entry);
+    removeAgent(store, entry);
+    await writeStore(options.env, store);
+    output(opts, { removed: entry.ref, revoked: !!opts.revoke }, () =>
+      opts.revoke
+        ? `Removed ${entry.ref} and revoked its key`
+        : `Removed ${entry.ref}. Its key still works on the server: revoke it in the web app (Settings → Agents), or next time use --revoke`,
+    );
+  });
+
+  program
+    .command("claude")
+    .description("start Claude Code as a saved agent, with the spider MCP server and its inbox channel")
+    .argument("[agent]", "handle, org/handle or server/org/handle (default: pick one, or the default agent)")
+    .argument("[claudeArgs...]", "arguments for claude, after --")
+    .option("--no-channel", "don't push the agent's inbox into the session")
+    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean }) => {
+      // Everything after "--" goes to claude; an agent is only an operand before it.
+      const dash = argv.indexOf("--");
+      const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
+      const given = (dash >= 0 && named !== undefined && 1 + rest.length <= extra.length ? undefined : named) ?? globals().as;
+
+      const store = await readStore(options.env);
+      const all = listAgents(store);
+      if (!all.length) {
+        throw new CliError(EXIT.auth, "No saved agents. Run `spider accept-invite <code>` or `spider login` first", "unauthorized");
+      }
+      let entry: AgentEntry | undefined;
+      if (given) entry = findAgent(store, given);
+      else if (options.select && all.length > 1) {
+        const current = defaultAgent(store);
+        const ordered = current ? [current, ...all.filter((a) => a.ref !== current.ref)] : all;
+        const picked = await options.select(
+          "Start Claude Code as which agent?",
+          ordered.map((a) => ({
+            value: a.ref,
+            label: `${a.agent}  ${a.saved.actor.name}`,
+            group: `${a.server} › ${a.org}`,
+            hint: `${scopeOf(a)}${a.ref === current?.ref ? " · default" : ""}`,
+          })),
+        );
+        if (!picked) throw usageError("No agent picked");
+        entry = findAgent(store, picked);
+      } else entry = savedAgentFor(store, options, {});
+      if (!entry) throw usageError(`Which agent? Run spider claude <agent>. Saved agents: ${agentList(store)}`);
+      if (!options.spawn) throw new CliError(EXIT.unexpected, "Can't start claude from here", "unexpected");
+
+      const self = options.self ?? selfInvocation();
+      const dir = await mkdtemp(join(tmpdir(), "spider-claude-"));
+      const config = join(dir, "mcp.json");
+      await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
+      const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env.HOME, entry);
+      const command = [
+        "claude",
+        ...extra,
+        ...(agentName ? ["--agent", agentName] : []),
+        // Both options take several values, so they come last.
+        "--mcp-config",
+        config,
+        ...(opts.channel ? ["--dangerously-load-development-channels", "server:spider-channel"] : []),
+      ];
+      // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
+      const env: Record<string, string | undefined> = { ...options.env, SPIDER_AGENT: entry.ref };
+      delete env.SPIDER_TOKEN;
+      stderr.write(`Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`);
+      try {
+        result.exitCode = await options.spawn(command, { env });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
 
   // For Claude Code's MCP `headersHelper`: prints {"Authorization": "Bearer …"} from the same
   // credentials the CLI uses, so .mcp.json needs no exported variable.
@@ -365,7 +679,7 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
     .command("mcp-headers")
     .description("print MCP request headers as JSON (for Claude Code's headersHelper)")
     .action(async () => {
-      const { token } = await credentialsFor(options);
+      const { token } = await credentialsFor(options, globals());
       stdout.write(`${JSON.stringify({ Authorization: `Bearer ${token}` })}\n`);
     });
 
@@ -712,11 +1026,11 @@ function buildProgram(options: RunOptions, cwd: string, json = false) {
       await closed;
     });
 
-  return program;
+  return { program, result };
 }
 
 /** Runs the CLI with `argv` (arguments after the program name) and resolves to the exit code. */
-export async function run(argv: string[], options: RunOptions): Promise<ExitCode> {
+export async function run(argv: string[], options: RunOptions): Promise<number> {
   const json = argv.includes("--json");
   const fail = (err: CliError) => {
     options.stderr.write(
@@ -726,8 +1040,9 @@ export async function run(argv: string[], options: RunOptions): Promise<ExitCode
   };
 
   try {
-    await buildProgram(options, options.cwd ?? process.cwd(), json).parseAsync(argv, { from: "user" });
-    return EXIT.ok;
+    const { program, result } = buildProgram(options, options.cwd ?? process.cwd(), argv, json);
+    await program.parseAsync(argv, { from: "user" });
+    return result.exitCode ?? EXIT.ok;
   } catch (err) {
     if (err instanceof CommanderError) {
       // Commander's exitCode is 0 for --help, --version and `help`, and non-zero for real usage

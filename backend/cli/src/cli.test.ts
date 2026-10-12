@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run, type RunOptions } from "./cli";
+import type { Store } from "./credentials";
 
 const project = {
   id: "p",
@@ -168,5 +169,179 @@ describe("exit codes", () => {
     expect(taskHelp.stdout).toContain("start [options] [key]");
     expect((await cli(["task", "help"], { env: {} })).code).toBe(0);
     expect((await cli(["task"], { env: {} })).code).toBe(2);
+  });
+});
+
+/** Two saved agents on prod (reviewer is the default) and one on local, in a temp config dir and home. */
+function savedAgents() {
+  const home = mkdtempSync(join(tmpdir(), "spider-home-"));
+  const configDir = join(home, "config");
+  mkdirSync(configDir);
+  const saved = (handle: string, token: string) => ({
+    token,
+    actor: { name: handle, handle },
+    projects: handle === "reviewer" ? [{ key: "ST", name: "Spider" }] : null,
+    source: "invite" as const,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+  const store: Store = {
+    version: 2,
+    default: { server: "prod", org: "acme", agent: "reviewer" },
+    servers: {
+      prod: {
+        url: "https://api.test",
+        orgs: { acme: { name: "Acme", agents: { reviewer: saved("reviewer", "spt_rev"), writer: saved("writer", "spt_wri") } } },
+      },
+      local: { url: "http://localhost:4000", orgs: { acme: { name: "Acme", agents: { writer: saved("writer", "spt_local") } } } },
+    },
+  };
+  writeFileSync(join(configDir, "credentials.json"), JSON.stringify(store), { mode: 0o600 });
+  const env = { HOME: home, SPIDER_CONFIG_DIR: configDir };
+  return { home, env, cleanup: () => rmSync(home, { recursive: true, force: true }) };
+}
+
+describe("saved agents", () => {
+  test("which key: --as > SPIDER_TOKEN > SPIDER_AGENT > default", async () => {
+    const { env, cleanup } = savedAgents();
+    const token = async (argv: string[], extra: Record<string, string> = {}) => {
+      const result = await cli(argv, { env: { ...env, ...extra } });
+      return result.code === 0 ? (JSON.parse(result.stdout) as { Authorization: string }).Authorization : result.stderr;
+    };
+    try {
+      expect(await token(["mcp-headers"])).toBe("Bearer spt_rev");
+      expect(await token(["mcp-headers"], { SPIDER_AGENT: "prod/acme/writer" })).toBe("Bearer spt_wri");
+      expect(await token(["mcp-headers"], { SPIDER_AGENT: "local/acme/writer", SPIDER_TOKEN: "spt_env" })).toBe("Bearer spt_env");
+      expect(await token(["mcp-headers", "--as", "local/acme/writer"], { SPIDER_TOKEN: "spt_env" })).toBe("Bearer spt_local");
+      expect(await token(["--as", "reviewer", "mcp-headers"], { SPIDER_AGENT: "prod/acme/writer" })).toBe("Bearer spt_rev");
+      const ambiguous = await cli(["mcp-headers", "--as", "writer"], { env });
+      expect(ambiguous.code).toBe(2);
+      expect(ambiguous.stderr).toContain("prod/acme/writer, local/acme/writer");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("whoami names the saved agent and talks to its server", async () => {
+    const { env, cleanup } = savedAgents();
+    try {
+      const api = fakeApi();
+      const result = await cli(["whoami", "--as", "prod/acme/writer"], { env, fetch: api.fetch });
+      expect(result.stdout).toBe("@bot (Bot, member) in acme · saved agent prod/acme/writer\n");
+      expect(api.requests[0]?.url).toBe("https://api.test/v1/whoami");
+      expect(api.requests[0]?.headers.get("Authorization")).toBe("Bearer spt_wri");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("agents: list grouped with the default marked, set the default, remove", async () => {
+    const { env, cleanup } = savedAgents();
+    try {
+      const listed = await cli(["agents"], { env });
+      expect(listed.stdout).toBe(
+        [
+          "prod  https://api.test",
+          "  acme  Acme",
+          "    * reviewer  reviewer · ST",
+          "      writer  writer · all projects",
+          "local  http://localhost:4000",
+          "  acme  Acme",
+          "      writer  writer · all projects",
+          "",
+        ].join("\n"),
+      );
+      expect(listed.stdout).not.toContain("spt_");
+      expect((await cli(["agents", "default", "local/acme/writer"], { env })).code).toBe(0);
+      const json = JSON.parse((await cli(["agents", "list", "--json"], { env })).stdout) as { default: string };
+      expect(json.default).toBe("local/acme/writer");
+      const removed = await cli(["agents", "remove", "local/acme/writer"], { env });
+      expect(removed.stdout).toContain("Its key still works on the server");
+      expect((await cli(["mcp-headers"], { env })).code).toBe(4);
+      expect((await cli(["agents", "remove", "nobody"], { env })).code).toBe(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("claude launches Claude Code as the agent with a secret-free MCP config", async () => {
+    const { home, env, cleanup } = savedAgents();
+    mkdirSync(join(home, ".claude", "agents"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", "agents", "code-reviewer.md"),
+      "---\nname: code-reviewer\ndescription: Reviews code\nspider-agent: prod/acme/reviewer\n---\nYou review code.\n",
+    );
+    const launched: { argv: string[]; env: Record<string, string | undefined>; config: string; configPath: string }[] = [];
+    const spawn: RunOptions["spawn"] = async (argv, opts) => {
+      const configPath = argv[argv.indexOf("--mcp-config") + 1] ?? "";
+      launched.push({ argv, env: opts.env, config: readFileSync(configPath, "utf8"), configPath });
+      return 7;
+    };
+    const self = ["/usr/local/bin/bun", "/repo/backend/cli/src/index.ts"];
+    try {
+      const started = await cli(["claude", "reviewer", "--", "--model", "opus"], {
+        env: { ...env, SPIDER_TOKEN: "spt_env" },
+        spawn,
+        self,
+      });
+      expect(started.code).toBe(7);
+      const [first] = launched;
+      expect(first?.argv).toEqual([
+        "claude",
+        "--model",
+        "opus",
+        "--agent",
+        "code-reviewer",
+        "--mcp-config",
+        first?.configPath ?? "",
+        "--dangerously-load-development-channels",
+        "server:spider-channel",
+      ]);
+      expect(first?.env.SPIDER_AGENT).toBe("prod/acme/reviewer");
+      expect(first?.env).not.toHaveProperty("SPIDER_TOKEN");
+      expect(JSON.parse(first?.config ?? "")).toEqual({
+        mcpServers: {
+          spider: {
+            type: "http",
+            url: "https://api.test/mcp",
+            headersHelper: "/usr/local/bin/bun /repo/backend/cli/src/index.ts mcp-headers --as prod/acme/reviewer",
+          },
+          "spider-channel": {
+            type: "stdio",
+            command: "/usr/local/bin/bun",
+            args: ["/repo/backend/cli/src/index.ts", "channel", "--as", "prod/acme/reviewer"],
+          },
+        },
+      });
+      expect(first?.config).not.toContain("spt_");
+      expect(existsSync(first?.configPath ?? "")).toBe(false);
+
+      // No agent and no picker: the default; --no-channel leaves the channel out.
+      await cli(["claude", "--no-channel"], { env, spawn, self });
+      expect(launched[1]?.argv.slice(-2)).toEqual(["--mcp-config", launched[1]?.configPath ?? ""]);
+      expect(launched[1]?.env.SPIDER_AGENT).toBe("prod/acme/reviewer");
+      expect(JSON.parse(launched[1]?.config ?? "").mcpServers).not.toHaveProperty("spider-channel");
+
+      // At a terminal, a picker grouped by server and org.
+      let asked: unknown;
+      await cli(["claude"], {
+        env,
+        spawn,
+        self,
+        select: async (_question, choices) => {
+          asked = choices.map((c) => [c.group, c.value]);
+          return "local/acme/writer";
+        },
+      });
+      expect(asked).toEqual([
+        ["prod › acme", "prod/acme/reviewer"],
+        ["prod › acme", "prod/acme/writer"],
+        ["local › acme", "local/acme/writer"],
+      ]);
+      expect(launched[2]?.env.SPIDER_AGENT).toBe("local/acme/writer");
+      expect(launched[2]?.argv).not.toContain("--agent");
+      expect(JSON.parse(launched[2]?.config ?? "").mcpServers.spider.url).toBe("http://localhost:4000/mcp");
+    } finally {
+      cleanup();
+    }
   });
 });
