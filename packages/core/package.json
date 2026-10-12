@@ -17,7 +17,8 @@
     "./anchors": "./src/anchors.ts",
     "./urls": "./src/urls.ts",
     "./views": "./src/views.ts",
-    "./board": "./src/board.ts"
+    "./board": "./src/board.ts",
+    "./git-automation-rules": "./src/git-automation-rules.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

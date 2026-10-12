@@ -104,7 +104,7 @@ Branches, commits and pull requests link to tasks from the [webhooks](#webhooks-
 | A commit (`push`) | Every task its message names, and the branch's task. |
 | A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names. |
 
-Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. Status automation (ST-85) will act only on `closing`, `branch` and `title`.
+Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. [Status automation](#status-automation-st-85) acts only on `closing`, `branch` and `title`.
 
 - **Branches** stay linked when deleted on GitHub (`delete`, or a `push` with `deleted`); they are shown as deleted, and live again if pushed again.
 - **Pull requests** are stored in `pull_requests` (only those that link to a task). Their links follow the latest title, body and branch: an edit that drops a key removes that task's link. The state is `open` (with `draft`), `closed` (without merging) or `merged`.
@@ -112,7 +112,7 @@ Each link records **how** the key was found (`via`), the strongest when several 
 - Each change publishes `task.git` (realtime), so an open task page refreshes its Development panel.
 - No activity entries are written for links; the task's git links are the record.
 
-**Status automation (ST-85)** plugs into `automatePullRequest` in `git-links.ts`: it runs in the delivery's transaction after the PR and its links are saved (never for stale events) and receives the action, the PR before and after, and the linked tasks with `via`.
+**Status automation (ST-85)** runs as `automatePullRequest` (`git-automation.ts`), called from `git-links.ts` in the delivery's transaction after the PR and its links are saved (never for stale events), with the action, the PR before and after, and the linked tasks with `via`; see [Status automation](#status-automation-st-85).
 
 **Reading:** `GET /v1/orgs/:org/tasks/:key/git` returns `TaskGitDto`: `pullRequests` (recently updated first), `branches` and `commits` (newest first, the latest 100), each with the repo's `owner/name` and a GitHub URL built from the repo's current name. Also `client.tasks.git` (SDK), MCP `get_task_git`, `spider task git [key]`, and the **Development** panel on the task page. Project settings list the project's repos.
 
@@ -135,16 +135,29 @@ Also in `@repo/core/git`:
 
 Matching is syntactic: `UTF-8` and `SHA-256` look like keys. Link processing keeps only keys of existing tasks in projects attached to the repo.
 
-## Status automation
+## Status automation (ST-85)
 
-Planned in ST-85 (the seam is in place, see [Linking work to tasks](#linking-work-to-tasks-st-84)). Configurable per project. The defaults:
+A `pull_request` event moves the tasks the PR is linked to, with no manual step: open a PR for `st-12-…` and ST-12 goes to In Review; merge it and ST-12 is Done. Configurable per project (`projects.git_automation`, null = the defaults); each event names a status **category**, and the task moves to the first status of that category (board order) in its own project's task workflow.
 
-| Git event | Task status |
-|---|---|
-| Branch created / first commit | In Progress |
-| Pull request opened | In Review |
-| Pull request merged | Done |
-| Pull request closed without merge | No change (it's logged) |
+| Pull request event | Setting | Default |
+|---|---|---|
+| Opened as a draft, or converted to a draft | `draft` | In Progress (`in_progress`) |
+| Opened (not a draft), reopened, or marked ready for review | `opened` | In Review (`in_review`) |
+| Merged | `merged` | Done (`done`) |
+| Closed without merging | `closed` | No change (`null`) |
+
+`enabled: false` turns it off for the project. Other actions (`edited`, `synchronize`, …) move nothing.
+
+Rules (`decideTransition` and `pullRequestEvent` in `@repo/core/git-automation-rules`, browser-safe):
+
+- **Which links:** only a closing keyword, the head branch or the title (`via` `closing`, `branch`, `title`). A key mentioned only in the PR body links the PR but doesn't move the task.
+- **Which tasks:** only kind `task`; releases and milestones never move (ST-93 ships releases separately; Done means finished, not shipped).
+- **Forward only:** a task never moves back in its workflow (by category: backlog, todo, in progress, in review, done/canceled), and a done or canceled task stays. The one exception: a draft event moves a task from the `opened` category (In Review) back to the `draft` one (In Progress), unless another linked PR is open and ready.
+- **Several PRs:** a closing move (merged → Done) waits until no other PR linked to the task (by closing keyword, branch or title) is open.
+- **Who:** the change is the @github bot's, with activity source `git`, through the same `applyTaskUpdate` as a manual change (activity, `completedAt`, realtime).
+- **Out of order:** stale events are ignored before automation runs (see above), and a late `opened` for a merged PR moves nothing.
+
+Settings: `PATCH /v1/orgs/:org/projects/:key` with `gitAutomation` (only the fields given change; `null` resets to the defaults), MCP `update_project`, `spider project update KEY --automation on|off|defaults --on-draft|--on-opened|--on-merged|--on-closed <category|none>`, and **Status automation** in the web app's project settings. `ProjectDto.gitAutomation` always has every field, defaults filled in.
 
 ## Agents and Git
 

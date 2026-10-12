@@ -54,7 +54,7 @@ activity (append-only log for everything)
 | One `actors` table for people and agents | Assignees, authors, mentions and the audit log all point at a single table. Agent-only settings live in `agents`. |
 | `org_id` on every main table | Access control is one rule: the row's `org_id` must be in the user's organizations. It also makes per-organization filters fast. |
 | UUIDv7 primary keys + per-project numbers | UUIDv7 IDs sort by creation time and keep indexes efficient. `SPI-123` comes from `projects.task_seq`, incremented in the same transaction that inserts the task. |
-| Statuses belong to projects, each mapped to a fixed category | Projects name their columns freely; automation and reports use the categories. |
+| Statuses belong to projects, each mapped to a fixed category | Projects name their columns freely; automation and reports use the categories. Status automation from pull requests (ST-85, `projects.git_automation`) names categories, not statuses, and moves a task to the first status of that category in its own workflow. |
 | Statuses are per project **and** task kind (ST-90) | Releases and milestones move through their own workflows (Planned → On staging → Release review → Released; Planned → Active → Ready to close → Done), so `statuses.kind` splits a project's statuses into one workflow per kind; `position` orders a workflow. A task's kind is fixed at creation, and the composite foreign key `tasks (project_id, kind, status_id) → statuses (project_id, kind, id)` makes the database refuse a status of another project or kind. Names are unique per workflow regardless of case (status lookups by name are case-insensitive). Every new project gets the three default workflows (`DEFAULT_WORKFLOWS` in core); the migration gave existing projects the release and milestone ones. A status's category never changes; deleting one moves its tasks to another status of the same workflow first, and each workflow keeps an open and a done status. |
 | Custom field values as JSON, keyed by field definition ID | Renaming a field touches no data. A GIN index keeps filtering fast. The app's `core` package validates values against the definitions. |
 | `sort_key` holds a fractional index | Dragging a card changes one row instead of renumbering the column. |
@@ -158,6 +158,7 @@ create table projects (
   task_seq int not null default 0,
   settings jsonb not null default '{}',
   rules_document_id uuid references documents on delete set null,  -- rules for agents: one of its own project-level documents (ST-111)
+  git_automation jsonb,                       -- status automation from pull requests (ST-85): { enabled, draft, opened, merged, closed }; null = defaults
   archived_at timestamptz,
   unique (org_id, key)
 );

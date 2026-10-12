@@ -41,3 +41,5 @@ export * from "./board";
 export * from "./github";
 export * from "./github-webhooks";
 export * from "./git-links";
+export * from "./git-automation";
+export * from "./git-automation-rules";

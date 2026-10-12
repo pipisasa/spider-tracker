@@ -412,6 +412,19 @@ withDb("spider CLI against the API", () => {
     expect(view.stdout).toContain("Done means merged.");
     // An owner's agent may clear them.
     expect((await spider("project", "update", "SPI", "--rules", "", "--json")).json()).toMatchObject({ rulesDocumentId: null });
+    // Status automation from pull requests (ST-85).
+    expect((await spider("project", "update", "SPI", "--on-closed", "Canceled", "--on-draft", "none", "--json")).json()).toMatchObject({
+      gitAutomation: { enabled: true, draft: null, opened: "in_review", merged: "done", closed: "canceled" },
+    });
+    expect((await spider("project", "view", "SPI")).stdout).toContain(
+      "Status automation from pull requests: draft → no change, opened → in_review, merged → done, closed → canceled",
+    );
+    expect((await spider("project", "update", "SPI", "--automation", "off", "--json")).json()).toMatchObject({ gitAutomation: { enabled: false } });
+    expect((await spider("project", "update", "SPI", "--automation", "defaults", "--json")).json()).toMatchObject({
+      gitAutomation: { enabled: true, draft: "in_progress", opened: "in_review", merged: "done", closed: null },
+    });
+    expect((await spider("project", "update", "SPI", "--on-merged", "shipped")).code).toBe(2);
+    expect((await spider("project", "update", "SPI", "--automation", "defaults", "--on-merged", "done")).code).toBe(2);
     expect((await asOwner("DELETE", `/documents/${rulesDoc.id}`, {})).status).toBeLessThan(300);
 
     // Document comments (ST-118): a mention on a document is pushed with its document_id; the reply goes there.
@@ -1246,6 +1259,11 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("list_projects")).toEqual(await cli("projects"));
       // With rules (ST-111), get_project and project view give them as ProjectRulesDto.
       expect(await cli("project", "update", "SPI", "--rules", doc?.id ?? "")).toMatchObject({ rulesDocumentId: doc?.id });
+      // Status automation from pull requests (ST-85): update_project and project update change it alike.
+      const automated = await mcp("update_project", { projectKey: "SPI", gitAutomation: { closed: "canceled", draft: null } });
+      expect(automated).toEqual(await cli("project", "update", "SPI", "--on-closed", "Canceled", "--on-draft", "none"));
+      expect(automated).toMatchObject({ gitAutomation: { enabled: true, draft: null, opened: "in_review", merged: "done", closed: "canceled" } });
+      await cli("project", "update", "SPI", "--automation", "defaults");
       // project view adds task counts per status, which get_project leaves out.
       const view = (await cli("project", "view", "SPI")) as {
         statuses: Record<string, unknown>[];
