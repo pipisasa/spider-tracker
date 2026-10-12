@@ -641,11 +641,23 @@ export interface TaskUpdateOutcome {
   changed: boolean;
 }
 
+/** Extras for applyTaskUpdate. */
+export interface TaskUpdateOptions {
+  /** Context added to the activity entry's changes (not a field change), e.g. the pull request that moved the task (ST-85). */
+  activity?: Record<string, unknown>;
+}
+
 /**
  * Applies a validated update to a task found in `tx`: the body of updateTask, shared with updateTasks
  * and markDuplicate (core only; callers check write access and parse the input).
  */
-export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, projectKey }: FoundTask, data: UpdateTaskInput): Promise<TaskUpdateOutcome> {
+export async function applyTaskUpdate(
+  tx: Tx,
+  ctx: ActorContext,
+  { task, projectKey }: FoundTask,
+  data: UpdateTaskInput,
+  options: TaskUpdateOptions = {},
+): Promise<TaskUpdateOutcome> {
   const scope = await projectScope(tx, ctx);
   const patch: Partial<typeof tasks.$inferInsert> = {};
   const changes: Record<string, [unknown, unknown]> = {};
@@ -760,7 +772,7 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
 
   // Pure reordering isn't worth an activity entry.
   if (Object.keys(changes).length > 0) {
-    await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
+    await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes: { ...changes, ...options.activity } });
   }
   await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
   // A finished task (or one leaving) may complete its milestone, old or new (ST-96).

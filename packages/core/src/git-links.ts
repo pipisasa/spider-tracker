@@ -7,6 +7,7 @@ import type { GitBranchDto, GitCommitDto, GitLinkVia, PullRequestDto, PullReques
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { automatePullRequest } from "./git-automation";
+import { trustedPullRequest } from "./git-automation-rules";
 import { closingKeysIn, taskKeyFromBranch, taskKeysIn } from "./git";
 import type { GithubEventHandler } from "./github-webhooks";
 import { repoFullName } from "./remotes";
@@ -249,6 +250,17 @@ export interface PullRequestChange {
   previous: PullRequestRow | null;
   /** The tasks it links to now, with how. */
   tasks: { task: LinkedTask; via: GitLinkVia }[];
+  origin: PullRequestOrigin;
+}
+
+/** Where a pull request event comes from, for status automation (ST-85). */
+export interface PullRequestOrigin {
+  /** The repo's default branch: only a merge into it counts as merged. */
+  defaultBranch: string;
+  /** False for a PR from a fork or from an author who isn't trusted (trustedPullRequest): it links but moves nothing. */
+  trusted: boolean;
+  /** The GitHub login whose action sent the event (who merged, for a merge), kept in the activity. */
+  sender: string | null;
 }
 
 /**
@@ -294,8 +306,9 @@ export function nextPullRequestState(
 
 /**
  * Saves a pull request event and links it to the tasks it names; false when stale or nothing to
- * link. `ctx` is the @github bot: status automation runs as it. Also used when Spider Tracker opens
- * the pull request itself (ST-87), so the link is there before GitHub's webhook arrives.
+ * link. `ctx` is the @github bot: status automation runs as it, given `origin`. Also used when
+ * Spider Tracker opens the pull request itself (ST-87), so the link is there before GitHub's
+ * webhook arrives.
  */
 export async function savePullRequest(
   tx: Tx,
@@ -303,6 +316,7 @@ export async function savePullRequest(
   repo: RepoRow,
   action: string,
   data: PullRequestData,
+  origin: PullRequestOrigin,
 ): Promise<boolean> {
   // One PR event per repo at a time, so two first events of a PR can't both insert it. (No key
   // update: links and PRs referencing the repo can still be written meanwhile.)
@@ -376,7 +390,7 @@ export async function savePullRequest(
   }
 
   await announce(tx, ctx.orgId, [...linked.map((l) => l.task), ...(await tasksByIds(tx, removed.map((l) => l.taskId)))]);
-  await automatePullRequest(tx, ctx, { action, pullRequest, previous: previous ?? null, tasks: linked });
+  await automatePullRequest(tx, ctx, { action, pullRequest, previous: previous ?? null, tasks: linked, origin });
   return true;
 }
 
@@ -389,6 +403,7 @@ function parsePayload<T extends z.ZodType>(schemaOf: T, event: string, payload: 
 }
 
 const repositoryRef = z.object({ name: z.string(), owner: z.object({ login: z.string() }) });
+const userRef = z.object({ login: z.string(), type: z.string().optional() });
 const timestamp = z.iso.datetime({ offset: true });
 
 const refPayload = z.object({
@@ -426,11 +441,13 @@ const pullRequestPayload = z.object({
     merged_at: timestamp.nullable().optional(),
     closed_at: timestamp.nullable().optional(),
     updated_at: timestamp,
-    head: z.object({ ref: z.string() }),
+    head: z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }).nullable().optional() }),
     base: z.object({ ref: z.string() }),
-    user: z.object({ login: z.string() }).nullable().optional(),
+    user: userRef.nullable().optional(),
+    author_association: z.string().optional(),
   }),
-  repository: repositoryRef,
+  repository: repositoryRef.extend({ default_branch: z.string().min(1).optional() }),
+  sender: userRef.nullable().optional(),
 });
 
 const HEADS = "refs/heads/";
@@ -489,7 +506,8 @@ export const handlePush: GithubEventHandler = async (tx, e) => {
 
 /**
  * pull_request: saves the PR (unless the event is stale) and links it to the tasks named by its
- * branch, title (closing keywords too) and body.
+ * branch, title (closing keywords too) and body. Status automation counts a merge only into the
+ * repo's default branch, and skips PRs from forks and untrusted authors (trustedPullRequest).
  */
 export const handlePullRequest: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(pullRequestPayload, "pull_request", e.payload);
@@ -497,7 +515,17 @@ export const handlePullRequest: GithubEventHandler = async (tx, e) => {
   const repo = await findRepoByName(tx, e.ctx.orgId, data.repository.owner.login, data.repository.name);
   if (!repo) return false;
   const merged = pr.merged === true || (pr.state === "closed" && pr.merged_at != null);
-  return savePullRequest(tx, e.ctx, repo, data.action, {
+  const origin: PullRequestOrigin = {
+    defaultBranch: data.repository.default_branch ?? repo.defaultBranch,
+    trusted: trustedPullRequest({
+      baseRepo: `${data.repository.owner.login}/${data.repository.name}`,
+      headRepo: pr.head.repo?.full_name ?? null,
+      authorAssociation: pr.author_association ?? null,
+      authorType: pr.user?.type ?? null,
+    }),
+    sender: data.sender?.login ?? null,
+  };
+  const saved: PullRequestData = {
     number: pr.number,
     title: pr.title,
     body: pr.body ?? null,
@@ -509,7 +537,8 @@ export const handlePullRequest: GithubEventHandler = async (tx, e) => {
     mergedAt: merged && pr.merged_at ? new Date(pr.merged_at) : null,
     closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
     updatedAt: new Date(pr.updated_at),
-  });
+  };
+  return savePullRequest(tx, e.ctx, repo, data.action, saved, origin);
 };
 
 // --- Reading ------------------------------------------------------------------------------------------

@@ -10,7 +10,13 @@ import { applyTaskUpdate } from "./tasks";
 // opened, marked ready, converted to a draft, merged or closed, the task moves to the status the
 // project's settings name for that event, as the @github bot (source "git"):
 //
-// - Only ordinary tasks (kind "task") move; releases and milestones never do.
+// - Only ordinary tasks (kind "task") of projects that aren't archived move; releases and
+//   milestones never do.
+// - Only trusted pull requests move tasks: not from a fork, and by an owner, member or collaborator
+//   of the repo, or a bot (trustedPullRequest). Others still link.
+// - A merge counts only into the repo's default branch; a merge into another branch (a stacked
+//   PR, a release or feature branch) moves nothing. Opened, ready and draft events count whatever
+//   the base.
 // - Only links by closing keyword, branch name or title count: a mention in the PR body links the
 //   PR to the task but doesn't move it.
 // - Forward only: a task never moves back in the workflow, and a finished or canceled task stays.
@@ -19,6 +25,8 @@ import { applyTaskUpdate } from "./tasks";
 //   is still open and ready.
 // - A closing move (merged → Done) waits until no other linked PR is open.
 // - The target is the first status of the setting's category in the task's own project and kind.
+// - The activity entry names the pull request, the event and the GitHub login that sent it (who
+//   merged, for a merge).
 
 const { gitLinks, projects, pullRequests, statuses, tasks } = schema;
 
@@ -26,8 +34,9 @@ const { gitLinks, projects, pullRequests, statuses, tasks } = schema;
  * Moves the tasks a saved pull request event links to (by closing keyword, branch or title), in
  * the delivery's transaction; `ctx` is the @github bot. Says whether a task changed.
  */
-export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { action, pullRequest, tasks: linked }) => {
-  const event = pullRequestEvent(action, pullRequest);
+export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { action, pullRequest, tasks: linked, origin }) => {
+  if (!origin.trusted) return false;
+  const event = pullRequestEvent(action, pullRequest, origin.defaultBranch);
   if (!event) return false;
   const ids = [...new Set(linked.filter((l) => AUTOMATING_VIA.includes(l.via)).map((l) => l.task.id))];
   if (ids.length === 0) return false;
@@ -37,7 +46,7 @@ export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { acti
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
-    .where(and(inArray(tasks.id, ids), eq(tasks.kind, "task"), isNull(tasks.deletedAt)))
+    .where(and(inArray(tasks.id, ids), eq(tasks.kind, "task"), isNull(tasks.deletedAt), isNull(projects.archivedAt)))
     .for("update", { of: tasks });
   if (rows.length === 0) return false;
 
@@ -57,6 +66,7 @@ export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { acti
       ),
     );
 
+  const activity = { pullRequest: { number: pullRequest.number, event, sender: origin.sender } };
   let changed = false;
   for (const row of rows) {
     const target = decideTransition({
@@ -68,7 +78,7 @@ export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { acti
     if (!target) continue;
     const status = await firstStatus(tx, row.task.projectId, target);
     if (!status) continue;
-    const outcome = await applyTaskUpdate(tx, ctx, { task: row.task, projectKey: row.projectKey }, { statusId: status.id });
+    const outcome = await applyTaskUpdate(tx, ctx, { task: row.task, projectKey: row.projectKey }, { statusId: status.id }, { activity });
     changed ||= outcome.changed;
   }
   return changed;

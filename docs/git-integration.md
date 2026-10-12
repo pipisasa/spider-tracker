@@ -145,7 +145,7 @@ A `pull_request` event moves the tasks the PR is linked to, with no manual step:
 |---|---|---|
 | Opened as a draft, or converted to a draft | `draft` | In Progress (`in_progress`) |
 | Opened (not a draft), reopened, or marked ready for review | `opened` | In Review (`in_review`) |
-| Merged | `merged` | Done (`done`) |
+| Merged into the repo's default branch | `merged` | Done (`done`) |
 | Closed without merging | `closed` | No change (`null`) |
 
 `enabled: false` turns it off for the project. Other actions (`edited`, `synchronize`, …) move nothing.
@@ -153,10 +153,13 @@ A `pull_request` event moves the tasks the PR is linked to, with no manual step:
 Rules (`decideTransition` and `pullRequestEvent` in `@repo/core/git-automation-rules`, browser-safe):
 
 - **Which links:** only a closing keyword, the head branch or the title (`via` `closing`, `branch`, `title`). A key mentioned only in the PR body links the PR but doesn't move the task.
-- **Which tasks:** only kind `task`; releases and milestones never move (ST-93 ships releases separately; Done means finished, not shipped).
+- **Which tasks:** only kind `task`, in projects that aren't archived; releases and milestones never move (ST-93 ships releases separately; Done means finished, not shipped).
+- **Which base:** a merge counts only when the PR's base is the repo's default branch (`repository.default_branch` in the payload, else the repo's stored one). A merge into another branch (a stacked PR into its parent's branch, a release or feature branch) moves nothing: the work hasn't reached the default branch yet, and the task stays where it is (usually In Review) until a PR naming it is merged into the default branch. Opened, ready and draft events count whatever the base: the work is in progress or in review either way.
+- **Whose PRs:** only trusted PRs move tasks (`trustedPullRequest`): the head branch is in the repo itself (`pull_request.head.repo.full_name` equals the repo; not a fork, nor a deleted one), and the author's `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`, or the author is a bot (`user.type` `Bot`: a GitHub App installed on the repo, such as Spider Tracker's own App, whose PRs from `spider pr` have the association `NONE`). Other PRs (from forks, drive-by contributors on a public repo) are still saved and linked, but move nothing. A PR opened through `spider pr` (ST-87) is trusted: its head is always a branch of the repo and the person or agent asking may write to the task.
 - **Forward only:** a task never moves back in its workflow (by category: backlog, todo, in progress, in review, done/canceled), and a done or canceled task stays. The one exception: a draft event moves a task from the `opened` category (In Review) back to the `draft` one (In Progress), unless another linked PR is open and ready.
 - **Several PRs:** a closing move (merged → Done) waits until no other PR linked to the task (by closing keyword, branch or title) is open.
-- **Who:** the change is the @github bot's, with activity source `git`, through the same `applyTaskUpdate` as a manual change (activity, `completedAt`, realtime).
+- **Who:** the change is the @github bot's, with activity source `git`, through the same `applyTaskUpdate` as a manual change (activity, `completedAt`, realtime). The activity entry's `changes` also has `pullRequest: { number, event, sender }`, where `sender` is the GitHub login whose action sent the event (who merged, for a merge; the App's bot for `spider pr`), so a Done move can be traced to a person or agent; the task page shows it ("moved In Review → Done (pull request #12 merged by ann)").
+- **Redeliveries:** a delivery id seen before is `duplicate` and changes nothing (ST-83), so GitHub redelivering an event never moves a task twice.
 - **Out of order:** stale events are ignored before automation runs (see above), and a late `opened` for a merged PR moves nothing.
 
 Settings: `PATCH /v1/orgs/:org/projects/:key` with `gitAutomation` (only the fields given change; `null` resets to the defaults), MCP `update_project`, `spider project update KEY --automation on|off|defaults --on-draft|--on-opened|--on-merged|--on-closed <category|none>`, and **Status automation** in the web app's project settings. `ProjectDto.gitAutomation` always has every field, defaults filled in.

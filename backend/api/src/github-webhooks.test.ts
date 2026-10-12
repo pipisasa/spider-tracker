@@ -272,7 +272,8 @@ withDb("status automation from signed pull_request events (ST-85)", () => {
         action,
         number: 5,
         installation: { id: installationId },
-        repository: { name: "web", owner: { login: "acme" } },
+        repository: { name: "web", owner: { login: "acme" }, default_branch: "main" },
+        sender: { login: "ann", type: "User" },
         pull_request: {
           number: 5,
           title: "Ship it",
@@ -280,9 +281,10 @@ withDb("status automation from signed pull_request events (ST-85)", () => {
           state: "open",
           draft: false,
           merged: false,
-          head: { ref: "st-1-ship-it" },
+          head: { ref: "st-1-ship-it", repo: { full_name: "acme/web" } },
           base: { ref: "main" },
-          user: { login: "ann" },
+          user: { login: "ann", type: "User" },
+          author_association: "MEMBER",
           ...fields,
         },
       });
@@ -298,7 +300,8 @@ withDb("status automation from signed pull_request events (ST-85)", () => {
       closed_at: "2026-10-12T12:00:00Z",
       updated_at: "2026-10-12T12:00:00Z",
     });
-    expect(await (await post(merged, { event: "pull_request" })).json()).toEqual({ status: "processed" });
+    const delivery = newDelivery();
+    expect(await (await post(merged, { event: "pull_request", delivery })).json()).toEqual({ status: "processed" });
     const done = await client.tasks.get(slug, "ST-1");
     expect(await statusName()).toBe("Done");
     expect(done.completedAt).not.toBeNull();
@@ -307,5 +310,13 @@ withDb("status automation from signed pull_request events (ST-85)", () => {
     const activity = await client.tasks.activity(slug, "ST-1");
     const moves = activity.items.filter((a) => a.action === "task.updated");
     expect(moves.map((a) => a.source)).toEqual(["git", "git"]);
+
+    // GitHub redelivering the merge (same delivery id) changes nothing more.
+    const again = await post(merged, { event: "pull_request", delivery });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ status: "duplicate" });
+    const after = await client.tasks.activity(slug, "ST-1");
+    expect(after.items.filter((a) => a.action === "task.updated").length).toBe(2);
+    expect(await statusName()).toBe("Done");
   });
 });

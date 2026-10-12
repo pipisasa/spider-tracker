@@ -185,9 +185,12 @@ export async function openTaskPullRequest(
   });
 
   // As if GitHub's event had arrived: "opened" moves the task (as the @github bot); one that was
-  // already open is only linked ("edited" moves nothing).
+  // already open is only linked ("edited" moves nothing). It is trusted: the head is a branch of
+  // this repo (a branch name, never "fork:branch") and the actor may write to the task; GitHub's
+  // later events for it come from the App's bot, also trusted (trustedPullRequest).
   const saved = pullRequestData(pullRequest);
-  await db.transaction(async (tx) => savePullRequest(tx, await githubBotContext(tx, ctx.orgId), repo, created ? "opened" : "edited", saved));
+  const origin = { defaultBranch: repo.defaultBranch, trusted: true, sender: pullRequest.author };
+  await db.transaction(async (tx) => savePullRequest(tx, await githubBotContext(tx, ctx.orgId), repo, created ? "opened" : "edited", saved, origin));
   if (!created) throw exists(pullRequest.number);
 
   const [row] = await db
