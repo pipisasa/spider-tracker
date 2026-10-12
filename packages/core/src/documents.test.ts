@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { acceptAgentInvite, createAgentInvite } from "./agent-invites";
 import { createAgent } from "./agents";
 import {
   createDocument,
   deleteDocument,
+  editDocument,
   getDocument,
   getDocumentVersion,
   listDocuments,
@@ -205,6 +206,74 @@ run("documents", () => {
     expect((await getDocument(db, ctx.orgId, doc.id)).version).toBe(2);
   });
 
+  test("partial edits save a new version each and check baseVersion when given", async () => {
+    const doc = await createDocument(db, ctx, {
+      title: "Edits",
+      content: "# Edits\n\nIntro.\n\n## Решения\n\nOld.\n\n## Next\n\nLater.\n",
+    });
+    const v2 = await editDocument(db, ctx, doc.id, { edits: [{ old: "Intro.", new: "Hello." }] });
+    expect(v2).toMatchObject({ version: 2, content: expect.stringContaining("Hello.") });
+
+    const v3 = await editDocument(db, ctx, doc.id, {
+      baseVersion: 2,
+      edits: [{ section: "## Решения", content: "New." }, { append: "See [[Plan]]." }],
+    });
+    expect(v3.version).toBe(3);
+    expect(v3.content).toBe("# Edits\n\nHello.\n\n## Решения\n\nNew.\n\n## Next\n\nLater.\nSee [[Plan]].");
+    const links = await db
+      .select({ target: schema.documentLinks.target })
+      .from(schema.documentLinks)
+      .where(eq(schema.documentLinks.documentId, doc.id));
+    expect(links.map((l) => l.target)).toEqual(["Plan"]);
+
+    await expect(
+      editDocument(db, ctx, doc.id, { baseVersion: 2, edits: [{ append: "stale" }] }),
+    ).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("version 3") });
+    await expect(
+      editDocument(db, ctx, doc.id, { edits: [{ old: "Intro.", new: "x" }] }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      editDocument(db, ctx, doc.id, { edits: [{ append: "ok" }, { old: "missing", new: "x" }] }),
+    ).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("Edit 2") });
+    await expect(editDocument(db, ctx, doc.id, { edits: [] })).rejects.toMatchObject({ code: "validation" });
+    await expect(
+      editDocument(db, ctx, doc.id, { edits: [{ old: "a", new: "b", append: "c" }] }),
+    ).rejects.toMatchObject({ code: "validation" });
+    // A no-op edit keeps the version.
+    expect((await editDocument(db, ctx, doc.id, { edits: [{ old: "New.", new: "New." }] })).version).toBe(3);
+
+    expect((await listDocumentVersions(db, ctx.orgId, doc.id)).map((v) => v.version)).toEqual([3, 2, 1]);
+    const [activity] = await db
+      .select({ changes: schema.activity.changes })
+      .from(schema.activity)
+      .where(
+        and(
+          eq(schema.activity.entityType, "document"),
+          eq(schema.activity.entityId, doc.id),
+          eq(schema.activity.action, "document.updated"),
+        ),
+      )
+      .orderBy(desc(schema.activity.id))
+      .limit(1);
+    expect(activity?.changes).toMatchObject({ version: [2, 3], fields: ["content"], edits: ["section", "append"] });
+  });
+
+  test("concurrent partial edits without baseVersion both apply", async () => {
+    const doc = await createDocument(db, ctx, { title: "Shared", content: "a\nb\n" });
+    await Promise.all([
+      editDocument(db, ctx, doc.id, { edits: [{ old: "a", new: "A" }] }),
+      editDocument(db, ctx, doc.id, { edits: [{ old: "b", new: "B" }] }),
+    ]);
+    expect(await getDocument(db, ctx.orgId, doc.id)).toMatchObject({ version: 3, content: "A\nB\n" });
+  });
+
+  test("an edit can't push a document over 1 MB", async () => {
+    const doc = await createDocument(db, ctx, { title: "Big", content: "x".repeat(999_990) });
+    await expect(
+      editDocument(db, ctx, doc.id, { edits: [{ append: "y".repeat(20) }] }),
+    ).rejects.toMatchObject({ code: "validation", message: expect.stringContaining("1 MB") });
+  });
+
   test("guests read but can't write", async () => {
     const doc = await createDocument(db, ctx, { title: "Read me" });
     const guest: ActorContext = { ...ctx, role: "guest" };
@@ -217,6 +286,9 @@ run("documents", () => {
     ).rejects.toMatchObject({
       code: "forbidden",
     });
+    await expect(
+      editDocument(db, guest, doc.id, { edits: [{ append: "no" }] }),
+    ).rejects.toMatchObject({ code: "forbidden" });
     await expect(deleteDocument(db, guest, doc.id)).rejects.toMatchObject({
       code: "forbidden",
     });

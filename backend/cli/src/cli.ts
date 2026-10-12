@@ -11,7 +11,13 @@ import type {
 } from "@repo/core/contracts";
 import { normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { MIN_CLI_HEADER } from "@repo/core/version";
-import type { CreateTaskInput, UpdateDocumentInput, UpdateProjectInput, UpdateTaskInput } from "@repo/core/schemas";
+import type {
+  CreateTaskInput,
+  DocumentEdit,
+  UpdateDocumentInput,
+  UpdateProjectInput,
+  UpdateTaskInput,
+} from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError, Option } from "commander";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -154,7 +160,19 @@ interface JsonOption {
   json?: boolean;
 }
 
-type DocEditOptions = JsonOption & { title?: string; format?: string; file?: string; baseVersion?: string; force?: boolean };
+type DocEditOptions = JsonOption & {
+  title?: string;
+  format?: string;
+  file?: string;
+  baseVersion?: string;
+  force?: boolean;
+  old?: string;
+  new?: string;
+  all?: boolean;
+  append?: boolean;
+  section?: string;
+  text?: string;
+};
 
 interface TaskFields extends JsonOption {
   title?: string;
@@ -1477,21 +1495,35 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     doc
       .command("edit")
-      .description("save a new version of a document; fails if someone saved it after --base-version")
+      .description(
+        "save a new version of a document: replace its content (--file, with --base-version or --force), " +
+          "or change part of it (--old/--new, --append, --section) without resending the rest",
+      )
       .argument("<id>")
       .option("--title <text>", "new title")
       .option("--format <md|html>", "new format")
-      .option("--file <path>", 'new content from a file, or "-" for standard input')
+      .option("--file <path>", 'new content from a file, or "-" for standard input; with --append or --section, the text to write')
+      .option("--old <text>", "replace this exact fragment (it must occur once; see --all) with --new")
+      .option("--new <text>", "the fragment's replacement")
+      .option("--all", "with --old: replace every occurrence")
+      .option("--append", "add --text or --file to the end, on a new line")
+      .option("--section <heading>", 'replace the body of this Markdown section (e.g. "## Decisions") with --text or --file')
+      .option("--text <text>", "the text for --append or --section")
       .option("--base-version <n>", "the version your edit is based on (from doc view / doc list)")
       .option("--force", "without --base-version: save on top of whatever the current version is"),
   ).action(async (id: string, opts: DocEditOptions) => {
+    const partial = opts.old !== undefined || opts.append === true || opts.section !== undefined;
+    if (partial) return editDocumentPart(id, opts);
+    if (opts.new !== undefined || opts.all || opts.text !== undefined) {
+      throw usageError("--new and --all go with --old; --text goes with --append or --section");
+    }
     if (opts.title === undefined && opts.format === undefined && opts.file === undefined) {
-      throw usageError("Nothing to change. Pass --title, --format or --file");
+      throw usageError("Nothing to change. Pass --title, --format or --file, or a partial edit (--old/--new, --append, --section)");
     }
     // ST-21: the base version must be the one the edit was made from, not one re-read just before saving.
     if (opts.baseVersion === undefined && !opts.force) {
       throw usageError(
-        "Pass --base-version <n> (the version you read with doc view) so a newer save isn't overwritten, or --force to overwrite whatever is current",
+        "Pass --base-version <n> (the version you read with doc view) so a newer save isn't overwritten, or --force to overwrite whatever is current. To change part of the document, use --old/--new, --append or --section instead",
       );
     }
     const baseVersion = opts.baseVersion === undefined ? undefined : parseVersion(opts.baseVersion);
@@ -1508,6 +1540,40 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       saved.version === current.version ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
     );
   });
+
+  /**
+   * One partial edit (ST-116). Without --base-version it applies to the current version and
+   * fails (conflict) if the fragment or section isn't there, so it never overwrites anyone.
+   */
+  async function editDocumentPart(id: string, opts: DocEditOptions) {
+    const modes = [opts.old !== undefined, opts.append === true, opts.section !== undefined].filter(Boolean).length;
+    if (modes > 1) throw usageError("Pass one of --old/--new, --append or --section");
+    if (opts.title !== undefined || opts.format !== undefined) {
+      throw usageError("--title and --format can't be combined with a partial edit; change them in a separate doc edit");
+    }
+    let edit: DocumentEdit;
+    if (opts.old !== undefined) {
+      if (opts.new === undefined) throw usageError('--old needs --new (use --new "" to delete the fragment)');
+      if (opts.text !== undefined || opts.file !== undefined) throw usageError("--old/--new take the text inline; --text and --file go with --append or --section");
+      edit = { old: opts.old, new: opts.new, ...(opts.all ? { all: true } : {}) };
+    } else {
+      if (opts.new !== undefined || opts.all) throw usageError("--new and --all go with --old");
+      if ((opts.text !== undefined) === (opts.file !== undefined)) {
+        throw usageError(`${opts.append ? "--append" : "--section"} needs the text: pass --text <text> or --file <path|->`);
+      }
+      const text = opts.text ?? (await readContent(opts.file ?? "-"));
+      edit = opts.section !== undefined ? { section: opts.section, content: text } : { append: text };
+    }
+    const baseVersion = opts.baseVersion === undefined ? undefined : parseVersion(opts.baseVersion);
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    const before = baseVersion ?? (await client.documents.get(slug, id)).version;
+    const saved = await client.documents.edit(slug, id, { baseVersion, edits: [edit] });
+    output(opts, saved, () =>
+      saved.version === before ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
+    );
+  }
 
   withJson(
     doc

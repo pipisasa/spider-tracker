@@ -118,6 +118,7 @@ withDb("MCP server", () => {
         "get_document",
         "list_documents",
         "move_document",
+        "edit_document",
         "update_document",
         "update_project",
         "get_inbox",
@@ -255,6 +256,31 @@ withDb("MCP server", () => {
     const orgWide = await call(client, "move_document", { id: doc.id, project: null });
     expect(orgWide.json()).toMatchObject({ id: doc.id, project: null, version: 2 });
     expect((await call(client, "move_document", { id: doc.id, project: "NOPE" })).isError).toBe(true);
+  });
+
+  test("edit_document: partial edits without resending the document", async () => {
+    const doc = (
+      await call(client, "create_document", { title: "Partial", content: "# Partial\n\nIntro.\n\n## Decisions\n\nOld.\n" })
+    ).json() as { id: string };
+
+    const edited = await call(client, "edit_document", { id: doc.id, edits: [{ old: "Intro.", new: "Hello." }] });
+    expect(edited.json()).toMatchObject({ id: doc.id, version: 2, updatedBy: "claude-code" });
+    const sectioned = await call(client, "edit_document", {
+      id: doc.id,
+      baseVersion: 2,
+      edits: [{ section: "## Decisions", content: "New." }, { append: "Done." }],
+    });
+    expect(sectioned.json()).toMatchObject({ version: 3 });
+    expect((await call(client, "get_document", { id: doc.id })).json()).toMatchObject({
+      content: "# Partial\n\nHello.\n\n## Decisions\n\nNew.\nDone.",
+    });
+
+    const missing = await call(client, "edit_document", { id: doc.id, edits: [{ old: "Intro.", new: "x" }] });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain(`doesn't contain "Intro."`);
+    const stale = await call(client, "edit_document", { id: doc.id, baseVersion: 2, edits: [{ append: "late" }] });
+    expect(stale.isError).toBe(true);
+    expect(stale.text).toContain("version 3");
   });
 
   test("statuses can be given by category, like the CLI", async () => {
