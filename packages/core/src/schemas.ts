@@ -109,9 +109,48 @@ export const taskListFilters = z.object({
     .optional(),
   /** Case-insensitive text in the title. */
   q: z.string().trim().max(200).optional(),
+  /** Direct sub-tasks of this task key ("ST-3"). */
+  parent: z.string().trim().min(1).max(30).optional(),
 });
 
 export type TaskListFilters = z.input<typeof taskListFilters>;
+
+/** Most tasks one bulk update may touch, whether given as keys or matched by a filter (ST-106). */
+export const MAX_BULK_TASKS = 100;
+
+/**
+ * What a bulk update changes on every task. `status` is a status id, name or category, matched in
+ * each task's own project (keys may span projects); assignees and tags replace the lists.
+ */
+export const bulkTaskChanges = z
+  .object({
+    status: filterValue,
+    priority: prioritySchema,
+    assigneeIds: z.array(z.uuid()).max(20),
+    tagIds: z.array(z.uuid()).max(20),
+    parentId: z.uuid().nullable(),
+  })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+/** The tasks of one project matching the list filters (see `taskListFilters`). */
+export const bulkTaskFilter = taskListFilters.extend({ project: z.string().trim().min(1).max(10) });
+
+/** Either `keys` or `filter`; `dryRun` reports what would happen without changing anything. */
+export const bulkUpdateTasksInput = z
+  .object({
+    keys: z
+      .array(z.string().trim().min(1).max(30))
+      .min(1)
+      .max(MAX_BULK_TASKS, `At most ${MAX_BULK_TASKS} tasks per update`)
+      .optional(),
+    filter: bulkTaskFilter.optional(),
+    set: bulkTaskChanges,
+    dryRun: z.boolean().optional(),
+  })
+  .refine((v) => (v.keys === undefined) !== (v.filter === undefined), "Pass either keys or a filter");
+
+export type BulkUpdateTasksInput = z.input<typeof bulkUpdateTasksInput>;
 
 /** Parses "SPI-12" into its project key and number. */
 export function parseTaskKey(value: string): { projectKey: string; number: number } | null {

@@ -56,6 +56,7 @@ import {
   revokeApiKey,
   updateProject,
   updateTask,
+  updateTasks,
   webUrls,
   withDocumentUrl,
   withProjectUrl,
@@ -232,6 +233,7 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
       tagMatch: c.req.query("tagMatch"),
       priority: query.priority,
       q: c.req.query("q"),
+      parent: c.req.query("parent"),
     };
     return c.json(list((await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)).map((t) => task(c, t))));
   });
@@ -273,6 +275,9 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     if (c.get("apiKey")) await realtime.presence.touch(actor, found.key);
     return c.json(task(c, found));
   });
+
+  // Several tasks at once, by keys or a filter; per-task outcomes, 200 even when some fail (ST-106).
+  app.post("/tasks/bulk-update", async (c) => c.json(await updateTasks(db, c.get("actor"), await body(c))));
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(task(c, await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),

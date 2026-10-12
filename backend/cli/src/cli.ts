@@ -1,5 +1,7 @@
 import type {
   ActorDto,
+  BulkTaskResultDto,
+  BulkUpdateTasksResponse,
   DocumentFormat,
   DocumentSummaryDto,
   ProjectDetailDto,
@@ -12,6 +14,7 @@ import type {
 import { normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import type {
+  BulkUpdateTasksInput,
   CreateTaskInput,
   DocumentEdit,
   UpdateDocumentInput,
@@ -49,6 +52,16 @@ import {
   writeProjectSettings,
   type RunClaude,
 } from "./claude-setup";
+import {
+  DEFAULT_PERMISSION_MODE,
+  PERMISSION_MODES,
+  brokenHooks,
+  claudeCommand,
+  isPermissionMode,
+  permissionLine,
+  permissionModeFor,
+  type PermissionMode,
+} from "./claude-launch";
 import { branchNameFor, taskKeysIn } from "@repo/core/git";
 import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
 import { isCompiled } from "./self-update";
@@ -182,6 +195,32 @@ interface TaskFields extends JsonOption {
   assign?: string[];
   tag?: string[];
   parent?: string;
+}
+
+/** The changes `task update` makes, as typed (before resolving names to ids). */
+interface TaskChanges {
+  status?: string;
+  priority?: string;
+  assign?: string[];
+  tag?: string[];
+  parent?: string;
+}
+
+/**
+ * `task update` options. With --project (filter mode) --status, --parent, --tag and --priority
+ * select tasks and only the --set-* flags change them; otherwise both forms set the field.
+ */
+interface TaskUpdateOptions extends TaskFields {
+  setStatus?: string;
+  setPriority?: string;
+  setAssign?: string[];
+  setTag?: string[];
+  setParent?: string;
+  project?: string;
+  assignee?: string[];
+  anyTag?: boolean;
+  yes?: boolean;
+  dryRun?: boolean;
 }
 
 interface TaskListOptions extends JsonOption {
@@ -406,6 +445,30 @@ function taskDetail(task: CliTask): string {
   ];
   if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
   if (task.description) lines.push("", task.description);
+  return lines.join("\n");
+}
+
+/** One line per task of a bulk update, then the counts (and how to apply, after a preview). */
+function bulkLines(
+  dryRun: boolean,
+  results: (Omit<BulkTaskResultDto, "task"> & { task: CliTask | null })[],
+  summary: BulkUpdateTasksResponse["summary"],
+  applyHint?: string,
+): string {
+  if (results.length === 0) return "No matching tasks";
+  const label = (outcome: BulkTaskResultDto["outcome"]) =>
+    outcome === "changed" ? (dryRun ? "would change" : "changed") : outcome === "unchanged" ? "unchanged" : "failed";
+  const keyWidth = Math.max(...results.map((r) => r.key.length));
+  const labelWidth = Math.max(...results.map((r) => label(r.outcome).length));
+  const lines = results.map((r) =>
+    [
+      r.key.padEnd(keyWidth),
+      label(r.outcome).padEnd(labelWidth),
+      r.task ? `${r.task.status?.name ?? "?"}  ${r.task.title}` : (r.error?.message ?? ""),
+    ].join("  "),
+  );
+  const counts = `${summary.changed} ${dryRun ? "would change" : "changed"}, ${summary.unchanged} unchanged, ${summary.failed} failed`;
+  lines.push(dryRun ? `Dry run: ${counts}; nothing was changed.${applyHint ? ` ${applyHint}` : ""}` : counts);
   return lines.join("\n");
 }
 
@@ -741,6 +804,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         projects: a.saved.projects,
         source: a.saved.source,
         createdAt: a.saved.createdAt,
+        permissionMode: a.saved.permissionMode ?? null,
         default: a.ref === current?.ref,
       }));
       output(opts, { default: current?.ref ?? null, items }, () => {
@@ -769,6 +833,34 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       output(opts, { default: entry.ref }, () => `Default agent: ${entry.ref}`);
     },
   );
+
+  withJson(
+    agents
+      .command("permission-mode")
+      .description("show or set the Claude Code permission mode spider claude starts a saved agent in")
+      .argument("<agent>")
+      .argument("[mode]", `one of ${PERMISSION_MODES.join(", ")}`)
+      .option("--clear", "go back to the spider default (auto)"),
+  ).action(async (ref: string, mode: string | undefined, opts: JsonOption & { clear?: boolean }) => {
+    if (mode !== undefined && !isPermissionMode(mode)) {
+      throw usageError(`Unknown permission mode ${mode}. Use one of ${PERMISSION_MODES.join(", ")}`);
+    }
+    if (mode !== undefined && opts.clear) throw usageError("Give a mode or --clear, not both");
+    const store = await readStore(options.env);
+    const entry = findAgent(store, ref);
+    if (mode !== undefined || opts.clear) {
+      const saved = store.servers[entry.server]?.orgs[entry.org]?.agents[entry.agent];
+      if (saved) {
+        if (mode === undefined) delete saved.permissionMode;
+        else saved.permissionMode = mode;
+      }
+      await writeStore(options.env, store);
+    }
+    const current = mode ?? (opts.clear ? undefined : entry.saved.permissionMode);
+    output(opts, { agent: entry.ref, permissionMode: current ?? null, effective: current ?? DEFAULT_PERMISSION_MODE }, () =>
+      current ? `${entry.ref} starts in ${current}` : `${entry.ref} starts in ${DEFAULT_PERMISSION_MODE} (the spider default)`,
+    );
+  });
 
   withJson(
     agents
@@ -804,7 +896,12 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     .argument("[agent]", "handle, org/handle or server/org/handle (default: pick one, or the default agent)")
     .argument("[claudeArgs...]", "arguments for claude, after --")
     .option("--no-channel", "don't push the agent's inbox into the session")
-    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean }) => {
+    .addOption(
+      new Option("--permission-mode <mode>", "the permission mode to start in (default: the agent's, see spider agents permission-mode, else auto)").choices(
+        PERMISSION_MODES,
+      ),
+    )
+    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean; permissionMode?: PermissionMode }) => {
       // Everything after "--" goes to claude; an agent is only an operand before it.
       const dash = argv.indexOf("--");
       const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
@@ -840,20 +937,27 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const config = join(dir, "mcp.json");
       await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
       const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env, entry);
-      const command = [
-        "claude",
-        ...extra,
-        ...(agentName ? ["--agent", agentName] : []),
-        // Both options take several values, so they come last.
-        "--mcp-config",
-        config,
-        ...(opts.channel ? ["--dangerously-load-development-channels", "server:spider-channel"] : []),
-      ];
+      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
+        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
+      }
+      const permission = permissionModeFor(opts.permissionMode, extra, entry.saved.permissionMode);
+      const command = claudeCommand({ claudeArgs: extra, agent: agentName, mcpConfig: config, channel: opts.channel, permission });
       // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
       const env: Record<string, string | undefined> = { ...options.env, SPIDER_AGENT: entry.ref };
       delete env.SPIDER_TOKEN;
       if (noticeAllowed(argv, options.env, options.isInteractive)) await startNotice(options.env, httpFetch, (l) => stderr.write(l))();
       stderr.write(`Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`);
+      stderr.write(`${permissionLine(permission)}\n`);
+      if (opts.channel) {
+        stderr.write(
+          "Inbox channel: Claude Code asks to confirm development channels at every start (no setting skips it); choose \"I am using this for local development\", or use --no-channel\n",
+        );
+      }
+      for (const hook of await brokenHooks(options.env, cwd)) {
+        stderr.write(
+          `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`,
+        );
+      }
       try {
         result.exitCode = await options.spawn(command, { env });
       } finally {
@@ -1291,17 +1395,113 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     output(opts, created, () => taskLines([created]));
   });
 
+  /** Updates several tasks through the bulk endpoint and prints one line per task (ST-106). */
+  const bulkUpdate = async (
+    target: Pick<BulkUpdateTasksInput, "keys" | "filter">,
+    changes: TaskChanges,
+    dryRun: boolean,
+    hints: { nothing: string; apply?: string },
+    opts: JsonOption,
+  ) => {
+    const { sdk, org, whoami, members, tags, describe } = conn();
+    const set: BulkUpdateTasksInput["set"] = {};
+    if (changes.status !== undefined) set.status = changes.status;
+    if (changes.priority !== undefined) set.priority = parsePriority(changes.priority);
+    if (changes.assign !== undefined) set.assigneeIds = resolveAssignees(await members(), (await whoami()).actor.id, changes.assign);
+    if (changes.tag !== undefined) set.tagIds = resolveTags(await tags(), changes.tag);
+    if (changes.parent !== undefined) {
+      set.parentId = changes.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(changes.parent, cwd, git))).id;
+    }
+    if (Object.keys(set).length === 0) throw usageError(hints.nothing);
+
+    const response = await (await sdk()).tasks.bulkUpdate(await org(), { ...target, set, dryRun });
+    const results = await Promise.all(
+      response.results.map(async (r) => ({ ...r, task: r.task ? await describe(r.task) : null })),
+    );
+    output(opts, { ...response, results }, () => bulkLines(response.dryRun, results, response.summary, hints.apply));
+    if (response.summary.failed > 0) result.exitCode = EXIT.unexpected;
+  };
+
   taskOptions(
     task
       .command("update")
-      .description("change a task (default: the current branch's); --assign replaces the assignees")
-      .argument("[key]")
-      .option("--title <text>", "title"),
-  ).action(async (key: string | undefined, opts: TaskFields) => {
-    const resolved = taskKey(key, cwd, git);
-    const input = await taskInput(projectKeyOf(resolved), opts);
-    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --title, --status, --assign, …");
-    await update(resolved, input, opts);
+      .description(
+        "change a task (default: the current branch's), several keys, or the tasks matching --project and filters; --assign replaces the assignees",
+      )
+      .argument("[keys...]", "task keys, e.g. ST-2 ST-3 (default: the current branch's)")
+      .option("--title <text>", "title (one task only)")
+      .option("--set-status <name>", "new status: the same as --status, which filters tasks with --project")
+      .option("--set-priority <0-4>", "new priority: the same as --priority, which filters with --project")
+      .option("--set-assign <handle>", "new assignees: the same as --assign; repeatable or comma-separated", collect)
+      .option("--set-tag <name>", "new tags: the same as --tag, which filters with --project; repeatable or comma-separated", collect)
+      .option("--set-parent <key>", 'new parent: the same as --parent, which filters with --project ("" makes them top-level)')
+      .option("--project <key>", "update the tasks of this project matching --status, --parent, --assignee, --tag, --priority")
+      .option("--assignee <handle>", 'with --project: assigned to any of these, "me", "mine" or "none"; repeatable or comma-separated', collect)
+      .option("--any-tag", "with --project and --tag: any of the tags instead of all")
+      .option("--yes", "with --project: apply the changes (without it, only list what would change)")
+      .option("--dry-run", "list what would change without changing anything"),
+  ).action(async (keys: string[], opts: TaskUpdateOptions) => {
+    if (opts.project !== undefined) {
+      // Filter mode: the task-field flags select tasks; changes come only from --set-*.
+      if (keys.length > 0) throw usageError("Pass task keys or --project with filters, not both");
+      for (const [flag, value] of [["--title", opts.title], ["--description", opts.description], ["--assign", opts.assign]] as const) {
+        if (value !== undefined) {
+          throw usageError(`${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag and --set-parent`);
+        }
+      }
+      if (opts.parent !== undefined && !parseTaskKey(opts.parent.trim())) {
+        throw usageError(`Invalid task key "${opts.parent}" in --parent. Expected something like ST-12`);
+      }
+      const filter: BulkUpdateTasksInput["filter"] = {
+        project: opts.project.toUpperCase(),
+        status: opts.status === undefined ? undefined : [opts.status],
+        parent: opts.parent?.trim(),
+        assignee: opts.assignee,
+        tags: opts.tag,
+        tagMatch: opts.anyTag ? "any" : undefined,
+        priority: opts.priority?.split(",").map(parsePriority),
+      };
+      const changes = { status: opts.setStatus, priority: opts.setPriority, assign: opts.setAssign, tag: opts.setTag, parent: opts.setParent };
+      await bulkUpdate({ filter }, changes, opts.dryRun === true || !opts.yes, {
+        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag or --set-parent",
+        apply: opts.dryRun ? undefined : "Run again with --yes to apply.",
+      }, opts);
+      return;
+    }
+
+    if (opts.assignee !== undefined || opts.anyTag) {
+      throw usageError("--assignee and --any-tag filter tasks; use them with --project (--assign sets the assignees)");
+    }
+    // Outside filter mode, --status and --set-status (and the others) both set the field.
+    const pick = (name: string, plain: string | undefined, set: string | undefined) => {
+      if (plain !== undefined && set !== undefined) throw usageError(`Pass --${name} or --set-${name}, not both`);
+      return set ?? plain;
+    };
+    const pickList = (name: string, plain: string[] | undefined, set: string[] | undefined) => {
+      if (plain !== undefined && set !== undefined) throw usageError(`Pass --${name} or --set-${name}, not both`);
+      return set ?? plain;
+    };
+    const changes: TaskChanges = {
+      status: pick("status", opts.status, opts.setStatus),
+      priority: pick("priority", opts.priority, opts.setPriority),
+      assign: pickList("assign", opts.assign, opts.setAssign),
+      tag: pickList("tag", opts.tag, opts.setTag),
+      parent: pick("parent", opts.parent, opts.setParent),
+    };
+
+    if (keys.length <= 1 && !opts.dryRun) {
+      const resolved = taskKey(keys[0], cwd, git);
+      const input = await taskInput(projectKeyOf(resolved), { ...opts, ...changes });
+      if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --title, --status, --assign, …");
+      await update(resolved, input, opts);
+      return;
+    }
+
+    if (opts.title !== undefined || opts.description !== undefined) {
+      throw usageError("--title and --description change one task at a time");
+    }
+    const resolvedKeys = keys.length ? keys.map((k) => taskKey(k, cwd, git)) : [taskKey(undefined, cwd, git)];
+    await bulkUpdate({ keys: resolvedKeys }, changes, opts.dryRun === true, { nothing: "Nothing to update. Pass --status, --priority, --assign, --tag or --parent" }, opts);
   });
 
   /**
@@ -1315,8 +1515,10 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const name = branchNameFor(key, title);
     if (isDirty(cwd, git)) stderr.write("Warning: the working tree has uncommitted changes; they move to the new branch.\n");
     try {
-      const { created } = createOrSwitchBranch(cwd, name, git);
-      return { branch: name, note: `${created ? "Created and switched to" : "Switched to"} branch ${name}` };
+      const { created, tracking } = createOrSwitchBranch(cwd, name, git);
+      const from = current ?? "a detached HEAD";
+      const what = tracking ? `new branch ${name} tracking ${tracking}` : created ? `new branch ${name}` : `existing branch ${name}`;
+      return { branch: name, note: `Git: switched ${cwd} from ${from} to ${what} (--no-branch leaves git alone)` };
     } catch (err) {
       stderr.write(`Warning: couldn't switch to branch ${name}: ${err instanceof Error ? err.message : String(err)}\n`);
       return { branch: null };

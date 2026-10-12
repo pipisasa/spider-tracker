@@ -5,6 +5,7 @@ import type { ActorContext, DocumentSummaryDto, ProjectDetailDto, StatusDto, Tas
 import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
+  MAX_BULK_TASKS,
   addComment,
   archiveProject,
   authenticateApiKey,
@@ -34,6 +35,7 @@ import {
   markInboxRead,
   updateProject,
   updateTask,
+  updateTasks,
   webUrls,
 } from "@repo/core";
 import type { Db, schema } from "@repo/db";
@@ -396,6 +398,80 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
         });
         return describeTask(task, project, true);
+      }),
+  );
+
+  server.registerTool(
+    "update_tasks",
+    {
+      description: `Update several tasks at once: by keys (any projects) or by a filter in one project, at most ${MAX_BULK_TASKS}. Only the fields you pass change; assignees and tags replace the whole list. Returns one result per task (changed, unchanged or error with the reason); one task failing doesn't stop the others. Use dryRun to see what would change first.`,
+      inputSchema: {
+        keys: z.array(z.string()).min(1).max(MAX_BULK_TASKS).optional().describe('Task keys, e.g. ["ST-2", "ST-3"]; or use filter'),
+        filter: z
+          .object({
+            projectKey: z.string().describe('Project key, e.g. "ST"'),
+            parent: z.string().optional().describe('Only direct sub-tasks of this task key, e.g. "ST-1"'),
+            status: oneOrMany.optional().describe("Current status: id, name or category; an array matches any"),
+            assignee: oneOrMany.optional().describe('"me", "mine", "none" or a handle; an array matches any'),
+            tags: z.array(z.string()).max(20).optional().describe('Tag names; all of them unless tagMatch is "any"'),
+            tagMatch: tagMatchSchema.optional(),
+            priority: z.array(priority).max(5).optional().describe("Any of these priorities"),
+            query: z.string().optional().describe("Case-insensitive text to find in titles"),
+          })
+          .optional()
+          .describe(`Tasks to change, as in list_tasks; fails if more than ${MAX_BULK_TASKS} match`),
+        status: z.string().optional().describe("New status name or category, matched in each task's project; see get_project"),
+        priority: priority.optional(),
+        assignees: assigneesInput.optional(),
+        tags: tagsInput.optional(),
+        parent: z.string().nullable().optional().describe("New parent task key; null makes them top-level tasks"),
+        dryRun: z.boolean().optional().describe("Report what would change without changing anything"),
+      },
+    },
+    ({ keys, filter, status, priority, assignees, tags, parent, dryRun }) =>
+      run(async () => {
+        const result = await updateTasks(db, ctx, {
+          keys,
+          filter: filter && {
+            project: filter.projectKey,
+            parent: filter.parent,
+            status: filter.status === undefined ? undefined : [filter.status].flat(),
+            assignee: filter.assignee === undefined ? undefined : [filter.assignee].flat(),
+            tags: filter.tags,
+            tagMatch: filter.tagMatch,
+            priority: filter.priority,
+            q: filter.query,
+          },
+          set: {
+            status,
+            priority,
+            assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
+            tagIds: tags ? await resolveTags(tags) : undefined,
+            parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
+          },
+          dryRun,
+        });
+        const projects = new Map<string, Promise<ProjectDetailDto>>();
+        const projectOf = (taskKey: string) => {
+          const projectKey = taskKey.split("-")[0] ?? "";
+          let project = projects.get(projectKey);
+          if (!project) {
+            project = getProject(db, ctx, projectKey);
+            projects.set(projectKey, project);
+          }
+          return project;
+        };
+        return {
+          dryRun: result.dryRun,
+          summary: result.summary,
+          results: await Promise.all(
+            result.results.map(async ({ key: taskKey, outcome, task, error }) =>
+              task
+                ? { outcome, ...(await describeTask(task, await projectOf(task.key))) }
+                : { key: taskKey, outcome, error: error?.message },
+            ),
+          ),
+        };
       }),
   );
 

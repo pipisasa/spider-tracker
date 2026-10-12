@@ -58,12 +58,21 @@ function fakeApi(overrides: Record<string, () => Response> = {}) {
   return { fetch, requests };
 }
 
+/** The default git for `cli()`: tests that need git inject a fake, so none runs real git in the runner's directory. */
+const noGit: GitRunner = (args) => {
+  throw new Error(`test ran git ${args.join(" ")} without injecting a fake git`);
+};
+
+/** A git runner for a directory that is not a repository. */
+const notARepo: GitRunner = () => ({ exitCode: 128, stdout: "", stderr: "fatal: not a git repository" });
+
 async function cli(argv: string[], options: Partial<RunOptions> = {}) {
   let stdout = "";
   let stderr = "";
   const code = await run(argv, {
     env: { SPIDER_TOKEN: "spt_secret", SPIDER_API_URL: "https://api.test" },
     fetch: fakeApi().fetch,
+    git: noGit,
     stdout: { write: (s: string) => (stdout += s) },
     stderr: { write: (s: string) => (stderr += s) },
     ...options,
@@ -107,14 +116,9 @@ describe("exit codes", () => {
   });
 
   test("2 when the key is omitted and the branch has none", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "spider-cli-"));
-    try {
-      const result = await cli(["task", "view"], { cwd: dir });
-      expect(result.code).toBe(2);
-      expect(result.stderr).toContain("No task key given");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const result = await cli(["task", "view"], { git: notARepo, cwd: "/work" });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("No task key given");
   });
 
   test("mcp-headers prints the Authorization header for Claude Code", async () => {
@@ -211,7 +215,7 @@ function savedAgents() {
 }
 
 /** A fake git repository: records commands and answers the ones `spider start` runs. */
-function fakeGit({ repo = true, branch = "main", branches = ["main"], dirty = false, failSwitch = false } = {}) {
+function fakeGit({ repo = true, branch = "main", branches = ["main"], remote = [] as string[], dirty = false, failSwitch = false } = {}) {
   const state = { branch, branches: new Set(branches) };
   const calls: string[] = [];
   const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
@@ -222,12 +226,18 @@ function fakeGit({ repo = true, branch = "main", branches = ["main"], dirty = fa
     if (!repo) return fail("fatal: not a git repository");
     const [command, ...rest] = args;
     if (command === "rev-parse" && rest[0] === "--is-inside-work-tree") return ok("true\n");
-    if (command === "rev-parse") return state.branches.has(rest.at(-1)?.replace("refs/heads/", "") ?? "") ? ok() : fail();
+    if (command === "rev-parse") {
+      const ref = rest.at(-1) ?? "";
+      const found = ref.startsWith("refs/remotes/origin/")
+        ? remote.includes(ref.slice("refs/remotes/origin/".length))
+        : state.branches.has(ref.replace("refs/heads/", ""));
+      return found ? ok() : fail();
+    }
     if (command === "branch") return ok(`${state.branch}\n`);
     if (command === "status") return ok(dirty ? " M src/index.ts\n" : "");
     if (command === "switch") {
       if (failSwitch) return fail("error: Your local changes would be overwritten by checkout");
-      const name = rest.at(-1) ?? "";
+      const name = rest[0] === "-c" ? (rest[1] ?? "") : (rest[0] ?? "");
       if (rest[0] === "-c") state.branches.add(name);
       state.branch = name;
       return ok();
@@ -253,8 +263,17 @@ describe("spider start", () => {
     expect(result.code).toBe(0);
     expect(state.branch).toBe("st-1-write-the-cli");
     expect(calls).toContain("switch -c st-1-write-the-cli");
-    expect(result.stdout).toContain("Created and switched to branch st-1-write-the-cli");
+    expect(result.stdout).toContain("Git: switched /work from main to new branch st-1-write-the-cli (--no-branch leaves git alone)");
     expect(result.stderr).toBe("");
+  });
+
+  test("a branch only on origin is tracked, not created from HEAD", async () => {
+    const { git, calls, state } = fakeGit({ remote: ["st-1-write-the-cli"] });
+    const result = await start(["start", "ST-1"], git);
+    expect(result.code).toBe(0);
+    expect(calls).toContain("switch -c st-1-write-the-cli --track origin/st-1-write-the-cli");
+    expect(state.branch).toBe("st-1-write-the-cli");
+    expect(result.stdout).toContain("from main to new branch st-1-write-the-cli tracking origin/st-1-write-the-cli");
   });
 
   test("an existing branch is switched to, not created; --json has the branch", async () => {
@@ -480,11 +499,15 @@ describe("saved agents", () => {
         self,
       });
       expect(started.code).toBe(7);
+      expect(started.stderr).toContain("Permission mode: auto (spider default)\n");
+      expect(started.stderr).toContain("confirm development channels");
       const [first] = launched;
       expect(first?.argv).toEqual([
         "claude",
         "--model",
         "opus",
+        "--permission-mode",
+        "auto",
         "--agent",
         "code-reviewer",
         "--mcp-config",
@@ -536,6 +559,77 @@ describe("saved agents", () => {
       expect(launched[2]?.env.SPIDER_AGENT).toBe("local/acme/writer");
       expect(launched[2]?.argv).not.toContain("--agent");
       expect(JSON.parse(launched[2]?.config ?? "").mcpServers.spider.url).toBe("http://localhost:4000/mcp");
+    } finally {
+      cleanup();
+    }
+  });
+  test("claude starts in an explicit permission mode: the option, claude's own, the agent's, else auto", async () => {
+    const { env, cleanup } = savedAgents();
+    const launched: string[][] = [];
+    const spawn: RunOptions["spawn"] = async (argv) => (launched.push(argv), 0);
+    const self = ["spider"];
+    const modeOf = (argv: string[] | undefined) => argv?.[argv.indexOf("--permission-mode") + 1];
+    try {
+      const flag = await cli(["claude", "reviewer", "--permission-mode", "acceptEdits"], { env, spawn, self });
+      expect(modeOf(launched[0])).toBe("acceptEdits");
+      expect(flag.stderr).toContain("Permission mode: acceptEdits (--permission-mode)\n");
+
+      // Claude's own flag after -- is kept as given, not doubled.
+      const passed = await cli(["claude", "reviewer", "--", "--permission-mode", "plan"], { env, spawn, self });
+      expect(launched[1]?.filter((a) => a === "--permission-mode")).toHaveLength(1);
+      expect(modeOf(launched[1])).toBe("plan");
+      expect(passed.stderr).toContain("Permission mode: plan (claude arguments)\n");
+      await cli(["claude", "reviewer", "--", "--dangerously-skip-permissions"], { env, spawn, self });
+      expect(launched[2]).not.toContain("--permission-mode");
+
+      // Both: a usage error, nothing started.
+      const both = await cli(["claude", "reviewer", "--permission-mode", "auto", "--", "--permission-mode", "plan"], { env, spawn, self });
+      expect(both.code).toBe(2);
+      expect(launched).toHaveLength(3);
+      expect((await cli(["claude", "reviewer", "--permission-mode", "yolo"], { env, spawn, self })).code).toBe(2);
+
+      // Saved per agent.
+      const set = await cli(["agents", "permission-mode", "reviewer", "manual", "--json"], { env });
+      expect(JSON.parse(set.stdout)).toEqual({ agent: "prod/acme/reviewer", permissionMode: "manual", effective: "manual" });
+      const saved = await cli(["claude", "reviewer"], { env, spawn, self });
+      expect(modeOf(launched[3])).toBe("manual");
+      expect(saved.stderr).toContain("Permission mode: manual (saved for this agent)\n");
+      await cli(["claude", "prod/acme/writer"], { env, spawn, self });
+      expect(modeOf(launched[4])).toBe("auto");
+      const listed = JSON.parse((await cli(["agents", "--json"], { env })).stdout) as { items: { agent: string; permissionMode: string | null }[] };
+      expect(listed.items.find((a) => a.agent === "prod/acme/reviewer")?.permissionMode).toBe("manual");
+
+      const cleared = await cli(["agents", "permission-mode", "reviewer", "--clear"], { env });
+      expect(cleared.stdout).toContain("starts in auto (the spider default)");
+      await cli(["claude", "reviewer"], { env, spawn, self });
+      expect(modeOf(launched[5])).toBe("auto");
+      expect((await cli(["agents", "permission-mode", "reviewer", "yolo"], { env })).code).toBe(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("claude warns about a settings hook whose script is gone", async () => {
+    const { home, env, cleanup } = savedAgents();
+    mkdirSync(join(home, ".claude", "hooks"), { recursive: true });
+    writeFileSync(join(home, ".claude", "hooks", "present.js"), "");
+    writeFileSync(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { hooks: [{ type: "command", command: `node "${join(home, ".claude", "hooks", "gone.js")}"` }] },
+            { hooks: [{ type: "command", command: "node ~/.claude/hooks/present.js" }] },
+          ],
+        },
+      }),
+    );
+    try {
+      const started = await cli(["claude", "reviewer", "--no-channel"], { env, spawn: async () => 0, self: ["spider"], cwd: home });
+      expect(started.code).toBe(0);
+      expect(started.stderr).toContain(`Warning: a SessionStart hook in ${join(home, ".claude", "settings.json")} runs ${join(home, ".claude", "hooks", "gone.js")}, which doesn't exist`);
+      expect(started.stderr).not.toContain("present.js");
+      expect(started.stderr).not.toContain("development channels");
     } finally {
       cleanup();
     }
@@ -593,7 +687,7 @@ describe("Claude Code plugins", () => {
       // spider claude starts it as the plugin agent.
       let launched: string[] = [];
       await cli(["claude", "builder"], { env, self: ["spider"], spawn: async (argv) => ((launched = argv), 0) });
-      expect(launched.slice(0, 3)).toEqual(["claude", "--agent", "spider-agents:prod:acme:builder"]);
+      expect(launched.slice(0, 5)).toEqual(["claude", "--permission-mode", "auto", "--agent", "spider-agents:prod:acme:builder"]);
 
       // remove --claude deletes it.
       const removed = await cli(["agents", "remove", "builder", "--claude", "--json"], { env });
