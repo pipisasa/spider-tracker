@@ -73,26 +73,26 @@ function ProjectPage() {
 
   return (
     <>
-      <header className="flex items-center gap-3 border-b px-6 py-3">
-        <h1 className="font-semibold">{project.name}</h1>
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3 md:px-6">
+        <h1 className="min-w-0 truncate font-semibold">{project.name}</h1>
         <span className="text-sm text-muted-foreground">{project.key}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <Button variant={view === "board" ? "secondary" : "ghost"} size="sm" asChild>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          <Button variant={view === "board" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
             <Link to="." search={(prev) => ({ ...prev, view: "board" })}>
               <KanbanIcon />
-              Board
+              <span className="max-sm:sr-only">Board</span>
             </Link>
           </Button>
-          <Button variant={view === "list" ? "secondary" : "ghost"} size="sm" asChild>
+          <Button variant={view === "list" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
             <Link to="." search={(prev) => ({ ...prev, view: "list" })}>
               <ListIcon />
-              List
+              <span className="max-sm:sr-only">List</span>
             </Link>
           </Button>
-          <Button variant={view === "docs" ? "secondary" : "ghost"} size="sm" asChild>
+          <Button variant={view === "docs" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
             <Link to="." search={{ view: "docs" }}>
               <FileTextIcon />
-              Docs
+              <span className="max-sm:sr-only">Docs</span>
             </Link>
           </Button>
           {view !== "docs" && (
@@ -109,9 +109,9 @@ function ProjectPage() {
           {view === "docs" ? (
             membership.actor.role !== "guest" &&
             !archived && (
-              <Button size="sm" className="ml-2" onClick={() => setNewDocumentOpen(true)}>
+              <Button size="sm" className="ml-2 max-md:h-10" onClick={() => setNewDocumentOpen(true)}>
                 <PlusIcon />
-                New document
+                <span className="max-sm:sr-only">New document</span>
               </Button>
             )
           ) : membership.actor.role === "guest" ? null : archived ? (
@@ -119,29 +119,29 @@ function ProjectPage() {
               <TooltipTrigger asChild>
                 {/* A disabled button swallows pointer events, so the span carries the tooltip. */}
                 <span className="ml-2" tabIndex={0}>
-                  <Button size="sm" disabled>
+                  <Button size="sm" disabled className="max-md:h-10">
                     <PlusIcon />
-                    New task
+                    <span className="max-sm:sr-only">New task</span>
                   </Button>
                 </span>
               </TooltipTrigger>
               <TooltipContent>This project is archived. Restore it to create tasks.</TooltipContent>
             </Tooltip>
           ) : (
-            <Button size="sm" className="ml-2" onClick={() => openNewTask()}>
+            <Button size="sm" className="ml-2 max-md:h-10" onClick={() => openNewTask()}>
               <PlusIcon />
-              New task
+              <span className="max-sm:sr-only">New task</span>
             </Button>
           )}
           {canManage && (
-            <Button variant="ghost" size="icon" aria-label="Project settings" onClick={() => setSettingsOpen(true)}>
+            <Button variant="ghost" size="icon" className="max-md:size-10" aria-label="Project settings" onClick={() => setSettingsOpen(true)}>
               <SettingsIcon />
             </Button>
           )}
         </div>
       </header>
       {archived && (
-        <div role="status" className="flex items-center gap-3 border-b bg-muted px-6 py-2 text-sm">
+        <div role="status" className="flex items-center gap-3 border-b bg-muted px-4 py-2 text-sm md:px-6">
           <span>This project is archived. Its tasks stay readable, but no new tasks can be created.</span>
           {canManage && (
             <Button
@@ -168,7 +168,7 @@ function ProjectPage() {
         />
       )}
       {view !== "docs" && filtered && (
-        <p role="status" className="border-b px-6 py-1.5 text-xs text-muted-foreground">
+        <p role="status" className="border-b px-4 py-1.5 md:px-6 text-xs text-muted-foreground">
           Showing {visibleTasks.length} of {tasks.length} tasks
         </p>
       )}
@@ -210,7 +210,7 @@ function ProjectPage() {
 function ProjectDocuments({ orgSlug, projectKey }: { orgSlug: string; projectKey: string }) {
   const { data: documents = [], isPending } = useQuery(documentsQuery(orgSlug, { project: projectKey }));
   return (
-    <main className="flex flex-col gap-3 overflow-y-auto px-6 py-4">
+    <main className="flex flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
       {!isPending && (
         <DocumentList
           orgSlug={orgSlug}

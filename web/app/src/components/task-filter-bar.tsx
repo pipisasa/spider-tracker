@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { actorLabel } from "@/lib/assignees";
 import { isEmptyFilters, toggleValue, type TaskFilters } from "@/lib/task-filters";
 import type { ActorDto, Priority, StatusDto, TagDto } from "@repo/core/contracts";
-import { CheckIcon, ChevronDownIcon, SearchIcon, XIcon, type LucideIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ListFilterIcon, SearchIcon, XIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 // Filter bar of the project page (ST-15): a text box, one multi-select per field, and chips
@@ -36,7 +36,7 @@ function MultiSelect({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" aria-label={`Filter by ${label.toLowerCase()}`}>
+        <Button variant="outline" size="sm" className="max-md:h-10" aria-label={`Filter by ${label.toLowerCase()}`}>
           {Icon && <Icon />}
           {label}
           {selected.length > 0 && <span className="rounded-full bg-secondary px-1.5 text-xs">{selected.length}</span>}
@@ -101,6 +101,7 @@ export function TaskFilterBar({
   meId: string;
 }) {
   // The text box is local and debounced into the URL; external changes (a saved view, Clear) reset it.
+  const [open, setOpen] = useState(false);
   const [text, setText] = useState(filters.q ?? "");
   useEffect(() => setText(filters.q ?? ""), [filters.q]);
   useEffect(() => {
@@ -123,19 +124,37 @@ export function TaskFilterBar({
     ...members.filter((m) => m.id !== meId).map((m) => ({ value: m.id, label: actorLabel(m) })),
   ];
 
+  const activeCount =
+    (filters.status?.length ?? 0) +
+    (filters.assignee?.length ?? 0) +
+    (filters.priority?.length ?? 0) +
+    (filters.tag?.length ?? 0) +
+    (filters.q ? 1 : 0);
+
   return (
-    <div role="search" aria-label="Filter tasks" className="flex flex-wrap items-center gap-2 border-b px-6 py-2">
-      <div className="relative">
+    <div role="search" aria-label="Filter tasks" className="flex flex-wrap items-center gap-2 border-b px-4 py-2 md:px-6">
+      <div className="relative max-md:min-w-0 max-md:flex-1">
         <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
           aria-label="Filter by title or key"
           placeholder="Filter tasks…"
-          className="h-8 w-48 pl-7"
+          className="h-10 w-full pl-7 md:h-8 md:w-48"
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
       </div>
+      <Button
+        variant="outline"
+        className="md:hidden h-10"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <ListFilterIcon />
+        Filters
+        {activeCount > 0 && <span className="rounded-full bg-secondary px-1.5 text-xs">{activeCount}</span>}
+      </Button>
+      <div className={`${open ? "flex" : "hidden"} w-full flex-wrap items-center gap-2 md:contents`}>
       <MultiSelect
         label="Status"
         options={statuses.map((s) => ({ value: s.id, label: s.name, icon: <StatusIcon status={s} /> }))}
@@ -201,6 +220,7 @@ export function TaskFilterBar({
           </Button>
         </>
       )}
+      </div>
     </div>
   );
 }

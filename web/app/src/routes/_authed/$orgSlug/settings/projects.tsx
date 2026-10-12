@@ -33,10 +33,10 @@ function ProjectsSettingsPage() {
 
   return (
     <>
-      <header className="border-b px-6 py-3">
+      <header className="border-b px-4 py-3 md:px-6">
         <h1 className="font-semibold">Projects</h1>
       </header>
-      <main className="flex max-w-2xl flex-col gap-6 px-6 py-4">
+      <main className="flex max-w-2xl flex-col gap-6 px-4 py-4 md:px-6">
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-medium">Active projects</h2>
           {projects.length === 0 && (

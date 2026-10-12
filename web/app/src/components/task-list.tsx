@@ -38,7 +38,7 @@ export function TaskList({
     <div className="flex flex-col pb-8">
       {groups.map(({ status, tasks: groupTasks }) => (
         <section key={status.id}>
-          <header className="flex items-center gap-2 border-b bg-muted/40 px-6 py-2 text-sm font-medium">
+          <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm font-medium md:px-6">
             <StatusIcon status={status} />
             {status.name}
             <span className="text-muted-foreground">{groupTasks.length}</span>
@@ -49,12 +49,16 @@ export function TaskList({
                 <Link
                   to="/$orgSlug/tasks/$taskKey"
                   params={{ orgSlug, taskKey: task.key }}
-                  className="flex items-center gap-3 px-6 py-2 text-sm hover:bg-muted/50"
+                  className="flex flex-col gap-1 px-4 py-2.5 text-sm hover:bg-muted/50 md:flex-row md:items-center md:gap-3 md:px-6 md:py-2"
                 >
-                  <PriorityIcon priority={task.priority} className="size-4 text-muted-foreground" />
-                  <span className="w-16 shrink-0 text-muted-foreground">{task.key}</span>
-                  <StatusIcon status={status} />
-                  <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                  <div className="flex min-w-0 items-center gap-3 md:flex-1">
+                    <PriorityIcon priority={task.priority} className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="w-16 shrink-0 text-muted-foreground">{task.key}</span>
+                    <StatusIcon status={status} className="size-4 hidden md:inline-block" />
+                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                  </div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pl-7 md:flex-nowrap md:pl-0">
+                  <StatusIcon status={status} className="size-4 md:hidden" />
                   {task.subtasks && (
                     <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                       <ListChecksIcon className="size-3.5" aria-hidden />
@@ -66,6 +70,7 @@ export function TaskList({
                   <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
                     {dateFormat.format(new Date(task.createdAt))}
                   </span>
+                  </div>
                 </Link>
               </li>
             ))}

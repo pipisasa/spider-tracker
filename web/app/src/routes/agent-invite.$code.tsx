@@ -41,7 +41,7 @@ function AgentInvitePage() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 md:px-6 md:py-10">
       <div>
         <Button onClick={copy}>
           {copied ? <CheckIcon /> : <CopyIcon />}
