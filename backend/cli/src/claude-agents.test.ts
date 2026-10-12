@@ -12,9 +12,13 @@ import { dirname, join } from "node:path";
 import {
   claudeAgentFor,
   claudeAgentTarget,
+  claudeAgentMarkdown,
+  refreshAgentFiles,
   removeClaudeAgents,
+  spiderSection,
   writeClaudeAgent,
 } from "./claude-agents";
+import { CLI_VERSION } from "./version";
 import type { AgentEntry } from "./credentials";
 
 const homes: string[] = [];
@@ -131,7 +135,7 @@ describe("Claude Code agents for saved agents", () => {
     expect(written?.path).toBe(join(agents, "prod", "acme", "bot.md"));
     const text = readFileSync(written?.path ?? "", "utf8");
     expect(text).toStartWith(
-      '---\nname: bot\ndescription: "Reviews: pull requests"\nspider-agent: prod/acme/bot\n---\n\nYou review code.\n\n## Spider Tracker\n',
+      `---\nname: bot\ndescription: "Reviews: pull requests"\nspider-agent: prod/acme/bot\nspider-generated: ${CLI_VERSION}\n---\n\nYou review code.\n\n<!-- spider:begin v=${CLI_VERSION} -->\n## Spider Tracker\n`,
     );
     expect(text).toContain("working in: ST (Spider)");
     expect(text).toContain("spider … --as bot --json");
@@ -187,5 +191,101 @@ describe("Claude Code agents for saved agents", () => {
     await removeClaudeAgents(env, entry("prod", "batele", "builder"));
     expect(existsSync(join(agents, "prod"))).toBe(false);
     expect(existsSync(agents)).toBe(true);
+  });
+});
+
+describe("refreshing generated agent sections", () => {
+  const role = {
+    description: "Reviews code",
+    prompt: "You review code.\n\nBe kind.",
+    projects: [{ key: "ST", name: "Spider" }],
+  };
+  const old = (version: string) =>
+    claudeAgentMarkdown(entry("prod", "acme", "bot"), "bot", role, version)
+      // Pretend the old template said something else.
+      .replace("Stay within your projects.", "Old wording.");
+  const preMarker = [
+    "---",
+    "name: rev",
+    'description: "Reviews"',
+    "spider-agent: prod/acme/rev",
+    "---",
+    "",
+    "You review.",
+    "",
+    "## Spider Tracker",
+    "",
+    "You are @rev in Spider Tracker (organization acme), working in: WEB (Web), ST (Spider).",
+    "",
+    "- Old bullet.",
+    "",
+  ].join("\n");
+
+  test("re-renders outdated sections, keeping frontmatter and role body", async () => {
+    const { env, agents, legacy } = setup(
+      {
+        "spider/rev.md": preMarker,
+        "mine.md": agentFile("mine"),
+        "custom.md": agentFile("custom", "prod/acme/custom"),
+      },
+      {
+        "prod/acme/bot.md": old("0.0.1"),
+        "prod/acme/new.md": old("99.0.0"),
+        "prod/acme/same.md": old(CLI_VERSION),
+      },
+    );
+    const results = await refreshAgentFiles(env);
+    const state = Object.fromEntries(
+      results.map((r) => [r.path.split("/").slice(-2).join("/"), r.state]),
+    );
+    expect(state).toEqual({
+      "acme/bot.md": "outdated",
+      "acme/new.md": "newer",
+      "acme/same.md": "current",
+      "spider/rev.md": "outdated",
+      "agents/custom.md": "unmanaged",
+    });
+
+    const bot = readFileSync(join(agents, "prod/acme/bot.md"), "utf8");
+    expect(bot).toBe(
+      claudeAgentMarkdown(entry("prod", "acme", "bot"), "bot", role),
+    );
+    expect(readFileSync(join(agents, "prod/acme/new.md"), "utf8")).toContain(
+      "Old wording.",
+    );
+    expect(readFileSync(join(agents, "prod/acme/same.md"), "utf8")).toContain(
+      "Old wording.",
+    );
+
+    const rev = readFileSync(join(legacy, "spider/rev.md"), "utf8");
+    expect(rev).toBe(
+      [
+        "---",
+        "name: rev",
+        'description: "Reviews"',
+        "spider-agent: prod/acme/rev",
+        `spider-generated: ${CLI_VERSION}`,
+        "---",
+        "",
+        "You review.",
+        "",
+        spiderSection({
+          agent: "rev",
+          org: "acme",
+          projects: "WEB (Web), ST (Spider)",
+        }),
+        "",
+      ].join("\n"),
+    );
+    expect(readFileSync(join(legacy, "custom.md"), "utf8")).toBe(
+      agentFile("custom", "prod/acme/custom"),
+    );
+    expect(readFileSync(join(legacy, "mine.md"), "utf8")).toBe(
+      agentFile("mine"),
+    );
+
+    // A second run has nothing left to do.
+    const again = await refreshAgentFiles(env);
+    expect(again.filter((r) => r.next !== undefined)).toEqual([]);
   });
 });

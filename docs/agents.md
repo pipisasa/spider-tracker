@@ -50,7 +50,7 @@ spider claude reviewer                            # Claude Code as that agent (p
   spider-agents/agents/<server>/<org>/<handle>.md
 ```
 
-Each file's frontmatter has `name` (the handle, or `<server>-<handle>` / `<server>-<org>-<handle>` if another agent file uses it), `description` and `spider-agent: <server/org/handle>`. Claude Code names nested plugin agents by folder, so it is `spider-agents:<server>:<org>:<name>`. After writing, the CLI runs `claude plugin marketplace add <dir>` and `claude plugin install spider-agents@spider-local --scope user` (both idempotent); a directory marketplace is read in place, so later files need no update, just a new session. Without `claude` on PATH the file is still written and the CLI says how to install Claude Code. `spider agents remove <agent> --claude` deletes the agent's files. Agent files from earlier versions (`~/.claude/agents/**` with `spider-agent:`) are still found by `spider claude` and removed by `--claude`. The key stays in the CLI's credentials file.
+Each file's frontmatter has `name` (the handle, or `<server>-<handle>` / `<server>-<org>-<handle>` if another agent file uses it), `description`, `spider-agent: <server/org/handle>` and `spider-generated: <cli version>`. The generated "Spider Tracker" section sits between `<!-- spider:begin v=<cli version> -->` and `<!-- spider:end -->`, so `spider update` can re-render just that part (see [Updating](#updating)). Claude Code names nested plugin agents by folder, so it is `spider-agents:<server>:<org>:<name>`. After writing, the CLI runs `claude plugin marketplace add <dir>` and `claude plugin install spider-agents@spider-local --scope user` (both idempotent); a directory marketplace is read in place, so later files need no update, just a new session. Without `claude` on PATH the file is still written and the CLI says how to install Claude Code. `spider agents remove <agent> --claude` deletes the agent's files. Agent files from earlier versions (`~/.claude/agents/**` with `spider-agent:`) are still found by `spider claude` and removed by `--claude`. The key stays in the CLI's credentials file.
 
 ### Onboarding an agent from an invite link
 The invite page tells the person to hand the link to Claude Code. Claude Code then:
@@ -67,7 +67,18 @@ This repo is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json`
 - the **`spider` MCP server** (`.mcp.json`, HTTP `https://tracker-api.batele.plus/mcp`, `headersHelper: spider mcp-headers`), so no secret is stored: the CLI prints the header for `SPIDER_TOKEN`, `SPIDER_AGENT` or the default saved agent. Claude Code namespaces it as `plugin:spider-tracker:spider`, so it never clashes with the `spider` server `spider claude` passes with `--mcp-config` (that one targets the agent's own server); in such a session both act as the same agent;
 - **`/spider-tracker:create-agent`** (above).
 
+- a **SessionStart hook** (`hooks/hooks.json`, on `startup`) running `spider update --check --hook` when `spider` is on PATH: silent when everything is current, otherwise it adds a short note to the session so Claude can tell the user and offer `spider update`.
+
 Install it with `spider setup claude`, or for a team with `spider setup claude --project`, which adds the marketplace and enables the plugin in `./.claude/settings.json` (`extraKnownMarketplaces`, `enabledPlugins`), keeping the other settings.
+
+### Updating
+`spider update` brings a machine up to date in one go:
+
+1. **The CLI**: the compiled binary downloads `spider-<os>-<arch>` from the latest `cli-v<version>` GitHub release next to itself, checks that it reports the new version, and renames it over the old one. Run from source, it says to `git pull` instead.
+2. **The shared plugin**: `claude plugin marketplace update spider-tracker` and `claude plugin update spider-tracker@spider-tracker` (skipped with a note when Claude Code or the plugin isn't installed). The private `spider-agents` plugin is a directory marketplace read in place, so it needs no update.
+3. **Agent files**: every agent file with `spider-agent:` (the private plugin's and older `~/.claude/agents/**` ones) whose generated section is older than the CLI gets that section re-rendered; the frontmatter and role are kept. Files from before the markers are fixed up when they end with a `## Spider Tracker` section; others are listed and left alone.
+
+Restart Claude Code sessions afterwards to load the updates. `spider update --check` only reports; the plugin's SessionStart hook runs the quiet `--hook` form. At a terminal, other commands print `A new spider is available: … Run: spider update` from a daily check (`SPIDER_NO_UPDATE_CHECK=1` or `CI` turns it off), and any command warns when the server's `X-Spider-Min-Cli` is newer than the CLI.
 
 ## Project scope
 

@@ -9,6 +9,7 @@ import type {
   WhoAmIResponse,
 } from "@repo/core/contracts";
 import { parseTaskKey } from "@repo/core/schemas";
+import { MIN_CLI_HEADER } from "@repo/core/version";
 import type { CreateTaskInput, UpdateDocumentInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
 import { Command, CommanderError } from "commander";
@@ -28,10 +29,11 @@ import {
   type AgentEntry,
   type Store,
 } from "./credentials";
-import { PLUGIN_ID, claudeAgentFor, linkedClaudeAgents, pluginRoot, removeClaudeAgents, scanClaudeAgents, writeClaudeAgent } from "./claude-agents";
+import { PLUGIN_ID, agentFileRefreshes, claudeAgentFor, refreshAgentFiles, linkedClaudeAgents, pluginRoot, removeClaudeAgents, scanClaudeAgents, writeClaudeAgent } from "./claude-agents";
 import {
   ClaudeCommandError,
   INSTALL_CLAUDE_HINT,
+  SHARED_MARKETPLACE,
   SHARED_PLUGIN_ID,
   installAgentsPlugin,
   installSharedPlugin,
@@ -39,8 +41,20 @@ import {
   writeProjectSettings,
   type RunClaude,
 } from "./claude-setup";
-import packageJson from "../package.json" with { type: "json" };
 import { currentBranch, taskKeyFromBranch } from "./git";
+import { isCompiled } from "./self-update";
+import { checkForUpdates } from "./update-check";
+import {
+  hookNote,
+  hookOutput,
+  installedPluginVersion,
+  noticeAllowed,
+  passiveNoticeFor,
+  startNotice,
+  updateReport,
+  type UpdateReport,
+} from "./update";
+import { CLI_VERSION, isNewer } from "./version";
 import {
   CliError,
   EXIT,
@@ -60,7 +74,7 @@ import {
 export { EXIT, type ExitCode } from "./resolve";
 
 export const DEFAULT_API_URL = "https://tracker-api.batele.plus";
-const VERSION = packageJson.version;
+const VERSION = CLI_VERSION;
 
 export interface Writer {
   write(chunk: string): unknown;
@@ -89,6 +103,12 @@ export interface RunOptions {
   self?: string[];
   /** Runs `claude <args>` capturing its output (plugin setup); undefined result when Claude Code is missing. */
   runClaude?: RunClaude;
+  /** Transport for update checks and downloads (GitHub); defaults to the global fetch. */
+  httpFetch?: FetchLike;
+  /** stderr is a terminal: allows the passive "a new spider is available" notice. */
+  isInteractive?: boolean;
+  /** Replaces this compiled binary with release `version`; omitted when running from source. */
+  selfUpdate?: (version: string) => Promise<unknown>;
 }
 
 export interface Choice {
@@ -107,8 +127,7 @@ interface Globals {
 
 /** How to run this CLI again: the compiled binary, or bun with this checkout's entry point. */
 export function selfInvocation(): string[] {
-  const compiled = Bun.main.startsWith("/$bunfs/") || /[\\/]~BUN[\\/]/.test(Bun.main);
-  return compiled ? [process.execPath] : [process.execPath, join(import.meta.dir, "index.ts")];
+  return isCompiled() ? [process.execPath] : [process.execPath, join(import.meta.dir, "index.ts")];
 }
 
 /** A task as the CLI prints it with --json: the API task plus its status and assignee handles. */
@@ -204,11 +223,11 @@ export function claudeMcpConfig(entry: AgentEntry, self: string[], channel: bool
   };
 }
 
-function connect(options: RunOptions, globals: Globals) {
+function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
   const credentials = credentialsFor(options, globals);
   credentials.catch(() => {});
   const ready = credentials.then(({ token, baseUrl }) =>
-    createClient({ baseUrl, token, source: "cli", fetch: options.fetch }),
+    createClient({ baseUrl, token, source: "cli", fetch: apiFetch }),
   );
   // Commands await `sdk()`; this only stops an early failure from being reported as unhandled.
   ready.catch(() => {});
@@ -325,6 +344,44 @@ function parseFormat(value: string): DocumentFormat {
   throw usageError(`Invalid format "${value}". Use md or html`);
 }
 
+/** newVersion from `claude plugin update --json` (its last line). */
+function updatedVersion(output: string): string | undefined {
+  const last = output.trim().split("\n").pop() ?? "";
+  try {
+    const parsed: unknown = JSON.parse(last);
+    if (typeof parsed === "object" && parsed !== null && "newVersion" in parsed && typeof parsed.newVersion === "string") {
+      return parsed.newVersion;
+    }
+  } catch {
+    // Not JSON: an older Claude Code.
+  }
+  return undefined;
+}
+
+/** `spider update --check` for people. */
+function reportLines(report: UpdateReport): string {
+  const { cli, plugin } = report;
+  const lines = [
+    `spider        ${cli.current}${cli.latest ? (cli.outdated ? ` → ${cli.latest} available` : " (latest)") : " (latest unknown)"}`,
+    `${plugin.id}  ${
+      plugin.installed === null
+        ? `not installed${plugin.latest ? ` (latest ${plugin.latest})` : ""}`
+        : `${plugin.installed}${plugin.latest ? (plugin.outdated ? ` → ${plugin.latest} available` : " (latest)") : " (latest unknown)"}`
+    }`,
+  ];
+  const outdated = report.agents.filter((a) => a.state === "outdated");
+  const unmanaged = report.agents.filter((a) => a.state === "unmanaged");
+  lines.push(
+    report.agents.length
+      ? `agent files   ${outdated.length ? `${outdated.length} of ${report.agents.length} need refreshing` : `${report.agents.length} up to date`}`
+      : "agent files   none",
+  );
+  for (const a of outdated) lines.push(`  ${a.path} (${a.version ? `v${a.version}` : "before version markers"})`);
+  for (const a of unmanaged) lines.push(`  ${a.path} (no generated section; left as is)`);
+  if (cli.outdated || plugin.outdated || outdated.length) lines.push("Run: spider update");
+  return lines.join("\n");
+}
+
 /** Builds the command tree for one run; actions write to the run's streams. */
 function buildProgram(options: RunOptions, cwd: string, argv: string[], json = false) {
   const { stdout, stderr } = options;
@@ -332,7 +389,21 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   /** Set by commands that run another program (`spider claude`) to its exit code. */
   const result: { exitCode?: number } = {};
   const globals = () => program.opts<Globals>();
-  const conn = () => (api ??= connect(options, globals()));
+  const conn = () => (api ??= connect(options, globals(), apiFetch));
+  const httpFetch: FetchLike = options.httpFetch ?? ((input, init) => fetch(input, init));
+  // Warns once per run when the server says this CLI is older than it supports.
+  let warnedMinCli = false;
+  const apiFetch: FetchLike = async (input, init) => {
+    const res = await (options.fetch ?? fetch)(input, init);
+    const min = res.headers.get(MIN_CLI_HEADER);
+    if (!warnedMinCli && min && isNewer(min, VERSION)) {
+      warnedMinCli = true;
+      stderr.write(
+        `This spider (${VERSION}) is older than the server supports (${min}); some commands may fail. Run: spider update\n`,
+      );
+    }
+    return res;
+  };
   const print = (text: string) => stdout.write(text.endsWith("\n") || text === "" ? text : `${text}\n`);
   const output = (opts: JsonOption, json: unknown, human: () => string) =>
     print(opts.json ? JSON.stringify(json) : human());
@@ -440,7 +511,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const store = await readStore(options.env);
       // An invite link names its server; a bare code goes to --server / SPIDER_API_URL / prod.
       const { key, server } = (!globals().server && serverForLink(store, code)) || serverFor(store);
-      const client = createClient({ baseUrl: server.url, source: "cli", fetch: options.fetch });
+      const client = createClient({ baseUrl: server.url, source: "cli", fetch: apiFetch });
       const accepted = await client.agentInvites.accept({
         code,
         name: opts.name,
@@ -497,7 +568,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   ).action(async (opts: JsonOption & { name: string; browser: boolean }) => {
     const store = await readStore(options.env);
     const { key, server } = serverFor(store);
-    const client = createClient({ baseUrl: server.url, fetch: options.fetch });
+    const client = createClient({ baseUrl: server.url, fetch: apiFetch });
     const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
     const code = await client.device.start(opts.name);
@@ -542,7 +613,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
 
   /** Revokes a saved agent's key on its server; one already revoked or deleted is fine. */
   const revoke = (entry: AgentEntry) =>
-    createClient({ baseUrl: entry.serverUrl, token: entry.saved.token, source: "cli", fetch: options.fetch })
+    createClient({ baseUrl: entry.serverUrl, token: entry.saved.token, source: "cli", fetch: apiFetch })
       .keys.revokeCurrent()
       .catch((err: unknown) => {
         if (!(err instanceof SpiderApiError) || (err.status !== 401 && err.status !== 404)) throw err;
@@ -691,6 +762,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
       const env: Record<string, string | undefined> = { ...options.env, SPIDER_AGENT: entry.ref };
       delete env.SPIDER_TOKEN;
+      if (noticeAllowed(argv, options.env, options.isInteractive)) await startNotice(options.env, httpFetch, (l) => stderr.write(l))();
       stderr.write(`Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`);
       try {
         result.exitCode = await options.spawn(command, { env });
@@ -732,6 +804,117 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       { scope: "user", claude: installed, marketplace: source, plugin: SHARED_PLUGIN_ID, agentsPlugin: installed && root ? PLUGIN_ID : null },
       () => (installed ? `Installed ${SHARED_PLUGIN_ID} (from ${source}) and ${PLUGIN_ID} for your user. Restart Claude Code to load them.` : ""),
     );
+  });
+
+  withJson(
+    program
+      .command("update")
+      .description(`update spider, the ${SHARED_PLUGIN_ID} Claude Code plugin and your agent files`)
+      .option("--check", "only report what is out of date")
+      .option("--hook", "with --check: quiet output for a Claude Code SessionStart hook"),
+  ).action(async (opts: JsonOption & { check?: boolean; hook?: boolean }) => {
+    if (opts.hook) {
+      // Runs at every session start: never fails, prints nothing unless something is out of date.
+      try {
+        const info = await checkForUpdates(options.env, httpFetch, { timeoutMs: 2000 });
+        const report = updateReport(info, await installedPluginVersion(options.env), await agentFileRefreshes(options.env));
+        const note = hookNote(report);
+        if (note) print(hookOutput(note));
+      } catch {
+        // Nothing to report.
+      }
+      return;
+    }
+    const info = await checkForUpdates(options.env, httpFetch, { force: true });
+    if (opts.check) {
+      const report = updateReport(
+        info,
+        await installedPluginVersion(options.env, options.runClaude),
+        await agentFileRefreshes(options.env),
+      );
+      output(opts, report, () => reportLines(report));
+      return;
+    }
+
+    const lines: string[] = [];
+    let failed = false;
+    let restart = false;
+
+    // The spider binary.
+    const cli: { from: string; to: string | null; updated: boolean; note?: string } = {
+      from: VERSION,
+      to: info.cli,
+      updated: false,
+    };
+    if (!info.cli) cli.note = "Couldn't find the latest spider release; try again later";
+    else if (!isNewer(info.cli, VERSION)) cli.note = `spider ${VERSION} is up to date`;
+    else if (!options.selfUpdate) cli.note = `spider ${info.cli} is available. Running from source: update with git pull`;
+    else {
+      try {
+        await options.selfUpdate(info.cli);
+        cli.updated = true;
+        cli.note = `Updated spider ${VERSION} → ${info.cli}`;
+      } catch (error) {
+        failed = true;
+        cli.note = `Couldn't update spider: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    lines.push(cli.note ?? "");
+
+    // The shared plugin, through Claude Code's own updater.
+    const installed = await installedPluginVersion(options.env, options.runClaude);
+    const plugin: { id: string; from: string | null; to: string | null; updated: boolean; note: string } = {
+      id: SHARED_PLUGIN_ID,
+      from: installed,
+      to: installed,
+      updated: false,
+      note: "",
+    };
+    if (!options.runClaude) plugin.note = `${SHARED_PLUGIN_ID}: Claude Code is not available here; skipped`;
+    else if (installed === null) plugin.note = `${SHARED_PLUGIN_ID} is not installed; run spider setup claude`;
+    else {
+      const steps = [
+        ["plugin", "marketplace", "update", SHARED_MARKETPLACE],
+        ["plugin", "update", SHARED_PLUGIN_ID, "--json"],
+      ];
+      for (const args of steps) {
+        const ran = await options.runClaude(args);
+        if (!ran) {
+          plugin.note = INSTALL_CLAUDE_HINT;
+          break;
+        }
+        if (ran.exitCode !== 0) {
+          failed = true;
+          plugin.note = `claude ${args.join(" ")} failed: ${ran.output.trim() || `exit ${ran.exitCode}`}`;
+          break;
+        }
+        if (args[1] === "update") plugin.to = updatedVersion(ran.output) ?? installed;
+      }
+      if (!plugin.note) {
+        plugin.updated = plugin.to !== installed;
+        restart ||= plugin.updated;
+        plugin.note = plugin.updated
+          ? `Updated ${SHARED_PLUGIN_ID} ${installed} → ${plugin.to}`
+          : `${SHARED_PLUGIN_ID} ${installed} is up to date`;
+      }
+    }
+    lines.push(plugin.note);
+
+    // Generated agent files.
+    const files = await refreshAgentFiles(options.env);
+    const refreshed = files.filter((f) => f.next !== undefined).map((f) => f.path);
+    const unmanaged = files.filter((f) => f.state === "unmanaged").map((f) => f.path);
+    restart ||= refreshed.length > 0;
+    lines.push(
+      refreshed.length
+        ? `Refreshed the Spider Tracker section of ${refreshed.length} agent file${refreshed.length === 1 ? "" : "s"}`
+        : "Agent files are up to date",
+    );
+    for (const path of unmanaged) lines.push(`  left as is (no generated Spider Tracker section): ${path}`);
+    if (restart) lines.push("Restart Claude Code sessions to load the updates.");
+
+    output(opts, { cli, plugin, agents: { refreshed, unmanaged }, restart }, () => lines.join("\n"));
+    if (failed) result.exitCode = EXIT.unexpected;
   });
 
   // For Claude Code's MCP `headersHelper`: prints {"Authorization": "Bearer …"} from the same
@@ -1100,6 +1283,17 @@ export async function run(argv: string[], options: RunOptions): Promise<number> 
     return err.exitCode;
   };
 
+  // The passive update notice: started now (no added latency), printed after the command.
+  const notice =
+    noticeAllowed(argv, options.env, options.isInteractive) && passiveNoticeFor(argv)
+      ? startNotice(options.env, options.httpFetch ?? ((input, init) => fetch(input, init)), (line) => options.stderr.write(line))
+      : undefined;
+  const code = await runProgram(argv, options, json, fail);
+  await notice?.().catch(() => {});
+  return code;
+}
+
+async function runProgram(argv: string[], options: RunOptions, json: boolean, fail: (err: CliError) => number) {
   try {
     const { program, result } = buildProgram(options, options.cwd ?? process.cwd(), argv, json);
     await program.parseAsync(argv, { from: "user" });

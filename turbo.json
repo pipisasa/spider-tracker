@@ -16,6 +16,7 @@
     "BATELE_ID_ISSUER",
     "SPIDER_TOKEN",
     "SPIDER_API_URL",
+    "SPIDER_NO_UPDATE_CHECK",
     "SIGNUP_ALLOWLIST"
   ],
   "tasks": {

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { styleText } from "node:util";
 import { Separator, select as inquirerSelect } from "@inquirer/prompts";
 import { run, type Choice } from "./cli";
+import { isCompiled, replaceBinary } from "./self-update";
 
 /** Best effort: open a URL in the default browser. */
 function openUrl(url: string) {
@@ -80,4 +81,6 @@ process.exitCode = await run(process.argv.slice(2), {
   select: interactive ? select : undefined,
   spawn: spawnInherit,
   runClaude,
+  isInteractive: !!process.stderr.isTTY,
+  selfUpdate: isCompiled() ? (version) => replaceBinary(version, (input, init) => fetch(input, init)) : undefined,
 });

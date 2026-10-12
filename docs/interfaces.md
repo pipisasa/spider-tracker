@@ -26,6 +26,7 @@ See [auth.md](./auth.md) for all flows.
 
 - Base path `/v1`; organization-scoped routes under `/v1/orgs/{orgSlug}` (members, projects, tasks). The spec at `/openapi.json` is the reference.
 - Errors are `{ "error": { "code", "message" } }` with status 400 / 401 / 403 / 404 / 409.
+- **Minimum CLI version:** `/v1/*` and `/mcp` responses carry `X-Spider-Min-Cli: <version>` (`MIN_CLI_VERSION` in `@repo/core`), the oldest `spider` CLI the server supports; `GET /health` returns it as `minCliVersion`. Older CLIs warn once per run (on stderr) and suggest `spider update`.
 - **Activity source:** browser sessions record `source = ui`. API-key clients record `api` by default and may declare `X-Spider-Source: cli | mcp | api`; other values are ignored.
 
 ### Comments and inbox
@@ -151,6 +152,15 @@ The organization is the key's (from `whoami`).
 
 `spider setup claude --project` doesn't call `claude`: it adds `extraKnownMarketplaces["spider-tracker"]` (`github`, `git` or `directory` source) and `enabledPlugins["spider-tracker@spider-tracker"]: true` to `./.claude/settings.json`, keeping everything else, so a team gets the plugin offered when they trust the project.
 
+### Updates
+`spider update [--check] [--hook] [--json]` (see [agents.md](./agents.md#updating)) checks the latest `cli-v*` GitHub release (`api.github.com/repos/pipisasa/spider-tracker/releases/latest`, else the newest `cli-v*` in the list) and the shared plugin's `plugin.json` on `main`, caching `{ checkedAt, cli, plugin }` in `<config dir>/update-check.json` (0600) for 24 hours.
+
+- `--check` re-checks (ignoring the cache) and reports the CLI (current, latest), the installed `spider-tracker@spider-tracker` (from `claude plugin list --json`, else `~/.claude/plugins/installed_plugins.json`) and each Spider agent file's state (`current`, `outdated`, `newer`, `unmanaged`). Exit `0`. `--json`: `{ checkedAt, cli: { current, latest, outdated }, plugin: { id, installed, latest, outdated }, agents: [{ path, agent, state, version }] }`.
+- `--hook` is for a Claude Code SessionStart hook: uses a fresh cache (else re-checks with a 2 s timeout), reads the plugin version from the file, never fails, prints nothing when everything is current and otherwise `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Spider Tracker: … Tell the user and offer to run `spider update` …"}}`.
+- Without flags it updates the binary (compiled only), the plugin (through `claude`) and the agent files, prints one line per part and exits `1` only if a step failed. `--json`: `{ cli: { from, to, updated, note }, plugin: { id, from, to, updated, note }, agents: { refreshed, unmanaged }, restart }`.
+
+**Passive notice:** when stderr is a terminal, after any command except `--json` runs, `mcp-headers`, `channel` and `update` (and before `spider claude` starts Claude Code), the CLI prints `A new spider is available: <current> → <latest>. Run: spider update` from the cache. A stale cache is refreshed in the background while the command runs; the CLI waits at most 300 ms more for it after the command. `SPIDER_NO_UPDATE_CHECK=1` or `CI` turns this off.
+
 ### Starting Claude Code as an agent
 `spider claude [agent] [--no-channel] [-- claude args…]` picks the agent (the argument, `--as`, a picker grouped server → organization when run at a terminal with several agents saved, else `SPIDER_AGENT` or the default) and runs:
 
@@ -174,6 +184,7 @@ with `SPIDER_AGENT=<server/org/handle>` set and `SPIDER_TOKEN` removed. The temp
 spider login [--name …] [--no-browser] [--server prod|local|URL]
 spider accept-invite <code|link> [--name …] [--handle …] [--description …] [--prompt …] [--no-claude] [--server …] [--default]
 spider setup claude [--project]     # install the spider-tracker plugin (user scope) or enable it in ./.claude/settings.json
+spider update [--check] [--hook]    # update the CLI, the spider-tracker plugin and agent files; --check only reports
 spider logout
 spider agents [list]                # saved agents by server and organization; * marks the default
 spider agents default <agent>

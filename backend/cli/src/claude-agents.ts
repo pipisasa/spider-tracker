@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { configDir, type AgentEntry } from "./credentials";
+import { CLI_VERSION, compareVersions } from "./version";
 
 // Claude Code agents that belong to saved Spider agents. New ones live in a private plugin the CLI
 // owns, <configDir>/claude-plugin: a local marketplace `spider-local` with one plugin
@@ -197,11 +198,42 @@ export interface AgentRole {
 const yamlString = (value: string) =>
   JSON.stringify(value.replace(/\s+/g, " ").trim());
 
+/** Who the generated section describes. */
+export interface SectionSubject {
+  agent: string;
+  org: string;
+  /** "ST (Spider Tracker), WEB (Web)" or "all projects". */
+  projects: string;
+}
+
+export const SECTION_END = "<!-- spider:end -->";
+const SECTION_PATTERN =
+  /<!-- spider:begin v=(\S+) -->[\s\S]*?<!-- spider:end -->/;
+
+/** The generated "Spider Tracker" section, between markers that record the CLI version that wrote it. */
+export function spiderSection(
+  subject: SectionSubject,
+  version = CLI_VERSION,
+): string {
+  return [
+    `<!-- spider:begin v=${version} -->`,
+    "## Spider Tracker",
+    "",
+    `You are @${subject.agent} in Spider Tracker (organization ${subject.org}), working in: ${subject.projects}.`,
+    "",
+    `- In sessions started with \`spider claude ${subject.agent}\`, act through the \`spider\` MCP tools (whoami, list_tasks, start_task, add_comment, …); your inbox (mentions, assignments, replies) arrives as \`<channel source="spider" …>\` messages — answer with the channel's \`reply\` tool.`,
+    `- For one-off CLI calls, use \`spider … --as ${subject.agent} --json\`.`,
+    "- Stay within your projects. Never put secrets (API keys, tokens, passwords) in tasks or comments.",
+    SECTION_END,
+  ].join("\n");
+}
+
 /** The agent file: frontmatter, the role, and how it works in Spider Tracker. */
 export function claudeAgentMarkdown(
   entry: AgentEntry,
   name: string,
   role: AgentRole,
+  version = CLI_VERSION,
 ): string {
   const projects = role.projects?.length
     ? role.projects.map((p) => `${p.key} (${p.name})`).join(", ")
@@ -211,19 +243,121 @@ export function claudeAgentMarkdown(
     `name: ${name}`,
     `description: ${yamlString(role.description)}`,
     `spider-agent: ${entry.ref}`,
+    `spider-generated: ${version}`,
     "---",
     "",
     role.prompt.trim(),
     "",
-    "## Spider Tracker",
-    "",
-    `You are @${entry.agent} in Spider Tracker (organization ${entry.org}), working in: ${projects}.`,
-    "",
-    `- In sessions started with \`spider claude ${entry.agent}\`, act through the \`spider\` MCP tools (whoami, list_tasks, start_task, add_comment, …); your inbox (mentions, assignments, replies) arrives as \`<channel source="spider" …>\` messages — answer with the channel's \`reply\` tool.`,
-    `- For one-off CLI calls, use \`spider … --as ${entry.agent} --json\`.`,
-    "- Stay within your projects. Never put secrets (API keys, tokens, passwords) in tasks or comments.",
+    spiderSection({ agent: entry.agent, org: entry.org, projects }, version),
     "",
   ].join("\n");
+}
+
+/**
+ * How an agent file's generated section compares with this CLI's: `current`, `outdated` (written
+ * by an older CLI, or before the markers), `newer` (by a newer CLI; left alone) or `unmanaged`
+ * (no markers and no "## Spider Tracker" section to replace).
+ */
+export type SectionState = "current" | "outdated" | "newer" | "unmanaged";
+
+export interface AgentFileRefresh {
+  path: string;
+  spider: string;
+  state: SectionState;
+  /** The version in the section's marker; null before markers. */
+  version: string | null;
+  /** The file with the section re-rendered; undefined unless outdated. */
+  next?: string;
+}
+
+/** Works out a Spider agent file's section state and, when outdated, its refreshed text. */
+export function refreshAgentText(
+  text: string,
+  spider: string,
+  version = CLI_VERSION,
+) {
+  const marked = SECTION_PATTERN.exec(text);
+  const old = marked ? marked[0] : headingSection(text);
+  const markerVersion = marked?.[1] ?? null;
+  if (old === undefined) return { state: "unmanaged" as const, version: null };
+  if (markerVersion !== null) {
+    const order = compareVersions(markerVersion, version);
+    if (order > 0) return { state: "newer" as const, version: markerVersion };
+    if (order === 0)
+      return { state: "current" as const, version: markerVersion };
+  }
+  const intro =
+    /You are @(\S+) in Spider Tracker \(organization ([^)]+)\), working in: (.*)\.\s*$/m.exec(
+      old,
+    );
+  const parts = spider.split("/");
+  const subject: SectionSubject = {
+    agent: parts[parts.length - 1] || intro?.[1] || spider,
+    org:
+      (parts.length > 1 ? parts[parts.length - 2] : undefined) ??
+      intro?.[2] ??
+      "",
+    projects: intro?.[3] || "all projects",
+  };
+  const body = text.replace(old, () => spiderSection(subject, version));
+  return {
+    state: "outdated" as const,
+    version: markerVersion,
+    next: withGeneratedField(body, version),
+  };
+}
+
+/** An unmarked section from before the markers: from "## Spider Tracker" to the end of the file. */
+function headingSection(text: string) {
+  const match = /^## Spider Tracker[ \t]*\r?\n[\s\S]*$/m.exec(text);
+  return match ? match[0].replace(/\s+$/, "") : undefined;
+}
+
+/** Sets `spider-generated: <version>` in the frontmatter, after `spider-agent`. */
+function withGeneratedField(text: string, version: string) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!front) return text;
+  const lines = front[1]!
+    .split(/\r?\n/)
+    .filter((l) => !/^spider-generated:/.test(l));
+  const at = lines.findIndex((l) => /^spider-agent:/.test(l));
+  lines.splice(
+    at >= 0 ? at + 1 : lines.length,
+    0,
+    `spider-generated: ${version}`,
+  );
+  return `---\n${lines.join("\n")}\n---${text.slice(front[0].length)}`;
+}
+
+/** Spider agent files (the private plugin's and legacy ~/.claude/agents ones) and their section state. */
+export async function agentFileRefreshes(
+  env: Env,
+  version = CLI_VERSION,
+): Promise<AgentFileRefresh[]> {
+  const files = (await scanClaudeAgents(env)).filter((f) => f.spider);
+  return Promise.all(
+    files.map(async (file) => {
+      const spider = file.spider ?? "";
+      const text = await readFile(file.path, "utf8");
+      return {
+        path: file.path,
+        spider,
+        ...refreshAgentText(text, spider, version),
+      };
+    }),
+  );
+}
+
+/** Re-renders the generated section of every outdated Spider agent file; returns all of them. */
+export async function refreshAgentFiles(
+  env: Env,
+  version = CLI_VERSION,
+): Promise<AgentFileRefresh[]> {
+  const refreshes = await agentFileRefreshes(env, version);
+  for (const refresh of refreshes) {
+    if (refresh.next !== undefined) await writeFile(refresh.path, refresh.next);
+  }
+  return refreshes;
 }
 
 /** Writes (or replaces) this saved agent's Claude Code agent in the private plugin. */
