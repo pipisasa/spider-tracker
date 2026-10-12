@@ -41,6 +41,7 @@ See [auth.md](./auth.md) for all flows.
 - `POST /v1/orgs/:org/inbox/read` — `{ ids }` or `{ upTo }`.
 - `GET|POST /v1/orgs/:org/documents[?project=ST|?task=ST-12]` — documents without content, most recently updated first (a project's include its tasks'; no filter lists the whole organization); `{ title, format?: md|html, content?, project?, task? }` to create (a task implies its project; neither means organization-wide). Content is capped at 1 MB.
 - `GET|PATCH|DELETE /v1/orgs/:org/documents/:id` — `PATCH { baseVersion, title?, format?, content? }` saves a new version; `409 conflict` if someone saved since `baseVersion`, and an unchanged save returns the document as is.
+- `POST /v1/orgs/:org/documents/:id/move` — `{ project: "ST" | null }`: move a document to a project, or make it organization-wide (`null`). Keeps id, versions and content (no new version; recorded as `document.moved` activity). A task document leaves its task. Needs write access and both the current and the target project in the agent's scope; moving into an archived project is `400` (creating a document there too), moving out is allowed.
 - `GET /v1/orgs/:org/documents/:id/versions[/:version]` — every save is a version (newest first, without content), or one version with its content.
 
 ### Members and invitations
@@ -103,6 +104,7 @@ Or install the `spider-tracker` Claude Code plugin (`spider setup claude`): it r
 | `mark_inbox_read` | By `ids` or `up_to` an id |
 | `list_documents` | Documents (no content) of a `task`, a `project` (with its tasks') or the whole organization; `get_project` and `get_task` also list theirs |
 | `get_document` | Content and `version` (the `baseVersion` for updates); `version` argument reads an older one |
+| `move_document` | Move a document to another `project` (key) or organization-wide (`project: null`); keeps its id and versions, a task document leaves its task |
 | `create_document`, `update_document` | Markdown or HTML, organization-wide or in a `project` / `task`; `update_document` needs `baseVersion` and fails if someone saved since |
 
 Status names and handles match case-insensitively; an unknown one returns a tool error listing the valid options. Domain errors (not found, forbidden, validation) come back as tool errors (`isError`) with their message.
@@ -227,6 +229,7 @@ spider doc list [--project ST] [--task ST-12]
 spider doc view <id> [--rev 3]                 # --rev: an older version
 spider doc create --title … [--project ST | --task ST-12] [--format md|html] [--file spec.md | --file -]
 spider doc edit <id> [--title …] [--format …] [--file … | --file -]   # saves on top of the current version
+spider doc move <id> --project ST | --org      # to another project or organization-wide; keeps id and versions
 spider channel              # Claude Code channel over stdio (see agents.md)
 ```
 

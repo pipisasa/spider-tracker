@@ -9,10 +9,11 @@ import {
   getDocumentVersion,
   listDocuments,
   listDocumentVersions,
+  moveDocument,
   updateDocument,
 } from "./documents";
 import { createOrganization } from "./organizations";
-import { createProject } from "./projects";
+import { archiveProject, createProject } from "./projects";
 import { createTask, deleteTask } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -240,5 +241,73 @@ run("documents", () => {
     expect(
       (await listDocuments(db, ctx.orgId)).map((d) => d.title),
     ).not.toContain("On gone task");
+  });
+
+  test("moves keep id and versions; task documents leave their task; activity is recorded", async () => {
+    const doc = await createDocument(db, ctx, { title: "Plan", project: "SPI" });
+    await updateDocument(db, ctx, doc.id, { baseVersion: 1, content: "v2" });
+
+    const moved = await moveDocument(db, ctx, doc.id, { project: "oth" });
+    expect(moved).toMatchObject({ id: doc.id, projectKey: "OTH", taskKey: null, version: 2, content: "v2" });
+    expect(await listDocumentVersions(db, ctx, doc.id)).toHaveLength(2);
+    expect((await listDocuments(db, ctx, { project: "SPI" })).map((d) => d.id)).not.toContain(doc.id);
+    expect((await listDocuments(db, ctx, { project: "OTH" })).map((d) => d.id)).toContain(doc.id);
+
+    // Already there: nothing changes.
+    await moveDocument(db, ctx, doc.id, { project: "OTH" });
+
+    const orgWide = await moveDocument(db, ctx, doc.id, { project: null });
+    expect(orgWide).toMatchObject({ id: doc.id, projectKey: null, taskKey: null, version: 2 });
+
+    const entries = await db
+      .select()
+      .from(schema.activity)
+      .where(and(eq(schema.activity.entityId, doc.id), eq(schema.activity.action, "document.moved")));
+    expect(entries.map((e) => e.changes)).toEqual([
+      { title: "Plan", project: ["SPI", "OTH"] },
+      { title: "Plan", project: ["OTH", null] },
+    ]);
+
+    const onTask = await createDocument(db, ctx, { title: "Task doc", task: "SPI-1" });
+    const detached = await moveDocument(db, ctx, onTask.id, { project: "SPI" });
+    expect(detached).toMatchObject({ projectKey: "SPI", taskKey: null });
+    await expect(moveDocument(db, ctx, doc.id, { project: "NOPE" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(moveDocument(db, { ...ctx, role: "guest" }, doc.id, { project: "SPI" })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+  });
+
+  test("scoped agents need access to both the source and the target", async () => {
+    const [agent] = await db
+      .insert(schema.actors)
+      .values({ orgId: ctx.orgId, type: "agent", name: "Scoped", handle: `scoped-${Date.now()}` })
+      .returning();
+    if (!agent) throw new Error("no agent");
+    const [spi] = await db.select().from(schema.projects).where(and(eq(schema.projects.orgId, ctx.orgId), eq(schema.projects.key, "SPI")));
+    if (!spi) throw new Error("no project");
+    await db.insert(schema.agentProjects).values({ agentId: agent.id, projectId: spi.id });
+    const scoped: ActorContext = { ...ctx, actorId: agent.id, role: "member", source: "mcp" };
+
+    const inOther = await createDocument(db, ctx, { title: "Hidden", project: "OTH" });
+    const inSpi = await createDocument(db, ctx, { title: "Visible", project: "SPI" });
+    await expect(moveDocument(db, scoped, inOther.id, { project: "SPI" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(moveDocument(db, scoped, inSpi.id, { project: "OTH" })).rejects.toMatchObject({ code: "not_found" });
+    expect(await moveDocument(db, scoped, inSpi.id, { project: null })).toMatchObject({ projectKey: null });
+  });
+
+  test("documents can't be created or moved into an archived project, but can leave one", async () => {
+    await createProject(db, ctx, { name: "Old", key: "OLD" });
+    const inOld = await createDocument(db, ctx, { title: "Legacy", project: "OLD" });
+    const free = await createDocument(db, ctx, { title: "Free" });
+    await archiveProject(db, ctx, "OLD", true);
+    await expect(createDocument(db, ctx, { title: "New", project: "OLD" })).rejects.toMatchObject({
+      code: "validation",
+      message: "Project OLD is archived",
+    });
+    await expect(moveDocument(db, ctx, free.id, { project: "OLD" })).rejects.toMatchObject({
+      code: "validation",
+      message: "Project OLD is archived",
+    });
+    expect(await moveDocument(db, ctx, inOld.id, { project: "SPI" })).toMatchObject({ projectKey: "SPI" });
   });
 });

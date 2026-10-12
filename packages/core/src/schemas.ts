@@ -217,6 +217,13 @@ export const updateDocumentInput = z.object({
 
 export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
 
+/** `project` is the target project key, or null to make the document organization-wide. */
+export const moveDocumentInput = z.object({
+  project: z.string().trim().min(1).nullable(),
+});
+
+export type MoveDocumentInput = z.infer<typeof moveDocumentInput>;
+
 /** `task` lists a task's documents; `project` a project's, including its tasks'; neither, the whole organization's. */
 export const documentListQuery = z.object({
   project: z.string().trim().min(1).optional(),

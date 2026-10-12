@@ -14,6 +14,7 @@ import {
   markInboxReadInput,
   updateAgentInput,
   updateDocumentInput,
+  moveDocumentInput,
   updateProjectInput,
   updateTaskInput,
 } from "@repo/core/schemas";
@@ -157,6 +158,7 @@ const schemas: Record<string, JsonSchema> = {
   DocumentVersionList: listOf("DocumentVersionSummary"),
   CreateDocumentInput: fromZod(createDocumentInput),
   UpdateDocumentInput: fromZod(updateDocumentInput),
+  MoveDocumentInput: fromZod(moveDocumentInput),
   Invitation: object({
     id: string({ format: "uuid" }),
     code: string({ examples: ["ABCD-EFGH"], description: "Accepted with or without the dash, in any case" }),
@@ -566,6 +568,15 @@ const paths = {
       responses: { "200": ok("Updated document", "Document"), ...errors },
     },
     delete: { operationId: "deleteDocument", summary: "Delete a document", responses: { "204": { description: "Deleted" }, ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/move": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    post: {
+      operationId: "moveDocument",
+      summary: "Move a document to a project (key), or make it organization-wide (null); keeps id and versions, detaches it from a task",
+      requestBody: body("MoveDocumentInput"),
+      responses: { "200": ok("Moved document", "Document"), ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/versions": {
     parameters: [orgSlug, pathParam("documentId", "Document id")],

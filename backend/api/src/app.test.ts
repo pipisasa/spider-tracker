@@ -390,6 +390,17 @@ withDb("SDK and client-declared source", () => {
     expect(await client.documents.get(slug, doc.id).catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
+  test("POST /documents/:id/move makes a document organization-wide and back, keeping its versions", async () => {
+    const client = sdk();
+    const doc = await client.documents.create(slug, { title: "Movable", project: "SPI", content: "v1" });
+    await client.documents.update(slug, doc.id, { baseVersion: 1, content: "v2" });
+    expect(await client.documents.move(slug, doc.id, { project: null })).toMatchObject({ id: doc.id, projectKey: null, version: 2 });
+    expect(await client.documents.move(slug, doc.id, { project: "SPI" })).toMatchObject({ projectKey: "SPI", content: "v2" });
+    expect((await client.documents.versions.list(slug, doc.id)).items).toHaveLength(2);
+    expect(await client.documents.move(slug, doc.id, { project: "NOPE" }).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    await client.documents.delete(slug, doc.id);
+  });
+
   test("API-key clients declare their source; unknown values fall back to api", async () => {
     const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", { title: "From the CLI" });
     const raw = await app.request(`/v1/orgs/${slug}/projects/SPI/tasks`, {

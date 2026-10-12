@@ -106,6 +106,7 @@ withDb("MCP server", () => {
         "create_task",
         "get_document",
         "list_documents",
+        "move_document",
         "update_document",
         "update_project",
         "get_inbox",
@@ -221,6 +222,10 @@ withDb("MCP server", () => {
     const listed = JSON.parse((await call(client, "list_documents", { task: "SPI-1" })).text) as { title: string }[];
     expect(listed.map((d) => d.title)).toEqual(["Notes"]);
     expect((await call(otherClient, "get_document", { id: doc.id })).isError).toBe(true);
+
+    const orgWide = await call(client, "move_document", { id: doc.id, project: null });
+    expect(orgWide.json()).toMatchObject({ id: doc.id, project: null, version: 2 });
+    expect((await call(client, "move_document", { id: doc.id, project: "NOPE" })).isError).toBe(true);
   });
 
   test("statuses can be given by category, like the CLI", async () => {

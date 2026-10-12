@@ -12,6 +12,7 @@ import {
   getDocument,
   getDocumentVersion,
   listDocuments,
+  moveDocument,
   updateDocument,
   createProject,
   createTask,
@@ -535,6 +536,19 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ id, baseVersion, title, content, format }) =>
       run(async () => describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }))),
+  );
+
+  server.registerTool(
+    "move_document",
+    {
+      description:
+        "Move a document to another project, or make it organization-wide (project null). Keeps its id and versions; a task document leaves its task. Needs access to both projects.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        project: z.string().nullable().describe('Target project key, or null for organization-wide'),
+      },
+    },
+    ({ id, project }) => run(async () => describeDocument(await moveDocument(db, ctx, id, { project }))),
   );
 
   server.registerTool(
