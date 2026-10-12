@@ -38,12 +38,22 @@ export function isDirty(cwd: string, git: GitRunner = runGit): boolean {
   return result.exitCode === 0 && result.stdout.trim() !== "";
 }
 
-/** Switches to branch `name`, creating it from HEAD when it doesn't exist; throws with git's message on failure. */
-export function createOrSwitchBranch(cwd: string, name: string, git: GitRunner = runGit): { created: boolean } {
-  const exists = git(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`], cwd).exitCode === 0;
-  const result = git(exists ? ["switch", name] : ["switch", "-c", name], cwd);
+/**
+ * Switches to branch `name`: the local branch when it exists, else a new local branch tracking `origin/<name>` when
+ * only the remote one exists, else a new branch from HEAD. Throws with git's message on failure.
+ */
+export function createOrSwitchBranch(
+  cwd: string,
+  name: string,
+  git: GitRunner = runGit,
+): { created: boolean; tracking: string | null } {
+  const has = (ref: string) => git(["rev-parse", "--verify", "--quiet", ref], cwd).exitCode === 0;
+  const local = has(`refs/heads/${name}`);
+  const tracking = !local && has(`refs/remotes/origin/${name}`) ? `origin/${name}` : null;
+  const args = local ? ["switch", name] : tracking ? ["switch", "-c", name, "--track", tracking] : ["switch", "-c", name];
+  const result = git(args, cwd);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `git switch ${name} failed`);
-  return { created: !exists };
+  return { created: !local, tracking };
 }
 
 /** "owner/name" from a GitHub-style remote URL (https, ssh or scp-like), or null. */

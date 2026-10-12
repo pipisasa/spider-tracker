@@ -21,7 +21,7 @@
 - The lowercased key, a dash and the title in kebab case: `ST-12` "Fix the login" → `st-12-fix-the-login`.
 - The title part is ASCII only and at most 40 characters: accents are dropped (`Café` → `cafe`), other scripts are removed, and a title with nothing left gives just `st-12`.
 
-`spider start [KEY]` switches to that branch (creating it if needed) unless the current branch already contains the key; see [interfaces.md](./interfaces.md).
+`spider start [KEY]` switches to that branch (creating it if needed, tracking `origin/<branch>` when only the remote one exists) unless the current branch already contains the key; see [interfaces.md](./interfaces.md).
 
 ## Finding keys
 
