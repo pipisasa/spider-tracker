@@ -793,6 +793,37 @@ export const releaseChangelogInput = z.object({
 
 export type ReleaseChangelogInput = z.input<typeof releaseChangelogInput>;
 
+// Deployments (ST-94): a release's app deployed to one of its environments.
+
+/** A git commit SHA, abbreviated (at least 7 hex digits) or full (40, or 64 for SHA-256); stored lower-case. */
+export const commitShaSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[0-9a-f]{7,64}$/, "A git commit SHA: 7 to 64 hex digits, e.g. 3f2c1ab");
+
+/**
+ * `POST /releases/:key/deployments`: the release's `app` (by name; `repo` "owner/name" picks one
+ * when the release ships apps of that name from several repos) was deployed to `environment`, one
+ * of the app's environments, at `commitSha`.
+ */
+export const recordDeploymentInput = z.object({
+  app: appSlug,
+  repo: z.string().trim().min(1, "Required").max(300).optional(),
+  environment: appSlug,
+  commitSha: commitShaSchema,
+});
+
+export type RecordDeploymentInput = z.input<typeof recordDeploymentInput>;
+
+/** A release's deployments, optionally of one app or environment. */
+export const deploymentListQuery = z.object({
+  app: appSlug.optional(),
+  environment: appSlug.optional(),
+});
+
+export type DeploymentListQuery = z.input<typeof deploymentListQuery>;
+
 // Milestones (ST-96): tasks of kind "milestone" that group tasks of their project.
 
 /**

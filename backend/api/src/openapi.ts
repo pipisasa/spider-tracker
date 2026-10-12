@@ -41,6 +41,7 @@ import {
   updateReleaseInput,
   releaseTasksInput,
   releaseChangelogInput,
+  recordDeploymentInput,
 } from "@repo/core/schemas";
 import { z } from "zod";
 
@@ -275,10 +276,38 @@ const schemas: Record<string, JsonSchema> = {
             url: webUrl("task"),
           }),
         },
+        deployments: { type: "array", description: "Its deployments, newest first (ST-94)", items: ref("Deployment") },
       }),
     ],
   },
   ReleaseList: listOf("Release"),
+  Deployment: object({
+    id: string({ format: "uuid" }),
+    releaseId: string({ format: "uuid" }),
+    releaseKey: string({ examples: ["ST-120"] }),
+    appId: string({ format: "uuid" }),
+    app: string({ examples: ["web"] }),
+    repo: string({ examples: ["pipisasa/spider-tracker"] }),
+    environment: string({ examples: ["staging", "prod"] }),
+    production: { type: "boolean", description: "The environment is the app's last one, its production" },
+    commitSha: string({ examples: ["3f2c1ab9d0e4"] }),
+    deployedBy: {
+      description: "Who recorded it; null once that actor is gone",
+      oneOf: [{ type: "null" }, object({ id: string({ format: "uuid" }), handle: string(), name: string() })],
+    },
+    source: string({ examples: ["cli", "mcp", "api", "ui"] }),
+    createdAt: string({ format: "date-time" }),
+  }),
+  DeploymentList: listOf("Deployment"),
+  RecordDeploymentInput: fromZod(recordDeploymentInput),
+  RecordedDeployment: object({
+    deployment: ref("Deployment"),
+    release: ref("Release"),
+    movedFrom: {
+      description: "The status the release left when this deployment moved it (Planned → On staging); null when it stayed",
+      oneOf: [{ type: "null" }, ref("StatusRef")],
+    },
+  }),
   Milestone: {
     allOf: [
       ref("Task"),
@@ -1608,6 +1637,25 @@ const paths = {
         "Write the generated changelog into the release's description: replace its changelog block or append one, keeping the rest. taskApps (task key → app names) groups it by app; a block edited by hand is 409 unless force",
       requestBody: body("ReleaseChangelogInput"),
       responses: { "200": ok("Written changelog", "ReleaseChangelog"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/releases/{taskKey}/deployments": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "listDeployments",
+      summary: "The release's deployments (app × environment, commit, who, when), newest first",
+      parameters: [
+        { name: "app", in: "query", schema: { type: "string" }, description: 'Only this app, e.g. "web"' },
+        { name: "environment", in: "query", schema: { type: "string" }, description: 'Only this environment, e.g. "prod"' },
+      ],
+      responses: { "200": ok("Deployments", "DeploymentList"), ...errors },
+    },
+    post: {
+      operationId: "recordDeployment",
+      summary:
+        "Record that one of the release's apps was deployed to one of the app's environments at a commit (spider release deploy). The first deployment moves a Planned release to On staging (as the @spider bot); Released stays manual and needs every app with environments deployed to its last one. A canceled release takes none",
+      requestBody: body("RecordDeploymentInput"),
+      responses: { "201": ok("Recorded deployment", "RecordedDeployment"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/release-candidates": {

@@ -37,6 +37,8 @@ export * from "./workflows";
 export * from "./repos";
 export * from "./remotes";
 export * from "./releases";
+export * from "./deployments";
+export * from "./deployment-records";
 export * from "./release-changelog";
 export * from "./release-notes";
 export * from "./release-check";

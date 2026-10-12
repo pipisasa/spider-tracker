@@ -14,6 +14,7 @@ import type {
   ReleaseChangelogDto,
   ReleaseCheckDto,
   ReleaseDto,
+  DeploymentDto,
   StatusDto,
   RepoDto,
   TagDto,
@@ -27,7 +28,7 @@ import { allStatuses, workflowOf } from "@repo/core/statuses";
 import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
-import { milestoneProgressLabel, shippingLabel } from "@repo/core/board";
+import { deploymentCells, milestoneProgressLabel, shippingLabel } from "@repo/core/board";
 import { appNotes, changelogBlock, changelogFileSection, insertReleaseSection, regroupChangelog, releaseTag } from "@repo/core/release-notes";
 import { checkRelease, taskAppsFrom } from "@repo/core/release-check";
 import {
@@ -543,7 +544,30 @@ function releaseDetail(release: ReleaseView): string {
       ...release.tasks.map((t) => `  ${t.key.padEnd(keyWidth)}  ${t.status.name}  ${t.title}${t.shippedAt ? `  [shipped ${release.title}]` : ""}`),
     );
   }
+  // The latest deployment per app and environment (ST-94), in each app's deploy order.
+  const cells = deploymentCells(release);
+  if (cells.length) {
+    const appWidth = Math.max(...cells.map((c) => c.app.length));
+    const envWidth = Math.max(...cells.map((c) => c.environment.length));
+    lines.push(
+      "Deployments:",
+      ...cells.map((c) => `  ${c.app.padEnd(appWidth)}  ${c.environment.padEnd(envWidth)}  ${c.latest ? deploymentSummary(c.latest) : "not deployed"}`),
+    );
+  }
   return lines.join("\n");
+}
+
+/** "3f2c1ab  2026-10-13 14:02  @st-developer": a deployment's commit, time (UTC) and who. */
+function deploymentSummary(d: DeploymentDto): string {
+  return `${d.commitSha.slice(0, 7)}  ${d.createdAt.slice(0, 16).replace("T", " ")}  ${d.deployedBy ? `@${d.deployedBy.handle}` : "someone"}`;
+}
+
+/** One line per deployment, newest first: app, environment, commit, time and who. */
+function deploymentLines(deployments: DeploymentDto[]): string {
+  if (deployments.length === 0) return "No deployments";
+  const appWidth = Math.max(...deployments.map((d) => d.app.length));
+  const envWidth = Math.max(...deployments.map((d) => d.environment.length));
+  return deployments.map((d) => `${d.app.padEnd(appWidth)}  ${d.environment.padEnd(envWidth)}  ${deploymentSummary(d)}`).join("\n");
 }
 
 /** A milestone (ST-96): key, title, status, dates, progress, releases and tasks, then its description. */
@@ -2117,6 +2141,60 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     });
     const views = await Promise.all(items.map(describe));
     output(opts, { items: views }, () => (views.length ? taskLines(views) : "No candidates: every Done task with code is in a release"));
+  });
+
+  // Deployments (ST-94): after a manual deploy (scripts/deploy.ts runs this), record the app, environment
+  // and commit on the release. The commit defaults to HEAD of this folder, through the injected git runner.
+  /** `web` or `owner/name:web`. */
+  const parseDeployApp = (value: string): { app: string; repo?: string } => {
+    const match = /^(?:(.+):)?([^:]+)$/.exec(value.trim());
+    if (!match?.[2]) throw usageError(`Invalid --app "${value}". Expected an app name, e.g. web (or owner/name:web)`);
+    return { app: match[2].trim(), ...(match[1] ? { repo: repoArg(match[1]) } : {}) };
+  };
+  const headCommit = (): string => {
+    const result = git(["rev-parse", "HEAD"], cwd);
+    const sha = result.exitCode === 0 ? result.stdout.trim() : "";
+    if (!sha) throw usageError("No commit to record: run it in the clone you deployed from, or pass --commit <sha>");
+    return sha;
+  };
+
+  withJson(
+    releaseCommand
+      .command("deploy")
+      .description("record a deployment of the release's app to one of its environments (the first moves a Planned release to On staging)")
+      .argument("<key>", "the release, e.g. ST-120")
+      .requiredOption("--app <name>", "the app deployed, one the release ships, e.g. web (or owner/name:web)")
+      .requiredOption("--env <environment>", "one of the app's environments, e.g. staging or prod")
+      .option("--commit <sha>", "the deployed commit (default: HEAD of this folder)"),
+  ).action(async (key: string, opts: JsonOption & { app: string; env: string; commit?: string }) => {
+    const { app, repo } = parseDeployApp(opts.app);
+    const commitSha = opts.commit?.trim() || headCommit();
+    const { sdk, org } = conn();
+    const recorded = await (await sdk()).releases.deploy(await org(), taskKey(key, cwd, git), { app, repo, environment: opts.env.trim(), commitSha });
+    const release = await describeRelease(recorded.release);
+    const { deployment, movedFrom } = recorded;
+    output(opts, { deployment, release, movedFrom }, () =>
+      [
+        `Recorded ${deployment.app} → ${deployment.environment} at ${deployment.commitSha.slice(0, 7)} for ${release.key} (${release.title})`,
+        movedFrom ? `${release.key} moved ${movedFrom.name} → ${release.status?.name ?? "?"}` : `${release.key} is ${release.status?.name ?? "?"}`,
+      ].join("\n"),
+    );
+  });
+
+  withJson(
+    releaseCommand
+      .command("deployments")
+      .description("a release's deployments, newest first")
+      .argument("<key>", "the release")
+      .option("--app <name>", "only this app")
+      .option("--env <environment>", "only this environment"),
+  ).action(async (key: string, opts: JsonOption & { app?: string; env?: string }) => {
+    const { sdk, org } = conn();
+    const { items } = await (await sdk()).releases.deployments(await org(), taskKey(key, cwd, git), {
+      app: opts.app?.trim().toLowerCase(),
+      environment: opts.env?.trim().toLowerCase(),
+    });
+    output(opts, { items }, () => deploymentLines(items));
   });
 
   // Changelog, notes and the git check (ST-95). Local git, through the injected runner, maps tasks to

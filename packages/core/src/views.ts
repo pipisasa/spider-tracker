@@ -6,6 +6,7 @@ import { formatUnifiedDiff } from "./diff";
 import type {
   ActorDto,
   CommentDto,
+  DeploymentDto,
   DocumentCommentDto,
   DocumentDiffDto,
   DocumentDto,
@@ -153,7 +154,10 @@ export const projectRulesView = (
 });
 
 /** A release (ST-93) as the CLI and MCP print it: the API release plus assignee handles and tag names. */
-export interface ReleaseView extends Omit<ReleaseDto, "status">, Pick<TaskView, "status" | "assignees" | "tags"> {}
+export interface ReleaseView extends Omit<ReleaseDto, "status" | "deployments">, Pick<TaskView, "status" | "assignees" | "tags"> {
+  /** Newest first (ST-94); empty from servers before deployments. */
+  deployments: DeploymentDto[];
+}
 
 export const releaseView = (release: ReleaseDto, { actors, tags }: Omit<TaskViewLookups, "statuses">): ReleaseView => ({
   ...release,
@@ -161,6 +165,7 @@ export const releaseView = (release: ReleaseDto, { actors, tags }: Omit<TaskView
   repos: release.repos,
   apps: release.apps,
   tasks: release.tasks,
+  deployments: release.deployments ?? [],
 });
 
 /** A milestone (ST-96) as the CLI and MCP print it: the API milestone plus assignee handles and tag names. */
