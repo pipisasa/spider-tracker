@@ -1,6 +1,7 @@
 import { Board } from "@/components/board";
 import { DocumentList, NewDocumentDialog } from "@/components/documents";
 import { NewTaskDialog } from "@/components/new-task-dialog";
+import { NewReleaseDialog, ReleasesView } from "@/components/releases";
 import { TaskList } from "@/components/task-list";
 import { ProjectSettingsDialog } from "@/components/project-settings";
 import { SavedViewsMenu } from "@/components/saved-views";
@@ -16,6 +17,7 @@ import {
   documentsQuery,
   membersQuery,
   projectQuery,
+  releasesQuery,
   tagsQuery,
   tasksQuery,
   useArchiveProject,
@@ -33,17 +35,48 @@ import type { SavedViewDto } from "@repo/core/contracts";
 import { kindOf } from "@repo/core/statuses";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileTextIcon, KanbanIcon, ListIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
+import { FileTextIcon, KanbanIcon, ListIcon, PackageIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-type View = "board" | "list" | "docs";
+type View = "board" | "list" | "docs" | "releases";
+
+/** The board setting "Release columns" (ST-93): on by default, remembered per project in this browser. */
+function useReleaseColumns(projectKey: string): [boolean, (on: boolean) => void] {
+  const storageKey = `spider:board:${projectKey}:release-columns`;
+  const read = () => {
+    try {
+      return localStorage.getItem(storageKey) !== "off";
+    } catch {
+      return true;
+    }
+  };
+  const [on, setOn] = useState(read);
+  const [readFor, setReadFor] = useState(projectKey);
+  if (readFor !== projectKey) {
+    setReadFor(projectKey);
+    setOn(read());
+  }
+  return [
+    on,
+    (next: boolean) => {
+      setOn(next);
+      try {
+        localStorage.setItem(storageKey, next ? "on" : "off");
+      } catch {
+        // Private windows may refuse storage; the setting then lasts for this page only.
+      }
+    },
+  ];
+}
 
 /** `view` plus the task filters (status, assignee, priority, tag, q, overdue), all in the URL so links can be shared. */
 type ProjectSearch = TaskFilters & { view?: View };
 
 export const Route = createFileRoute("/_authed/$orgSlug/projects/$projectKey")({
   validateSearch: (search: Record<string, unknown>): ProjectSearch => ({
-    ...(search.view === "list" || search.view === "board" || search.view === "docs" ? { view: search.view } : {}),
+    ...(search.view === "list" || search.view === "board" || search.view === "docs" || search.view === "releases"
+      ? { view: search.view }
+      : {}),
     ...parseFilters(search),
   }),
   loader: async ({ context, params }) => {
@@ -70,6 +103,10 @@ function ProjectPage() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newDocumentOpen, setNewDocumentOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newReleaseStatus, setNewReleaseStatus] = useState<string | undefined>();
+  const [newReleaseOpen, setNewReleaseOpen] = useState(false);
+  const [releaseColumns, setReleaseColumns] = useReleaseColumns(projectKey);
+  const { data: releases = [] } = useQuery({ ...releasesQuery(orgSlug, projectKey), enabled: view === "releases" || (view === "board" && releaseColumns) });
   const restore = useArchiveProject(orgSlug);
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
   const archived = project.archivedAt !== null;
@@ -130,6 +167,12 @@ function ProjectPage() {
               <span className="max-sm:sr-only">List</span>
             </Link>
           </Button>
+          <Button variant={view === "releases" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+            <Link to="." search={{ view: "releases" }}>
+              <PackageIcon />
+              <span className="max-sm:sr-only">Releases</span>
+            </Link>
+          </Button>
           <Button variant={view === "docs" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
             <Link to="." search={{ view: "docs" }}>
               <FileTextIcon />
@@ -149,7 +192,13 @@ function ProjectPage() {
               <TooltipContent>The project&apos;s rules for agents</TooltipContent>
             </Tooltip>
           )}
-          {view !== "docs" && (
+          {view === "board" && (
+            <label className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
+              <input type="checkbox" checked={releaseColumns} onChange={(e) => setReleaseColumns(e.target.checked)} />
+              Release columns
+            </label>
+          )}
+          {(view === "board" || view === "list") && (
             <SavedViewsMenu
               orgSlug={orgSlug}
               projectKey={project.key}
@@ -160,7 +209,7 @@ function ProjectPage() {
               onApply={applyView}
             />
           )}
-          {view === "docs" ? (
+          {view === "releases" ? null : view === "docs" ? (
             membership.actor.role !== "guest" &&
             !archived && (
               <Button size="sm" className="ml-2 max-md:h-10" onClick={() => setNewDocumentOpen(true)}>
@@ -215,7 +264,7 @@ function ProjectPage() {
           )}
         </div>
       )}
-      {view !== "docs" && (
+      {(view === "board" || view === "list") && (
         <TaskFilterBar
           filters={filters}
           onChange={setFilters}
@@ -226,12 +275,14 @@ function ProjectPage() {
           meId={meId}
         />
       )}
-      {view !== "docs" && filtered && (
+      {(view === "board" || view === "list") && filtered && (
         <p role="status" className="border-b px-4 py-1.5 md:px-6 text-xs text-muted-foreground">
           Showing {visibleTasks.length} of {tasks.length} tasks
         </p>
       )}
-      {view === "docs" ? (
+      {view === "releases" ? (
+        <ReleasesView orgSlug={orgSlug} project={project} releases={releases} canWrite={membership.actor.role !== "guest" && !archived} />
+      ) : view === "docs" ? (
         <ProjectDocuments orgSlug={orgSlug} projectKey={project.key} rulesDocumentId={project.rulesDocumentId} />
       ) : view === "board" ? (
         <Board
@@ -241,6 +292,16 @@ function ProjectPage() {
           members={actors}
           tags={tags}
           onAdd={!archived && membership.actor.role !== "guest" ? openNewTask : undefined}
+          releaseStatuses={releaseColumns ? project.workflows.release : []}
+          releases={releases}
+          onAddRelease={
+            !archived && membership.actor.role !== "guest"
+              ? (statusId) => {
+                  setNewReleaseStatus(statusId);
+                  setNewReleaseOpen(true);
+                }
+              : undefined
+          }
         />
       ) : (
         <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={visibleTasks} members={actors} tags={tags} />
@@ -256,6 +317,13 @@ function ProjectPage() {
       {canManage && (
         <ProjectSettingsDialog orgSlug={orgSlug} project={project} open={settingsOpen} onOpenChange={setSettingsOpen} />
       )}
+      <NewReleaseDialog
+        orgSlug={orgSlug}
+        project={project}
+        defaultStatusId={newReleaseStatus}
+        open={newReleaseOpen}
+        onOpenChange={setNewReleaseOpen}
+      />
       <NewDocumentDialog
         orgSlug={orgSlug}
         scope={{ project: project.key }}

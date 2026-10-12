@@ -143,6 +143,8 @@ export const updateTaskInput = z
     position: taskPositionInput,
     startDate: taskDateSchema,
     targetDate: taskDateSchema,
+    /** Marks a task as having no code to ship (ST-93), so it needs no release. */
+    noCode: z.boolean(),
   })
   .partial();
 
@@ -201,6 +203,7 @@ export const bulkTaskChanges = z
     parentId: z.uuid().nullable(),
     startDate: taskDateSchema,
     targetDate: taskDateSchema,
+    noCode: z.boolean(),
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
@@ -633,3 +636,96 @@ export const updateAppInput = z
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
 
 export type UpdateAppInput = z.input<typeof updateAppInput>;
+
+// Releases (ST-93): tasks of kind "release" that link repos and apps and include Done tasks.
+
+const DATE_VERSION = /^\d{4}\.(0?[1-9]|1[0-2])\.(0?[1-9]|[12]\d|3[01])(\.\d+)?$/;
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+
+/** A version as stored: trimmed, a semver without its leading "v". */
+export const normalizeAppVersion = (versioning: "date" | "semver", version: string) =>
+  versioning === "semver" ? version.trim().replace(/^v(?=\d)/, "") : version.trim();
+
+/** Why `version` doesn't fit the app's versioning, or null when it does ("2026.10.13", or "1.4.0"). */
+export function appVersionProblem(versioning: "date" | "semver", version: string): string | null {
+  const value = normalizeAppVersion(versioning, version);
+  if (versioning === "date") return DATE_VERSION.test(value) ? null : `"${version}" isn't a date version like 2026.10.13`;
+  return SEMVER.test(value) ? null : `"${version}" isn't a semver version like 1.4.0`;
+}
+
+const taskKeyRef = z.string().trim().min(1).max(30);
+
+/** An app a release ships and its version, in the app's versioning; its repo is linked too. */
+export const releaseAppInput = z.object({
+  /** The app's repo, "owner/name". */
+  repo: z.string().trim().min(1, "Required").max(300),
+  /** The app's name, e.g. "web". */
+  app: appSlug,
+  version: z.string().trim().min(1, "Required").max(50, "At most 50 characters"),
+});
+
+export type ReleaseAppInput = z.input<typeof releaseAppInput>;
+
+const releaseRepos = z.array(z.string().trim().min(1).max(300)).max(20, "At most 20 repos");
+const releaseApps = z
+  .array(releaseAppInput)
+  .max(50, "At most 50 apps")
+  .refine(
+    (list) => new Set(list.map((a) => `${a.repo.toLowerCase()}:${a.app}`)).size === list.length,
+    "Each app only once",
+  );
+const releaseTaskKeys = z.array(taskKeyRef).max(MAX_BULK_TASKS, `At most ${MAX_BULK_TASKS} tasks at once`);
+
+/**
+ * A new release: a task of kind "release" whose title is its name, usually the version
+ * ("2026.10.13"). It links `repos` ("owner/name") and `apps` with a version each, and may
+ * include Done `tasks` (keys, any project) from the start.
+ */
+export const createReleaseInput = z
+  .object({
+    title: taskTitle,
+    description: taskDescription.optional(),
+    statusId: z.uuid().optional(),
+    assigneeIds: z.array(z.uuid()).max(20).optional(),
+    startDate: taskDateSchema.optional(),
+    targetDate: taskDateSchema.optional(),
+    repos: releaseRepos.optional(),
+    apps: releaseApps.optional(),
+    tasks: releaseTaskKeys.optional(),
+  })
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
+
+export type CreateReleaseInput = z.input<typeof createReleaseInput>;
+
+/** Replaces a release's repos or apps (with their versions); apps' repos stay linked. */
+export const updateReleaseInput = z
+  .object({ repos: releaseRepos, apps: releaseApps })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateReleaseInput = z.input<typeof updateReleaseInput>;
+
+/** Task keys to add to (or remove from) a release. */
+export const releaseTasksInput = z.object({ tasks: releaseTaskKeys.min(1, "At least one task") });
+
+export type ReleaseTasksInput = z.input<typeof releaseTasksInput>;
+
+/** Releases of a project: by status (id, name or category of the release workflow) or app name. */
+export const releaseListFilters = z.object({
+  status: z.array(filterValue).max(20).optional(),
+  app: z.string().trim().toLowerCase().min(1).max(30).optional(),
+});
+
+export type ReleaseListFilters = z.input<typeof releaseListFilters>;
+
+/**
+ * Done tasks that could go into a release: with code, in no release, not shipped. `project` narrows
+ * to one project; `release` checks the release exists (and, once commits are linked, step 6 of
+ * ST-89, will narrow to the release's repos).
+ */
+export const releaseCandidatesQuery = z.object({
+  project: z.string().trim().min(1).max(10).optional(),
+  release: taskKeyRef.optional(),
+});
+
+export type ReleaseCandidatesQuery = z.input<typeof releaseCandidatesQuery>;

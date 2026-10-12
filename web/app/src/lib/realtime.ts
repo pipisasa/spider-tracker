@@ -38,10 +38,13 @@ export function useOrgEvents(orgSlug: string) {
       void qc.invalidateQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
       void qc.invalidateQueries({ queryKey: keys.activity(orgSlug, e.taskKey) });
       void qc.invalidateQueries({ queryKey: keys.relations(orgSlug, e.taskKey) });
+      // A task's change can move releases and shipping states (ST-93).
+      void qc.invalidateQueries({ queryKey: keys.releaseLists(orgSlug) });
     });
     on("task.git", (e) => void qc.invalidateQueries({ queryKey: keys.git(orgSlug, e.taskKey) }));
     on("task.deleted", (e) => {
       refreshSubtasks();
+      void qc.invalidateQueries({ queryKey: keys.releaseLists(orgSlug) });
       void qc.invalidateQueries({ queryKey: keys.tasks(orgSlug, e.projectKey) });
       qc.removeQueries({ queryKey: keys.task(orgSlug, e.taskKey), exact: true });
     });

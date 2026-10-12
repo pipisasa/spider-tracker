@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { boardColumns } from "@repo/core/board";
+import { createClient } from "@repo/sdk";
 import { run } from "./cli";
 import type { Store } from "./credentials";
 
@@ -1107,6 +1109,72 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "git", "SPI-999")).code).toBe(3);
   });
 
+  test("releases: a release in ST includes three Done tasks and is marked Released; all three show shipped <version>; the board puts it in Released (ST-93)", async () => {
+    const done = async (project: string, title: string) => {
+      const created = await spider("task", "create", "--project", project, "--title", title, "--status", "Done", "--json");
+      expect(created.code).toBe(0);
+      return created.json().key as string;
+    };
+    const keys = [await done("ST", "Task kinds"), await done("ST", "Dates"), await done("SPI", "From another project")];
+    const candidates = await spider("release", "candidates", "--json");
+    expect((candidates.json().items as { key: string }[]).map((t) => t.key)).toEqual(expect.arrayContaining(keys));
+    expect((await spider("task", "view", keys[0] ?? "")).stdout).toContain("Shipping: not in a release");
+
+    // The origin remote (pipisasa/spider-tracker) is the apps' repo.
+    const created = await spider(
+      "release", "create", "--project", "ST", "--title", "2026.10.13",
+      "--app", "web=2026.10.13", "--app", "cli=v0.1.8", "--task", `${keys[0]},${keys[1]}`, "--json",
+    );
+    expect(created.code).toBe(0);
+    const release = created.json() as { key: string; status: { name: string }; apps: { name: string; version: string }[] };
+    expect(release).toMatchObject({
+      kind: "release",
+      title: "2026.10.13",
+      status: { name: "Planned" },
+      repos: [{ fullName: "pipisasa/spider-tracker" }],
+      apps: [{ name: "cli", version: "0.1.8" }, { name: "web", version: "2026.10.13" }],
+    });
+    expect((await spider("release", "add", release.key, keys[2] ?? "")).stdout).toContain(`Tasks (3):`);
+    expect((await spider("release", "add", "--json", release.key, keys[2] ?? "")).json().tasks).toHaveLength(3);
+    expect((await spider("release", "create", "--project", "ST", "--title", "x", "--app", "web=1.0.0")).stderr).toContain("isn't a date version");
+    expect((await spider("task", "view", keys[2] ?? "")).stdout).toContain(`Shipping: 2026.10.13 · planned (${release.key})`);
+
+    // Released through the ordinary status change; the tasks stay Done.
+    expect((await spider("task", "update", release.key, "--status", "On staging")).code).toBe(0);
+    expect((await spider("task", "done", release.key, "--json")).json()).toMatchObject({ status: { name: "Released" } });
+    for (const key of keys) {
+      const view = await spider("task", "view", key, "--json");
+      expect(view.json()).toMatchObject({ status: { name: "Done" }, shipping: { state: "shipped", release: { key: release.key, title: "2026.10.13" } } });
+      expect((await spider("task", "view", key)).stdout).toContain(`Shipping: shipped 2026.10.13 (${release.key})`);
+    }
+    expect((await spider("task", "list", "--project", "ST", "--status", "done")).stdout).toContain("[shipped 2026.10.13]");
+    expect((await spider("release", "view", release.key)).stdout).toMatch(new RegExp(`^${release.key}  2026\\.10\\.13  Released  \\(shipped `));
+    expect((await spider("release", "list", "--project", "ST", "--app", "web")).stdout).toBe(
+      `${release.key}  2026.10.13  Released  cli 0.1.8, web 2026.10.13  3 tasks\n`,
+    );
+
+    // The board: release columns after the task columns, the release in the Released column.
+    const sdk = createClient({ baseUrl: env.API_ORIGIN, token, fetch: (input, init) => app.request(input, init) });
+    const [detail, tasks, releases] = await Promise.all([
+      sdk.projects.get(slug, "ST"),
+      sdk.tasks.list(slug, "ST", { kind: "task" }),
+      sdk.releases.list(slug, "ST"),
+    ]);
+    const columns = boardColumns(detail, tasks.items, releases.items);
+    const column = columns.find((c) => c.type === "releases" && c.releases.some((r) => r.key === release.key));
+    expect(column?.status.name).toBe("Released");
+    expect(columns.findIndex((c) => c === column)).toBeGreaterThan(columns.findIndex((c) => c.type === "tasks" && c.status.name === "Done"));
+
+    // Shipped: no more changes; no code; a removed task is a candidate again.
+    expect((await spider("release", "remove", release.key, keys[0] ?? "")).code).toBe(2);
+    const second = (await spider("release", "create", "--project", "ST", "--title", "2026.10.14", "--json")).json().key as string;
+    const late = await done("ST", "Late");
+    expect((await spider("release", "add", second, late)).code).toBe(0);
+    expect((await spider("release", "remove", second, late, "--json")).json().tasks).toEqual([]);
+    expect((await spider("task", "update", late, "--no-code", "--json")).json()).toMatchObject({ noCode: true, shipping: { state: "no_code" } });
+    expect((await spider("task", "list", "--project", "ST", "--status", "done")).stdout).toContain("[no code]");
+  });
+
   test("CLI --json and MCP return tasks, documents, comments, document comments and projects in the same shape (ST-107)", async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${env.API_ORIGIN}/mcp`), {
       fetch: async (url, init) => app.request(url, init),
@@ -1208,6 +1276,22 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("update_app", { repo: "pipisasa/spider-tracker", app: "docs", versioning: "date" })).toEqual(
         await cli("app", "update", "docs", "--repo", "pipisasa/spider-tracker", "--versioning", "date"),
       );
+
+      // Releases (ST-93): ReleaseView on both sides; candidates as tasks.
+      const releaseKey = ((await cli("release", "list", "--project", "ST")) as { items: { key: string }[] }).items[0]?.key ?? "";
+      expect(await mcp("get_release", { key: releaseKey })).toEqual(await cli("release", "view", releaseKey));
+      expect(await mcp("list_releases", { projectKey: "ST" })).toEqual(await cli("release", "list", "--project", "ST"));
+      expect(await mcp("list_release_candidates", { projectKey: "SPI" })).toEqual(await cli("release", "candidates", "--project", "SPI"));
+      const mcpRelease = (await mcp("create_release", { projectKey: "ST", title: "2026.11.01", apps: [{ repo: "pipisasa/spider-tracker", app: "web", version: "2026.11.01" }] })) as { key: string };
+      const cliRelease = (await cli("release", "create", "--project", "ST", "--title", "2026.11.02", "--app", "pipisasa/spider-tracker:web=2026.11.02")) as { key: string };
+      expect(shape(mcpRelease)).toEqual(shape(cliRelease));
+      expect(await mcp("update_release", { key: mcpRelease.key, apps: [{ repo: "pipisasa/spider-tracker", app: "cli", version: "0.2.0" }] })).toEqual(
+        await cli("release", "update", mcpRelease.key, "--app", "pipisasa/spider-tracker:cli=0.2.0"),
+      );
+      const parityTask = ((await cli("task", "create", "--project", "SPI", "--title", "Parity release", "--status", "Done")) as { key: string }).key;
+      const addedMcp = await mcp("add_to_release", { key: mcpRelease.key, tasks: [parityTask] });
+      expect(await mcp("remove_from_release", { key: mcpRelease.key, tasks: [parityTask] })).toEqual(await cli("release", "view", mcpRelease.key));
+      expect(addedMcp).toEqual(await cli("release", "add", mcpRelease.key, parityTask));
 
       // Writes return the same fields.
       expect(shape(await mcp("update_task", { key: "SPI-1", priority: 1 }))).toEqual(shape(await cli("task", "update", "SPI-1", "--priority", "2")));

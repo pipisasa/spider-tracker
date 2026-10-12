@@ -2,6 +2,7 @@ import { Development } from "@/components/development";
 import { TaskDocuments, TaskMentions } from "@/components/documents";
 import { DuplicateDialog } from "@/components/duplicate-dialog";
 import { Relations } from "@/components/relations";
+import { ReleasePanel, ShippingChip } from "@/components/releases";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
 import { actorLabel } from "@/lib/assignees";
 import { useWorkingNow } from "@/lib/use-presence";
-import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
+import { actorsQuery, membersQuery, projectQuery, releaseQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import { branchNameFor } from "@repo/core/git";
 import { allStatuses, kindOf, workflowOf } from "@repo/core/statuses";
@@ -68,6 +69,9 @@ function TaskPage() {
   // Every kind's statuses, for looking up other tasks' (ST-90); the picker offers this task's workflow.
   const statuses = allStatuses(project);
   const overdue = isOverdue(task, statuses.find((s) => s.id === task.statusId)?.category);
+  const category = statuses.find((s) => s.id === task.statusId)?.category;
+  const isRelease = kindOf(task) === "release";
+  const { data: release } = useQuery({ ...releaseQuery(orgSlug, task.key), enabled: isRelease });
 
   function deleteTask() {
     remove.mutate(task.key, {
@@ -132,6 +136,32 @@ function TaskPage() {
             <span className="text-sm">{dateTimeFormat.format(new Date(task.completedAt))}</span>
           </Field>
         )}
+        {/* Done means finished; shipping is tracked by releases (ST-93). */}
+        {task.shipping && (
+          <Field label="Shipping">
+            <span className="flex flex-col gap-1 text-sm">
+              {task.shipping.release ? (
+                <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.shipping.release.key }} className="w-fit hover:underline">
+                  <ShippingChip shipping={task.shipping} />
+                </Link>
+              ) : (
+                <ShippingChip shipping={task.shipping} />
+              )}
+              {task.shippedAt && <span className="text-xs text-muted-foreground">{dateTimeFormat.format(new Date(task.shippedAt))}</span>}
+            </span>
+          </Field>
+        )}
+        {isRelease && task.shippedAt && (
+          <Field label="Released">
+            <span className="text-sm">{dateTimeFormat.format(new Date(task.shippedAt))}</span>
+          </Field>
+        )}
+        {canEdit && kindOf(task) === "task" && category === "done" && !task.releaseId && !task.shippedAt && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={task.noCode} onChange={(e) => save({ noCode: e.target.checked })} />
+            No code to ship
+          </label>
+        )}
         <Button variant="ghost" className="mt-auto justify-start" onClick={copyBranchName}>
           <GitBranchIcon />
           Copy branch name
@@ -186,6 +216,7 @@ function TaskPage() {
         <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"}
           afterTitle={<div className="flex flex-col gap-4 rounded-lg border p-3 md:hidden">{fields}</div>}
         />
+        {release && <ReleasePanel orgSlug={orgSlug} release={release} canWrite={canEdit} />}
         <Subtasks
           key={`subtasks-${task.id}`}
           orgSlug={orgSlug}

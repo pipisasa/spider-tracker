@@ -88,7 +88,7 @@ function repoRefCondition(ref: string): SQL | null {
 }
 
 /** A repo the viewer can see; locked for a change inside a transaction with `forUpdate`. */
-async function findRepo(db: Db | Tx, viewer: Viewer, ref: string, forUpdate = false): Promise<RepoRow> {
+export async function findRepo(db: Db | Tx, viewer: Viewer, ref: string, forUpdate = false): Promise<RepoRow> {
   const condition = repoRefCondition(ref);
   const notFound = () => new DomainError("not_found", `Repo ${ref.trim()} not found`);
   if (!condition) throw notFound();
@@ -334,7 +334,7 @@ export async function detachRepo(db: Db, ctx: ActorContext, projectKey: string, 
   });
 }
 
-async function findApp(tx: Tx, repo: RepoRow, name: string): Promise<AppRow> {
+export async function findApp(tx: Tx, repo: RepoRow, name: string): Promise<AppRow> {
   const [row] = await tx
     .select()
     .from(apps)

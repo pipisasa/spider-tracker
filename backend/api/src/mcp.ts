@@ -7,6 +7,7 @@ import type {
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectRulesDto,
+  ReleaseDto,
   StatusDto,
   TaskDto,
   TaskKind,
@@ -70,6 +71,14 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  addToRelease,
+  createRelease,
+  getRelease,
+  listReleaseCandidates,
+  listReleases,
+  removeFromRelease,
+  updateRelease,
+  releaseView,
   actorHandle,
   commentView,
   documentVersionView,
@@ -105,6 +114,9 @@ const targetDateInput = dateInput.nullable().describe('Target date, "YYYY-MM-DD"
 const overdueInput = z
   .boolean()
   .describe("true: only tasks past their target date (today = the server's UTC date) that aren't done or canceled");
+const noCodeInput = z
+  .boolean()
+  .describe("true: the task has no code to ship, so its Done needs no release (shipping state \"no code\"); false undoes it");
 const kindInput = z
   .enum(["task", "release", "milestone"])
   .describe("Task kind; each has its own workflow of statuses (see get_project workflows)");
@@ -510,6 +522,137 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     ({ repo, app, ...input }) => run(async () => updateApp(db, ctx, repo, app, input)),
   );
 
+  // Releases (ST-93): ReleaseView, as `spider release … --json` prints it.
+  const describeRelease = async (release: ReleaseDto) => {
+    const [actors, tags] = await Promise.all([actorRefs(), release.tagIds.length ? loadTags() : []]);
+    const view = releaseView(release, { actors, tags });
+    return withTaskUrl(urls, { ...view, tasks: view.tasks.map((t) => withTaskUrl(urls, t)) });
+  };
+  const releaseKeyInput = z.string().describe('The release\'s task key, e.g. "ST-120"');
+  const releaseAppsInput = z
+    .array(
+      z.object({
+        repo: z.string().describe('The app\'s repo, "owner/name"'),
+        app: z.string().describe('The app\'s name, e.g. "web"'),
+        version: z.string().describe('In the app\'s versioning: "2026.10.13" (date) or "0.1.8" (semver)'),
+      }),
+    )
+    .max(50);
+  const releaseReposInput = z
+    .array(z.string())
+    .max(20)
+    .describe('Repos ("owner/name") it ships from, attached to a project you can see (it may be another project)');
+  const taskKeysInput = z.array(z.string()).min(1).max(MAX_BULK_TASKS).describe('Task keys, e.g. ["ST-2", "OPS-7"]');
+
+  server.registerTool(
+    "list_releases",
+    {
+      description:
+        "List a project's releases (tasks of kind release) in board order, with their status, repos, apps and versions, and the Done tasks they include.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        status: oneOrMany.optional().describe("Status id, name or category of the release workflow; an array matches any"),
+        app: z.string().optional().describe('Only releases shipping this app, e.g. "web"'),
+      },
+    },
+    ({ projectKey, status, app }) =>
+      run(async () => ({
+        items: await Promise.all(
+          (await listReleases(db, ctx, projectKey, { status: status === undefined ? undefined : [status].flat(), app })).map(describeRelease),
+        ),
+      })),
+  );
+
+  server.registerTool(
+    "get_release",
+    { description: "Get a release with its status, repos, apps and versions, and included tasks.", inputSchema: { key: releaseKeyInput } },
+    ({ key: releaseKey }) => run(async () => describeRelease(await getRelease(db, ctx, releaseKey))),
+  );
+
+  server.registerTool(
+    "create_release",
+    {
+      description:
+        "Create a release in a project: a task of kind release (the title is usually the version, e.g. 2026.10.13) in its first Planned status unless you pass one. It links repos and apps with a version each, and can include Done tasks from any project. Done means finished; a task ships when its release is moved to Released (update_task).",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        title: z.string().describe('The release\'s name, usually its version, e.g. "2026.10.13"'),
+        description: z.string().optional().describe("Markdown, e.g. release notes"),
+        status: z.string().optional().describe("Status name of the release workflow; see get_project"),
+        assignees: assigneesInput.optional().describe("The release owner(s)"),
+        targetDate: dateInput.optional().describe('Target date, "YYYY-MM-DD"'),
+        repos: releaseReposInput.optional(),
+        apps: releaseAppsInput.optional().describe("The apps it ships, with a version each; their repos are linked too"),
+        tasks: taskKeysInput.optional().describe("Done tasks to include (see list_release_candidates)"),
+      },
+    },
+    ({ projectKey, title, description, status, assignees, targetDate, repos, apps, tasks }) =>
+      run(async () => {
+        const project = await getProject(db, ctx, projectKey);
+        const release = await createRelease(db, ctx, project.key, {
+          title,
+          description,
+          statusId: status ? resolveStatus(project, status, "release").id : undefined,
+          assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
+          targetDate,
+          repos,
+          apps,
+          tasks,
+        });
+        return describeRelease(release);
+      }),
+  );
+
+  server.registerTool(
+    "update_release",
+    {
+      description:
+        "Replace a release's repos or apps (with their versions). To change its status (Planned, On staging, Release review, Released), title or owner use update_task; Released marks its tasks shipped.",
+      inputSchema: {
+        key: releaseKeyInput,
+        repos: releaseReposInput.optional().describe("Replaces the linked repos (apps' repos stay linked)"),
+        apps: releaseAppsInput.optional().describe("Replaces the apps and versions"),
+      },
+    },
+    ({ key: releaseKey, repos, apps }) => run(async () => describeRelease(await updateRelease(db, ctx, releaseKey, { repos, apps }))),
+  );
+
+  server.registerTool(
+    "add_to_release",
+    {
+      description:
+        "Add Done tasks (from any project you can see) to a release that isn't Released or Canceled. A task ships in one release: one already in another is refused. All or nothing.",
+      inputSchema: { key: releaseKeyInput, tasks: taskKeysInput },
+    },
+    ({ key: releaseKey, tasks }) => run(async () => describeRelease(await addToRelease(db, ctx, releaseKey, { tasks }))),
+  );
+
+  server.registerTool(
+    "remove_from_release",
+    {
+      description: "Take tasks out of a release that hasn't shipped; they become candidates again. All or nothing.",
+      inputSchema: { key: releaseKeyInput, tasks: taskKeysInput },
+    },
+    ({ key: releaseKey, tasks }) => run(async () => describeRelease(await removeFromRelease(db, ctx, releaseKey, { tasks }))),
+  );
+
+  server.registerTool(
+    "list_release_candidates",
+    {
+      description:
+        "List Done tasks with code that are in no release and haven't shipped, most recently finished first (at most 200). Tasks marked noCode (update_task) never need a release.",
+      inputSchema: {
+        projectKey: z.string().optional().describe("Only this project's tasks"),
+        release: z.string().optional().describe('For this release, e.g. "ST-120"'),
+      },
+    },
+    ({ projectKey, release }) =>
+      run(async () => {
+        const tasks = await listReleaseCandidates(db, ctx, { project: projectKey, release });
+        return { items: await Promise.all(tasks.map(async (t) => describeTask(t, await projectOfTask(t.key)))) };
+      }),
+  );
+
   server.registerTool(
     "list_tasks",
     {
@@ -557,7 +700,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_task",
     {
       description:
-        "Get a task by key, with its description, status name, assignee handles, parent, sub-tasks, links and documents.",
+        "Get a task by key, with its description, status name, assignee handles, parent, sub-tasks, links and documents. Done means finished, not shipped: `shipping` says where a Done task's code is (not_in_release, in_release, shipped, no_code) and in which release.",
       inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
     },
     ({ key: taskKey }) =>
@@ -629,9 +772,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         parent: z.string().nullable().optional().describe('Parent task key; null makes it a top-level task'),
         startDate: startDateInput.optional(),
         targetDate: targetDateInput.optional(),
+        noCode: noCodeInput.optional(),
       },
     },
-    ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate }) =>
+    ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate, noCode }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
         // A status is matched in the workflow of the task's kind.
@@ -646,6 +790,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
           startDate,
           targetDate,
+          noCode,
         });
         return describeTask(task, project);
       }),
@@ -679,10 +824,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         parent: z.string().nullable().optional().describe("New parent task key; null makes them top-level tasks"),
         startDate: startDateInput.optional(),
         targetDate: targetDateInput.optional(),
+        noCode: noCodeInput.optional(),
         dryRun: z.boolean().optional().describe("Report what would change without changing anything"),
       },
     },
-    ({ keys, filter, status, priority, assignees, tags, parent, startDate, targetDate, dryRun }) =>
+    ({ keys, filter, status, priority, assignees, tags, parent, startDate, targetDate, noCode, dryRun }) =>
       run(async () => {
         const result = await updateTasks(db, ctx, {
           keys,
@@ -706,6 +852,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
             startDate,
             targetDate,
+            noCode,
           },
           dryRun,
         });

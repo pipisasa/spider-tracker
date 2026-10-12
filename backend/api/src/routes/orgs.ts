@@ -77,6 +77,14 @@ import {
   updateProject,
   updateTask,
   updateTasks,
+  addToRelease,
+  createRelease,
+  getRelease,
+  listReleaseCandidates,
+  listReleases,
+  removeFromRelease,
+  updateRelease,
+  type ReleaseDto,
   webUrls,
   withDocumentUrl,
   withProjectUrl,
@@ -148,6 +156,8 @@ export function orgRoutes(
   const project = <T extends { key: string }>(c: C, p: T) => withProjectUrl(c.get("urls"), p);
   const task = <T extends { key: string }>(c: C, t: T) => withTaskUrl(c.get("urls"), t);
   const document = <T extends { id: string }>(c: C, d: T) => withDocumentUrl(c.get("urls"), d);
+  /** A release and its included tasks carry their web pages (ST-93). */
+  const release = (c: C, r: ReleaseDto) => ({ ...task(c, r), tasks: r.tasks.map((t) => task(c, t)) });
 
   // GET /members?all=true includes deactivated actors, to name the ones still assigned to tasks.
   app.get("/members", async (c) => {
@@ -329,6 +339,45 @@ export function orgRoutes(
 
   app.post("/projects/:projectKey/tasks", async (c) =>
     c.json(task(c, await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  // Releases (ST-93): tasks of kind release with repos, apps and included Done tasks. ?status= repeats, ?app=web.
+  app.get("/projects/:projectKey/releases", async (c) =>
+    c.json(
+      list(
+        (await listReleases(db, c.get("actor"), c.req.param("projectKey"), { status: c.req.queries().status, app: c.req.query("app") })).map((r) =>
+          release(c, r),
+        ),
+      ),
+    ),
+  );
+
+  app.post("/projects/:projectKey/releases", async (c) =>
+    c.json(release(c, await createRelease(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  app.get("/releases/:taskKey", async (c) => c.json(release(c, await getRelease(db, c.get("actor"), c.req.param("taskKey")))));
+
+  app.patch("/releases/:taskKey", async (c) =>
+    c.json(release(c, await updateRelease(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
+  );
+
+  app.post("/releases/:taskKey/tasks", async (c) =>
+    c.json(release(c, await addToRelease(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
+  );
+
+  app.delete("/releases/:taskKey/tasks/:includedKey", async (c) =>
+    c.json(release(c, await removeFromRelease(db, c.get("actor"), c.req.param("taskKey"), { tasks: [c.req.param("includedKey")] }))),
+  );
+
+  app.get("/release-candidates", async (c) =>
+    c.json(
+      list(
+        (await listReleaseCandidates(db, c.get("actor"), { project: c.req.query("project"), release: c.req.query("release") })).map((t) =>
+          task(c, t),
+        ),
+      ),
+    ),
   );
 
   app.get("/projects/:projectKey/views", async (c) =>

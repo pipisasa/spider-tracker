@@ -125,6 +125,13 @@ withDb("MCP server", () => {
         "list_repos",
         "update_app",
         "update_repo",
+        "create_release",
+        "get_release",
+        "list_releases",
+        "update_release",
+        "add_to_release",
+        "remove_from_release",
+        "list_release_candidates",
         "assign_to_me",
         "create_document",
         "diff_document",
@@ -767,6 +774,46 @@ withDb("MCP server", () => {
       .from(schema.activity)
       .where(and(eq(schema.activity.entityType, "repo"), eq(schema.activity.entityId, (repo.json() as { id: string }).id)));
     expect(new Set(sources.map((s) => s.source))).toEqual(new Set(["mcp"]));
+  });
+
+  test("releases (ST-93): create with apps and Done tasks, candidates, remove, Released ships them", async () => {
+    const done = async (title: string) =>
+      (await call(client, "create_task", { projectKey: "SPI", title, status: "Done" })).json() as { key: string; shipping: unknown };
+    const [a, b] = [await done("Release A"), await done("Release B")];
+    expect(a.shipping).toEqual({ state: "not_in_release", release: null });
+    const candidates = (await call(client, "list_release_candidates", { projectKey: "SPI" })).json() as { items: { key: string }[] };
+    expect(candidates.items.map((t) => t.key)).toEqual(expect.arrayContaining([a.key, b.key]));
+
+    const created = await call(client, "create_release", {
+      projectKey: "SPI",
+      title: "2026.10.13",
+      apps: [{ repo: "pipisasa/spider-tracker", app: "api", version: "2026.10.13" }],
+      tasks: [a.key],
+    });
+    const release = created.json() as { key: string; url: string; status: { name: string }; tasks: { key: string; url: string }[] };
+    expect(release).toMatchObject({
+      kind: "release",
+      status: { name: "Planned" },
+      apps: [{ name: "api", version: "2026.10.13" }],
+      repos: [{ fullName: "pipisasa/spider-tracker" }],
+      tasks: [{ key: a.key, url: expect.stringContaining(`/tasks/${a.key}`) }],
+      assignees: [],
+    });
+    expect((await call(client, "add_to_release", { key: release.key, tasks: [b.key] })).json()).toMatchObject({ tasks: [{ key: a.key }, { key: b.key }] });
+    expect((await call(client, "remove_from_release", { key: release.key, tasks: [b.key] })).json()).toMatchObject({ tasks: [{ key: a.key }] });
+    expect(await call(client, "add_to_release", { key: release.key, tasks: ["SPI-1"] })).toMatchObject({ isError: true });
+    expect((await call(client, "update_task", { key: b.key, noCode: true })).json()).toMatchObject({ shipping: { state: "no_code" } });
+    expect((await call(client, "update_release", { key: release.key, apps: [{ repo: "pipisasa/spider-tracker", app: "api", version: "2026.10.14" }] })).json()).toMatchObject({
+      apps: [{ version: "2026.10.14" }],
+    });
+
+    expect((await call(client, "update_task", { key: release.key, status: "Released" })).json()).toMatchObject({ status: { name: "Released" } });
+    expect((await call(client, "get_task", { key: a.key })).json()).toMatchObject({
+      status: { category: "done" },
+      shipping: { state: "shipped", release: { key: release.key, title: "2026.10.13" } },
+    });
+    const listed = (await call(client, "list_releases", { projectKey: "SPI", status: "Released" })).json() as { items: unknown[] };
+    expect(listed.items).toEqual([(await call(client, "get_release", { key: release.key })).json()]);
   });
 
   test("a key from another organization can't see this one's tasks", async () => {

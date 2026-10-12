@@ -130,8 +130,44 @@ export interface TaskDto {
   completedAt: string | null;
   /** Direct sub-tasks the viewer can see (closed = done or canceled); null when there are none. */
   subtasks: { done: number; total: number } | null;
+  /**
+   * The release (a task of kind "release") this task ships in (ST-93); null when in none, or when
+   * the release is in a project the viewer can't see.
+   */
+  releaseId: string | null;
+  /** When its release was marked Released (for a release: when it was); null until then. */
+  shippedAt: string | null;
+  /** Marked as having no code to ship: a Done task that never needs a release. */
+  noCode: boolean;
+  /**
+   * Where a task's code is (ST-93; Done means finished, not shipped). Null for releases and
+   * milestones, and for tasks that aren't Done and are in no release.
+   */
+  shipping: TaskShippingDto | null;
   /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
   url?: string;
+}
+
+/**
+ * A Done task's shipping state (ST-93): `not_in_release` (it has code that no release ships yet),
+ * `in_release` (in a release on its way: Planned, On staging, Release review), `shipped` (its
+ * release is Released) or `no_code` (marked as having nothing to ship).
+ */
+export type ShippingState = "not_in_release" | "in_release" | "shipped" | "no_code";
+
+/** A release as a task's shipping state names it. */
+export interface ReleaseRefDto {
+  id: string;
+  key: string;
+  /** The release's name, usually its version ("2026.10.13"). */
+  title: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+}
+
+export interface TaskShippingDto {
+  state: ShippingState;
+  /** The release it is in; null when in none, or in one the viewer can't see. */
+  release: ReleaseRefDto | null;
 }
 
 /** What a bulk update did to one task (ST-106); in a dry run, "changed" means it would change. */
@@ -209,6 +245,46 @@ export interface RepoDto {
   /** By name. */
   apps: AppDto[];
   createdAt: string;
+}
+
+/** An app a release ships (ST-93), with the version it ships. */
+export interface ReleaseAppDto {
+  appId: string;
+  /** The repo's "owner/name". */
+  repo: string;
+  /** The app's name, e.g. "web". */
+  name: string;
+  versioning: AppVersioning;
+  environments: string[];
+  /** "2026.10.13" (date) or "0.1.8" (semver). */
+  version: string;
+}
+
+/** A task a release includes (ST-93). */
+export interface ReleaseTaskDto {
+  id: string;
+  key: string;
+  title: string;
+  projectKey: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  completedAt: string | null;
+  shippedAt: string | null;
+  /** The web page's address; set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
+}
+
+/**
+ * A release (ST-93): a task of kind "release" with its status, the repos and apps (a version each)
+ * it ships, and the Done tasks it includes, from any project. A project-scoped agent sees only the
+ * included tasks of its own projects.
+ */
+export interface ReleaseDto extends TaskDto {
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  repos: { id: string; fullName: string }[];
+  /** By repo, then name. */
+  apps: ReleaseAppDto[];
+  /** By project key, then number. */
+  tasks: ReleaseTaskDto[];
 }
 
 /** A GitHub App installation connected to the organization (ST-82). */

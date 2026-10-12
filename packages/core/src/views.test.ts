@@ -25,6 +25,10 @@ const task: TaskDto = {
   updatedAt: "2026-01-01T00:00:00.000Z",
   completedAt: null,
   subtasks: null,
+  releaseId: null,
+  shippedAt: null,
+  noCode: false,
+  shipping: null,
 };
 const actors = [
   { id: "a1", handle: "alice", deactivated: false },

@@ -6,7 +6,18 @@ import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import { notify } from "./inbox";
-import type { BulkTaskResultDto, BulkUpdateTasksResponse, Priority, ProjectDetailDto, SubtaskDto, TaskDto, TaskKind } from "./contracts";
+import type {
+  BulkTaskResultDto,
+  BulkUpdateTasksResponse,
+  Priority,
+  ProjectDetailDto,
+  ReleaseRefDto,
+  StatusCategory,
+  SubtaskDto,
+  TaskDto,
+  TaskKind,
+  TaskShippingDto,
+} from "./contracts";
 import { DomainError } from "./errors";
 import { listMembers } from "./organizations";
 import { getProject } from "./projects";
@@ -21,8 +32,10 @@ import {
   taskListFilters,
   todayUtc,
   updateTaskInput,
+  type CreateTaskInput,
   type UpdateTaskInput,
 } from "./schemas";
+import { applyReleaseTransition, releaseTasksOnDelete } from "./shipping";
 import { allStatuses, matchStatuses, unknownStatusMessage, workflowOf } from "./statuses";
 import { parseInput } from "./validate";
 
@@ -39,9 +52,25 @@ interface TaskLinks {
   parentKey: string | null;
   /** The parent is outside the viewer's scope: neither its key nor its id is shown. */
   parentHidden: boolean;
+  /** The task's status category; null when unknown (shipping is then left out). */
+  category: StatusCategory | null;
+  /** The release it is in, when the viewer can see it (ST-93). */
+  release: ReleaseRefDto | null;
+  /** In a release outside the viewer's scope: its id isn't shown. */
+  releaseHidden: boolean;
 }
 
-function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, parentKey, parentHidden }: TaskLinks): TaskDto {
+/** Where a task's code is (ST-93); see TaskDto.shipping. */
+function shippingOf(row: TaskRow, { category, release, releaseHidden }: TaskLinks): TaskShippingDto | null {
+  if (row.kind !== "task") return null;
+  if (row.shippedAt) return { state: "shipped", release };
+  if (row.releaseId && (release || releaseHidden)) return { state: "in_release", release };
+  if (category !== "done") return null;
+  return { state: row.noCode ? "no_code" : "not_in_release", release: null };
+}
+
+function toTaskDto(row: TaskRow, projectKey: string, links: TaskLinks): TaskDto {
+  const { assigneeIds, tagIds, parentKey, parentHidden } = links;
   return {
     id: row.id,
     key: `${projectKey}-${row.number}`,
@@ -64,28 +93,42 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
     updatedAt: row.updatedAt.toISOString(),
     completedAt: row.completedAt?.toISOString() ?? null,
     subtasks: null,
+    releaseId: links.release ? row.releaseId : null,
+    shippedAt: row.shippedAt?.toISOString() ?? null,
+    noCode: row.noCode,
+    shipping: shippingOf(row, links),
   };
 }
 
-/** Assignees, tags and parent key of each task; parents outside `scope` are hidden (no key, no id). */
+const emptyLinks = (): TaskLinks => ({
+  assigneeIds: [],
+  tagIds: [],
+  parentKey: null,
+  parentHidden: false,
+  category: null,
+  release: null,
+  releaseHidden: false,
+});
+
+/**
+ * Assignees, tags, parent key, status category and release of each task; parents and releases
+ * outside `scope` are hidden (no key, no id).
+ */
 async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) {
-  const map = new Map<string, TaskLinks>(
-    taskIds.map((id) => [id, { assigneeIds: [], tagIds: [], parentKey: null, parentHidden: false }]),
-  );
+  const map = new Map<string, TaskLinks>(taskIds.map((id) => [id, emptyLinks()]));
   if (taskIds.length === 0) return map;
-  const [assigneeRows, tagRows] = await Promise.all([
-    db
-      .select({ taskId: taskAssignees.taskId, actorId: taskAssignees.actorId })
-      .from(taskAssignees)
-      .where(inArray(taskAssignees.taskId, taskIds))
-      .orderBy(asc(taskAssignees.assignedAt)),
-    db
-      .select({ taskId: taskTags.taskId, tagId: taskTags.tagId })
-      .from(taskTags)
-      .innerJoin(tags, eq(taskTags.tagId, tags.id))
-      .where(inArray(taskTags.taskId, taskIds))
-      .orderBy(asc(tags.name)),
-  ]);
+  // One after the other: inside a transaction they share its connection.
+  const assigneeRows = await db
+    .select({ taskId: taskAssignees.taskId, actorId: taskAssignees.actorId })
+    .from(taskAssignees)
+    .where(inArray(taskAssignees.taskId, taskIds))
+    .orderBy(asc(taskAssignees.assignedAt));
+  const tagRows = await db
+    .select({ taskId: taskTags.taskId, tagId: taskTags.tagId })
+    .from(taskTags)
+    .innerJoin(tags, eq(taskTags.tagId, tags.id))
+    .where(inArray(taskTags.taskId, taskIds))
+    .orderBy(asc(tags.name));
   for (const row of assigneeRows) map.get(row.taskId)?.assigneeIds.push(row.actorId);
   for (const row of tagRows) map.get(row.taskId)?.tagIds.push(row.tagId);
 
@@ -102,7 +145,56 @@ async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) 
     if (inScope(scope, row.projectId)) links.parentKey = `${row.projectKey}-${row.number}`;
     else links.parentHidden = true;
   }
+
+  // The status category, and the release with its status (ST-93).
+  const shippingRows = await db
+    .select({ taskId: tasks.id, category: statuses.category, releaseId: tasks.releaseId })
+    .from(tasks)
+    .innerJoin(statuses, eq(tasks.statusId, statuses.id))
+    .where(inArray(tasks.id, taskIds));
+  const releaseIds = [...new Set(shippingRows.flatMap((r) => (r.releaseId ? [r.releaseId] : [])))];
+  const releaseRows = releaseIds.length
+    ? await db
+        .select({
+          id: tasks.id,
+          number: tasks.number,
+          title: tasks.title,
+          projectId: tasks.projectId,
+          projectKey: projects.key,
+          status: { id: statuses.id, name: statuses.name, category: statuses.category },
+        })
+        .from(tasks)
+        .innerJoin(statuses, eq(tasks.statusId, statuses.id))
+        .innerJoin(projects, eq(tasks.projectId, projects.id))
+        .where(and(inArray(tasks.id, releaseIds), isNull(tasks.deletedAt)))
+    : [];
+  for (const row of shippingRows) {
+    const links = map.get(row.taskId);
+    if (!links) continue;
+    links.category = row.category;
+    const release = releaseRows.find((r) => r.id === row.releaseId);
+    if (!release) continue;
+    if (!inScope(scope, release.projectId)) {
+      links.releaseHidden = true;
+      continue;
+    }
+    links.release = { id: release.id, key: `${release.projectKey}-${release.number}`, title: release.title, status: release.status };
+  }
   return map;
+}
+
+/** Task rows (with their project keys) as DTOs for `viewer`, with links and sub-task counts. */
+export async function toTaskDtos(db: Db | Tx, scope: ProjectScope, rows: { task: TaskRow; projectKey: string }[]): Promise<TaskDto[]> {
+  const links = await linksByTask(
+    db,
+    scope,
+    rows.map((r) => r.task.id),
+  );
+  return withProgress(
+    db,
+    scope,
+    rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? emptyLinks())),
+  );
 }
 
 /** Fills `subtasks` ({ done, total } of the direct children inside `scope`) in one grouped query. */
@@ -131,8 +223,6 @@ async function withProgress(db: Db | Tx, scope: ProjectScope, dtos: TaskDto[]): 
   const byParent = new Map(rows.map((r) => [r.parentId, { done: r.done, total: r.total }]));
   return dtos.map((t) => ({ ...t, subtasks: byParent.get(t.id) ?? null }));
 }
-
-const noLinks: TaskLinks = { assigneeIds: [], tagIds: [], parentKey: null, parentHidden: false };
 
 async function assertTagsInOrg(tx: Tx, orgId: string, tagIds: string[]) {
   if (tagIds.length === 0) return;
@@ -229,90 +319,94 @@ async function sortKeyFor(
 export async function createTask(db: Db, ctx: ActorContext, projectKey: string, input: unknown): Promise<TaskDto> {
   assertCanWrite(ctx);
   const data = parseInput(createTaskInput, input);
+  return db.transaction((tx) => createTaskIn(tx, ctx, projectKey, data));
+}
 
-  return db.transaction(async (tx) => {
-    // Bumping the counter locks the project row, so numbers are unique and gap-free per project.
-    const [project] = await tx
-      .update(projects)
-      .set({ taskSeq: sql`${projects.taskSeq} + 1` })
-      .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, projectKey.toUpperCase())))
-      .returning({ id: projects.id, key: projects.key, taskSeq: projects.taskSeq, archivedAt: projects.archivedAt });
-    const scope = await projectScope(tx, ctx);
-    if (!project || !inScope(scope, project.id)) {
-      throw new DomainError("not_found", `Project ${projectKey} not found`);
-    }
-    // Throwing rolls back the counter bump.
-    if (project.archivedAt) throw new DomainError("validation", `Project ${project.key} is archived`);
+/** The body of createTask inside a transaction, shared with createRelease (core only; callers check write access). */
+export async function createTaskIn(tx: Tx, ctx: ActorContext, projectKey: string, data: CreateTaskInput): Promise<TaskDto> {
+  // Bumping the counter locks the project row, so numbers are unique and gap-free per project.
+  const [project] = await tx
+    .update(projects)
+    .set({ taskSeq: sql`${projects.taskSeq} + 1` })
+    .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, projectKey.toUpperCase())))
+    .returning({ id: projects.id, key: projects.key, taskSeq: projects.taskSeq, archivedAt: projects.archivedAt });
+  const scope = await projectScope(tx, ctx);
+  if (!project || !inScope(scope, project.id)) {
+    throw new DomainError("not_found", `Project ${projectKey} not found`);
+  }
+  // Throwing rolls back the counter bump.
+  if (project.archivedAt) throw new DomainError("validation", `Project ${project.key} is archived`);
 
-    const kind = data.kind ?? "task";
-    let status: StatusRow | undefined;
-    if (data.statusId) {
-      status = await findStatus(tx, project.id, kind, data.statusId);
-    } else {
-      // The kind's first todo status, else its first status.
-      const rows = await tx
-        .select()
-        .from(statuses)
-        .where(and(eq(statuses.projectId, project.id), eq(statuses.kind, kind)))
-        .orderBy(asc(statuses.position));
-      status = rows.find((s) => s.category === "todo") ?? rows[0];
-    }
-    if (!status) throw new DomainError("validation", `Project has no ${kind} statuses`);
+  const kind = data.kind ?? "task";
+  let status: StatusRow | undefined;
+  if (data.statusId) {
+    status = await findStatus(tx, project.id, kind, data.statusId);
+  } else {
+    // The kind's first todo status, else its first status.
+    const rows = await tx
+      .select()
+      .from(statuses)
+      .where(and(eq(statuses.projectId, project.id), eq(statuses.kind, kind)))
+      .orderBy(asc(statuses.position));
+    status = rows.find((s) => s.category === "todo") ?? rows[0];
+  }
+  if (!status) throw new DomainError("validation", `Project has no ${kind} statuses`);
 
-    const assigneeIds = [...new Set(data.assigneeIds ?? [])];
-    const tagIds = [...new Set(data.tagIds ?? [])];
-    await assertActorsInOrg(tx, ctx.orgId, assigneeIds);
-    await assertTagsInOrg(tx, ctx.orgId, tagIds);
-    if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId);
+  const assigneeIds = [...new Set(data.assigneeIds ?? [])];
+  const tagIds = [...new Set(data.tagIds ?? [])];
+  await assertActorsInOrg(tx, ctx.orgId, assigneeIds);
+  await assertTagsInOrg(tx, ctx.orgId, tagIds);
+  if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId);
 
-    const [task] = await tx
-      .insert(tasks)
-      .values({
-        orgId: ctx.orgId,
-        projectId: project.id,
-        kind,
-        number: project.taskSeq,
-        title: data.title,
-        description: data.description ?? null,
-        statusId: status.id,
-        priority: data.priority ?? 0,
-        parentId: data.parentId ?? null,
-        startDate: data.startDate ?? null,
-        targetDate: data.targetDate ?? null,
-        sortKey: await sortKeyFor(tx, project.id, status.id),
-        creatorId: ctx.actorId,
-        completedAt: CLOSED.includes(status.category) ? new Date() : null,
-      })
-      .returning();
-    if (!task) throw new Error("Failed to create task");
+  const [task] = await tx
+    .insert(tasks)
+    .values({
+      orgId: ctx.orgId,
+      projectId: project.id,
+      kind,
+      number: project.taskSeq,
+      title: data.title,
+      description: data.description ?? null,
+      statusId: status.id,
+      priority: data.priority ?? 0,
+      parentId: data.parentId ?? null,
+      startDate: data.startDate ?? null,
+      targetDate: data.targetDate ?? null,
+      sortKey: await sortKeyFor(tx, project.id, status.id),
+      creatorId: ctx.actorId,
+      completedAt: CLOSED.includes(status.category) ? new Date() : null,
+      // A release created as Released has shipped (ST-93).
+      shippedAt: kind === "release" && status.category === "done" ? new Date() : null,
+    })
+    .returning();
+  if (!task) throw new Error("Failed to create task");
 
-    if (assigneeIds.length > 0) {
-      await tx
-        .insert(taskAssignees)
-        .values(assigneeIds.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
-      await notify(tx, ctx, task.id, assigneeIds.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
-    }
-    if (tagIds.length > 0) await tx.insert(taskTags).values(tagIds.map((tagId) => ({ taskId: task.id, tagId })));
+  if (assigneeIds.length > 0) {
+    await tx
+      .insert(taskAssignees)
+      .values(assigneeIds.map((actorId) => ({ taskId: task.id, actorId, assignedBy: ctx.actorId })));
+    await notify(tx, ctx, task.id, assigneeIds.map((recipientId) => ({ recipientId, kind: "assigned" as const })));
+  }
+  if (tagIds.length > 0) await tx.insert(taskTags).values(tagIds.map((tagId) => ({ taskId: task.id, tagId })));
 
-    await recordActivity(tx, ctx, {
-      entityType: "task",
-      entityId: task.id,
-      action: "task.created",
-      changes: {
-        title: task.title,
-        ...(kind !== "task" ? { kind } : {}),
-        statusId: status.id,
-        assigneeIds,
-        ...(tagIds.length ? { tagIds } : {}),
-        ...(task.startDate ? { startDate: task.startDate } : {}),
-        ...(task.targetDate ? { targetDate: task.targetDate } : {}),
-      },
-    });
-
-    await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
-    const links = task.parentId ? (await linksByTask(tx, scope, [task.id])).get(task.id) : undefined;
-    return toTaskDto(task, project.key, { ...(links ?? noLinks), assigneeIds, tagIds });
+  await recordActivity(tx, ctx, {
+    entityType: "task",
+    entityId: task.id,
+    action: "task.created",
+    changes: {
+      title: task.title,
+      ...(kind !== "task" ? { kind } : {}),
+      statusId: status.id,
+      assigneeIds,
+      ...(tagIds.length ? { tagIds } : {}),
+      ...(task.startDate ? { startDate: task.startDate } : {}),
+      ...(task.targetDate ? { targetDate: task.targetDate } : {}),
+    },
   });
+
+  await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
+  const links = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? emptyLinks();
+  return toTaskDto(task, project.key, { ...links, assigneeIds, tagIds });
 }
 
 /**
@@ -443,15 +537,10 @@ export async function listTasks(db: Db, viewer: Viewer, projectKey: string, filt
     .from(tasks)
     .where(and(eq(tasks.projectId, project.id), isNull(tasks.deletedAt), ...conditions))
     .orderBy(asc(tasks.sortKey), asc(tasks.id));
-  const links = await linksByTask(
+  return toTaskDtos(
     db,
     scope,
-    rows.map((r) => r.id),
-  );
-  return withProgress(
-    db,
-    scope,
-    rows.map((r) => toTaskDto(r, project.key, links.get(r.id) ?? noLinks)),
+    rows.map((task) => ({ task, projectKey: project.key })),
   );
 }
 
@@ -479,8 +568,7 @@ export async function findTask(db: Db | Tx, viewer: Viewer, taskKey: string) {
 export async function getTask(db: Db, viewer: Viewer, taskKey: string): Promise<TaskDto> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
   const scope = await projectScope(db, viewer);
-  const links = await linksByTask(db, scope, [task.id]);
-  return (await withProgress(db, scope, [toTaskDto(task, projectKey, links.get(task.id) ?? noLinks)]))[0]!;
+  return (await toTaskDtos(db, scope, [{ task, projectKey }]))[0]!;
 }
 
 /** Direct sub-tasks of a task (any project), oldest first, with their own status. */
@@ -494,16 +582,7 @@ export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Pro
     .innerJoin(statuses, eq(tasks.statusId, statuses.id))
     .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt), scope ? inArray(tasks.projectId, [...scope]) : undefined))
     .orderBy(asc(tasks.createdAt));
-  const links = await linksByTask(
-    db,
-    scope,
-    rows.map((r) => r.task.id),
-  );
-  const dtos = await withProgress(
-    db,
-    scope,
-    rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks)),
-  );
+  const dtos = await toTaskDtos(db, scope, rows);
   return dtos.map((dto, i) => ({ ...dto, status: rows[i]!.status }));
 }
 
@@ -550,6 +629,10 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
     if (data.startDate !== undefined) track("startDate", data.startDate);
     if (data.targetDate !== undefined) track("targetDate", data.targetDate);
   }
+  if (data.noCode !== undefined) {
+    if (task.kind !== "task" && data.noCode) throw new DomainError("validation", `Only tasks have code to ship; ${projectKey}-${task.number} is a ${task.kind}`);
+    track("noCode", data.noCode);
+  }
 
   // A position move wins over a bare status change; both re-sort the task.
   const targetStatusId = data.position?.statusId ?? data.statusId;
@@ -563,12 +646,18 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
       const [previous] = await tx.select().from(statuses).where(eq(statuses.id, task.statusId)).limit(1);
       const wasClosed = previous ? CLOSED.includes(previous.category) : false;
       const isClosed = CLOSED.includes(status.category);
-      if (isClosed && !wasClosed) patch.completedAt = new Date();
+      const now = new Date();
+      if (isClosed && !wasClosed) patch.completedAt = now;
       if (!isClosed && wasClosed) patch.completedAt = null;
+      // A release marked Released ships its tasks; leaving Released or canceling undoes that (ST-93).
+      if (task.kind === "release" && previous) {
+        const shipped = await applyReleaseTransition(tx, ctx, { ...task, key: `${projectKey}-${task.number}` }, previous.category, status.category, now);
+        if (shipped !== undefined) patch.shippedAt = shipped;
+      }
     }
   }
 
-  const current = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? noLinks;
+  const current = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? emptyLinks();
   let assigneeIds = current.assigneeIds;
   if (data.assigneeIds !== undefined) {
     const next = [...new Set(data.assigneeIds)];
@@ -623,9 +712,9 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes });
   }
   await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
-  const links = updated.parentId ? (await linksByTask(tx, scope, [updated.id])).get(updated.id) : undefined;
+  const links = (await linksByTask(tx, scope, [updated.id])).get(updated.id) ?? emptyLinks();
   return {
-    task: (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { ...(links ?? noLinks), assigneeIds, tagIds })]))[0]!,
+    task: (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { ...links, assigneeIds, tagIds })]))[0]!,
     changed: true,
   };
 }
@@ -727,6 +816,8 @@ export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Pr
     await tx.update(tasks).set({ deletedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.deleted" });
     await publish(tx, { type: "task.deleted", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
+    // A deleted release no longer holds its tasks (ST-93); shipped ones stay shipped.
+    if (task.kind === "release") await releaseTasksOnDelete(tx, ctx, task.id);
 
     // Sub-tasks become top-level tasks rather than hanging off a deleted parent (ST-9).
     const children = await tx

@@ -29,6 +29,7 @@ import type {
   Priority,
   ProjectDto,
   RelationDto,
+  ReleaseDto,
   AppDto,
   RepoDto,
   SavedViewDto,
@@ -67,6 +68,8 @@ import type {
   UpdateSavedViewInput,
   UpdateStatusInput,
   UpdateTaskInput,
+  CreateReleaseInput,
+  UpdateReleaseInput,
 } from "@repo/core/schemas";
 
 // Typed client for the public API. Imports only the contracts/schemas subpaths
@@ -307,6 +310,41 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
           request<AppDto>("PATCH", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`, input),
         delete: (orgSlug: string, repo: string, app: string) =>
           request<void>("DELETE", `${org(orgSlug)}/repos/${repoPath(repo)}/apps/${seg(app)}`),
+      },
+    },
+
+    /**
+     * Releases (ST-93): tasks of kind "release" linking repos and apps (a version each) and
+     * including Done tasks of any project. Change a release's status with `tasks.update`;
+     * Released ships its tasks.
+     */
+    releases: {
+      /** In board order; `status` (ids, names or categories) and `app` (a name) narrow it. */
+      list: (orgSlug: string, projectKey: string, query: { status?: string[]; app?: string } = {}) => {
+        const params = new URLSearchParams();
+        for (const value of query.status ?? []) params.append("status", value);
+        if (query.app) params.set("app", query.app);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<ReleaseDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/releases${qs}`);
+      },
+      get: (orgSlug: string, releaseKey: string) => request<ReleaseDto>("GET", `${org(orgSlug)}/releases/${seg(releaseKey)}`),
+      create: (orgSlug: string, projectKey: string, input: CreateReleaseInput) =>
+        request<ReleaseDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/releases`, input),
+      /** Replaces its repos or apps (with versions). */
+      update: (orgSlug: string, releaseKey: string, input: UpdateReleaseInput) =>
+        request<ReleaseDto>("PATCH", `${org(orgSlug)}/releases/${seg(releaseKey)}`, input),
+      /** Done tasks of any project; all or nothing, 409 when one is in another release. */
+      add: (orgSlug: string, releaseKey: string, taskKeys: string[]) =>
+        request<ReleaseDto>("POST", `${org(orgSlug)}/releases/${seg(releaseKey)}/tasks`, { tasks: taskKeys }),
+      remove: (orgSlug: string, releaseKey: string, taskKey: string) =>
+        request<ReleaseDto>("DELETE", `${org(orgSlug)}/releases/${seg(releaseKey)}/tasks/${seg(taskKey)}`),
+      /** Done tasks with code in no release and not shipped, most recently finished first. */
+      candidates: (orgSlug: string, query: { project?: string; release?: string } = {}) => {
+        const params = new URLSearchParams();
+        if (query.project) params.set("project", query.project);
+        if (query.release) params.set("release", query.release);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/release-candidates${qs}`);
       },
     },
 
