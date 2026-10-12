@@ -883,6 +883,16 @@ withDb("spider CLI against the API", () => {
     expect(merged.report.summary).toMatchObject({ updated: 2, conflict: 0 });
     expect(versionIn("2")).toBe(4);
 
+    // A file that isn't UTF-8 (cp1251 here) fails and keeps its bytes; the others publish as usual.
+    const cp1251 = new Uint8Array([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x0a]);
+    writeFileSync(join(dir, "legacy.md"), cp1251);
+    const legacy = await spider("doc", "publish", "publish");
+    expect(legacy.code).toBe(1);
+    expect(legacy.stdout).toContain("failed     legacy.md        legacy\n  Not UTF-8 text; not published, and the file wasn't changed");
+    expect(legacy.stdout).toEndWith("0 created, 0 updated, 30 unchanged, 0 conflicts, 1 failed\n");
+    expect(new Uint8Array(readFileSync(join(dir, "legacy.md")))).toEqual(cp1251);
+    rmSync(join(dir, "legacy.md"));
+
     expect((await spider("doc", "publish", "missing")).code).toBe(2);
     writeFileSync(join(dir, "bad.md"), "---\nid: D31\n---\n");
     expect((await spider("doc", "publish", "publish", "--json")).stderr).toContain('bad.md: id \\"D31\\" isn\'t a document id');
