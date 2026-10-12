@@ -46,8 +46,8 @@ function isWellFormedCode(input: unknown): boolean {
   return /^[A-Z0-9]{8}$/.test(normalizeAgentInviteCode(input.code));
 }
 
-function errorBody(code: string, message: string): ApiErrorBody {
-  return { error: { code, message } };
+function errorBody(code: string, message: string, url?: string): ApiErrorBody {
+  return { error: url === undefined ? { code, message } : { code, message, url } };
 }
 
 /** `github`: the GitHub App port (ST-82); null or left out when the server has none configured. */
@@ -117,7 +117,7 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
   app.route("/webhooks", githubWebhookRoutes(db, github, githubAppConfig(env)?.webhookSecret ?? null));
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
-  app.route("/mcp", mcpRoutes(db, realtime, env.WEB_ORIGIN));
+  app.route("/mcp", mcpRoutes(db, realtime, env.WEB_ORIGIN, github));
 
   // Agent invites are accepted without a session: the code is the credential (ST-31).
   // Registered before the /v1 auth middleware; rate limited per client IP, and failed codes from
@@ -240,7 +240,7 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
 
   app.onError((err, c) => {
     if (err instanceof DomainError) {
-      return c.json(errorBody(err.code, err.message), errorStatus[err.code]);
+      return c.json(errorBody(err.code, err.message, err.url), errorStatus[err.code]);
     }
     if (err instanceof GithubUnavailableError) {
       console.error(err);

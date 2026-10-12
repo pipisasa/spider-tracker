@@ -9,6 +9,7 @@ import {
   resolveDocumentCommentInput,
   createTagInput,
   attachRepoInput,
+  openPullRequestInput,
   createAppInput,
   createRepoInput,
   updateAppInput,
@@ -74,7 +75,20 @@ function fromZod(schema: z.ZodType): JsonSchema {
 }
 
 const schemas: Record<string, JsonSchema> = {
-  Error: object({ error: object({ code: string(), message: string() }) }),
+  Error: object({
+    error: {
+      type: "object",
+      properties: {
+        code: string(),
+        message: string(),
+        url: string({
+          format: "uri",
+          description: "What the error is about, when it has an address: the pull request already open (409 from POST /tasks/{taskKey}/pull-request)",
+        }),
+      },
+      required: ["code", "message"],
+    },
+  }),
   Organization: object({ id: string({ format: "uuid" }), slug: string(), name: string() }),
   Actor: object({
     id: string({ format: "uuid" }),
@@ -437,6 +451,11 @@ const schemas: Record<string, JsonSchema> = {
     pullRequests: { type: "array", items: ref("PullRequest"), description: "Recently updated first" },
     branches: { type: "array", items: ref("GitBranch"), description: "Newest first" },
     commits: { type: "array", items: ref("GitCommit"), description: "The latest 100, newest first" },
+  }),
+  OpenPullRequestInput: fromZod(openPullRequestInput),
+  OpenedPullRequest: object({
+    taskKey: string(),
+    pullRequest: ref("PullRequest"),
   }),
   CreateRepoInput: fromZod(createRepoInput),
   UpdateRepoInput: fromZod(updateRepoInput),
@@ -1317,6 +1336,24 @@ const paths = {
       summary:
         "Branches, commits and pull requests linked to the task from GitHub: a branch named after it, commits and PRs that mention it (only in repos attached to its project)",
       responses: { "200": ok("Git links", "TaskGit"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/pull-request": {
+    parameters: [orgSlug, taskKey],
+    post: {
+      operationId: "openPullRequest",
+      summary:
+        "Open the task's pull request on GitHub as the App (installation token) for a branch already pushed, and link it to the task at once (ST-87). " +
+        "The repo is the one named, or the only one attached to the task's project; head defaults to the task's branch, base to the repo's default branch. " +
+        'The title defaults to "<task title> (KEY)"; the body always closes the task ("Closes KEY"), so status automation moves it',
+      requestBody: { required: false, ...json("OpenPullRequestInput") },
+      responses: {
+        "201": ok("The pull request, as linked to the task", "OpenedPullRequest"),
+        ...errors,
+        "409": { description: "A pull request is already open for the branch: error.url is its address", ...json("Error") },
+        "502": githubDown,
+        "503": githubOff,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/backlinks": {

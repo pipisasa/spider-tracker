@@ -75,3 +75,9 @@ export function remoteRepo(cwd: string, git: GitRunner = runGit): string | null 
   const url = originUrl(cwd, git);
   return url ? repoFromRemoteUrl(url) : null;
 }
+
+/** Pushes `branch` to `origin` and sets it as the upstream (`spider pr`), with the person's own git and credentials. Throws with git's message on failure. */
+export function pushBranch(cwd: string, branch: string, git: GitRunner = runGit): void {
+  const result = git(["push", "--set-upstream", "origin", branch], cwd);
+  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `git push origin ${branch} failed`);
+}

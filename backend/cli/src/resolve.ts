@@ -12,6 +12,8 @@ export class CliError extends Error {
     readonly exitCode: ExitCode,
     message: string,
     readonly code = "error",
+    /** What the error is about (the pull request already open); in `--json` errors as `error.url`. */
+    readonly url?: string,
   ) {
     super(message);
     this.name = "CliError";
@@ -26,7 +28,7 @@ export function fromApiError(err: SpiderApiError, hint = ""): CliError {
   if (err.status === 401 || err.status === 403) return new CliError(EXIT.auth, message, err.code);
   if (err.status === 404) return new CliError(EXIT.notFound, message, err.code);
   if (err.status === 400 || err.status === 409 || err.status === 422) {
-    return new CliError(EXIT.usage, message, err.code);
+    return new CliError(EXIT.usage, message, err.code, err.url);
   }
   return new CliError(EXIT.unexpected, message, err.code);
 }
