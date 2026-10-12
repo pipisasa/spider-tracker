@@ -21,6 +21,7 @@ import type {
   ProjectDetailDto,
   ProjectDto,
   RelationDto,
+  SavedViewDto,
   TagDto,
   SubtaskDto,
   TaskDto,
@@ -33,6 +34,7 @@ import type {
   CreateCommentInput,
   CreateDocumentInput,
   CreateProjectInput,
+  CreateSavedViewInput,
   CreateTagInput,
   CreateTaskInput,
   RelationInput,
@@ -40,6 +42,7 @@ import type {
   UpdateDocumentInput,
   MoveDocumentInput,
   UpdateProjectInput,
+  UpdateSavedViewInput,
   UpdateTaskInput,
 } from "@repo/core/schemas";
 
@@ -189,6 +192,18 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         request<ProjectDetailDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
       unarchive: (orgSlug: string, projectKey: string) =>
         request<ProjectDetailDto>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/archive`),
+    },
+
+    views: {
+      /** The project's shared views plus the caller's own. */
+      list: (orgSlug: string, projectKey: string) =>
+        request<ListResponse<SavedViewDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/views`),
+      create: (orgSlug: string, projectKey: string, input: CreateSavedViewInput) =>
+        request<SavedViewDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/views`, input),
+      update: (orgSlug: string, projectKey: string, viewId: string, input: UpdateSavedViewInput) =>
+        request<SavedViewDto>("PATCH", `${org(orgSlug)}/projects/${seg(projectKey)}/views/${seg(viewId)}`, input),
+      delete: (orgSlug: string, projectKey: string, viewId: string) =>
+        request<void>("DELETE", `${org(orgSlug)}/projects/${seg(projectKey)}/views/${seg(viewId)}`),
     },
 
     tags: {

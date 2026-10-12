@@ -35,6 +35,11 @@ See [auth.md](./auth.md) for all flows.
 - `POST|DELETE /v1/orgs/:org/projects/:key/archive` — archive (left out of lists, new tasks get `400 "Project ST is archived"`; its tasks stay readable and editable) or restore (owners and admins). Both return the project; repeating one changes nothing.
 - Agents are created as members, so their keys (CLI, MCP) get `403` on these writes unless the agent's role is raised to admin.
 
+### Saved views
+- `GET|POST /v1/orgs/:org/projects/:key/views` — the project's shared views plus the caller's own, by name; `{ name, filters?, shared?, view?: board|list }` to save one (not for guests). `filters` is `{ status?: ids, assignee?: ids | "me" | "none", priority?: 0-4, tag?: ids, q?: text }`: values within a key are OR-ed, keys AND-ed.
+- `PATCH|DELETE /v1/orgs/:org/projects/:key/views/:id` — the view's owner, or organization owners and admins, change or delete it (`403` for others; someone else's personal view is `404`). Views of projects outside an agent's scope are `404`.
+- The web app applies filters client-side from the project's URL (`?status=&assignee=&priority=&tag=&q=`); `GET .../tasks` still returns every task.
+
 ### Comments and inbox
 - `GET|POST /v1/orgs/:org/tasks/:key/comments` — comments, oldest first; `{ body, parentId? }` to add.
 - `GET /v1/orgs/:org/inbox?after=&unread=true&limit=&wait=` — the caller's notifications, oldest first. With `wait` (seconds, max 25) the request is held until an item newer than `after` arrives (checked every second until realtime, ST-13, replaces it).

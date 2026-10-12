@@ -243,3 +243,41 @@ export type CreateInvitationInput = z.input<typeof createInvitationInput>;
 export const invitationCodeInput = z.object({
   code: z.string().trim().min(1, "Enter an invitation code").max(40),
 });
+
+/**
+ * Task filters of a project page (ST-15); every key is optional and values within a key are
+ * OR-ed, keys are AND-ed. `assignee` takes actor ids plus `me` (the viewer) and `none` (unassigned).
+ */
+export const viewFiltersSchema = z.object({
+  status: z.array(z.uuid()).max(50).optional(),
+  assignee: z.array(z.union([z.literal("me"), z.literal("none"), z.uuid()])).max(50).optional(),
+  priority: z.array(prioritySchema).max(5).optional(),
+  tag: z.array(z.uuid()).max(50).optional(),
+  q: z.string().trim().max(200).optional(),
+});
+
+export type ViewFilters = z.infer<typeof viewFiltersSchema>;
+
+export const viewKindSchema = z.enum(["board", "list"]);
+
+const viewName = z.string().trim().min(1, "Required").max(60, "At most 60 characters");
+
+export const createSavedViewInput = z.object({
+  name: viewName,
+  filters: viewFiltersSchema.default({}),
+  shared: z.boolean().default(false),
+  view: viewKindSchema.default("board"),
+});
+
+export type CreateSavedViewInput = z.input<typeof createSavedViewInput>;
+
+export const updateSavedViewInput = z
+  .object({
+    name: viewName.optional(),
+    filters: viewFiltersSchema.optional(),
+    shared: z.boolean().optional(),
+    view: viewKindSchema.optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateSavedViewInput = z.infer<typeof updateSavedViewInput>;

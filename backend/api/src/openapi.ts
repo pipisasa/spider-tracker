@@ -5,6 +5,9 @@ import {
   createApiKeyInput,
   createCommentInput,
   createTagInput,
+  createSavedViewInput,
+  updateSavedViewInput,
+  viewFiltersSchema,
   createOrganizationInput,
   deviceCodeInput,
   relationInput,
@@ -147,6 +150,21 @@ const schemas: Record<string, JsonSchema> = {
   Tag: object({ id: string({ format: "uuid" }), name: string(), color: nullable("string") }),
   TagList: listOf("Tag"),
   CreateTagInput: fromZod(createTagInput),
+  ViewFilters: fromZod(viewFiltersSchema),
+  SavedView: object({
+    id: string({ format: "uuid" }),
+    projectKey: string(),
+    ownerActorId: string({ format: "uuid" }),
+    name: string(),
+    filters: ref("ViewFilters"),
+    shared: { type: "boolean" },
+    view: string({ enum: ["board", "list"] }),
+    createdAt: string({ format: "date-time" }),
+    updatedAt: string({ format: "date-time" }),
+  }),
+  SavedViewList: listOf("SavedView"),
+  CreateSavedViewInput: fromZod(createSavedViewInput),
+  UpdateSavedViewInput: fromZod(updateSavedViewInput),
   Relation: object({
     kind: string({ enum: ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"] }),
     task: object({ id: string({ format: "uuid" }), key: string(), title: string(), statusId: string({ format: "uuid" }) }),
@@ -652,6 +670,34 @@ const paths = {
       summary:
         "Agents working on the project's tasks right now: they acted on a task (activity log) or read it through the API, CLI or MCP within the last 10 minutes",
       responses: { "200": ok("Active agents per task", "PresenceList"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/views": {
+    parameters: [orgSlug, projectKey],
+    get: {
+      operationId: "listSavedViews",
+      summary: "The project's shared saved views plus your own",
+      responses: { "200": ok("Saved views", "SavedViewList"), ...errors },
+    },
+    post: {
+      operationId: "createSavedView",
+      summary: "Save a filter set (personal unless shared); not for guests",
+      requestBody: body("CreateSavedViewInput"),
+      responses: { "201": ok("Created view", "SavedView"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/views/{viewId}": {
+    parameters: [orgSlug, projectKey, pathParam("viewId", "Saved view id")],
+    patch: {
+      operationId: "updateSavedView",
+      summary: "Rename or change a view (its owner, or organization owners and admins)",
+      requestBody: body("UpdateSavedViewInput"),
+      responses: { "200": ok("Updated view", "SavedView"), ...errors },
+    },
+    delete: {
+      operationId: "deleteSavedView",
+      summary: "Delete a view (its owner, or organization owners and admins)",
+      responses: { "204": { description: "Deleted" }, ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}": {

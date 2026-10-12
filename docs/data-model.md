@@ -218,6 +218,20 @@ create table task_tags (
   primary key (task_id, tag_id)
 );
 
+-- Saved filter sets per project (ST-15). Personal unless shared; `filters` is validated by
+-- viewFiltersSchema in core: { status?: id[], assignee?: (id|'me'|'none')[], priority?: 0-4[], tag?: id[], q?: text }.
+create table saved_views (
+  id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
+  project_id uuid not null references projects on delete cascade,
+  owner_actor_id uuid not null references actors on delete cascade,
+  name text not null,
+  filters jsonb not null default '{}',
+  shared boolean not null default false,
+  view text not null default 'board' check (view in ('board','list')),
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+
 -- ── custom fields ────────────────────────────────────
 create table custom_field_defs (
   id uuid primary key default uuidv7(),

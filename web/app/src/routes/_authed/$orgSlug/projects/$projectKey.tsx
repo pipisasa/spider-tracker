@@ -3,19 +3,28 @@ import { DocumentList, NewDocumentDialog } from "@/components/documents";
 import { NewTaskDialog } from "@/components/new-task-dialog";
 import { TaskList } from "@/components/task-list";
 import { ProjectSettingsDialog } from "@/components/project-settings";
+import { SavedViewsMenu } from "@/components/saved-views";
+import { TaskFilterBar } from "@/components/task-filter-bar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { actorsQuery, documentsQuery, membersQuery, projectQuery, tagsQuery, tasksQuery, useArchiveProject } from "@/lib/work";
+import { applyFilters, filtersToSearch, isEmptyFilters, normalizeFilters, parseFilters, type TaskFilters } from "@/lib/task-filters";
+import type { SavedViewDto } from "@repo/core/contracts";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FileTextIcon, KanbanIcon, ListIcon, PlusIcon, SettingsIcon } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type View = "board" | "list" | "docs";
 
+/** `view` plus the task filters (status, assignee, priority, tag, q), all in the URL so links can be shared. */
+type ProjectSearch = TaskFilters & { view?: View };
+
 export const Route = createFileRoute("/_authed/$orgSlug/projects/$projectKey")({
-  validateSearch: (search: Record<string, unknown>): { view?: View } =>
-    search.view === "list" || search.view === "board" || search.view === "docs" ? { view: search.view } : {},
+  validateSearch: (search: Record<string, unknown>): ProjectSearch => ({
+    ...(search.view === "list" || search.view === "board" || search.view === "docs" ? { view: search.view } : {}),
+    ...parseFilters(search),
+  }),
   loader: async ({ context, params }) => {
     await Promise.all([
       context.queryClient.ensureQueryData(projectQuery(params.orgSlug, params.projectKey)),
@@ -27,7 +36,8 @@ export const Route = createFileRoute("/_authed/$orgSlug/projects/$projectKey")({
 
 function ProjectPage() {
   const { orgSlug, projectKey } = Route.useParams();
-  const { view = "board" } = Route.useSearch();
+  const { view = "board", ...filters } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const { membership } = Route.useRouteContext();
   const { data: project } = useSuspenseQuery(projectQuery(orgSlug, projectKey));
   const { data: tasks } = useSuspenseQuery(tasksQuery(orgSlug, projectKey));
@@ -43,6 +53,19 @@ function ProjectPage() {
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
   const archived = project.archivedAt !== null;
 
+  const meId = membership.actor.id;
+  const visibleTasks = useMemo(() => applyFilters(tasks, filters, meId), [tasks, filters, meId]);
+  const filtered = !isEmptyFilters(filters);
+
+  const setFilters = (next: TaskFilters) =>
+    void navigate({
+      search: (prev) => ({ view: prev.view, ...filtersToSearch(next) }),
+      replace: true,
+    });
+
+  const applyView = (saved: SavedViewDto) =>
+    void navigate({ search: { view: saved.view, ...filtersToSearch(normalizeFilters(saved.filters)) } });
+
   const openNewTask = (statusId?: string) => {
     setNewTaskStatus(statusId);
     setNewTaskOpen(true);
@@ -55,13 +78,13 @@ function ProjectPage() {
         <span className="text-sm text-muted-foreground">{project.key}</span>
         <div className="ml-auto flex items-center gap-1">
           <Button variant={view === "board" ? "secondary" : "ghost"} size="sm" asChild>
-            <Link to="." search={{ view: "board" }}>
+            <Link to="." search={(prev) => ({ ...prev, view: "board" })}>
               <KanbanIcon />
               Board
             </Link>
           </Button>
           <Button variant={view === "list" ? "secondary" : "ghost"} size="sm" asChild>
-            <Link to="." search={{ view: "list" }}>
+            <Link to="." search={(prev) => ({ ...prev, view: "list" })}>
               <ListIcon />
               List
             </Link>
@@ -72,6 +95,17 @@ function ProjectPage() {
               Docs
             </Link>
           </Button>
+          {view !== "docs" && (
+            <SavedViewsMenu
+              orgSlug={orgSlug}
+              projectKey={project.key}
+              filters={filters}
+              layout={view}
+              actorId={meId}
+              role={membership.actor.role}
+              onApply={applyView}
+            />
+          )}
           {view === "docs" ? (
             membership.actor.role !== "guest" &&
             !archived && (
@@ -122,19 +156,35 @@ function ProjectPage() {
           )}
         </div>
       )}
+      {view !== "docs" && (
+        <TaskFilterBar
+          filters={filters}
+          onChange={setFilters}
+          statuses={project.statuses}
+          members={members}
+          actors={actors}
+          tags={tags}
+          meId={meId}
+        />
+      )}
+      {view !== "docs" && filtered && (
+        <p role="status" className="border-b px-6 py-1.5 text-xs text-muted-foreground">
+          Showing {visibleTasks.length} of {tasks.length} tasks
+        </p>
+      )}
       {view === "docs" ? (
         <ProjectDocuments orgSlug={orgSlug} projectKey={project.key} />
       ) : view === "board" ? (
         <Board
           orgSlug={orgSlug}
           statuses={project.statuses}
-          tasks={tasks}
+          tasks={visibleTasks}
           members={actors}
           tags={tags}
           onAdd={!archived && membership.actor.role !== "guest" ? openNewTask : undefined}
         />
       ) : (
-        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={actors} tags={tags} />
+        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={visibleTasks} members={actors} tags={tags} />
       )}
       <NewTaskDialog
         orgSlug={orgSlug}
