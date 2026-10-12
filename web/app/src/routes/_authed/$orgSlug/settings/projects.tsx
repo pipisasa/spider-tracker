@@ -52,7 +52,12 @@ function ProjectsSettingsPage() {
                 {p.name}
               </Link>
               <span className="text-xs text-muted-foreground">{p.key}</span>
-              <Button variant="outline" size="sm" className="ml-auto" onClick={() => setEditing(p)}>
+              <Button variant="outline" size="sm" className="ml-auto" asChild>
+                <Link to="/$orgSlug/settings/workflows/$projectKey" params={{ orgSlug, projectKey: p.key }}>
+                  Workflows
+                </Link>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setEditing(p)}>
                 Settings
               </Button>
             </div>

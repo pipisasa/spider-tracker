@@ -6,6 +6,7 @@
 
 - Create, edit and delete tasks with readable keys (`SPI-123`)
 - Statuses that each project can customise, mapped to fixed categories: backlog, todo, in progress, in review, done, canceled
+- Task kinds (ST-90): `task`, `release` and `milestone`, each with its own workflow per project (defaults: Backlog → Todo → In Progress → In Review → Done / Canceled; Planned → On staging → Release review → Released / Canceled; Planned → Active → Ready to close → Done). Owners, admins and their agents add, rename, recolor, reorder and delete statuses on Settings → Projects → Workflows, through the API, MCP (`create_status`, `update_status`, `delete_status`) and `spider project status`. Deleting a status moves its tasks to another status of the same workflow first; every workflow keeps an open and a done status. The board and list show tasks of kind `task`; releases and milestones get their own views later (ST-93, ST-96)
 - Priority, estimate, due date, sub-tasks
 - Relations: blocks / blocked by, relates to, duplicates; marking a duplicate (link, cancel, comment) is one action in the web, CLI and MCP
 - Several assignees per task, which can be people or agents

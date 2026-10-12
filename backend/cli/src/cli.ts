@@ -8,11 +8,15 @@ import type {
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectDto,
+  StatusDto,
   RepoDto,
   TagDto,
   TaskDto,
+  TaskKind,
   WhoAmIResponse,
 } from "@repo/core/contracts";
+import { TASK_KINDS } from "@repo/core/schemas";
+import { allStatuses, workflowOf } from "@repo/core/statuses";
 import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
@@ -113,8 +117,13 @@ import {
   EXIT,
   PRIORITY_NAMES,
   firstStatus,
+  findWorkflowStatus,
   fromApiError,
+  kindOf,
   matchStatuses,
+  parseCategory,
+  parseKind,
+  parsePosition,
   parseDate,
   parseLimit,
   parseVersion,
@@ -271,6 +280,7 @@ interface TaskUpdateOptions extends TaskFields {
 
 interface TaskListOptions extends JsonOption {
   project?: string;
+  kind?: string;
   status?: string;
   mine?: boolean;
   assignee?: string[];
@@ -416,7 +426,7 @@ function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
       loadActors(),
       task.tagIds?.length ? loadTags() : [],
     ]);
-    return taskView(task, { statuses: detail.statuses, actors, tags });
+    return taskView(task, { statuses: allStatuses(detail), actors, tags });
   };
 
   return { sdk, credentials, whoami, org, members: loadMembers, actors: loadActors, tags: loadTags, project, describe };
@@ -472,7 +482,7 @@ function taskLines(tasks: CliTask[]): string {
 function taskDetail(task: CliTask): string {
   const lines = [
     `${task.key}  ${task.title}`,
-    `Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
+    `${task.kind !== "task" ? `Kind: ${task.kind} · ` : ""}Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
     `Created ${task.createdAt} · Updated ${task.updatedAt}${task.completedAt ? ` · Completed ${task.completedAt}` : ""}`,
   ];
   if (task.startDate || task.targetDate) {
@@ -509,6 +519,20 @@ function bulkLines(
 }
 
 const projectLine = (p: ProjectDto) => `${p.key}  ${p.name}${p.archivedAt ? "  (archived)" : ""}`;
+
+/** One kind's workflow, a status per line with its category (and task count, when given). */
+function workflowLines(kind: TaskKind, statuses: (StatusDto & { taskCount?: number })[]): string[] {
+  const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
+  const categoryWidth = Math.max(0, ...statuses.map((s) => s.category.length));
+  return [
+    `${kind[0]?.toUpperCase()}${kind.slice(1)} workflow:`,
+    ...statuses.map((s) =>
+      [`  ${s.name.padEnd(nameWidth)}`, s.category.padEnd(categoryWidth), ...(s.taskCount === undefined ? [] : [String(s.taskCount)])]
+        .join("  ")
+        .trimEnd(),
+    ),
+  ];
+}
 
 /** "web  web/app (+ packages/core)  date  staging → prod". */
 const appLine = (a: AppDto) =>
@@ -635,12 +659,12 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   const withJson = (cmd: Command) => cmd.option("--json", "print stable JSON");
 
   /** Builds the API input for create/update from the shared task options. */
-  const taskInput = async (projectKey: string, opts: TaskFields) => {
+  const taskInput = async (projectKey: string, opts: TaskFields, kind: TaskKind = "task") => {
     const input: UpdateTaskInput = {};
     if (opts.title !== undefined) input.title = opts.title;
     if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
     if (opts.priority !== undefined) input.priority = parsePriority(opts.priority);
-    if (opts.status !== undefined) input.statusId = resolveStatus(await conn().project(projectKey), opts.status).id;
+    if (opts.status !== undefined) input.statusId = resolveStatus(await conn().project(projectKey), opts.status, kind).id;
     if (opts.assign !== undefined) {
       const { actor } = await conn().whoami();
       input.assigneeIds = resolveAssignees(await conn().members(), actor.id, opts.assign);
@@ -1346,7 +1370,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     projectCommand
       .command("create")
-      .description("create a project with the default statuses")
+      .description("create a project with the default workflows (task, release, milestone)")
       .requiredOption("--key <KEY>", "2–10 letters or digits, starting with a letter; prefixes task keys")
       .requiredOption("--name <text>", "name")
       .option("--description <text>", "description (Markdown)"),
@@ -1377,16 +1401,16 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const rulesDoc = detail.rulesDocumentId ? await client.documents.get(slug, detail.rulesDocumentId) : null;
       // ProjectRulesDto, as MCP get_project and whoami give them.
       const rules = rulesDoc && projectRulesView(detail, rulesDoc);
-      const statuses = detail.statuses.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
-      const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
+      const counted = (list: StatusDto[]) => list.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
+      const statuses = counted(detail.statuses);
+      // Servers from before kinds (ST-90) send no workflows.
+      const workflows = Object.fromEntries(TASK_KINDS.map((kind) => [kind, counted(workflowOf(detail, kind))]));
       // MCP get_project has the same shape, without taskCount.
-      output(opts, { ...detail, statuses, rules, documents }, () =>
+      output(opts, { ...detail, statuses, ...(detail.workflows ? { workflows } : {}), rules, documents }, () =>
         [
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
-          "",
-          "Statuses:",
-          ...statuses.map((s) => `  ${s.name.padEnd(nameWidth)}  ${s.taskCount}`),
+          ...TASK_KINDS.flatMap((kind) => (workflows[kind]?.length ? ["", ...workflowLines(kind, workflows[kind])] : [])),
           ...(detail.description ? ["", detail.description] : []),
           ...(rules ? ["", `Rules for agents: ${rules.title} (${rules.documentId}, v${rules.version})`, "", rules.content] : []),
         ].join("\n"),
@@ -1424,6 +1448,103 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const client = await sdk();
     const result = await (opts.undo ? client.projects.unarchive : client.projects.archive)(await org(), key);
     output(opts, result, () => `${opts.undo ? "Restored" : "Archived"} ${result.key}  ${result.name}`);
+  });
+
+  // Workflow editing (ST-90): a project's statuses per task kind; owners, admins and their agents.
+  const statusCommand = projectCommand
+    .command("status")
+    .description("a project's workflows: the statuses of each task kind (task, release, milestone)");
+  const kindOption = (cmd: Command) => cmd.option("--kind <kind>", `workflow of this task kind: ${TASK_KINDS.join(", ")}`, "task");
+  /** Prints a project's workflow of `kind` after a change. */
+  const workflowOutput = (opts: JsonOption, json: unknown, project: ProjectDetailDto, kind: TaskKind, note: string) =>
+    output(opts, json, () => [note, ...workflowLines(kind, workflowOf(project, kind))].join("\n"));
+
+  withJson(
+    statusCommand
+      .command("list", { isDefault: true })
+      .description("list the statuses of a project's workflows")
+      .argument("<project>")
+      .option("--kind <kind>", `only the workflow of this task kind: ${TASK_KINDS.join(", ")} (default: every workflow)`),
+  ).action(async (key: string, opts: JsonOption & { kind?: string }) => {
+    const detail = await conn().project(key);
+    const kinds = opts.kind === undefined ? TASK_KINDS : [parseKind(opts.kind)];
+    const items = kinds.flatMap((kind) => workflowOf(detail, kind));
+    output(opts, { items }, () =>
+      kinds
+        .filter((kind) => workflowOf(detail, kind).length > 0)
+        .map((kind) => workflowLines(kind, workflowOf(detail, kind)).join("\n"))
+        .join("\n\n"),
+    );
+  });
+
+  withJson(
+    kindOption(
+      statusCommand
+        .command("add")
+        .description("add a status to a workflow (at the end, or at --position)")
+        .argument("<project>")
+        .argument("<name>")
+        .requiredOption("--category <category>", "backlog, todo, in_progress, in_review, done or canceled (can't change later)")
+        .option("--color <hex>", "colour, e.g. #22c55e")
+        .option("--position <n>", "place in the workflow, 0 for first"),
+    ),
+  ).action(async (key: string, name: string, opts: JsonOption & { kind: string; category: string; color?: string; position?: string }) => {
+    const kind = parseKind(opts.kind);
+    const { sdk, org } = conn();
+    const updated = await (await sdk()).projects.statuses.create(await org(), key.toUpperCase(), {
+      kind,
+      name,
+      category: parseCategory(opts.category),
+      color: opts.color,
+      position: opts.position === undefined ? undefined : parsePosition(opts.position),
+    });
+    workflowOutput(opts, updated, updated, kind, `Added "${name}" to ${updated.key}'s ${kind} workflow`);
+  });
+
+  withJson(
+    kindOption(
+      statusCommand
+        .command("update")
+        .description("rename, recolor or move a status of a workflow")
+        .argument("<project>")
+        .argument("<status>", "status name or id")
+        .option("--name <text>", "new name")
+        .option("--color <hex>", 'colour, e.g. #22c55e ("" clears it)')
+        .option("--position <n>", "new place in the workflow, 0 for first"),
+    ),
+  ).action(async (key: string, ref: string, opts: JsonOption & { kind: string; name?: string; color?: string; position?: string }) => {
+    const kind = parseKind(opts.kind);
+    if (opts.name === undefined && opts.color === undefined && opts.position === undefined) {
+      throw usageError("Nothing to update. Pass --name, --color or --position");
+    }
+    const { sdk, org, project } = conn();
+    const status = findWorkflowStatus(await project(key), ref, kind);
+    const updated = await (await sdk()).projects.statuses.update(await org(), key.toUpperCase(), status.id, {
+      name: opts.name,
+      color: opts.color === undefined ? undefined : opts.color === "" ? null : opts.color,
+      position: opts.position === undefined ? undefined : parsePosition(opts.position),
+    });
+    workflowOutput(opts, updated, updated, kind, `Updated "${status.name}" in ${updated.key}'s ${kind} workflow`);
+  });
+
+  withJson(
+    kindOption(
+      statusCommand
+        .command("delete")
+        .description("delete a status, first moving its tasks to another status of the same workflow")
+        .argument("<project>")
+        .argument("<status>", "status name or id")
+        .requiredOption("--move-to <status>", "status (name or id) of the same workflow that takes its tasks"),
+    ),
+  ).action(async (key: string, ref: string, opts: JsonOption & { kind: string; moveTo: string }) => {
+    const kind = parseKind(opts.kind);
+    const { sdk, org, project } = conn();
+    const detail = await project(key);
+    const status = findWorkflowStatus(detail, ref, kind);
+    const target = findWorkflowStatus(detail, opts.moveTo, kind);
+    const result = await (await sdk()).projects.statuses.delete(await org(), key.toUpperCase(), status.id, { moveTo: target.id });
+    const moved = `${result.movedTasks} task${result.movedTasks === 1 ? "" : "s"} moved to "${target.name}"`;
+    workflowOutput(opts, result, result.project, kind, `Deleted "${status.name}" from ${result.project.key}'s ${kind} workflow; ${moved}`);
   });
 
   // Repos and apps (ST-92). A repo is "owner/name" or a GitHub URL; without one, the origin remote of the current folder.
@@ -1605,6 +1726,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .command("list")
       .description("list tasks")
       .option("--project <key>", "only this project (default: all)")
+      .option("--kind <kind>", `only tasks of this kind (${TASK_KINDS.join(", ")}); --status then matches its workflow only`)
       .option("--status <name>", "status name or category")
       .option("--mine", "only tasks assigned to me (same as --assignee me)")
       .option(
@@ -1619,6 +1741,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--limit <n>", "at most n tasks", "50"),
   ).action(async (opts: TaskListOptions) => {
     const limit = parseLimit(opts.limit);
+    const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
     const { sdk, org, whoami, actors, project, describe } = conn();
     const slug = await org();
     const keys = opts.project ? [opts.project.toUpperCase()] : (await (await sdk()).projects.list(slug)).items.map((p) => p.key);
@@ -1651,14 +1774,15 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       let status: string[] | undefined;
       if (opts.status !== undefined) {
         // A status unknown in one project may exist in another; it is an error only if no project has it.
-        status = matchStatuses(detail, opts.status).map((s) => s.id);
-        detail.statuses.forEach((s) => statusNames.add(s.name));
+        // Without --kind, in every workflow (ST-90).
+        status = matchStatuses(detail, opts.status, kind ?? "all").map((s) => s.id);
+        (kind ? workflowOf(detail, kind) : allStatuses(detail)).forEach((s) => statusNames.add(s.name));
         if (status.length === 0) continue;
         statusKnown = true;
       }
-      const overdue = opts.overdue ? { statuses: detail.statuses } : undefined;
-      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, tagMatch, priority, overdue: opts.overdue });
-      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee: assigneeCheck, tagIds, tagMatch, priority, overdue })));
+      const overdue = opts.overdue ? { statuses: allStatuses(detail) } : undefined;
+      const { items } = await (await sdk()).tasks.list(slug, key, { kind, status, assignee, tags: opts.tag, tagMatch, priority, overdue: opts.overdue });
+      found.push(...items.filter((t) => matchesTaskFilter(t, { kind, statusIds: status, assignee: assigneeCheck, tagIds, tagMatch, priority, overdue })));
       if (found.length >= limit) break;
     }
     if (opts.status !== undefined && !statusKnown) {
@@ -1836,7 +1960,11 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
 
     if (keys.length <= 1 && !opts.dryRun) {
       const resolved = taskKey(keys[0], cwd, git);
-      const input = await taskInput(projectKeyOf(resolved), { ...opts, ...changes });
+      // A status name is matched in the workflow of the task's kind (ST-90).
+      // The project first, so a missing project is reported as such.
+      if (changes.status !== undefined) await conn().project(projectKeyOf(resolved));
+      const kind = changes.status === undefined ? "task" : kindOf(await (await conn().sdk()).tasks.get(await conn().org(), resolved));
+      const input = await taskInput(projectKeyOf(resolved), { ...opts, ...changes }, kind);
       if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --title, --status, --assign, …");
       await update(resolved, input, opts);
       return;
@@ -1884,7 +2012,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     ]);
     const assigneeIds = [...new Set([...current.assigneeIds, who.actor.id])];
     const started = await describe(
-      await client.tasks.update(await org(), resolved, { statusId: firstStatus(detail, "in_progress").id, assigneeIds }),
+      await client.tasks.update(await org(), resolved, { statusId: firstStatus(detail, "in_progress", kindOf(current)).id, assigneeIds }),
     );
     const { branch, note } = opts.branch ? checkoutTaskBranch(resolved, started.title) : { branch: null };
     output(opts, { ...started, branch }, () => [taskLines([started]), ...(note ? [note] : [])].join("\n"));
@@ -1900,11 +2028,12 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   startCommand(task.command("start"));
   startCommand(program.command("start"));
 
-  withJson(task.command("done").description("move to the first done status").argument("[key]")).action(
+  withJson(task.command("done").description("move to the first done status of its workflow").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
       const resolved = taskKey(key, cwd, git);
-      const detail = await conn().project(projectKeyOf(resolved));
-      await update(resolved, { statusId: firstStatus(detail, "done").id }, opts);
+      const { sdk, org, project } = conn();
+      const [detail, current] = await Promise.all([project(projectKeyOf(resolved)), (await sdk()).tasks.get(await org(), resolved)]);
+      await update(resolved, { statusId: firstStatus(detail, "done", kindOf(current)).id }, opts);
     },
   );
 

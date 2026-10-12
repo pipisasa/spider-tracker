@@ -4,9 +4,13 @@ import { SpiderApiError } from "@repo/sdk";
 import {
   matchesTaskFilter,
   EXIT,
+  findWorkflowStatus,
   firstStatus,
   fromApiError,
   matchStatuses,
+  parseCategory,
+  parseKind,
+  parsePosition,
   mineActorIds,
   parseLimit,
   parseDate,
@@ -15,8 +19,9 @@ import {
   resolveStatus,
 } from "./resolve";
 
-const status = (id: string, name: string, category: StatusDto["category"], position: number): StatusDto => ({
+const status = (id: string, name: string, category: StatusDto["category"], position: number, kind: StatusDto["kind"] = "task"): StatusDto => ({
   id,
+  kind,
   name,
   category,
   color: null,
@@ -39,6 +44,16 @@ const project: ProjectDetailDto = {
     status("blocked", "Blocked", "in_progress", 4),
     status("done", "Done", "done", 5),
   ],
+  workflows: { task: [], release: [], milestone: [] },
+};
+project.workflows = {
+  task: project.statuses,
+  release: [
+    status("r-planned", "Planned", "todo", 0, "release"),
+    status("r-staging", "On staging", "in_progress", 1, "release"),
+    status("r-done", "Released", "done", 2, "release"),
+  ],
+  milestone: [status("m-done", "Done", "done", 0, "milestone")],
 };
 
 const member = (id: string, handle: string): ActorDto => ({
@@ -61,7 +76,7 @@ describe("status resolution", () => {
   });
 
   test("an unknown status is a usage error listing the valid ones", () => {
-    expect(() => resolveStatus(project, "Shipped")).toThrow(/Valid statuses: In Review, In Progress, Todo/);
+    expect(() => resolveStatus(project, "Shipped")).toThrow(/Valid statuses: Todo, In Progress, In Review, Blocked, Done$/);
     try {
       resolveStatus(project, "Shipped");
     } catch (err) {
@@ -73,6 +88,41 @@ describe("status resolution", () => {
     expect(firstStatus(project, "in_progress").id).toBe("doing");
     expect(firstStatus(project, "done").id).toBe("done");
     expect(() => firstStatus(project, "canceled")).toThrow(/no "canceled" status/);
+  });
+
+  test("statuses are matched in the workflow of the task's kind (ST-90)", () => {
+    expect(resolveStatus(project, "in_progress", "release").id).toBe("r-staging");
+    expect(resolveStatus(project, "done", "milestone").id).toBe("m-done");
+    expect(firstStatus(project, "done", "release").id).toBe("r-done");
+    expect(() => resolveStatus(project, "Released")).toThrow(/Unknown status "Released" in ST\./);
+    expect(() => resolveStatus(project, "Backlog", "release")).toThrow(/in ST's release workflow\. Valid statuses: Planned, On staging, Released/);
+    expect(() => firstStatus(project, "in_progress", "milestone")).toThrow(/ST's milestone workflow has no "in_progress" status/);
+    // "all" spans every workflow (list filters without a kind); names still win over categories.
+    expect(matchStatuses(project, "in_progress", "all").map((s) => s.id)).toEqual(["doing", "blocked", "r-staging"]);
+    expect(matchStatuses(project, "done", "all").map((s) => s.id)).toEqual(["done", "m-done"]);
+    // Edits name a status by id or exact name only.
+    expect(findWorkflowStatus(project, "on STAGING", "release").id).toBe("r-staging");
+    expect(findWorkflowStatus(project, "r-done", "release").id).toBe("r-done");
+    expect(() => findWorkflowStatus(project, "in_progress", "release")).toThrow(/Unknown status/);
+  });
+
+  test("servers from before kinds: statuses is the task workflow and tasks are tasks", () => {
+    const old = { ...project, workflows: undefined } as unknown as ProjectDetailDto;
+    expect(resolveStatus(old, "in progress").id).toBe("doing");
+    expect(() => resolveStatus(old, "planned", "release")).toThrow(/Valid statuses: $/);
+    const task = { statusId: "doing", assigneeIds: [], priority: 0 };
+    expect(matchesTaskFilter(task, { kind: "task" })).toBe(true);
+    expect(matchesTaskFilter(task, { kind: "release" })).toBe(false);
+  });
+
+  test("kinds, categories and positions as typed", () => {
+    expect(parseKind(" Release ")).toBe("release");
+    expect(() => parseKind("epic")).toThrow(/Use one of: task, release, milestone/);
+    expect(parseCategory("In Progress")).toBe("in_progress");
+    expect(parseCategory("in-review")).toBe("in_review");
+    expect(() => parseCategory("shipped")).toThrow(/Unknown category/);
+    expect(parsePosition("0")).toBe(0);
+    expect(() => parsePosition("-1")).toThrow(/Invalid position/);
   });
 });
 

@@ -30,6 +30,7 @@ import {
   type TaskFilters,
 } from "@/lib/task-filters";
 import type { SavedViewDto } from "@repo/core/contracts";
+import { kindOf } from "@repo/core/statuses";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FileTextIcon, KanbanIcon, ListIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
@@ -76,7 +77,8 @@ function ProjectPage() {
   const meId = membership.actor.id;
   const mineIds = useMemo(() => mineActorIds(meId, actors), [meId, actors]);
   const visibleTasks = useMemo(
-    () => applyFilters(tasks, filters, meId, mineIds, project.statuses),
+    // The board and list show ordinary tasks; releases and milestones get their own views (ST-93, ST-96).
+    () => applyFilters(tasks.filter((t) => kindOf(t) === "task"), filters, meId, mineIds, project.statuses),
     [tasks, filters, meId, mineIds, project.statuses],
   );
   const filtered = !isEmptyFilters(filters);
