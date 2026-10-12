@@ -16,6 +16,7 @@ import type {
   ListResponse,
   ProjectDetailDto,
   ProjectDto,
+  SubtaskDto,
   TaskDto,
 } from "@repo/core/contracts";
 import type {
@@ -199,6 +200,17 @@ export function useArchiveProject(org: string) {
   });
 }
 
+/** A parent's sub-task progress is computed by the server; refetch task lists and details when a child changes. */
+function refreshProgress(qc: ReturnType<typeof useQueryClient>, org: string) {
+  void qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "orgs" &&
+      k[1] === org &&
+      ((k[2] === "projects" && k[4] === "tasks" && k.length === 5) ||
+        (k[2] === "tasks" && k.length === 4)),
+  });
+}
+
 export function useCreateTask(org: string, projectKey: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -212,6 +224,7 @@ export function useCreateTask(org: string, projectKey: string) {
         old ? [...old, task] : old,
       );
       qc.setQueryData(keys.task(org, task.key), task);
+      if (task.parentId) refreshProgress(qc, org);
     },
   });
 }
@@ -259,12 +272,15 @@ export function useUpdateTask(org: string) {
       }
       toast.error(error.message);
     },
-    onSuccess: (task) => {
+    onSuccess: (task, { input }) => {
       const listKey = keys.tasks(org, projectKeyOf(task.key));
       qc.setQueryData<TaskDto[]>(listKey, (old) =>
         old?.map((t) => (t.id === task.id ? task : t)),
       );
       qc.setQueryData(keys.task(org, task.key), task);
+      if (task.parentId || input.parentId !== undefined) {
+        refreshProgress(qc, org);
+      }
     },
   });
 }
@@ -487,7 +503,7 @@ export const subtasksQuery = (org: string, taskKey: string) =>
     queryKey: keys.subtasks(org, taskKey),
     queryFn: async () =>
       (
-        await api<ListResponse<TaskDto>>(
+        await api<ListResponse<SubtaskDto>>(
           `${orgPath(org)}/tasks/${taskKey}/subtasks`,
         )
       ).items,

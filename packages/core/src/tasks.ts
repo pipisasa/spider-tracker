@@ -6,7 +6,7 @@ import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import { notify } from "./inbox";
-import type { Priority, TaskDto } from "./contracts";
+import type { Priority, SubtaskDto, TaskDto } from "./contracts";
 import { DomainError } from "./errors";
 import { createTaskInput, parseTaskKey, updateTaskInput, type UpdateTaskInput } from "./schemas";
 import { parseInput } from "./validate";
@@ -43,6 +43,7 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     completedAt: row.completedAt?.toISOString() ?? null,
+    subtasks: null,
   };
 }
 
@@ -78,6 +79,33 @@ async function linksByTask(db: Db | Tx, scope: ProjectScope, taskIds: string[]) 
     if (links) links.parentKey = `${row.projectKey}-${row.number}`;
   }
   return map;
+}
+
+/** Fills `subtasks` ({ done, total } of the direct children inside `scope`) in one grouped query. */
+async function withProgress(db: Db | Tx, scope: ProjectScope, dtos: TaskDto[]): Promise<TaskDto[]> {
+  if (dtos.length === 0) return dtos;
+  const child = aliasedTable(tasks, "child");
+  const rows = await db
+    .select({
+      parentId: child.parentId,
+      total: sql<number>`count(*)::int`,
+      done: sql<number>`(count(*) filter (where ${statuses.category} in ('done', 'canceled')))::int`,
+    })
+    .from(child)
+    .innerJoin(statuses, eq(child.statusId, statuses.id))
+    .where(
+      and(
+        inArray(
+          child.parentId,
+          dtos.map((t) => t.id),
+        ),
+        isNull(child.deletedAt),
+        scope ? inArray(child.projectId, [...scope]) : undefined,
+      ),
+    )
+    .groupBy(child.parentId);
+  const byParent = new Map(rows.map((r) => [r.parentId, { done: r.done, total: r.total }]));
+  return dtos.map((t) => ({ ...t, subtasks: byParent.get(t.id) ?? null }));
 }
 
 const noLinks: TaskLinks = { assigneeIds: [], tagIds: [], parentKey: null };
@@ -116,6 +144,9 @@ const MAX_TASK_DEPTH = 20;
 /** The parent must exist in the organization, and must not be the task itself or one of its sub-tasks. */
 async function assertParent(tx: Tx, orgId: string, scope: ProjectScope, parentId: string, selfId?: string) {
   if (parentId === selfId) throw new DomainError("validation", "A task can't be its own parent");
+  // Serialise parent changes per organization until commit: otherwise two concurrent re-parents
+  // (A under B, B under A) each pass the check against the other's uncommitted state and form a cycle.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + orgId}))`);
   let current: string | null = parentId;
   for (let depth = 0; current; depth++) {
     if (depth >= MAX_TASK_DEPTH) throw new DomainError("validation", `Sub-tasks can nest at most ${MAX_TASK_DEPTH} levels`);
@@ -257,7 +288,11 @@ export async function listTasks(db: Db, viewer: Viewer, projectKey: string): Pro
     scope,
     rows.map((r) => r.task.id),
   );
-  return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
+  return withProgress(
+    db,
+    scope,
+    rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks)),
+  );
 }
 
 /** The task row and its project key; not_found for unknown or deleted tasks, and tasks outside the viewer's scope. */
@@ -283,18 +318,20 @@ export async function findTask(db: Db | Tx, viewer: Viewer, taskKey: string) {
 
 export async function getTask(db: Db, viewer: Viewer, taskKey: string): Promise<TaskDto> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
-  const links = await linksByTask(db, await projectScope(db, viewer), [task.id]);
-  return toTaskDto(task, projectKey, links.get(task.id) ?? noLinks);
+  const scope = await projectScope(db, viewer);
+  const links = await linksByTask(db, scope, [task.id]);
+  return (await withProgress(db, scope, [toTaskDto(task, projectKey, links.get(task.id) ?? noLinks)]))[0]!;
 }
 
-/** Direct sub-tasks of a task (any project), oldest first. */
-export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Promise<TaskDto[]> {
+/** Direct sub-tasks of a task (any project), oldest first, with their own status. */
+export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Promise<SubtaskDto[]> {
   const { task } = await findTask(db, viewer, taskKey);
   const scope = await projectScope(db, viewer);
   const rows = await db
-    .select({ task: tasks, projectKey: projects.key })
+    .select({ task: tasks, projectKey: projects.key, status: { id: statuses.id, name: statuses.name, category: statuses.category, color: statuses.color } })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .innerJoin(statuses, eq(tasks.statusId, statuses.id))
     .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt), scope ? inArray(tasks.projectId, [...scope]) : undefined))
     .orderBy(asc(tasks.createdAt));
   const links = await linksByTask(
@@ -302,7 +339,12 @@ export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Pro
     scope,
     rows.map((r) => r.task.id),
   );
-  return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
+  const dtos = await withProgress(
+    db,
+    scope,
+    rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks)),
+  );
+  return dtos.map((dto, i) => ({ ...dto, status: rows[i]!.status }));
 }
 
 export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<TaskDto> {
@@ -384,7 +426,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     }
 
     const touched = Object.keys(patch).length > 0 || changes.assigneeIds !== undefined || changes.tagIds !== undefined;
-    if (!touched) return toTaskDto(task, projectKey, { assigneeIds, tagIds, parentKey: current.parentKey });
+    if (!touched) return (await withProgress(tx, scope, [toTaskDto(task, projectKey, { assigneeIds, tagIds, parentKey: current.parentKey })]))[0]!;
 
     const [updated] = await tx
       .update(tasks)
@@ -399,7 +441,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     }
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
     const parentKey = updated.parentId ? ((await linksByTask(tx, scope, [updated.id])).get(updated.id)?.parentKey ?? null) : null;
-    return toTaskDto(updated, projectKey, { assigneeIds, tagIds, parentKey });
+    return (await withProgress(tx, scope, [toTaskDto(updated, projectKey, { assigneeIds, tagIds, parentKey })]))[0]!;
   });
 }
 

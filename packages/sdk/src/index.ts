@@ -21,6 +21,7 @@ import type {
   ProjectDto,
   RelationDto,
   TagDto,
+  SubtaskDto,
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
@@ -262,7 +263,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       },
       /** Direct sub-tasks, oldest first. */
       subtasks: (orgSlug: string, taskKey: string) =>
-        request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/subtasks`),
+        request<ListResponse<SubtaskDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/subtasks`),
       /** The task's history (created, updated fields, comments), oldest first. */
       activity: (orgSlug: string, taskKey: string) =>
         request<ListResponse<ActivityDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/activity`),

@@ -2,7 +2,7 @@ import { ActorAvatar, StatusIcon } from "@/components/task-fields";
 import { Input } from "@/components/ui/input";
 import { assigneesOf } from "@/lib/assignees";
 import { keys, subtasksQuery, useCreateTask } from "@/lib/work";
-import type { ActorDto, StatusDto, TaskDto } from "@repo/core/contracts";
+import type { ActorDto, StatusDto, SubtaskDto, TaskDto } from "@repo/core/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, type FormEvent } from "react";
@@ -27,10 +27,7 @@ export function Subtasks({
   const qc = useQueryClient();
   const [title, setTitle] = useState("");
   const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
-  const done = subtasks.filter((t) => {
-    const category = statuses.find((s) => s.id === t.statusId)?.category;
-    return category === "done" || category === "canceled";
-  }).length;
+  const done = subtasks.filter((t) => t.status.category === "done" || t.status.category === "canceled").length;
 
   function add(event: FormEvent) {
     event.preventDefault();
@@ -40,7 +37,10 @@ export function Subtasks({
       {
         onSuccess: (child) => {
           setTitle("");
-          qc.setQueryData<TaskDto[]>(keys.subtasks(orgSlug, task.key), (old) => [...(old ?? []), child]);
+          const status = statuses.find((s) => s.id === child.statusId);
+          if (!status) return;
+          const entry: SubtaskDto = { ...child, status: { id: status.id, name: status.name, category: status.category, color: status.color } };
+          qc.setQueryData<SubtaskDto[]>(keys.subtasks(orgSlug, task.key), (old) => [...(old ?? []), entry]);
         },
         onError: (err) => toast.error(err.message),
       },
@@ -60,7 +60,6 @@ export function Subtasks({
       {subtasks.length > 0 && (
         <ul className="divide-y rounded-lg border">
           {subtasks.map((child) => {
-            const status = statuses.find((s) => s.id === child.statusId);
             return (
               <li key={child.id}>
                 <Link
@@ -68,7 +67,7 @@ export function Subtasks({
                   params={{ orgSlug, taskKey: child.key }}
                   className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted/50"
                 >
-                  {status && <StatusIcon status={status} />}
+                  <StatusIcon status={child.status} />
                   <span className="w-16 shrink-0 text-muted-foreground">{child.key}</span>
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
                   <span className="flex -space-x-1.5">

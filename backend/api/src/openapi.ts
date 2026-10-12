@@ -101,7 +101,26 @@ const schemas: Record<string, JsonSchema> = {
     createdAt: string({ format: "date-time" }),
     updatedAt: string({ format: "date-time" }),
     completedAt: nullable("string", { format: "date-time" }),
+    subtasks: nullable("object", {
+      description: "Direct sub-tasks the caller can see; closed = done or canceled. Null when there are none",
+      properties: { done: { type: "integer" }, total: { type: "integer" } },
+      required: ["done", "total"],
+      additionalProperties: false,
+    }),
   }),
+  Subtask: {
+    allOf: [
+      ref("Task"),
+      object({
+        status: object({
+          id: string({ format: "uuid" }),
+          name: string(),
+          category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+          color: nullable("string"),
+        }),
+      }),
+    ],
+  },
   Comment: object({
     id: string({ format: "uuid" }),
     taskKey: string(),
@@ -236,6 +255,7 @@ const schemas: Record<string, JsonSchema> = {
   ActorList: listOf("Actor"),
   ProjectList: listOf("Project"),
   TaskList: listOf("Task"),
+  SubtaskList: listOf("Subtask"),
   CreateProjectInput: fromZod(createProjectInput),
   UpdateProjectInput: fromZod(updateProjectInput),
   CreateTaskInput: fromZod(createTaskInput),
@@ -640,7 +660,7 @@ const paths = {
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/subtasks": {
     parameters: [orgSlug, taskKey],
-    get: { operationId: "listSubtasks", summary: "Direct sub-tasks of a task", responses: { "200": ok("Sub-tasks", "TaskList"), ...errors } },
+    get: { operationId: "listSubtasks", summary: "Direct sub-tasks of a task", responses: { "200": ok("Sub-tasks, each with its own status", "SubtaskList"), ...errors } },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/relations": {
     parameters: [orgSlug, taskKey],
