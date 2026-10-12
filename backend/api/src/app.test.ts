@@ -292,6 +292,24 @@ withDb("projects and tasks API", () => {
     expect(res.status).toBe(404);
   });
 
+  test("duplicates are a 409: tag names regardless of case, links", async () => {
+    const tag = await call(owner, "POST", "/tags", { name: "URGENT-FIX" });
+    expect(tag.status).toBe(409);
+    expect(await tag.json()).toMatchObject({ error: { code: "conflict" } });
+
+    const keys: string[] = [];
+    for (const title of ["Blocker", "Blocked"]) {
+      const res = await call(owner, "POST", "/projects/SPI/tasks", { title });
+      keys.push(((await res.json()) as { key: string }).key);
+    }
+    const [a, b] = keys;
+    expect((await call(owner, "POST", `/tasks/${a}/relations`, { kind: "blocks", task: b })).status).toBe(201);
+    expect((await call(owner, "POST", `/tasks/${b}/relations`, { kind: "blocked_by", task: a })).status).toBe(409);
+    expect((await call(owner, "POST", `/tasks/${b}/relations`, { kind: "blocks", task: a })).status).toBe(400);
+    expect((await call(owner, "DELETE", `/tasks/${a}/relations?kind=blocks&task=${b}`)).status).toBe(204);
+    expect((await call(owner, "DELETE", `/tasks/${a}/relations?kind=blocks&task=${b}`)).status).toBe(404);
+  });
+
   test("update, archive and restore a project", async () => {
     const updated = await call(owner, "PATCH", "/projects/spi", { name: "Spider Tracker", description: "The tracker" });
     expect(updated.status).toBe(200);

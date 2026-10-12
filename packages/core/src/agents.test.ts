@@ -12,7 +12,7 @@ import {
   updateAgent,
 } from "./agents";
 import { createOrganization } from "./organizations";
-import { holdLock, settle, waitForLockWaiters } from "./test-locks";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -137,7 +137,7 @@ run("agents and API keys", () => {
     // B passes the "is it taken?" check, then waits on its row while A takes the handle.
     const release = await holdLock(db, sql`select 1 from actors where id = ${b.actor.id} for update`);
     const second = settle(updateAgent(db, ctx, b.actor.id, { handle }));
-    await waitForLockWaiters(db, "actors", 1);
+    await waitForLockWaiters(db, '"actors"', 1);
     await updateAgent(db, ctx, a.actor.id, { handle });
     await release();
     expect(await second).toMatchObject({ code: "conflict" });

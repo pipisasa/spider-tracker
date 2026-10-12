@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { assertCanWrite, inScope, projectScope, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { RelationDto, RelationKind } from "./contracts";
@@ -21,8 +21,19 @@ type StoredType = "blocks" | "relates" | "duplicates";
 function toStored(kind: RelationKind, self: string, other: string): { from: string; to: string; type: StoredType } {
   if (kind === "blocked_by") return { from: other, to: self, type: "blocks" };
   if (kind === "duplicated_by") return { from: other, to: self, type: "duplicates" };
-  if (kind === "relates") return self < other ? { from: self, to: other, type: kind } : { from: other, to: self, type: kind };
+  if (kind === "relates") {
+    // Must agree with the `task_relations_relates_ordered` CHECK (from < to as uuids): Postgres
+    // orders uuids by bytes, which matches comparing their lowercase hex strings.
+    return self.toLowerCase() < other.toLowerCase() ? { from: self, to: other, type: kind } : { from: other, to: self, type: kind };
+  }
   return { from: self, to: other, type: kind };
+}
+
+/** Serialises link changes between two tasks, so checks like "the other already blocks this one" see concurrent inserts. */
+async function lockPair(tx: Tx, a: string, b: string) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext('relation:' || least(${a}::uuid, ${b}::uuid)::text || ':' || greatest(${a}::uuid, ${b}::uuid)::text))`,
+  );
 }
 
 const INVERSE: Record<RelationKind, RelationKind> = {
@@ -64,6 +75,7 @@ export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, in
     const self = await findTask(tx, ctx, taskKey);
     const other = await findTask(tx, ctx, otherKey);
     if (self.task.id === other.task.id) throw new DomainError("validation", "A task can't be related to itself");
+    await lockPair(tx, self.task.id, other.task.id);
 
     const link = toStored(kind, self.task.id, other.task.id);
     if (await findLink(tx, link.from, link.to, link.type)) throw new DomainError("conflict", "These tasks are already linked that way");
@@ -110,7 +122,7 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
     const link = toStored(kind, self.task.id, other.task.id);
     const found = await findLink(tx, link.from, link.to, link.type);
     if (!found) throw new DomainError("not_found", "No such link between these tasks");
-    await tx
+    const deleted = await tx
       .delete(taskRelations)
       .where(
         and(
@@ -118,7 +130,10 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
           eq(taskRelations.toTaskId, found.toTaskId),
           eq(taskRelations.type, link.type),
         ),
-      );
+      )
+      .returning({ fromTaskId: taskRelations.fromTaskId });
+    // A concurrent request removed it first.
+    if (deleted.length === 0) throw new DomainError("not_found", "No such link between these tasks");
     const selfKey = `${self.projectKey}-${self.task.number}`;
     const otherFullKey = `${other.projectKey}-${other.task.number}`;
     await recordActivity(tx, ctx, {

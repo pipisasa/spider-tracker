@@ -13,6 +13,7 @@
     "db:studio": "drizzle-kit studio",
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit",
+    "test": "bun test",
     "db:migrate:deploy": "bun src/migrate.ts"
   },
   "dependencies": {

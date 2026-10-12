@@ -375,6 +375,8 @@ export async function acceptAgentInvite(
 
     const name = data.name ?? agentRow.actor.name;
     let handle = data.handle ?? agentRow.actor.handle;
+    // A handle derived from the name may be taken concurrently; then the next free one is used.
+    const derivedFrom = data.handle ? undefined : data.name;
     if (data.handle)
       await assertHandleFree(
         tx,
@@ -382,23 +384,44 @@ export async function acceptAgentInvite(
         data.handle,
         agentRow.actor.id,
       );
-    else if (data.name)
-      handle = await uniqueHandle(tx, organization.id, handleFrom(data.name));
 
     let actor: typeof actors.$inferSelect | undefined;
-    try {
-      [actor] = await tx
-        .update(actors)
-        .set({ name, handle, deactivatedAt: null })
-        .where(eq(actors.id, agentRow.actor.id))
-        .returning();
-    } catch (err) {
-      // Someone took the handle after the check above; the code stays usable.
-      if (isUniqueViolation(err, "actors_org_handle_key"))
-        throw new DomainError("conflict", `Handle @${handle} is already used`);
-      throw err;
+    for (
+      let attempt = 0;
+      attempt < (derivedFrom ? 5 : 1) && !actor;
+      attempt++
+    ) {
+      if (derivedFrom)
+        handle = await uniqueHandle(
+          tx,
+          organization.id,
+          handleFrom(derivedFrom),
+        );
+      try {
+        // A savepoint, so a unique violation doesn't abort the whole transaction.
+        [actor] = await tx.transaction((sp) =>
+          sp
+            .update(actors)
+            .set({ name, handle, deactivatedAt: null })
+            .where(eq(actors.id, agentRow.actor.id))
+            .returning(),
+        );
+        if (!actor) throw new Error("Failed to activate agent");
+      } catch (err) {
+        if (!isUniqueViolation(err, "actors_org_handle_key")) throw err;
+        // Someone took an explicitly requested handle after the check above; the code stays usable.
+        if (!derivedFrom)
+          throw new DomainError(
+            "conflict",
+            `Handle @${handle} is already used`,
+          );
+      }
     }
-    if (!actor) throw new Error("Failed to activate agent");
+    if (!actor)
+      throw new DomainError(
+        "conflict",
+        "Couldn't pick a free handle; please try again",
+      );
     if (data.description !== undefined) {
       await tx
         .update(agents)

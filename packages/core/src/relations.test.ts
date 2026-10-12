@@ -7,7 +7,7 @@ import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { addRelation, listRelations, removeRelation } from "./relations";
 import { createTask, deleteTask } from "./tasks";
-import { holdLock, settle, waitForLockWaiters } from "./test-locks";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -17,6 +17,8 @@ run("task relations", () => {
   const user = { id: `test-${crypto.randomUUID()}`, name: "Owner", email: "owner@example.com" };
   const slug = `relations-${Date.now()}`;
   let ctx: ActorContext;
+  // A request waits either on the locked task (inserting the link) or on the pair lock.
+  const pairWaits = ['"task_relations"', "pg_advisory_xact_lock"];
   const kinds = async (key: string) => (await listRelations(db, ctx.orgId, key)).map((r) => `${r.kind} ${r.task.key}`);
 
   beforeAll(async () => {
@@ -68,13 +70,49 @@ run("task relations", () => {
       settle(addRelation(db, ctx, a.key, { kind: "relates", task: b.key })),
       settle(addRelation(db, ctx, b.key, { kind: "relates", task: a.key })),
     ];
-    await waitForLockWaiters(db, "task_relations", 2);
+    await waitForLockWaiters(db, pairWaits, 2);
     await release();
     const errors = await Promise.all(results);
     expect(errors.filter((e) => e === null)).toHaveLength(1);
     expect(errors.find((e) => e !== null)).toMatchObject({ code: "conflict" });
     expect(await kinds(a.key)).toEqual([`relates ${b.key}`]);
     await removeRelation(db, ctx, a.key, { kind: "relates", task: b.key });
+  });
+
+  test("two tasks blocking each other at once: one is refused", async () => {
+    const [a, b] = [await createTask(db, ctx, "SPI", { title: "North" }), await createTask(db, ctx, "SPI", { title: "South" })];
+    // Without the pair lock both would pass the mutual-block check, then queue on the locked task.
+    const release = await holdLock(db, sql`select 1 from tasks where id = ${a.id} for update`);
+    const results = [
+      settle(addRelation(db, ctx, a.key, { kind: "blocks", task: b.key })),
+      settle(addRelation(db, ctx, b.key, { kind: "blocks", task: a.key })),
+    ];
+    await waitForLockWaiters(db, pairWaits, 2);
+    await release();
+    const errors = await Promise.all(results);
+    expect(errors.filter((e) => e === null)).toHaveLength(1);
+    expect(errors.find((e) => e !== null)).toMatchObject({ code: "validation" });
+    expect(await kinds(a.key)).toHaveLength(1);
+  });
+
+  test("two removes at once: the second is not found and records nothing", async () => {
+    const [a, b] = [await createTask(db, ctx, "SPI", { title: "Once" }), await createTask(db, ctx, "SPI", { title: "Twice" })];
+    await addRelation(db, ctx, a.key, { kind: "blocks", task: b.key });
+    // Both find the link, then queue on its locked row.
+    const release = await holdLock(db, sql`select 1 from task_relations where from_task_id = ${a.id} and to_task_id = ${b.id} for update`);
+    const results = [
+      settle(removeRelation(db, ctx, a.key, { kind: "blocks", task: b.key })),
+      settle(removeRelation(db, ctx, b.key, { kind: "blocked_by", task: a.key })),
+    ];
+    await waitForLockWaiters(db, '"task_relations"', 2);
+    await release();
+    const errors = await Promise.all(results);
+    expect(errors.filter((e) => e === null)).toHaveLength(1);
+    expect(errors.find((e) => e !== null)).toMatchObject({ code: "not_found" });
+    for (const key of [a.key, b.key]) {
+      const removed = (await listTaskActivity(db, ctx.orgId, key)).filter((e) => e.action === "relation.removed");
+      expect(removed).toHaveLength(1);
+    }
   });
 
   test("adding and removing a link is recorded on both tasks", async () => {
