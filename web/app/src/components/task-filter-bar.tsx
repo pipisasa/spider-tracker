@@ -115,6 +115,7 @@ export function TaskFilterBar({
 
   const actorById = new Map([...actors, ...members].map((a) => [a.id, a]));
   const assigneeLabel = (value: string) => {
+    if (value === "mine") return "Me and my agents";
     if (value === "me") return "Me";
     if (value === "none") return "Unassigned";
     const actor = actorById.get(value);
@@ -122,6 +123,7 @@ export function TaskFilterBar({
   };
 
   const assigneeOptions: Option[] = [
+    { value: "mine", label: "Me and my agents" },
     { value: "me", label: "Me" },
     { value: "none", label: "Unassigned" },
     ...members.filter((m) => m.id !== meId).map((m) => ({ value: m.id, label: actorLabel(m) })),

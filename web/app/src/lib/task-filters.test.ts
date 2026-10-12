@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { TaskDto } from "@repo/core/contracts";
-import { activeFilterCount, applyFilters, filtersToSearch, normalizeFilters, parseFilters, sameFilters, toggleValue } from "./task-filters";
+import type { AgentDto, TaskDto } from "@repo/core/contracts";
+import {
+  activeFilterCount,
+  applyFilters,
+  filtersToSearch,
+  mineActorIds,
+  normalizeFilters,
+  parseFilters,
+  sameFilters,
+  toggleValue,
+} from "./task-filters";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ME = id(100);
@@ -32,8 +41,8 @@ function task(n: number, extra: Partial<TaskDto> = {}): TaskDto {
 describe("parseFilters", () => {
   test("reads arrays, single values and numeric strings; drops malformed ones", () => {
     expect(
-      parseFilters({ status: id(1), assignee: ["me", "none", id(2), "bob"], priority: ["1", 3, 9, "x"], tag: [id(5), id(5), "nope"], q: " bug " }),
-    ).toEqual({ status: [id(1)], assignee: ["me", "none", id(2)], priority: [1, 3], tag: [id(5)], q: "bug" });
+      parseFilters({ status: id(1), assignee: ["me", "mine", "none", id(2), "bob"], priority: ["1", 3, 9, "x"], tag: [id(5), id(5), "nope"], q: " bug " }),
+    ).toEqual({ status: [id(1)], assignee: ["me", "mine", "none", id(2)], priority: [1, 3], tag: [id(5)], q: "bug" });
   });
 
   test("empty and unknown input yields no filters; numeric q (JSON-parsed by the router) is kept", () => {
@@ -52,6 +61,7 @@ describe("parseFilters", () => {
     expect(normalizeFilters({ priority: [9] })).toEqual({});
     expect(normalizeFilters("x")).toEqual({});
     expect(normalizeFilters({ tag: [id(3)] })).toEqual({ tag: [id(3)] });
+    expect(normalizeFilters({ assignee: ["mine", "none"] })).toEqual({ assignee: ["mine", "none"] });
   });
 
   test("tagMatch: only any is kept in the URL; junk is dropped", () => {
@@ -97,6 +107,17 @@ describe("applyFilters", () => {
     expect(keys({ assignee: ["me"] })).toEqual(["SPI-1", "SPI-4"]);
     expect(keys({ assignee: ["none"] })).toEqual(["SPI-3"]);
     expect(keys({ assignee: ["none", id(101)] })).toEqual(["SPI-2", "SPI-3", "SPI-4"]);
+  });
+
+  test("assignee mine: the viewer and the agents they own, not other people's", () => {
+    const agent = (n: number, ownerId: string) => ({ actor: { id: id(n) }, ownerId }) as AgentDto;
+    const mine = mineActorIds(ME, [agent(102, ME), agent(103, id(101))]);
+    expect(mine).toEqual([ME, id(102)]);
+    const all = [...tasks, task(5, { assigneeIds: [id(102)] }), task(6, { assigneeIds: [id(103)] })];
+    expect(applyFilters(all, { assignee: ["mine"] }, ME, mine).map((t) => t.key)).toEqual(["SPI-1", "SPI-4", "SPI-5"]);
+    expect(applyFilters(all, { assignee: ["mine", "none"] }, ME, mine).map((t) => t.key)).toEqual(["SPI-1", "SPI-3", "SPI-4", "SPI-5"]);
+    // Without the agents (not loaded yet), mine is just the viewer.
+    expect(applyFilters(all, { assignee: ["mine"] }, ME).map((t) => t.key)).toEqual(["SPI-1", "SPI-4"]);
   });
 
   test("tag matches all chosen tags by default, any with tagMatch any", () => {
