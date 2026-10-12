@@ -5,13 +5,13 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { assertRole, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
-import type { ApiKeyDto, CreatedApiKeyDto } from "./contracts";
+import type { ApiKeyDto, CreatedApiKeyDto, ProjectRefDto } from "./contracts";
 import { DomainError } from "./errors";
 import { handleFrom } from "./handles";
 import { createAgentInput, createApiKeyInput, updateAgentInput } from "./schemas";
 import { parseInput } from "./validate";
 
-const { actors, agents, apiTokens, organizations } = schema;
+const { actors, agentProjects, agents, apiTokens, organizations, projects } = schema;
 
 const KEY_PREFIX = "spt_";
 
@@ -31,7 +31,7 @@ function toApiKeyDto(row: typeof apiTokens.$inferSelect): ApiKeyDto {
 }
 
 /** Agents are created by people who can work in the organization; never by guests or agent keys. */
-async function assertCanCreateAgent(db: Db, ctx: ActorContext) {
+export async function assertCanCreateAgent(db: Db, ctx: ActorContext) {
   assertRole(ctx, ["owner", "admin", "member"], "create agents");
   const [me] = await db.select({ type: actors.type }).from(actors).where(eq(actors.id, ctx.actorId)).limit(1);
   if (me?.type !== "human") throw new DomainError("forbidden", "Agents can't create agents");
@@ -81,6 +81,7 @@ export async function createAgent(db: Db, ctx: ActorContext, input: unknown) {
       description: data.description ?? null,
       canManage: true,
       keys: [] as ApiKeyDto[],
+      projects: null as ProjectRefDto[] | null,
     };
   });
 }
@@ -114,6 +115,10 @@ async function queryAgents(db: Db, ctx: ActorContext, agentActorId?: string) {
           .from(apiTokens)
           .where(inArray(apiTokens.actorId, manageable))
           .orderBy(asc(apiTokens.createdAt));
+  const scopes = await agentProjectRefs(
+    db,
+    rows.map((r) => r.actor.id),
+  );
   return rows.map(({ actor, agent, owner }) => ({
     actor,
     ownerId: agent.ownerId,
@@ -121,7 +126,26 @@ async function queryAgents(db: Db, ctx: ActorContext, agentActorId?: string) {
     description: agent.description,
     canManage: manageable.includes(actor.id),
     keys: keys.filter((k) => k.actorId === actor.id).map(toApiKeyDto),
+    projects: scopes.get(actor.id) ?? null,
   }));
+}
+
+/** Project keys and names each agent is limited to; agents without rows are absent (unscoped). */
+export async function agentProjectRefs(db: Db | Tx, agentActorIds: string[]) {
+  const map = new Map<string, ProjectRefDto[]>();
+  if (agentActorIds.length === 0) return map;
+  const rows = await db
+    .select({ agentId: agentProjects.agentId, key: projects.key, name: projects.name })
+    .from(agentProjects)
+    .innerJoin(projects, eq(agentProjects.projectId, projects.id))
+    .where(inArray(agentProjects.agentId, agentActorIds))
+    .orderBy(asc(projects.key));
+  for (const { agentId, key, name } of rows) {
+    const list = map.get(agentId) ?? [];
+    list.push({ key, name });
+    map.set(agentId, list);
+  }
+  return map;
 }
 
 async function findAgent(db: Db | Tx, orgId: string, agentActorId: string) {
@@ -135,11 +159,14 @@ async function findAgent(db: Db | Tx, orgId: string, agentActorId: string) {
   return row;
 }
 
-/** Renames an agent, changes its handle (unique in the organization) or description. */
+/**
+ * Renames an agent, changes its handle (unique in the organization) or description.
+ * An agent may update these three fields on itself.
+ */
 export async function updateAgent(db: Db, ctx: ActorContext, agentActorId: string, input: unknown) {
   const data = parseInput(updateAgentInput, input);
   const current = await findAgent(db, ctx.orgId, agentActorId);
-  assertCanManageAgent(ctx, current);
+  if (ctx.actorId !== agentActorId) assertCanManageAgent(ctx, current);
 
   await db.transaction(async (tx) => {
     const changes: Record<string, unknown> = {};

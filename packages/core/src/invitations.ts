@@ -23,7 +23,7 @@ const INVALID_CODE = "Invalid or expired invitation code";
 type InvitationRow = typeof invitations.$inferSelect;
 type InvitationRole = InvitationDto["role"];
 
-function generateCode(): string {
+export function generateInvitationCode(): string {
   let code = "";
   for (let i = 0; i < CODE_LENGTH; i++)
     code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
@@ -89,7 +89,7 @@ export async function createInvitation(
         .insert(invitations)
         .values({
           orgId: ctx.orgId,
-          code: generateCode(),
+          code: generateInvitationCode(),
           role: data.role,
           createdBy: ctx.actorId,
           expiresAt,
@@ -224,7 +224,7 @@ export async function previewInvitation(
 }
 
 /** A handle like `jane`, or `jane-2`, `jane-3`… when taken in the organization. */
-async function uniqueHandle(
+export async function uniqueHandle(
   tx: Tx,
   orgId: string,
   base: string,

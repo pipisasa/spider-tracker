@@ -1,8 +1,15 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, desc, eq, isNull, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { assertCanWrite, type ActorContext } from "./access";
+import {
+  assertCanWrite,
+  inScope,
+  orgIdOf,
+  projectScope,
+  type ActorContext,
+  type Viewer,
+} from "./access";
 import { recordActivity } from "./activity";
 import type {
   DocumentDto,
@@ -51,18 +58,19 @@ const toDocumentDto = (row: DocumentRow, scope: Scope): DocumentDto => ({
   content: row.content,
 });
 
-async function findProject(db: Db | Tx, orgId: string, key: string) {
+async function findProject(db: Db | Tx, viewer: Viewer, key: string) {
   const [project] = await db
     .select({ id: projects.id, key: projects.key })
     .from(projects)
     .where(
       and(
-        eq(projects.orgId, orgId),
+        eq(projects.orgId, orgIdOf(viewer)),
         eq(projects.key, key.trim().toUpperCase()),
       ),
     )
     .limit(1);
-  if (!project) throw new DomainError("not_found", `Project ${key} not found`);
+  if (!project || !inScope(await projectScope(db, viewer), project.id))
+    throw new DomainError("not_found", `Project ${key} not found`);
   return project;
 }
 
@@ -102,19 +110,25 @@ function scopeOf(row: {
 /** `lock` holds the document row until the transaction ends, so concurrent saves queue up. */
 async function findDocument(
   db: Db | Tx,
-  orgId: string,
+  viewer: Viewer,
   id: string,
   lock = false,
 ) {
   if (!isUuid(id)) throw new DomainError("not_found", "Document not found");
   const query = selectDocuments(
     db,
-    and(eq(documents.orgId, orgId), eq(documents.id, id)),
+    and(eq(documents.orgId, orgIdOf(viewer)), eq(documents.id, id)),
   ).limit(1);
   const [row] = lock
     ? await query.for("update", { of: documents })
     : await query;
-  if (!row) throw new DomainError("not_found", "Document not found");
+  // Organization-level documents are visible to every member, scoped agents included.
+  const visible =
+    row &&
+    (row.document.projectId === null ||
+      inScope(await projectScope(db, viewer), row.document.projectId));
+  if (!row || !visible)
+    throw new DomainError("not_found", "Document not found");
   return { document: row.document, scope: scopeOf(row) };
 }
 
@@ -141,7 +155,7 @@ export async function createDocument(
     let taskId: string | null = null;
     let scope: Scope = { projectKey: null, taskKey: null };
     if (data.task) {
-      const { task, projectKey } = await findTask(tx, ctx.orgId, data.task);
+      const { task, projectKey } = await findTask(tx, ctx, data.task);
       if (data.project && data.project.trim().toUpperCase() !== projectKey) {
         throw new DomainError(
           "validation",
@@ -152,7 +166,7 @@ export async function createDocument(
       taskId = task.id;
       scope = { projectKey, taskKey: `${projectKey}-${task.number}` };
     } else if (data.project) {
-      const project = await findProject(tx, ctx.orgId, data.project);
+      const project = await findProject(tx, ctx, data.project);
       projectId = project.id;
       scope = { projectKey: project.key, taskKey: null };
     }
@@ -194,17 +208,23 @@ export async function createDocument(
 /** Documents without their content, most recently updated first. */
 export async function listDocuments(
   db: Db,
-  orgId: string,
+  viewer: Viewer,
   query: unknown = {},
 ): Promise<DocumentSummaryDto[]> {
   const filter = parseInput(documentListQuery, query);
-  const where: SQL[] = [eq(documents.orgId, orgId)];
+  const where: (SQL | undefined)[] = [eq(documents.orgId, orgIdOf(viewer))];
   if (filter.task) {
-    const { task } = await findTask(db, orgId, filter.task);
+    const { task } = await findTask(db, viewer, filter.task);
     where.push(eq(documents.taskId, task.id));
   } else if (filter.project) {
-    const project = await findProject(db, orgId, filter.project);
+    const project = await findProject(db, viewer, filter.project);
     where.push(eq(documents.projectId, project.id));
+  }
+  const scope = await projectScope(db, viewer);
+  if (scope) {
+    where.push(
+      or(isNull(documents.projectId), inArray(documents.projectId, [...scope])),
+    );
   }
   const rows = await selectDocuments(db, and(...where)).orderBy(
     desc(documents.updatedAt),
@@ -215,10 +235,10 @@ export async function listDocuments(
 
 export async function getDocument(
   db: Db,
-  orgId: string,
+  viewer: Viewer,
   id: string,
 ): Promise<DocumentDto> {
-  const { document, scope } = await findDocument(db, orgId, id);
+  const { document, scope } = await findDocument(db, viewer, id);
   return toDocumentDto(document, scope);
 }
 
@@ -236,12 +256,7 @@ export async function updateDocument(
   const data = parseInput(updateDocumentInput, input);
 
   return db.transaction(async (tx) => {
-    const { document: current, scope } = await findDocument(
-      tx,
-      ctx.orgId,
-      id,
-      true,
-    );
+    const { document: current, scope } = await findDocument(tx, ctx, id, true);
     const version = current.version;
     if (data.baseVersion !== version) {
       throw new DomainError(
@@ -303,7 +318,7 @@ export async function updateDocument(
 export async function deleteDocument(db: Db, ctx: ActorContext, id: string) {
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
-    const { document, scope } = await findDocument(tx, ctx.orgId, id);
+    const { document, scope } = await findDocument(tx, ctx, id);
     await tx
       .update(documents)
       .set({ deletedAt: new Date() })
@@ -321,10 +336,10 @@ export async function deleteDocument(db: Db, ctx: ActorContext, id: string) {
 /** Every saved version, newest first, without content. */
 export async function listDocumentVersions(
   db: Db,
-  orgId: string,
+  viewer: Viewer,
   id: string,
 ): Promise<DocumentVersionSummaryDto[]> {
-  const { document } = await findDocument(db, orgId, id);
+  const { document } = await findDocument(db, viewer, id);
   const rows = await db
     .select({
       version: documentVersions.version,
@@ -341,11 +356,11 @@ export async function listDocumentVersions(
 
 export async function getDocumentVersion(
   db: Db,
-  orgId: string,
+  viewer: Viewer,
   id: string,
   version: number | string,
 ): Promise<DocumentVersionDto> {
-  const { document } = await findDocument(db, orgId, id);
+  const { document } = await findDocument(db, viewer, id);
   const number = Number(version);
   if (!Number.isInteger(number) || number < 1)
     throw new DomainError("not_found", `Version ${version} not found`);

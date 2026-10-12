@@ -16,6 +16,7 @@ import { Route as AuthedOrgSlugRouteImport } from './routes/_authed/$orgSlug'
 import { Route as AuthedAccountRouteImport } from './routes/_authed/account'
 import { Route as AuthedDeviceRouteImport } from './routes/_authed/device'
 import { Route as AuthedOnboardingRouteImport } from './routes/_authed/onboarding'
+import { Route as AgentInviteCodeRouteImport } from './routes/agent-invite.$code'
 import { Route as AuthedOrgSlugIndexRouteImport } from './routes/_authed/$orgSlug/index'
 import { Route as AuthedOrgSlugDocsIndexRouteImport } from './routes/_authed/$orgSlug/docs/index'
 import { Route as AuthedOrgSlugDocsDocumentIdRouteImport } from './routes/_authed/$orgSlug/docs/$documentId'
@@ -57,6 +58,11 @@ const AuthedOnboardingRoute = AuthedOnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
   getParentRoute: () => AuthedRoute,
+} as any)
+const AgentInviteCodeRoute = AgentInviteCodeRouteImport.update({
+  id: '/agent-invite/$code',
+  path: '/agent-invite/$code',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedOrgSlugIndexRoute = AuthedOrgSlugIndexRouteImport.update({
   id: '/',
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AuthedAccountRoute
   '/device': typeof AuthedDeviceRoute
   '/onboarding': typeof AuthedOnboardingRoute
+  '/agent-invite/$code': typeof AgentInviteCodeRoute
   '/$orgSlug/': typeof AuthedOrgSlugIndexRoute
   '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
   '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
@@ -119,6 +126,7 @@ export interface FileRoutesByTo {
   '/account': typeof AuthedAccountRoute
   '/device': typeof AuthedDeviceRoute
   '/onboarding': typeof AuthedOnboardingRoute
+  '/agent-invite/$code': typeof AgentInviteCodeRoute
   '/': typeof AuthedIndexRoute
   '/$orgSlug': typeof AuthedOrgSlugIndexRoute
   '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
@@ -136,6 +144,7 @@ export interface FileRoutesById {
   '/_authed/account': typeof AuthedAccountRoute
   '/_authed/device': typeof AuthedDeviceRoute
   '/_authed/onboarding': typeof AuthedOnboardingRoute
+  '/agent-invite/$code': typeof AgentInviteCodeRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$orgSlug/': typeof AuthedOrgSlugIndexRoute
   '/_authed/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
@@ -154,6 +163,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/device'
     | '/onboarding'
+    | '/agent-invite/$code'
     | '/$orgSlug/'
     | '/$orgSlug/docs/$documentId'
     | '/$orgSlug/projects/$projectKey'
@@ -167,6 +177,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/device'
     | '/onboarding'
+    | '/agent-invite/$code'
     | '/'
     | '/$orgSlug'
     | '/$orgSlug/docs/$documentId'
@@ -183,6 +194,7 @@ export interface FileRouteTypes {
     | '/_authed/account'
     | '/_authed/device'
     | '/_authed/onboarding'
+    | '/agent-invite/$code'
     | '/_authed/'
     | '/_authed/$orgSlug/'
     | '/_authed/$orgSlug/docs/$documentId'
@@ -196,6 +208,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  AgentInviteCodeRoute: typeof AgentInviteCodeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -248,6 +261,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/onboarding'
       preLoaderRoute: typeof AuthedOnboardingRouteImport
       parentRoute: typeof AuthedRoute
+    }
+    '/agent-invite/$code': {
+      id: '/agent-invite/$code'
+      path: '/agent-invite/$code'
+      fullPath: '/agent-invite/$code'
+      preLoaderRoute: typeof AgentInviteCodeRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authed/$orgSlug/': {
       id: '/_authed/$orgSlug/'
@@ -347,6 +367,7 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
+  AgentInviteCodeRoute: AgentInviteCodeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

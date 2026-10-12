@@ -106,3 +106,28 @@ export const invitations = pgTable(
     check("invitations_role_not_owner", sql`${t.role} <> 'owner'`),
   ],
 );
+
+// One-time codes that let an agent set itself up (ST-31). The pending agent is created with
+// the invite (deactivated until accepted); accepting activates it and issues its first key.
+export const agentInvites = pgTable(
+  "agent_invites",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Normalised: uppercase, no separators (shown as ABCD-EFGH). */
+    code: text("code").notNull().unique(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => actors.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now() + interval '7 days'`),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("agent_invites_org_idx").on(t.orgId), index("agent_invites_agent_idx").on(t.agentId)],
+);

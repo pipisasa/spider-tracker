@@ -184,3 +184,17 @@ export const taskRelations = pgTable(
     check("task_relations_not_self", sql`${t.fromTaskId} <> ${t.toTaskId}`),
   ],
 );
+
+// Projects an agent may see (ST-31). An agent without rows sees every project.
+export const agentProjects = pgTable(
+  "agent_projects",
+  {
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => actors.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.projectId] }), index("agent_projects_project_idx").on(t.projectId)],
+);

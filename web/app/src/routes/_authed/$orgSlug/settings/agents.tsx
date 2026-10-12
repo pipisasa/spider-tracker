@@ -13,17 +13,21 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiUrl } from "@/lib/api";
 import {
+  agentInvitesQuery,
   agentsQuery,
+  projectsQuery,
   useCreateAgent,
+  useCreateAgentInvite,
+  useRevokeAgentInvite,
   useCreateApiKey,
   useDeleteAgent,
   useRevokeApiKey,
   useUpdateAgent,
 } from "@/lib/work";
-import type { AgentDto, CreatedApiKeyDto } from "@repo/core/contracts";
+import type { AgentDto, AgentInviteDto, CreatedAgentInviteDto, CreatedApiKeyDto } from "@repo/core/contracts";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, KeyRoundIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, CopyIcon, KeyRoundIcon, PencilIcon, PlusIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -31,7 +35,12 @@ export const Route = createFileRoute("/_authed/$orgSlug/settings/agents")({
   beforeLoad: ({ context, params }) => {
     if (context.membership.actor.role === "guest") throw redirect({ to: "/$orgSlug", params });
   },
-  loader: ({ context, params }) => context.queryClient.ensureQueryData(agentsQuery(params.orgSlug)),
+  loader: ({ context, params }) =>
+    Promise.all([
+      context.queryClient.ensureQueryData(agentsQuery(params.orgSlug)),
+      context.queryClient.ensureQueryData(agentInvitesQuery(params.orgSlug)),
+      context.queryClient.ensureQueryData(projectsQuery(params.orgSlug)),
+    ]),
   component: AgentsPage,
 });
 
@@ -41,7 +50,9 @@ function AgentsPage() {
   const { orgSlug } = Route.useParams();
   const { membership } = Route.useRouteContext();
   const { data: agents } = useSuspenseQuery(agentsQuery(orgSlug));
+  const { data: invites } = useSuspenseQuery(agentInvitesQuery(orgSlug));
   const [creating, setCreating] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<AgentDto | null>(null);
   const [deleting, setDeleting] = useState<AgentDto | null>(null);
   const [newKeyFor, setNewKeyFor] = useState<AgentDto | null>(null);
@@ -71,11 +82,28 @@ function AgentsPage() {
             You manage the agents you create; owners and admins can manage every agent.
           </p>
         </div>
-        <Button className="ml-auto shrink-0" onClick={() => setCreating(true)}>
-          <PlusIcon />
-          New agent
-        </Button>
+        <div className="ml-auto flex shrink-0 gap-2">
+          <Button variant="outline" onClick={() => setInviting(true)}>
+            <UserPlusIcon />
+            Invite agent
+          </Button>
+          <Button onClick={() => setCreating(true)}>
+            <PlusIcon />
+            New agent
+          </Button>
+        </div>
       </header>
+
+      {invites.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-medium">Waiting for setup</h2>
+          <ul className="flex flex-col gap-2">
+            {invites.map((invite) => (
+              <PendingInvite key={invite.id} orgSlug={orgSlug} invite={invite} />
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-medium">My agents</h2>
@@ -96,6 +124,7 @@ function AgentsPage() {
         </section>
       )}
 
+      <InviteAgentDialog orgSlug={orgSlug} open={inviting} onClose={() => setInviting(false)} />
       <AgentFormDialog orgSlug={orgSlug} open={creating} agent={null} onClose={() => setCreating(false)} />
       <AgentFormDialog orgSlug={orgSlug} open={!!editing} agent={editing} onClose={() => setEditing(null)} />
       <DeleteAgentDialog orgSlug={orgSlug} agent={deleting} onClose={() => setDeleting(null)} />
@@ -304,6 +333,9 @@ function AgentCard({
         )}
       </div>
       {agent.description && <p className="text-sm text-muted-foreground">{agent.description}</p>}
+      <p className="text-xs text-muted-foreground">
+        {agent.projects ? `Projects: ${agent.projects.map((p) => p.key).join(", ")}` : "All projects"}
+      </p>
       {agent.canManage &&
         (active.length > 0 ? (
           <ul className="divide-y rounded-md border text-sm">
@@ -427,6 +459,164 @@ function CreatedKeyDialog({
         <DialogFooter>
           <Button onClick={onClose}>Done</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const inviteLink = (code: string) => `${window.location.origin}/agent-invite/${code}`;
+
+function CopyLine({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-md border bg-muted px-3 py-2 text-xs">{value}</code>
+        <Button variant="outline" size="icon" onClick={copy} aria-label={`Copy ${label.toLowerCase()}`}>
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PendingInvite({ orgSlug, invite }: { orgSlug: string; invite: AgentInviteDto }) {
+  const revoke = useRevokeAgentInvite(orgSlug);
+
+  return (
+    <li className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm">
+      <div className="flex min-w-0 flex-col">
+        <code className="font-medium">{invite.code}</code>
+        <span className="text-xs text-muted-foreground">
+          {invite.status === "expired" ? "Expired" : `Expires ${dateFormat.format(new Date(invite.expiresAt))}`} ·
+          Projects: {invite.projects.map((p) => p.key).join(", ")}
+        </span>
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="ml-auto text-destructive hover:text-destructive"
+        disabled={revoke.isPending}
+        onClick={() =>
+          revoke.mutate(invite.id, {
+            onSuccess: () => toast.success(`Revoked ${invite.code}`),
+            onError: (err) => toast.error(err.message),
+          })
+        }
+      >
+        Revoke
+      </Button>
+    </li>
+  );
+}
+
+const EXPIRY_DAYS = [1, 7, 30] as const;
+
+function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: boolean; onClose: () => void }) {
+  const { data: projects } = useSuspenseQuery(projectsQuery(orgSlug));
+  const [selected, setSelected] = useState<string[]>([]);
+  const [days, setDays] = useState<number>(7);
+  const [created, setCreated] = useState<CreatedAgentInviteDto | null>(null);
+  const create = useCreateAgentInvite(orgSlug);
+
+  useEffect(() => {
+    if (!open) return;
+    setSelected([]);
+    setDays(7);
+    setCreated(null);
+  }, [open]);
+
+  function toggle(key: string, checked: boolean) {
+    setSelected((current) => (checked ? [...current, key] : current.filter((k) => k !== key)));
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (selected.length === 0) return;
+    create.mutate(
+      { projectKeys: selected, expiresInDays: days },
+      { onSuccess: setCreated, onError: (err) => toast.error(err.message) },
+    );
+  }
+
+  const code = created?.invite.code;
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="sm:max-w-xl">
+        {code ? (
+          <div className="flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle>Invite code {code}</DialogTitle>
+              <DialogDescription>
+                Give it to the agent. It works once, until {dateFormat.format(new Date(created.invite.expiresAt))}, and
+                the agent will see only {created.invite.projects.map((p) => p.key).join(", ")}.
+              </DialogDescription>
+            </DialogHeader>
+            <CopyLine label="Code" value={code} />
+            <CopyLine label="Link" value={inviteLink(code)} />
+            <CopyLine label="CLI" value={`spider accept-invite ${code}`} />
+            <CopyLine label="Claude Code" value={`/spider-tracker:create-agent ${code}`} />
+            <DialogFooter>
+              <Button onClick={onClose}>Done</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle>Invite an agent</DialogTitle>
+              <DialogDescription>
+                The agent sets itself up with a one-time code and gets its own key. It belongs to you and sees only the
+                projects you pick.
+              </DialogDescription>
+            </DialogHeader>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-2 text-sm font-medium">Projects</legend>
+              {projects.map((project) => (
+                <label key={project.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={selected.includes(project.key)}
+                    onChange={(e) => toggle(project.key, e.target.checked)}
+                  />
+                  <span className="font-medium">{project.key}</span>
+                  <span className="text-muted-foreground">{project.name}</span>
+                </label>
+              ))}
+              {projects.length === 0 && <p className="text-sm text-muted-foreground">No projects yet.</p>}
+            </fieldset>
+            <div className="flex flex-col gap-2">
+              <Label>Expires after</Label>
+              <div className="flex gap-2">
+                {EXPIRY_DAYS.map((d) => (
+                  <Button
+                    key={d}
+                    type="button"
+                    size="sm"
+                    variant={days === d ? "default" : "outline"}
+                    onClick={() => setDays(d)}
+                  >
+                    {d === 1 ? "1 day" : `${d} days`}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={create.isPending || selected.length === 0}>
+                Create invite
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

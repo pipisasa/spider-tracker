@@ -1,7 +1,7 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq, isNull } from "drizzle-orm";
-import { assertRole, type ActorContext } from "./access";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { assertRole, inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto } from "./contracts";
@@ -66,22 +66,25 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
   });
 }
 
-export async function listProjects(db: Db, orgId: string): Promise<ProjectDto[]> {
+export async function listProjects(db: Db, viewer: Viewer): Promise<ProjectDto[]> {
+  const scope = await projectScope(db, viewer);
   const rows = await db
     .select()
     .from(projects)
-    .where(and(eq(projects.orgId, orgId), isNull(projects.archivedAt)))
+    .where(
+      and(eq(projects.orgId, orgIdOf(viewer)), isNull(projects.archivedAt), scope ? inArray(projects.id, [...scope]) : undefined),
+    )
     .orderBy(asc(projects.createdAt));
   return rows.map(toProjectDto);
 }
 
-export async function getProject(db: Db, orgId: string, key: string): Promise<ProjectDetailDto> {
+export async function getProject(db: Db, viewer: Viewer, key: string): Promise<ProjectDetailDto> {
   const [project] = await db
     .select()
     .from(projects)
-    .where(and(eq(projects.orgId, orgId), eq(projects.key, key.toUpperCase())))
+    .where(and(eq(projects.orgId, orgIdOf(viewer)), eq(projects.key, key.toUpperCase())))
     .limit(1);
-  if (!project) throw new DomainError("not_found", `Project ${key} not found`);
+  if (!project || !inScope(await projectScope(db, viewer), project.id)) throw new DomainError("not_found", `Project ${key} not found`);
   const rows = await db.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
   return { ...toProjectDto(project), statuses: rows.map(toStatusDto) };
 }

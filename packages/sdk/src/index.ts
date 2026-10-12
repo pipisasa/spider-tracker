@@ -1,9 +1,12 @@
 import type {
+  AcceptedAgentInviteDto,
   ActivityDto,
   ActorDto,
   AgentDto,
   ApiErrorBody,
   CommentDto,
+  AgentInviteDto,
+  CreatedAgentInviteDto,
   CreatedApiKeyDto,
   DocumentDto,
   DocumentSummaryDto,
@@ -22,6 +25,8 @@ import type {
   WhoAmIResponse,
 } from "@repo/core/contracts";
 import type {
+  AcceptAgentInviteInput,
+  CreateAgentInviteInput,
   CreateAgentInput,
   CreateCommentInput,
   CreateDocumentInput,
@@ -139,6 +144,8 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       create: (orgSlug: string, input: CreateAgentInput) => request<AgentDto>("POST", `${org(orgSlug)}/agents`, input),
       update: (orgSlug: string, agentId: string, input: UpdateAgentInput) =>
         request<AgentDto>("PATCH", `${org(orgSlug)}/agents/${seg(agentId)}`, input),
+      /** An agent key changes its own name, handle or description. */
+      updateMe: (orgSlug: string, input: UpdateAgentInput) => request<AgentDto>("PATCH", `${org(orgSlug)}/agents/me`, input),
       /** Deactivates the agent and revokes all its keys. */
       delete: (orgSlug: string, agentId: string) => request<void>("DELETE", `${org(orgSlug)}/agents/${seg(agentId)}`),
       keys: {
@@ -147,6 +154,16 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
           request<CreatedApiKeyDto>("POST", `${org(orgSlug)}/agents/${seg(agentId)}/keys`, input),
         revoke: (orgSlug: string, keyId: string) => request<void>("DELETE", `${org(orgSlug)}/api-keys/${seg(keyId)}`),
       },
+    },
+
+    /** One-time codes an agent uses to set itself up, limited to some projects. */
+    agentInvites: {
+      create: (orgSlug: string, input: CreateAgentInviteInput) =>
+        request<CreatedAgentInviteDto>("POST", `${org(orgSlug)}/agent-invites`, input),
+      list: (orgSlug: string) => request<ListResponse<AgentInviteDto>>("GET", `${org(orgSlug)}/agent-invites`),
+      revoke: (orgSlug: string, inviteId: string) => request<void>("DELETE", `${org(orgSlug)}/agent-invites/${seg(inviteId)}`),
+      /** No token needed: the code (or invite link) is the credential. Returns the agent's first API key. */
+      accept: (input: AcceptAgentInviteInput) => request<AcceptedAgentInviteDto>("POST", "/v1/agent-invites/accept", input),
     },
 
     projects: {

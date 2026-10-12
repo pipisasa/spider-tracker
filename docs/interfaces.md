@@ -45,6 +45,13 @@ See [auth.md](./auth.md) for all flows.
 - `GET|POST /v1/orgs/:org/agents` — active agents with `owner { id, name, handle }`, `canManage`, and key metadata only for agents you can manage; `{ name, handle?, description? }` to create one owned by you (owners, admins and members; guests and agent keys get `403`).
 - `PATCH|DELETE /v1/orgs/:org/agents/:agentId` — the agent's owner or an owner/admin: `{ name?, handle?, description? }` (`409` if the handle is taken); `DELETE` deactivates the agent and revokes all its keys (`204`).
 - `POST /v1/orgs/:org/agents/:agentId/keys` `{ name }` → `201 { key, secret }`, the secret shown once; `DELETE /v1/orgs/:org/api-keys/:keyId` revokes one. Same permission as above.
+- `PATCH /v1/orgs/:org/agents/me` `{ name?, handle?, description? }` → `200` agent — an agent key updating itself (an agent may also `PATCH` its own `/agents/:agentId`). Agents carry `projects: [{ key, name }] | null` (null = all projects).
+
+### Agent invites
+- `GET|POST /v1/orgs/:org/agent-invites` — people who can create agents. `POST { projectKeys: string[] (≥ 1), expiresInDays?: 1–30 (7) }` → `201 { invite, agent }`: creates a pending agent owned by you, limited to those projects, and a one-time code (`ABCD-EFGH`). `GET` lists unused invites for agents you can manage (`status: pending | expired`; expired ones for 7 days).
+- `DELETE /v1/orgs/:org/agent-invites/:id` — revoke an unused invite; its pending agent is removed.
+- `POST /v1/agent-invites/accept` `{ code, name?, handle?, description? }` → `201 { token, actor, organization: { id, slug, name }, projects: [{ key, name }], owner: { id, name, handle } }`. **No session or key**: the code is the credential. `code` may be the invite link (`…/agent-invite/ABCD-EFGH` or `…?code=…`). Activates the agent, applies the optional fields (`409` on a taken handle, without using up the code; a name without a handle derives one) and returns its first API key (named `invite`), shown once. Unknown, used, revoked and expired codes get `400 "Invalid or expired invitation code"`. Best-effort limit of 10 attempts per minute per client IP (`cf-connecting-ip`, else `x-forwarded-for`), per API instance → `429`.
+- The web shows the link as `${WEB_ORIGIN}/agent-invite/<CODE>`, a public page with the commands `spider accept-invite <CODE>` and `/spider-tracker:create-agent <CODE>`.
 
 ## SDK
 

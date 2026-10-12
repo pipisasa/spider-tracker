@@ -1,4 +1,6 @@
 import {
+  acceptAgentInviteInput,
+  createAgentInviteInput,
   createAgentInput,
   createApiKeyInput,
   createCommentInput,
@@ -186,8 +188,38 @@ const schemas: Record<string, JsonSchema> = {
     description: nullable("string"),
     canManage: { type: "boolean", description: "The caller owns the agent or is an organization owner/admin" },
     keys: { type: "array", items: ref("ApiKey"), description: "Empty unless canManage" },
+    projects: {
+      type: ["array", "null"],
+      items: ref("ProjectRef"),
+      description: "Projects the agent is limited to; null when it sees every project",
+    },
   }),
   AgentList: listOf("Agent"),
+  ProjectRef: object({ key: string(), name: string() }),
+  AgentInvite: object({
+    id: string({ format: "uuid" }),
+    code: string({ examples: ["ABCD-EFGH"] }),
+    status: string({ enum: ["pending", "expired"] }),
+    expiresAt: string({ format: "date-time" }),
+    createdAt: string({ format: "date-time" }),
+    createdBy: nullable("string", { format: "uuid" }),
+    agent: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+    projects: { type: "array", items: ref("ProjectRef") },
+  }),
+  AgentInviteList: listOf("AgentInvite"),
+  CreatedAgentInvite: object({
+    invite: ref("AgentInvite"),
+    agent: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+  }),
+  AcceptedAgentInvite: object({
+    token: string({ description: "The agent's API key (spt_…); shown only once" }),
+    actor: ref("Actor"),
+    organization: ref("Organization"),
+    projects: { type: "array", items: ref("ProjectRef") },
+    owner: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+  }),
+  CreateAgentInviteInput: fromZod(createAgentInviteInput),
+  AcceptAgentInviteInput: fromZod(acceptAgentInviteInput),
   CreateAgentInput: fromZod(createAgentInput),
   UpdateAgentInput: fromZod(updateAgentInput),
   CreateApiKeyInput: fromZod(createApiKeyInput),
@@ -294,6 +326,47 @@ const paths = {
       summary: "Create an agent owned by you (people with owner, admin or member role; not guests or agent keys)",
       requestBody: body("CreateAgentInput"),
       responses: { "201": ok("Created agent", "Agent"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/agents/me": {
+    parameters: [orgSlug],
+    patch: {
+      operationId: "updateAgentMe",
+      summary: "An agent changes its own name, handle or description (agent API keys)",
+      requestBody: body("UpdateAgentInput"),
+      responses: { "200": ok("Updated agent", "Agent"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/agent-invites": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "listAgentInvites",
+      summary: "Unused agent invites for agents you can manage (recently expired ones included)",
+      responses: { "200": ok("Agent invites", "AgentInviteList"), ...errors },
+    },
+    post: {
+      operationId: "createAgentInvite",
+      summary: "Create a pending agent limited to some projects, with a one-time setup code (people who can create agents)",
+      requestBody: body("CreateAgentInviteInput"),
+      responses: { "201": ok("Created invite", "CreatedAgentInvite"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/agent-invites/{inviteId}": {
+    parameters: [orgSlug, pathParam("inviteId", "Agent invite id")],
+    delete: {
+      operationId: "revokeAgentInvite",
+      summary: "Revoke an unused agent invite and remove its pending agent",
+      responses: { "204": { description: "Revoked" }, ...errors },
+    },
+  },
+  "/v1/agent-invites/accept": {
+    post: {
+      operationId: "acceptAgentInvite",
+      summary:
+        "Accept an agent invite without signing in (the code is the credential): activates the agent and returns its first API key. `code` may be the invite link. Rate limited per client IP",
+      security: [],
+      requestBody: body("AcceptAgentInviteInput"),
+      responses: { "201": ok("The agent's key and scope", "AcceptedAgentInvite"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/agents/{agentId}": {

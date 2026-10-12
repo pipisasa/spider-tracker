@@ -1,7 +1,7 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, desc, eq, gt, inArray, isNull } from "drizzle-orm";
-import { assertCanWrite, type ActorContext } from "./access";
+import { assertCanWrite, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { CommentDto, InboxKind } from "./contracts";
 import { DomainError } from "./errors";
@@ -37,8 +37,8 @@ function toCommentDto(row: typeof comments.$inferSelect, taskKey: string): Comme
   };
 }
 
-export async function listComments(db: Db, orgId: string, taskKey: string): Promise<CommentDto[]> {
-  const { task, projectKey } = await findTask(db, orgId, taskKey);
+export async function listComments(db: Db, viewer: Viewer, taskKey: string): Promise<CommentDto[]> {
+  const { task, projectKey } = await findTask(db, viewer, taskKey);
   const rows = await db
     .select()
     .from(comments)
@@ -56,7 +56,7 @@ export async function addComment(db: Db, ctx: ActorContext, taskKey: string, inp
   const data = parseInput(createCommentInput, input);
 
   return db.transaction(async (tx) => {
-    const { task, projectKey } = await findTask(tx, ctx.orgId, taskKey);
+    const { task, projectKey } = await findTask(tx, ctx, taskKey);
     const [author] = await tx.select({ type: actors.type }).from(actors).where(eq(actors.id, ctx.actorId)).limit(1);
 
     if (author?.type === "agent") {

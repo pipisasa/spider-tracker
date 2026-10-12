@@ -2,7 +2,9 @@ import type {
   ActivityDto,
   ActorDto,
   AgentDto,
+  AgentInviteDto,
   CommentDto,
+  CreatedAgentInviteDto,
   DocumentDto,
   DocumentSummaryDto,
   DocumentVersionDto,
@@ -18,6 +20,7 @@ import type {
 } from "@repo/core/contracts";
 import type {
   CreateAgentInput,
+  CreateAgentInviteInput,
   CreateDocumentInput,
   CreateInvitationInput,
   CreateProjectInput,
@@ -42,6 +45,7 @@ const orgPath = (org: string) => `/v1/orgs/${encodeURIComponent(org)}`;
 export const keys = {
   members: (org: string) => ["orgs", org, "members"] as const,
   agents: (org: string) => ["orgs", org, "agents"] as const,
+  agentInvites: (org: string) => ["orgs", org, "agent-invites"] as const,
   invitations: (org: string) => ["orgs", org, "invitations"] as const,
   tags: (org: string) => ["orgs", org, "tags"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
@@ -287,6 +291,37 @@ export function useRevokeApiKey(org: string) {
     mutationFn: (keyId: string) =>
       api<void>(`${orgPath(org)}/api-keys/${keyId}`, { method: "DELETE" }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
+  });
+}
+
+export const agentInvitesQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.agentInvites(org),
+    queryFn: async () =>
+      (await api<ListResponse<AgentInviteDto>>(`${orgPath(org)}/agent-invites`))
+        .items,
+  });
+
+export function useCreateAgentInvite(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateAgentInviteInput) =>
+      api<CreatedAgentInviteDto>(`${orgPath(org)}/agent-invites`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: keys.agentInvites(org) }),
+  });
+}
+
+export function useRevokeAgentInvite(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`${orgPath(org)}/agent-invites/${id}`, { method: "DELETE" }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: keys.agentInvites(org) }),
   });
 }
 

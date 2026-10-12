@@ -1,7 +1,7 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { aliasedTable, and, asc, eq, gt, inArray, isNull, lte } from "drizzle-orm";
-import type { ActorContext } from "./access";
+import { projectScope, type ActorContext } from "./access";
 import type { InboxItemDto, InboxKind } from "./contracts";
 import { publish } from "./events";
 import { inboxQuery, markInboxReadInput } from "./schemas";
@@ -37,6 +37,7 @@ const sender = aliasedTable(actors, "sender");
 /** The acting actor's inbox, oldest first; `after` returns only newer items (a cursor). */
 export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}): Promise<InboxItemDto[]> {
   const { after, unread, limit } = parseInput(inboxQuery, query);
+  const scope = await projectScope(db, ctx);
   const rows = await db
     .select({
       item: inboxItems,
@@ -56,6 +57,7 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
         eq(inboxItems.recipientId, ctx.actorId),
         eq(inboxItems.orgId, ctx.orgId),
         isNull(tasks.deletedAt),
+        scope ? inArray(tasks.projectId, [...scope]) : undefined,
         after !== undefined ? gt(inboxItems.id, after) : undefined,
         unread ? isNull(inboxItems.readAt) : undefined,
       ),

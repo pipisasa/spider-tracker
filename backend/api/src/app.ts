@@ -1,7 +1,8 @@
-import type { ApiErrorBody, AuthProvidersResponse, MeResponse, WhoAmIResponse } from "@repo/core";
+import type { AcceptedAgentInviteDto, ApiErrorBody, AuthProvidersResponse, MeResponse, WhoAmIResponse } from "@repo/core";
 import type { InvitationPreviewDto } from "@repo/core";
 import {
   DomainError,
+  acceptAgentInvite,
   acceptInvitation,
   authenticateApiKey,
   createOrganization,
@@ -15,10 +16,11 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { enabledAuthProviders, type Auth } from "./auth";
-import { toMembership } from "./dto";
+import { toActorDto, toMembership } from "./dto";
 import type { Env } from "./env";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
+import { clientIp, createRateLimiter } from "./rate-limit";
 import { deviceApprovalRoutes, deviceRoutes } from "./routes/device";
 import { createRealtime } from "./realtime";
 import { orgRoutes } from "./routes/orgs";
@@ -71,6 +73,20 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
   app.route("/mcp", mcpRoutes(db, realtime));
+
+  // Agent invites are accepted without a session: the code is the credential (ST-31).
+  // Registered before the /v1 auth middleware; rate limited per client IP.
+  const inviteAttempts = createRateLimiter({ limit: 10, windowMs: 60_000 });
+  app.post("/v1/agent-invites/accept", async (c) => {
+    if (!inviteAttempts.attempt(clientIp(c.req.raw.headers))) {
+      return c.json(errorBody("rate_limited", "Too many attempts. Try again in a minute"), 429);
+    }
+    const input: unknown = await c.req.json().catch(() => null);
+    const source = c.req.header("X-Spider-Source")?.trim().toLowerCase();
+    const accepted = await acceptAgentInvite(db, input, source === "cli" || source === "mcp" ? source : "api");
+    const body: AcceptedAgentInviteDto = { ...accepted, actor: toActorDto(accepted.actor) };
+    return c.json(body, 201);
+  });
 
   // Everything under /v1 requires a browser session or an agent API key (Bearer spt_…).
   app.use("/v1/*", async (c, next) => {

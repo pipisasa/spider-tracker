@@ -128,7 +128,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     return ids.map((id) => rows.find((t) => t.id === id)?.name ?? id);
   };
 
-  const projectOfTask = (taskKey: string) => getProject(db, ctx.orgId, taskKey.split("-")[0] ?? "");
+  const projectOfTask = (taskKey: string) => getProject(db, ctx, taskKey.split("-")[0] ?? "");
 
   /** A task as the model sees it: names and handles instead of ids. */
   const describeTask = async (task: TaskDto, project: ProjectDetailDto, detail = false) => ({
@@ -167,7 +167,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     { description: "List the organization's projects (key, name, description).", inputSchema: {} },
     () =>
       run(async () =>
-        (await listProjects(db, ctx.orgId)).map((p) => ({ key: p.key, name: p.name, description: p.description })),
+        (await listProjects(db, ctx)).map((p) => ({ key: p.key, name: p.name, description: p.description })),
       ),
   );
 
@@ -180,8 +180,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ projectKey }) =>
       run(async () => {
-        const project = await getProject(db, ctx.orgId, projectKey);
-        const documents = await listDocuments(db, ctx.orgId, { project: project.key });
+        const project = await getProject(db, ctx, projectKey);
+        const documents = await listDocuments(db, ctx, { project: project.key });
         return {
           key: project.key,
           name: project.name,
@@ -207,8 +207,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ projectKey, status, assignee, query, limit }) =>
       run(async () => {
-        const project = await getProject(db, ctx.orgId, projectKey);
-        let tasks = await listTasks(db, ctx.orgId, project.key);
+        const project = await getProject(db, ctx, projectKey);
+        let tasks = await listTasks(db, ctx, project.key);
         if (status) {
           const wanted = status.trim().toLowerCase();
           const ids = project.statuses
@@ -242,11 +242,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ key: taskKey }) =>
       run(async () => {
-        const task = await getTask(db, ctx.orgId, taskKey);
+        const task = await getTask(db, ctx, taskKey);
         const [subtasks, relations, documents] = await Promise.all([
-          listSubtasks(db, ctx.orgId, task.key),
-          listRelations(db, ctx.orgId, task.key),
-          listDocuments(db, ctx.orgId, { task: task.key }),
+          listSubtasks(db, ctx, task.key),
+          listRelations(db, ctx, task.key),
+          listDocuments(db, ctx, { task: task.key }),
         ]);
         return {
           relations: relations.map((r) => ({ kind: r.kind, task: r.task.key, title: r.task.title })),
@@ -279,7 +279,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ projectKey, title, description, status, priority, assignees, tags, parent }) =>
       run(async () => {
-        const project = await getProject(db, ctx.orgId, projectKey);
+        const project = await getProject(db, ctx, projectKey);
         const task = await createTask(db, ctx, project.key, {
           title,
           description,
@@ -287,7 +287,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           statusId: status ? resolveStatus(project, status).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
-          parentId: parent ? (await getTask(db, ctx.orgId, parent)).id : undefined,
+          parentId: parent ? (await getTask(db, ctx, parent)).id : undefined,
         });
         return describeTask(task, project, true);
       }),
@@ -318,7 +318,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
           statusId: status ? resolveStatus(project, status).id : undefined,
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
-          parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx.orgId, parent)).id,
+          parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
         });
         return describeTask(task, project, true);
       }),
@@ -327,7 +327,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
   /** Adds you to a task's assignees and optionally moves it. */
   const takeTask = async (taskKey: string, moveToInProgress: boolean) => {
     const project = await projectOfTask(taskKey);
-    const current = await getTask(db, ctx.orgId, taskKey);
+    const current = await getTask(db, ctx, taskKey);
     let statusId: string | undefined;
     if (moveToInProgress) {
       const status = project.statuses.find((s) => s.category === "in_progress");
@@ -412,7 +412,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       },
     },
     ({ project, task }) =>
-      run(async () => Promise.all((await listDocuments(db, ctx.orgId, { project, task })).map(describeDocument))),
+      run(async () => Promise.all((await listDocuments(db, ctx, { project, task })).map(describeDocument))),
   );
 
   server.registerTool(
@@ -427,11 +427,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ id, version }) =>
       run(async () => {
-        const document = await getDocument(db, ctx.orgId, id);
+        const document = await getDocument(db, ctx, id);
         if (version === undefined || version === document.version) {
           return { ...(await describeDocument(document)), content: document.content };
         }
-        const old = await getDocumentVersion(db, ctx.orgId, id, version);
+        const old = await getDocumentVersion(db, ctx, id, version);
         return {
           id: document.id,
           title: old.title,
@@ -491,7 +491,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     ({ key: taskKey }) =>
       run(async () =>
         Promise.all(
-          (await listComments(db, ctx.orgId, taskKey)).map(async (c) => ({
+          (await listComments(db, ctx, taskKey)).map(async (c) => ({
             id: c.id,
             author: await handleOf(c.authorId),
             body: c.body,
@@ -515,7 +515,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         const statusName = (id: unknown) => project.statuses.find((s) => s.id === id)?.name ?? id;
         const handles = async (ids: unknown) => (Array.isArray(ids) ? Promise.all(ids.map((id) => handleOf(String(id)))) : ids);
         return Promise.all(
-          (await listTaskActivity(db, ctx.orgId, taskKey)).map(async (e) => {
+          (await listTaskActivity(db, ctx, taskKey)).map(async (e) => {
             const changes: Record<string, unknown> = { ...e.changes };
             const pair = (v: unknown) => (Array.isArray(v) ? v : [undefined, v]);
             if (changes.statusId !== undefined) {

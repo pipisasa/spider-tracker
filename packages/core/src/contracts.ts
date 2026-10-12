@@ -118,6 +118,43 @@ export interface AgentDto {
   canManage: boolean;
   /** Key metadata; empty unless `canManage`. */
   keys: ApiKeyDto[];
+  /** Projects the agent is limited to; null when it sees every project. */
+  projects: ProjectRefDto[] | null;
+}
+
+export interface ProjectRefDto {
+  key: string;
+  name: string;
+}
+
+export type AgentInviteStatus = "pending" | "expired";
+
+/** A one-time code an agent uses to set itself up (POST /v1/agent-invites/accept). */
+export interface AgentInviteDto {
+  id: string;
+  /** Shown as ABCD-EFGH. */
+  code: string;
+  status: AgentInviteStatus;
+  expiresAt: string;
+  createdAt: string;
+  createdBy: string | null;
+  /** The pending agent, active once the code is accepted. */
+  agent: { id: string; name: string; handle: string };
+  projects: ProjectRefDto[];
+}
+
+export interface CreatedAgentInviteDto {
+  invite: AgentInviteDto;
+  agent: AgentInviteDto["agent"];
+}
+
+/** POST /v1/agent-invites/accept: the agent's first API key (shown once) and where it works. */
+export interface AcceptedAgentInviteDto {
+  token: string;
+  actor: ActorDto;
+  organization: OrganizationDto;
+  projects: ProjectRefDto[];
+  owner: { id: string; name: string; handle: string };
 }
 
 /** Who the current credentials act as (session user or API key). */

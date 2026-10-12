@@ -103,6 +103,26 @@ export const updateAgentInput = z
 
 export type UpdateAgentInput = z.infer<typeof updateAgentInput>;
 
+export const createAgentInviteInput = z.object({
+  projectKeys: z
+    .array(z.string().trim().min(1).max(10))
+    .min(1, "Pick at least one project")
+    .max(100),
+  expiresInDays: z.number().int().min(1, "At least 1 day").max(30, "At most 30 days").default(7),
+});
+
+export type CreateAgentInviteInput = z.input<typeof createAgentInviteInput>;
+
+/** The code may also be the invite link (…/agent-invite/ABCD-EFGH or …?code=ABCD-EFGH). */
+export const acceptAgentInviteInput = z.object({
+  code: z.string().trim().min(1, "Enter an invitation code").max(500),
+  name: agentName.optional(),
+  handle: agentHandle.optional(),
+  description: z.string().trim().max(500).optional(),
+});
+
+export type AcceptAgentInviteInput = z.infer<typeof acceptAgentInviteInput>;
+
 export const createApiKeyInput = z.object({
   name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
 });

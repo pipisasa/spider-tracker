@@ -19,3 +19,4 @@ export * from "./tags";
 export * from "./relations";
 export * from "./documents";
 export * from "./invitations";
+export * from "./agent-invites";

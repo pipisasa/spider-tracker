@@ -2,7 +2,7 @@ import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { aliasedTable, and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
-import { assertCanWrite, type ActorContext } from "./access";
+import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import { notify } from "./inbox";
@@ -114,17 +114,17 @@ async function assertActorsInOrg(tx: Tx, orgId: string, actorIds: string[]) {
 const MAX_TASK_DEPTH = 20;
 
 /** The parent must exist in the organization, and must not be the task itself or one of its sub-tasks. */
-async function assertParent(tx: Tx, orgId: string, parentId: string, selfId?: string) {
+async function assertParent(tx: Tx, orgId: string, scope: ProjectScope, parentId: string, selfId?: string) {
   if (parentId === selfId) throw new DomainError("validation", "A task can't be its own parent");
   let current: string | null = parentId;
   for (let depth = 0; current; depth++) {
     if (depth >= MAX_TASK_DEPTH) throw new DomainError("validation", `Sub-tasks can nest at most ${MAX_TASK_DEPTH} levels`);
     const [row] = await tx
-      .select({ id: tasks.id, parentId: tasks.parentId })
+      .select({ id: tasks.id, parentId: tasks.parentId, projectId: tasks.projectId })
       .from(tasks)
       .where(and(eq(tasks.id, current), eq(tasks.orgId, orgId), isNull(tasks.deletedAt)))
       .limit(1);
-    if (!row) throw new DomainError("validation", depth === 0 ? "Parent task not found" : "Parent chain is broken");
+    if (!row || (depth === 0 && !inScope(scope, row.projectId))) throw new DomainError("validation", depth === 0 ? "Parent task not found" : "Parent chain is broken");
     if (selfId && row.parentId === selfId) {
       throw new DomainError("validation", "That task is a sub-task of this one; it can't also be its parent");
     }
@@ -176,7 +176,9 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       .set({ taskSeq: sql`${projects.taskSeq} + 1` })
       .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, projectKey.toUpperCase())))
       .returning({ id: projects.id, key: projects.key, taskSeq: projects.taskSeq });
-    if (!project) throw new DomainError("not_found", `Project ${projectKey} not found`);
+    if (!project || !inScope(await projectScope(tx, ctx), project.id)) {
+      throw new DomainError("not_found", `Project ${projectKey} not found`);
+    }
 
     let status: StatusRow | undefined;
     if (data.statusId) {
@@ -191,7 +193,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     const tagIds = [...new Set(data.tagIds ?? [])];
     await assertActorsInOrg(tx, ctx.orgId, assigneeIds);
     await assertTagsInOrg(tx, ctx.orgId, tagIds);
-    if (data.parentId) await assertParent(tx, ctx.orgId, data.parentId);
+    if (data.parentId) await assertParent(tx, ctx.orgId, await projectScope(tx, ctx), data.parentId);
 
     const [task] = await tx
       .insert(tasks)
@@ -232,12 +234,20 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
   });
 }
 
-export async function listTasks(db: Db, orgId: string, projectKey: string): Promise<TaskDto[]> {
+export async function listTasks(db: Db, viewer: Viewer, projectKey: string): Promise<TaskDto[]> {
+  const scope = await projectScope(db, viewer);
   const rows = await db
     .select({ task: tasks, projectKey: projects.key })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(and(eq(projects.orgId, orgId), eq(projects.key, projectKey.toUpperCase()), isNull(tasks.deletedAt)))
+    .where(
+      and(
+        eq(projects.orgId, orgIdOf(viewer)),
+        eq(projects.key, projectKey.toUpperCase()),
+        isNull(tasks.deletedAt),
+        scope ? inArray(projects.id, [...scope]) : undefined,
+      ),
+    )
     .orderBy(asc(tasks.sortKey), asc(tasks.id));
   const links = await linksByTask(
     db,
@@ -246,8 +256,8 @@ export async function listTasks(db: Db, orgId: string, projectKey: string): Prom
   return rows.map((r) => toTaskDto(r.task, r.projectKey, links.get(r.task.id) ?? noLinks));
 }
 
-/** The task row and its project key; not_found for unknown or deleted tasks. */
-export async function findTask(db: Db | Tx, orgId: string, taskKey: string) {
+/** The task row and its project key; not_found for unknown or deleted tasks, and tasks outside the viewer's scope. */
+export async function findTask(db: Db | Tx, viewer: Viewer, taskKey: string) {
   const parsed = parseTaskKey(taskKey);
   if (!parsed) throw new DomainError("not_found", `Task ${taskKey} not found`);
   const [row] = await db
@@ -256,31 +266,32 @@ export async function findTask(db: Db | Tx, orgId: string, taskKey: string) {
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .where(
       and(
-        eq(projects.orgId, orgId),
+        eq(projects.orgId, orgIdOf(viewer)),
         eq(projects.key, parsed.projectKey),
         eq(tasks.number, parsed.number),
         isNull(tasks.deletedAt),
       ),
     )
     .limit(1);
-  if (!row) throw new DomainError("not_found", `Task ${taskKey} not found`);
+  if (!row || !inScope(await projectScope(db, viewer), row.task.projectId)) throw new DomainError("not_found", `Task ${taskKey} not found`);
   return row;
 }
 
-export async function getTask(db: Db, orgId: string, taskKey: string): Promise<TaskDto> {
-  const { task, projectKey } = await findTask(db, orgId, taskKey);
+export async function getTask(db: Db, viewer: Viewer, taskKey: string): Promise<TaskDto> {
+  const { task, projectKey } = await findTask(db, viewer, taskKey);
   const links = await linksByTask(db, [task.id]);
   return toTaskDto(task, projectKey, links.get(task.id) ?? noLinks);
 }
 
 /** Direct sub-tasks of a task (any project), oldest first. */
-export async function listSubtasks(db: Db, orgId: string, taskKey: string): Promise<TaskDto[]> {
-  const { task } = await findTask(db, orgId, taskKey);
+export async function listSubtasks(db: Db, viewer: Viewer, taskKey: string): Promise<TaskDto[]> {
+  const { task } = await findTask(db, viewer, taskKey);
+  const scope = await projectScope(db, viewer);
   const rows = await db
     .select({ task: tasks, projectKey: projects.key })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt)))
+    .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt), scope ? inArray(tasks.projectId, [...scope]) : undefined))
     .orderBy(asc(tasks.createdAt));
   const links = await linksByTask(
     db,
@@ -294,7 +305,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
   const data: UpdateTaskInput = parseInput(updateTaskInput, input);
 
   return db.transaction(async (tx) => {
-    const { task, projectKey } = await findTask(tx, ctx.orgId, taskKey);
+    const { task, projectKey } = await findTask(tx, ctx, taskKey);
     const patch: Partial<typeof tasks.$inferInsert> = {};
     const changes: Record<string, [unknown, unknown]> = {};
     const track = <K extends keyof TaskRow>(field: K, value: TaskRow[K]) => {
@@ -307,7 +318,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     if (data.description !== undefined) track("description", data.description);
     if (data.priority !== undefined) track("priority", data.priority);
     if (data.parentId !== undefined) {
-      if (data.parentId) await assertParent(tx, ctx.orgId, data.parentId, task.id);
+      if (data.parentId) await assertParent(tx, ctx.orgId, await projectScope(tx, ctx), data.parentId, task.id);
       track("parentId", data.parentId);
     }
 
@@ -387,7 +398,7 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
 export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Promise<void> {
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
-    const { task, projectKey } = await findTask(tx, ctx.orgId, taskKey);
+    const { task, projectKey } = await findTask(tx, ctx, taskKey);
     await tx.update(tasks).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, task.id));
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.deleted" });
     await publish(tx, { type: "task.deleted", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });

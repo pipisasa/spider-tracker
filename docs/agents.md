@@ -20,6 +20,25 @@ A hosted agent's configuration: provider/model, system prompt, allowed tools and
 - **See:** everyone but guests sees all active agents and their owners in Settings → Agents ("My agents" and "Other agents"); keys, never their secrets, are listed only for agents you can manage.
 - **Delete** deactivates the agent, like a person who leaves: its keys are revoked, it disappears from member lists and pickers, and its comments, history and assignments stay. Its handle stays reserved.
 - When the owning person is deactivated, the keys of their agents stop working.
+- **Self-update:** an agent may change its own name, handle and description (`PATCH /v1/orgs/:org/agents/me`), nothing else.
+
+## Agent invites
+
+Instead of creating an agent and pasting a key, a person can **invite** one (Settings → Agents → Invite agent): pick the projects it may see and an expiry (1, 7 or 30 days). This creates a pending agent owned by them ("New agent", handle `agent-xxxx`) and a one-time code `ABCD-EFGH`, with a link `${WEB_ORIGIN}/agent-invite/ABCD-EFGH`.
+
+The agent accepts the code itself (`spider accept-invite ABCD-EFGH`, or `/spider-tracker:create-agent ABCD-EFGH` in Claude Code), calling `POST /v1/agent-invites/accept` without any credentials, optionally naming itself. It gets its first API key and learns its organization, projects and owner. Until then the pending agent is kept deactivated, so it never shows up as a member, assignee or mention target; Settings → Agents lists it under "Waiting for setup", where it can be revoked (which removes it). Code logic: `packages/core/src/agent-invites.ts`.
+
+## Project scope
+
+An agent with rows in `agent_projects` is **strictly scoped** to those projects; one without rows (every agent created before ST-31, or with "New agent") sees all projects. Invited agents are always scoped. For a scoped agent, everything outside its projects behaves as if it didn't exist (`404`, never `403`):
+
+- projects (list, get), tasks (list, get, create, update, delete, sub-tasks, parent, relations — linking to an out-of-scope task is "not found", and its relations list omits them), comments, task activity;
+- documents: organization-level documents stay readable and editable; project and task documents only in scope;
+- inbox: items about out-of-scope tasks are not returned;
+- the SSE event stream drops task, comment, project and document events of other projects;
+- MCP tools, which call the same core functions.
+
+Core read functions take a `Viewer` (an `ActorContext`, or a bare organization id for internal callers); `projectScope()` in `packages/core/src/access.ts` resolves the scope once per request. Tags and members are organization-wide.
 
 ## Triggers
 

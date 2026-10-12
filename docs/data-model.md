@@ -102,6 +102,23 @@ create table invitations (                     -- join codes; anyone signed in w
   created_at timestamptz not null default now()
 );
 
+create table agent_invites (                   -- one-time setup codes for a pending agent (ST-31)
+  id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
+  code text unique not null,                  -- same format as invitations
+  agent_id uuid not null references actors on delete cascade,  -- the pending agent, deactivated until accepted
+  created_by uuid references actors on delete set null,
+  expires_at timestamptz not null default now() + interval '7 days',
+  used_at timestamptz, revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table agent_projects (                  -- projects an agent may see; no rows = all projects
+  agent_id uuid references actors on delete cascade,
+  project_id uuid references projects on delete cascade,
+  primary key (agent_id, project_id)
+);
+
 create table agents (
   actor_id uuid primary key references actors on delete cascade,
   kind text not null check (kind in ('hosted','external')),

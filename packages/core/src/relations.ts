@@ -1,7 +1,7 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, eq, or } from "drizzle-orm";
-import { assertCanWrite, type ActorContext } from "./access";
+import { assertCanWrite, inScope, projectScope, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { RelationDto, RelationKind } from "./contracts";
 import { DomainError } from "./errors";
@@ -52,8 +52,8 @@ export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, in
   assertCanWrite(ctx);
   const { kind, task: otherKey } = parseInput(relationInput, input);
   return db.transaction(async (tx) => {
-    const self = await findTask(tx, ctx.orgId, taskKey);
-    const other = await findTask(tx, ctx.orgId, otherKey);
+    const self = await findTask(tx, ctx, taskKey);
+    const other = await findTask(tx, ctx, otherKey);
     if (self.task.id === other.task.id) throw new DomainError("validation", "A task can't be related to itself");
 
     const link = toStored(kind, self.task.id, other.task.id);
@@ -84,8 +84,8 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
   assertCanWrite(ctx);
   const { kind, task: otherKey } = parseInput(relationInput, input);
   await db.transaction(async (tx) => {
-    const self = await findTask(tx, ctx.orgId, taskKey);
-    const other = await findTask(tx, ctx.orgId, otherKey);
+    const self = await findTask(tx, ctx, taskKey);
+    const other = await findTask(tx, ctx, otherKey);
     const link = toStored(kind, self.task.id, other.task.id);
     const found = await findLink(tx, link.from, link.to, link.type);
     if (!found) throw new DomainError("not_found", "No such link between these tasks");
@@ -115,14 +115,15 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
 }
 
 /** Every link of a task, from its point of view, ordered by kind then key. */
-export async function listRelations(db: Db, orgId: string, taskKey: string): Promise<RelationDto[]> {
-  const { task } = await findTask(db, orgId, taskKey);
+export async function listRelations(db: Db, viewer: Viewer, taskKey: string): Promise<RelationDto[]> {
+  const { task } = await findTask(db, viewer, taskKey);
+  const scope = await projectScope(db, viewer);
   const rows = await db
     .select({
       fromTaskId: taskRelations.fromTaskId,
       toTaskId: taskRelations.toTaskId,
       type: taskRelations.type,
-      other: { id: tasks.id, number: tasks.number, title: tasks.title, statusId: tasks.statusId, deletedAt: tasks.deletedAt },
+      other: { id: tasks.id, projectId: tasks.projectId, number: tasks.number, title: tasks.title, statusId: tasks.statusId, deletedAt: tasks.deletedAt },
       projectKey: projects.key,
     })
     .from(taskRelations)
@@ -138,7 +139,7 @@ export async function listRelations(db: Db, orgId: string, taskKey: string): Pro
 
   const order: RelationKind[] = ["blocked_by", "blocks", "duplicates", "duplicated_by", "relates"];
   return rows
-    .filter((r) => !r.other.deletedAt)
+    .filter((r) => !r.other.deletedAt && inScope(scope, r.other.projectId))
     .map((r) => {
       const outgoing = r.fromTaskId === task.id;
       const kind: RelationKind =

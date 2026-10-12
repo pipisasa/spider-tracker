@@ -1,6 +1,11 @@
-import type { ActivitySource, ActorRole, AgentDto, ListResponse } from "@repo/core";
+import type { ActivitySource, ActorRole, AgentDto, CreatedAgentInviteDto, ListResponse } from "@repo/core";
 import {
   DomainError,
+  createAgentInvite,
+  eventInScope,
+  listAgentInvites,
+  revokeAgentInvite,
+  scopedProjectKeys,
   addComment,
   createTag,
   deleteTag,
@@ -110,6 +115,14 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     return c.json(list<AgentDto>(rows.map((r) => ({ ...r, actor: toActorDto(r.actor) }))));
   });
 
+  // An agent updating itself (name, handle, description).
+  app.patch("/agents/me", async (c) => {
+    const actor = c.get("actor");
+    const updated = await updateAgent(db, actor, actor.actorId, await body(c));
+    const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor) };
+    return c.json(agent);
+  });
+
   app.patch("/agents/:agentId", async (c) => {
     const updated = await updateAgent(db, c.get("actor"), c.req.param("agentId"), await body(c));
     const agent: AgentDto = { ...updated, actor: toActorDto(updated.actor) };
@@ -125,6 +138,18 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     const created = await createAgent(db, c.get("actor"), await body(c));
     const agent: AgentDto = { ...created, actor: toActorDto(created.actor) };
     return c.json(agent, 201);
+  });
+
+  app.get("/agent-invites", async (c) => c.json(list(await listAgentInvites(db, c.get("actor")))));
+
+  app.post("/agent-invites", async (c) => {
+    const created: CreatedAgentInviteDto = await createAgentInvite(db, c.get("actor"), await body(c));
+    return c.json(created, 201);
+  });
+
+  app.delete("/agent-invites/:inviteId", async (c) => {
+    await revokeAgentInvite(db, c.get("actor"), c.req.param("inviteId"));
+    return c.body(null, 204);
   });
 
   app.post("/agents/:agentId/keys", async (c) =>
@@ -145,34 +170,34 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     return c.body(null, 204);
   });
 
-  app.get("/projects", async (c) => c.json(list(await listProjects(db, c.get("actor").orgId))));
+  app.get("/projects", async (c) => c.json(list(await listProjects(db, c.get("actor")))));
 
   app.post("/projects", async (c) => c.json(await createProject(db, c.get("actor"), await body(c)), 201));
 
   app.get("/projects/:projectKey", async (c) =>
-    c.json(await getProject(db, c.get("actor").orgId, c.req.param("projectKey"))),
+    c.json(await getProject(db, c.get("actor"), c.req.param("projectKey"))),
   );
 
   app.get("/projects/:projectKey/tasks", async (c) =>
-    c.json(list(await listTasks(db, c.get("actor").orgId, c.req.param("projectKey")))),
+    c.json(list(await listTasks(db, c.get("actor"), c.req.param("projectKey")))),
   );
 
   app.post("/projects/:projectKey/tasks", async (c) =>
     c.json(await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c)), 201),
   );
 
-  app.get("/tasks/:taskKey", async (c) => c.json(await getTask(db, c.get("actor").orgId, c.req.param("taskKey"))));
+  app.get("/tasks/:taskKey", async (c) => c.json(await getTask(db, c.get("actor"), c.req.param("taskKey"))));
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
   );
 
   app.get("/tasks/:taskKey/subtasks", async (c) =>
-    c.json(list(await listSubtasks(db, c.get("actor").orgId, c.req.param("taskKey")))),
+    c.json(list(await listSubtasks(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
   app.get("/tasks/:taskKey/relations", async (c) =>
-    c.json(list(await listRelations(db, c.get("actor").orgId, c.req.param("taskKey")))),
+    c.json(list(await listRelations(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
   app.post("/tasks/:taskKey/relations", async (c) =>
@@ -186,11 +211,11 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   });
 
   app.get("/tasks/:taskKey/activity", async (c) =>
-    c.json(list(await listTaskActivity(db, c.get("actor").orgId, c.req.param("taskKey")))),
+    c.json(list(await listTaskActivity(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
   app.get("/tasks/:taskKey/comments", async (c) =>
-    c.json(list(await listComments(db, c.get("actor").orgId, c.req.param("taskKey")))),
+    c.json(list(await listComments(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
   app.post("/tasks/:taskKey/comments", async (c) =>
@@ -198,12 +223,12 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   );
 
   // GET /documents?project=ST or ?task=ST-12; without either, the whole organization's.
-  app.get("/documents", async (c) => c.json(list(await listDocuments(db, c.get("actor").orgId, c.req.query()))));
+  app.get("/documents", async (c) => c.json(list(await listDocuments(db, c.get("actor"), c.req.query()))));
 
   app.post("/documents", async (c) => c.json(await createDocument(db, c.get("actor"), await body(c)), 201));
 
   app.get("/documents/:documentId", async (c) =>
-    c.json(await getDocument(db, c.get("actor").orgId, c.req.param("documentId"))),
+    c.json(await getDocument(db, c.get("actor"), c.req.param("documentId"))),
   );
 
   app.patch("/documents/:documentId", async (c) =>
@@ -216,11 +241,11 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   });
 
   app.get("/documents/:documentId/versions", async (c) =>
-    c.json(list(await listDocumentVersions(db, c.get("actor").orgId, c.req.param("documentId")))),
+    c.json(list(await listDocumentVersions(db, c.get("actor"), c.req.param("documentId")))),
   );
 
   app.get("/documents/:documentId/versions/:version", async (c) =>
-    c.json(await getDocumentVersion(db, c.get("actor").orgId, c.req.param("documentId"), c.req.param("version"))),
+    c.json(await getDocumentVersion(db, c.get("actor"), c.req.param("documentId"), c.req.param("version"))),
   );
 
   // The caller's inbox. With ?wait=N (seconds, max 25) it holds the request until an item
@@ -245,11 +270,14 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   // Server-sent change events for the organization: the web app refreshes what changed.
   // Event payloads carry keys and ids only; clients refetch through the normal routes.
-  app.get("/events", (c) => {
-    const { orgId } = c.get("actor");
+  // Agents limited to some projects only hear about those (and organization-wide changes).
+  app.get("/events", async (c) => {
+    const actor = c.get("actor");
+    const { orgId } = actor;
+    const keys = await scopedProjectKeys(db, actor);
     return streamSSE(c, async (stream) => {
       const unsubscribe = await realtime.subscribe((event) => {
-        if (event.orgId !== orgId) return;
+        if (event.orgId !== orgId || !eventInScope(event, keys)) return;
         void stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
       });
       stream.onAbort(unsubscribe);
