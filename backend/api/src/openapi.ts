@@ -652,6 +652,44 @@ const paths = {
       },
     },
   },
+  "/webhooks/github": {
+    post: {
+      operationId: "githubWebhook",
+      summary:
+        "The GitHub App's webhook (GitHub calls it; the signature is the credential). X-Hub-Signature-256 is checked over the raw body before parsing, and each X-GitHub-Delivery is handled once. Handles installation, installation_repositories and repository; ping and other events are recorded and ignored",
+      security: [],
+      parameters: [
+        { name: "X-GitHub-Event", in: "header", required: true, schema: { type: "string" }, description: 'e.g. "installation"' },
+        { name: "X-GitHub-Delivery", in: "header", required: true, schema: { type: "string" }, description: "The delivery's GUID" },
+        {
+          name: "X-Hub-Signature-256",
+          in: "header",
+          required: true,
+          schema: { type: "string" },
+          description: "sha256=<hex HMAC-SHA256 of the body with the webhook secret>",
+        },
+      ],
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", description: "GitHub's event payload" } } } },
+      responses: {
+        "200": {
+          description: "Handled (processed), seen before (duplicate), or nothing to do (ignored)",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["status"],
+                properties: { status: string({ enum: ["processed", "ignored", "duplicate"] }) },
+              },
+            },
+          },
+        },
+        "400": { description: "Missing headers, a body that isn't JSON, or a payload that doesn't match its event", ...json("Error") },
+        "401": { description: "Missing or invalid signature (unauthorized)", ...json("Error") },
+        "413": { description: "Body over 5 MiB (payload_too_large)", ...json("Error") },
+        "503": githubOff,
+      },
+    },
+  },
   "/v1/device/{userCode}": {
     parameters: [userCode],
     get: {

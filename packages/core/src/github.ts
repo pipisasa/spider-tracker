@@ -210,6 +210,84 @@ async function assertCanManageGithub(db: Db, ctx: ActorContext, action: string) 
   if (await projectScope(db, ctx)) throw new DomainError("forbidden", `Agents limited to some projects can't ${action}`);
 }
 
+/** A repository an installation grants; webhooks don't say the default branch ("main" then). */
+export type GithubRepoGrant = Omit<GithubRepoData, "defaultBranch"> & { defaultBranch?: string };
+
+/**
+ * Gives the installation the repos it grants, inside the caller's transaction: repos the
+ * organization already has (same owner/name, any case) get it; the others are added (attached
+ * to no project). Returns their names, for the activity log.
+ */
+export async function grantGithubRepos(
+  tx: Tx,
+  ctx: ActorContext,
+  installationId: number,
+  repositories: GithubRepoGrant[],
+): Promise<{ attached: string[]; added: string[] }> {
+  // Unique by owner/name, case-insensitively.
+  const wanted = new Map<string, GithubRepoGrant>();
+  for (const repo of repositories) wanted.set(repoFullName(repo).toLowerCase(), repo);
+  const attached: string[] = [];
+  const added: string[] = [];
+  if (wanted.size === 0) return { attached, added };
+
+  const existing = await tx.select().from(repos).where(eq(repos.orgId, ctx.orgId)).for("update");
+  const byName = new Map(existing.map((r) => [repoFullName(r).toLowerCase(), r]));
+  for (const [key, repo] of wanted) {
+    const found = byName.get(key);
+    if (found) {
+      if (found.githubInstallationId !== installationId) {
+        await tx.update(repos).set({ githubInstallationId: installationId }).where(eq(repos.id, found.id));
+        attached.push(repoFullName(found));
+      }
+      continue;
+    }
+    const created = await insertRepo(tx, ctx, {
+      owner: repo.owner,
+      name: repo.name,
+      defaultBranch: repo.defaultBranch ?? "main",
+      githubInstallationId: installationId,
+    });
+    if (created) added.push(repoFullName(created));
+  }
+  return { attached, added };
+}
+
+/**
+ * Takes the installation off its repos whose lower-cased owner/name `released` accepts; they keep
+ * their rows. Returns their names.
+ */
+export async function releaseGithubRepos(
+  tx: Tx,
+  orgId: string,
+  installationId: number,
+  released: (key: string) => boolean,
+): Promise<string[]> {
+  const granted = await tx
+    .select()
+    .from(repos)
+    .where(and(eq(repos.orgId, orgId), eq(repos.githubInstallationId, installationId)))
+    .for("update");
+  const rows = granted.filter((r) => released(repoFullName(r).toLowerCase()));
+  if (rows.length) {
+    await tx
+      .update(repos)
+      .set({ githubInstallationId: null })
+      .where(
+        inArray(
+          repos.id,
+          rows.map((r) => r.id),
+        ),
+      );
+  }
+  return rows.map(repoFullName);
+}
+
+/** The non-empty lists of an access change, for an activity entry's `changes`. */
+export function repoAccessChanges(lists: { attached?: string[]; added?: string[]; released?: string[] }): Record<string, string[]> {
+  return Object.fromEntries(Object.entries(lists).filter(([, names]) => names !== undefined && names.length > 0));
+}
+
 /**
  * Connects an installation to the organization, or refreshes it (a sync): its account, and which
  * repos it grants. Repos the organization already has (same owner/name, any case) get the
@@ -250,55 +328,15 @@ export async function saveGithubInstallation(
     if (!row) throw new DomainError("conflict", `The GitHub installation on ${installation.account} was just connected; reload`);
     await ensureGithubBot(tx, ctx.orgId);
 
-    // Unique by owner/name, case-insensitively.
-    const wanted = new Map<string, GithubRepoData>();
-    for (const repo of repositories) wanted.set(repoFullName(repo).toLowerCase(), repo);
-
-    const existing = await tx.select().from(repos).where(eq(repos.orgId, ctx.orgId)).for("update");
-    const byName = new Map(existing.map((r) => [repoFullName(r).toLowerCase(), r]));
-    const attached: string[] = [];
-    const added: string[] = [];
-    for (const [key, repo] of wanted) {
-      const found = byName.get(key);
-      if (found) {
-        if (found.githubInstallationId !== row.id) {
-          await tx.update(repos).set({ githubInstallationId: row.id }).where(eq(repos.id, found.id));
-          attached.push(repoFullName(found));
-        }
-        continue;
-      }
-      const created = await insertRepo(tx, ctx, {
-        owner: repo.owner,
-        name: repo.name,
-        defaultBranch: repo.defaultBranch,
-        githubInstallationId: row.id,
-      });
-      if (created) added.push(repoFullName(created));
-    }
-    const released = existing.filter((r) => r.githubInstallationId === row.id && !wanted.has(repoFullName(r).toLowerCase()));
-    if (released.length) {
-      await tx
-        .update(repos)
-        .set({ githubInstallationId: null })
-        .where(
-          inArray(
-            repos.id,
-            released.map((r) => r.id),
-          ),
-        );
-    }
+    const access = await grantGithubRepos(tx, ctx, row.id, repositories);
+    const wanted = new Set(repositories.map((r) => repoFullName(r).toLowerCase()));
+    const released = await releaseGithubRepos(tx, ctx.orgId, row.id, (key) => !wanted.has(key));
 
     await recordActivity(tx, ctx, {
       entityType: "organization",
       entityId: ctx.orgId,
       action: current ? "github.synced" : "github.connected",
-      changes: {
-        installation: row.id,
-        account: row.accountLogin,
-        ...(attached.length ? { attached } : {}),
-        ...(added.length ? { added } : {}),
-        ...(released.length ? { released: released.map(repoFullName) } : {}),
-      },
+      changes: { installation: row.id, account: row.accountLogin, ...repoAccessChanges({ ...access, released }) },
     });
     await publish(tx, { type: "repos.changed", orgId: ctx.orgId });
     const [dto] = await toInstallationDtos(tx, ctx, [row]);
