@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boardColumns, shippingLabel } from "./board";
+import { boardColumns, milestoneProgressLabel, shippingLabel } from "./board";
 import type { StatusDto } from "./contracts";
 
 const status = (id: string, kind: StatusDto["kind"], name: string, category: StatusDto["category"], position: number): StatusDto => ({
@@ -45,4 +45,13 @@ describe("shippingLabel (ST-93)", () => {
     [{ state: "in_release" as const, release: null }, "in a release"],
     [{ state: "shipped" as const, release: ref }, "shipped 2026.10.14"],
   ])("%j → %s", (shipping, label) => expect(shippingLabel(shipping)).toBe(label));
+});
+
+describe("milestoneProgressLabel (ST-96)", () => {
+  const p = (total: number, done: number, withCode: number, shipped: number) => ({ total, done, canceled: 0, withCode, shipped, complete: false });
+  test.each([
+    [p(0, 0, 0, 0), "no tasks"],
+    [p(5, 3, 0, 0), "3/5 done"],
+    [p(5, 3, 2, 1), "3/5 done · 1/2 shipped"],
+  ])("%j → %s", (progress, label) => expect(milestoneProgressLabel(progress)).toBe(label));
 });

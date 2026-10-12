@@ -1198,6 +1198,35 @@ withDb("spider CLI against the API", () => {
     expect((await spider("task", "list", "--project", "ST", "--status", "done")).stdout).toContain("[no code]");
   });
 
+  test("milestones: create, task update --milestone (sub-tasks inherit), roadmap with progress; Done tasks with no code make it Ready to close (ST-96)", async () => {
+    const created = await spider(
+      "milestone", "create", "--project", "ST", "--title", "Phase 9: Polish", "--description", "**Goal:** x", "--target", "2026-12-01", "--status", "Active", "--json",
+    );
+    expect(created.code).toBe(0);
+    const milestone = created.json() as { key: string; kind: string; status: { name: string } };
+    expect(milestone).toMatchObject({ kind: "milestone", status: { name: "Active" }, progress: { total: 0 }, tasks: [] });
+    const create = async (...args: string[]) => (await spider("task", "create", "--project", "ST", ...args, "--json")).json().key as string;
+    const parent = await create("--title", "Polish parent", "--milestone", milestone.key);
+    const child = await create("--title", "Polish child", "--parent", parent);
+    expect((await spider("task", "view", child)).stdout).toContain(`Milestone: ${milestone.key} Phase 9: Polish (Active), from its parent`);
+    const loose = await create("--title", "Polish loose");
+    expect((await spider("task", "update", loose, "--milestone", milestone.key, "--json")).json()).toMatchObject({ milestone: { key: milestone.key, inherited: false } });
+    expect((await spider("task", "update", loose, "--milestone", "", "--json")).json()).toMatchObject({ milestoneId: null, milestone: null });
+    expect((await spider("task", "update", "--project", "ST", "--milestone", milestone.key)).code).toBe(2);
+    expect((await spider("task", "update", loose, "--milestone", parent)).stderr).toContain("not a milestone");
+
+    expect((await spider("roadmap", "ST")).stdout).toMatch(new RegExp(`${milestone.key}\\s+Phase 9: Polish\\s+Active\\s+target 2026-12-01\\s+0/2 done`));
+    const bulk = await spider("task", "update", parent, child, "--status", "Done", "--no-code", "--json");
+    expect(bulk.json()).toMatchObject({ summary: { changed: 2, failed: 0 } });
+
+    const view = (await spider("milestone", "view", milestone.key)).stdout;
+    expect(view).toStartWith(`${milestone.key}  Phase 9: Polish  Ready to close\nTarget: 2026-12-01\nProgress: 2/2 done · ready to close\nTasks (2):\n`);
+    expect(view).toContain(`(sub-task of ${parent})  [no code]`);
+    expect(view).toEndWith("\n\n**Goal:** x\n");
+    const ready = (await spider("milestone", "list", "ST", "--status", "Ready to close", "--json")).json() as { items: { key: string }[] };
+    expect(ready.items.map((m) => m.key)).toEqual([milestone.key]);
+  });
+
   test("CLI --json and MCP return tasks, documents, comments, document comments and projects in the same shape (ST-107)", async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${env.API_ORIGIN}/mcp`), {
       fetch: async (url, init) => app.request(url, init),
@@ -1326,6 +1355,14 @@ withDb("spider CLI against the API", () => {
       expect(mcpWritten).toMatchObject({ written: "added", description: { state: "current" } });
       // Writing again changes nothing; otherwise the same changelog.
       expect(await cli("release", "changelog", mcpRelease.key, "--write", "--no-git")).toEqual({ ...(mcpWritten as object), written: "unchanged" });
+
+      // Milestones (ST-96): MilestoneView on both sides.
+      const mcpMilestone = (await mcp("create_milestone", { projectKey: "SPI", title: "Parity milestone", targetDate: "2026-12-01" })) as { key: string };
+      const cliMilestone = (await cli("milestone", "create", "--project", "SPI", "--title", "Parity CLI milestone", "--target", "2026-12-02")) as { key: string };
+      expect(shape(mcpMilestone)).toEqual(shape(cliMilestone));
+      await cli("task", "update", child.key as string, "--milestone", mcpMilestone.key);
+      expect(await mcp("get_milestone", { key: mcpMilestone.key })).toEqual(await cli("milestone", "view", mcpMilestone.key));
+      expect(await mcp("list_milestones", { projectKey: "SPI" })).toEqual(await cli("roadmap", "SPI"));
 
       // Writes return the same fields.
       expect(shape(await mcp("update_task", { key: "SPI-1", priority: 1 }))).toEqual(shape(await cli("task", "update", "SPI-1", "--priority", "2")));

@@ -8,6 +8,7 @@ import type {
   ProjectDetailDto,
   ProjectRulesDto,
   ReleaseDto,
+  MilestoneDto,
   StatusDto,
   TaskDto,
   TaskKind,
@@ -84,6 +85,10 @@ import {
   writeReleaseChangelog,
   withChangelogUrls,
   releaseView,
+  milestoneView,
+  createMilestone,
+  getMilestone,
+  listMilestones,
   actorHandle,
   commentView,
   documentVersionView,
@@ -685,6 +690,75 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       ),
   );
 
+  // Milestones (ST-96): MilestoneView, as `spider roadmap --json` and `spider milestone view --json` print it.
+  const describeMilestone = async (milestone: MilestoneDto) => {
+    const [actors, tags] = await Promise.all([actorRefs(), milestone.tagIds.length ? loadTags() : []]);
+    const view = milestoneView(milestone, { actors, tags });
+    return withTaskUrl(urls, { ...view, tasks: view.tasks.map((t) => withTaskUrl(urls, t)) });
+  };
+  const milestoneKeyInput = z.string().describe('The milestone\'s task key, e.g. "ST-130"');
+
+  server.registerTool(
+    "list_milestones",
+    {
+      description:
+        "List a project's milestones, its roadmap: by target date, then start date (undated last), each with its status (Planned, Active, Ready to close, Done), progress (done of total tasks, canceled left out; of the done ones with code, how many have shipped in a release), its tasks (sub-tasks inherit their parent's milestone) and the releases that shipped them. When every task is Done and all their code has shipped, the tracker moves a milestone to Ready to close; a person closes it.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        status: oneOrMany.optional().describe("Status id, name or category of the milestone workflow; an array matches any"),
+      },
+    },
+    ({ projectKey, status }) =>
+      run(async () => ({
+        items: await Promise.all(
+          (await listMilestones(db, ctx, projectKey, { status: status === undefined ? undefined : [status].flat() })).map(describeMilestone),
+        ),
+      })),
+  );
+
+  server.registerTool(
+    "get_milestone",
+    { description: "Get a milestone with its status, progress, tasks and the releases that shipped them.", inputSchema: { key: milestoneKeyInput } },
+    ({ key: milestoneKey }) => run(async () => describeMilestone(await getMilestone(db, ctx, milestoneKey))),
+  );
+
+  server.registerTool(
+    "create_milestone",
+    {
+      description:
+        "Create a milestone in a project: a task of kind milestone, Planned unless you pass a status. Put its goal and a \"Done when\" in the description. Tasks join it with update_task (milestone) or update_tasks; their sub-tasks inherit it. Several milestones can be Active at once.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        title: z.string().describe('e.g. "Phase 4: Git and GitHub"'),
+        description: z.string().optional().describe('Markdown: the goal and "Done when"'),
+        status: z.string().optional().describe("Status name of the milestone workflow (Planned, Active, …); see get_project"),
+        assignees: assigneesInput.optional().describe("Who owns it"),
+        startDate: dateInput.optional().describe('Start date, "YYYY-MM-DD"'),
+        targetDate: dateInput.optional().describe('Target date, "YYYY-MM-DD", on or after the start date'),
+      },
+    },
+    ({ projectKey, title, description, status, assignees, startDate, targetDate }) =>
+      run(async () => {
+        const project = await getProject(db, ctx, projectKey);
+        const milestone = await createMilestone(db, ctx, project.key, {
+          title,
+          description,
+          statusId: status ? resolveStatus(project, status, "milestone").id : undefined,
+          assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
+          startDate,
+          targetDate,
+        });
+        return describeMilestone(milestone);
+      }),
+  );
+
+  /** A milestone's key as its id; null stays null (out of any milestone). */
+  const milestoneIdOf = async (key: string | null | undefined) =>
+    key === undefined ? undefined : key === null ? null : (await getTask(db, ctx, key)).id;
+  const milestoneInput = z
+    .string()
+    .describe('Milestone task key, e.g. "ST-130": a milestone of the task\'s own project (see list_milestones)');
+
   server.registerTool(
     "list_tasks",
     {
@@ -769,9 +843,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         parent: z.string().optional().describe('Parent task key, e.g. "ST-3", to create a sub-task'),
         startDate: dateInput.optional().describe('Start date, "YYYY-MM-DD"'),
         targetDate: dateInput.optional().describe('Target date, "YYYY-MM-DD", on or after the start date'),
+        milestone: milestoneInput.optional(),
       },
     },
-    ({ projectKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate }) =>
+    ({ projectKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate, milestone }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const task = await createTask(db, ctx, project.key, {
@@ -784,6 +859,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           parentId: parent ? (await getTask(db, ctx, parent)).id : undefined,
           startDate,
           targetDate,
+          milestoneId: await milestoneIdOf(milestone),
         });
         return describeTask(task, project);
       }),
@@ -805,9 +881,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         startDate: startDateInput.optional(),
         targetDate: targetDateInput.optional(),
         noCode: noCodeInput.optional(),
+        milestone: milestoneInput.nullable().optional().describe('Milestone task key, e.g. "ST-130", of the task\'s own project; null takes it out (sub-tasks inherit their parent\'s)'),
       },
     },
-    ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate, noCode }) =>
+    ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate, noCode, milestone }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
         // A status is matched in the workflow of the task's kind.
@@ -823,6 +900,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           startDate,
           targetDate,
           noCode,
+          milestoneId: await milestoneIdOf(milestone),
         });
         return describeTask(task, project);
       }),
@@ -857,10 +935,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         startDate: startDateInput.optional(),
         targetDate: targetDateInput.optional(),
         noCode: noCodeInput.optional(),
+        milestone: milestoneInput.nullable().optional().describe("Milestone task key for every task (each of its own project); null takes them out"),
         dryRun: z.boolean().optional().describe("Report what would change without changing anything"),
       },
     },
-    ({ keys, filter, status, priority, assignees, tags, parent, startDate, targetDate, noCode, dryRun }) =>
+    ({ keys, filter, status, priority, assignees, tags, parent, startDate, targetDate, noCode, milestone, dryRun }) =>
       run(async () => {
         const result = await updateTasks(db, ctx, {
           keys,
@@ -885,6 +964,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             startDate,
             targetDate,
             noCode,
+            milestoneId: await milestoneIdOf(milestone),
           },
           dryRun,
         });

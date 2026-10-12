@@ -115,6 +115,9 @@ export const tasks = pgTable(
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     // Marked as having no code to ship (ST-93): a Done task that never needs a release.
     noCode: boolean("no_code").notNull().default(false),
+    // The milestone (a task of kind "milestone", ST-96) this task was put in, in the same project.
+    // Sub-tasks without their own inherit their parent's; that is computed, never stored (milestones.ts).
+    milestoneId: uuid("milestone_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
     creatorId: uuid("creator_id")
       .notNull()
       .references(() => actors.id),
@@ -133,6 +136,8 @@ export const tasks = pgTable(
     index("tasks_board_idx").on(t.projectId, t.statusId, t.sortKey),
     index("tasks_release_idx").on(t.releaseId),
     check("tasks_release_not_self", sql`${t.releaseId} <> ${t.id}`),
+    index("tasks_milestone_idx").on(t.milestoneId),
+    check("tasks_milestone_not_self", sql`${t.milestoneId} <> ${t.id}`),
     check("tasks_priority_range", sql`${t.priority} between 0 and 4`),
     check("tasks_dates_ordered", sql`${t.startDate} is null or ${t.targetDate} is null or ${t.startDate} <= ${t.targetDate}`),
   ],

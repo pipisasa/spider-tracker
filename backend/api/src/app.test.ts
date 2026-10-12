@@ -539,6 +539,27 @@ withDb("SDK and client-declared source", () => {
     expect(noTarget.status).toBe(400);
   });
 
+  test("milestones through the SDK: create, roadmap, get, tasks join with milestoneId; 400 across projects (ST-96)", async () => {
+    const client = sdk();
+    await client.projects.create(slug, { name: "Roadmap", key: "RMP" });
+    const later = await client.milestones.create(slug, "RMP", { title: "Later", targetDate: "2027-01-01" });
+    const sooner = await client.milestones.create(slug, "RMP", { title: "Sooner", targetDate: "2026-11-01" });
+    expect(sooner).toMatchObject({ kind: "milestone", status: { name: "Planned" }, progress: { total: 0 }, url: `${env.WEB_ORIGIN}/${slug}/tasks/${sooner.key}` });
+    const task = await client.tasks.create(slug, "RMP", { title: "On the way", milestoneId: sooner.id });
+    expect(task.milestone).toMatchObject({ key: sooner.key, inherited: false });
+    const roadmap = await client.milestones.list(slug, "RMP");
+    expect(roadmap.items.map((m) => m.key)).toEqual([sooner.key, later.key]);
+    expect(roadmap.items[0]?.tasks).toEqual([expect.objectContaining({ key: task.key, url: `${env.WEB_ORIGIN}/${slug}/tasks/${task.key}` })]);
+    expect((await client.milestones.list(slug, "RMP", { status: ["done"] })).items).toEqual([]);
+    expect(await client.milestones.get(slug, sooner.key)).toEqual(roadmap.items[0]!);
+    const moved = await client.tasks.update(slug, task.key, { milestoneId: later.id });
+    expect(moved.milestoneId).toBe(later.id);
+    const spi = await client.tasks.create(slug, "SPI", { title: "Elsewhere" });
+    const refused = await client.tasks.update(slug, spi.key, { milestoneId: later.id }).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 400, code: "validation" });
+    expect(await client.milestones.get(slug, task.key).catch((e: unknown) => e)).toMatchObject({ status: 400 });
+  });
+
   test("bulk updates through the SDK: keys or a filter, per-task outcomes, dry run, 400 on bad input (ST-106)", async () => {
     const client = sdk();
     const parent = await client.tasks.create(slug, "SPI", { title: "Bulk parent" });

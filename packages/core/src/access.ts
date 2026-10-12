@@ -6,7 +6,7 @@ import { DomainError } from "./errors";
 
 const { actors, agentProjects, agents, organizations } = schema;
 
-export type ActivitySource = "ui" | "api" | "mcp" | "cli" | "git" | "agent_run";
+export type ActivitySource = "ui" | "api" | "mcp" | "cli" | "git" | "agent_run" | "system";
 
 /** Who is acting, in which organization: passed to every domain write. */
 export interface ActorContext {

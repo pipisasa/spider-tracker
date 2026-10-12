@@ -6,6 +6,7 @@ import { recordActivity } from "./activity";
 import type { StatusCategory } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
+import { effectiveMilestones, settleMilestones } from "./milestone-membership";
 
 // Shipping (ST-93): what a release's status does to the Done tasks it includes. Done means
 // finished; a task has shipped once its release is Released (category done). Status changes of
@@ -62,11 +63,22 @@ export async function applyReleaseTransition(
         `Release ${release.key} can't be released: ${unfinished.map((t) => `${t.projectKey}-${t.number}`).join(", ")} ${unfinished.length === 1 ? "isn't" : "aren't"} Done. Finish or remove ${unfinished.length === 1 ? "it" : "them"} first`,
       );
     }
-    for (const task of included.filter((t) => !t.shippedAt)) {
+    const shipping = included.filter((t) => !t.shippedAt);
+    for (const task of shipping) {
       await tx.update(tasks).set({ shippedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
       await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.shipped", changes: version });
       await announce(tx, ctx, task);
     }
+    // Shipping their code may complete the tasks' milestones (ST-96).
+    const memberships = await effectiveMilestones(
+      tx,
+      shipping.map((t) => t.id),
+    );
+    await settleMilestones(
+      tx,
+      ctx.orgId,
+      [...memberships.values()].map((m) => m.milestoneId),
+    );
     shippedAt = now;
   } else if (from === "done") {
     const shipped = await tx

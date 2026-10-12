@@ -160,6 +160,16 @@ export interface TaskDto {
    * milestones, and for tasks that aren't Done and are in no release.
    */
   shipping: TaskShippingDto | null;
+  /**
+   * The milestone this task was put in itself (ST-96), in its own project; null when none (a
+   * sub-task may still inherit its parent's, see `milestone`).
+   */
+  milestoneId: string | null;
+  /**
+   * The milestone the task belongs to (ST-96): its own, else the nearest ancestor's (`inherited`).
+   * Null when in none, for releases and milestones, or when the milestone is in a project the viewer can't see.
+   */
+  milestone: MilestoneRefDto | null;
   /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
   url?: string;
 }
@@ -184,6 +194,16 @@ export interface TaskShippingDto {
   state: ShippingState;
   /** The release it is in; null when in none, or in one the viewer can't see. */
   release: ReleaseRefDto | null;
+}
+
+/** A milestone as a task names it (ST-96). */
+export interface MilestoneRefDto {
+  id: string;
+  key: string;
+  title: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  /** Taken from an ancestor: the task has no milestone of its own. */
+  inherited: boolean;
 }
 
 /** What a bulk update did to one task (ST-106); in a dry run, "changed" means it would change. */
@@ -301,6 +321,69 @@ export interface ReleaseDto extends TaskDto {
   apps: ReleaseAppDto[];
   /** By project key, then number. */
   tasks: ReleaseTaskDto[];
+}
+
+/**
+ * A milestone's progress (ST-96), over its tasks the viewer can see: its own tasks and their
+ * sub-tasks that have no milestone of their own. Canceled tasks are left out of `total`.
+ */
+export interface MilestoneProgressDto {
+  /** Its tasks that aren't canceled. */
+  total: number;
+  /** Of those, the ones in a done status. */
+  done: number;
+  /** Canceled tasks (not part of `total`). */
+  canceled: number;
+  /** Of the done ones, those with code to ship (not marked no code). */
+  withCode: number;
+  /** Of the done ones with code, those whose release is Released. */
+  shipped: number;
+  /** Every task Done and all their code shipped (and at least one task): ready to close. */
+  complete: boolean;
+}
+
+/** A task of a milestone (ST-96). */
+export interface MilestoneTaskDto {
+  id: string;
+  key: string;
+  title: string;
+  projectKey: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  /** Its parent's key when it is a sub-task. */
+  parentKey: string | null;
+  /** In the milestone through an ancestor, not by its own `milestoneId`. */
+  inherited: boolean;
+  completedAt: string | null;
+  /** Where a Done task's code is, as on TaskDto. */
+  shipping: TaskShippingDto | null;
+  /** The web page's address; set in API, CLI and MCP responses, not by core itself. */
+  url?: string;
+}
+
+/** A release that ships some of a milestone's tasks (ST-96): what moved it forward. */
+export interface MilestoneReleaseDto {
+  id: string;
+  key: string;
+  /** Its name, usually the version. */
+  title: string;
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  /** When it was marked Released; null while on its way. */
+  shippedAt: string | null;
+  /** Keys of the milestone's tasks it includes. */
+  tasks: string[];
+}
+
+/**
+ * A milestone (ST-96): a task of kind "milestone" (goal and "Done when" in its description, start
+ * and target dates) with its status, progress, tasks and the releases that shipped them.
+ */
+export interface MilestoneDto extends TaskDto {
+  status: Pick<StatusDto, "id" | "name" | "category">;
+  progress: MilestoneProgressDto;
+  /** By project key, then number. */
+  tasks: MilestoneTaskDto[];
+  /** Released ones first, oldest first; then those on their way. */
+  releases: MilestoneReleaseDto[];
 }
 
 /** A task in a release's changelog (ST-95): its title and the "What changed" part of its handoff note. */
@@ -664,7 +747,7 @@ export interface ActivityDto {
   action: string;
   /** For task.updated: field → [before, after] (statusId, assigneeIds, title, priority, …). */
   changes: Record<string, unknown> | null;
-  /** ui | api | mcp | cli | git | agent_run */
+  /** ui | api | mcp | cli | git | agent_run | system (the tracker itself, ST-96) */
   source: string;
   actorId: string;
   createdAt: string;

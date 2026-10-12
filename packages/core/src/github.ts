@@ -3,6 +3,7 @@ import { schema } from "@repo/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { ensureBot } from "./bots";
 import { assertCanManageProjects, assertRole, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { GithubInstallationDto } from "./contracts";
@@ -124,28 +125,8 @@ const BOT_HANDLES = ["github", "github-bot"];
  * The organization's GitHub bot (an `integration` actor: no user, no API keys, hidden from
  * pickers), created on first use.
  */
-export async function ensureGithubBot(tx: Tx, orgId: string): Promise<string> {
-  const find = async () => {
-    const rows = await tx
-      .select({ id: actors.id, handle: actors.handle })
-      .from(actors)
-      .where(and(eq(actors.orgId, orgId), eq(actors.type, "integration"), inArray(actors.handle, BOT_HANDLES)));
-    return BOT_HANDLES.map((h) => rows.find((r) => r.handle === h)).find((r) => r !== undefined)?.id;
-  };
-  const existing = await find();
-  if (existing) return existing;
-  for (const handle of BOT_HANDLES) {
-    const [row] = await tx
-      .insert(actors)
-      .values({ orgId, type: "integration", name: "GitHub", handle, role: "member" })
-      .onConflictDoNothing()
-      .returning({ id: actors.id });
-    if (row) return row.id;
-    // A concurrent connect may have just created it.
-    const raced = await find();
-    if (raced) return raced;
-  }
-  throw new DomainError("conflict", `The handles ${BOT_HANDLES.map((h) => `@${h}`).join(" and ")} are taken; rename one to connect GitHub`);
+export function ensureGithubBot(tx: Tx, orgId: string): Promise<string> {
+  return ensureBot(tx, orgId, { name: "GitHub", handles: BOT_HANDLES, purpose: "connect GitHub" });
 }
 
 /** Context for changes made by GitHub events: the bot, with activity source "git". */

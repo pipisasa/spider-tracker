@@ -3,6 +3,8 @@
 [← Project overview](./PROJECT.md)
 
 > Work items now live in Spider Tracker itself: project **ST** at https://tracker.batele.plus/batele/projects/ST. This file keeps only the phase overview.
+>
+> **Moving to ST milestones (ST-96):** each phase below becomes a milestone in ST, with its tasks, once `bun run roadmap:import --as <agent>` has been run against prod (once; `--dry-run` previews). From then on the roadmap lives at https://tracker.batele.plus/batele/projects/ST?view=roadmap, and this file is kept only as a record of the original plan.
 
 Agent tools come before most tracker features, so agents help build the product from early on: once Phase 2 is done, Claude Code works on Spider Tracker's own tasks through the API and MCP, and the remaining features are tracked and built that way.
 

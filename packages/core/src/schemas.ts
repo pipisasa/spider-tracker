@@ -140,6 +140,8 @@ export const createTaskInput = z
     parentId: z.uuid().nullable().optional(),
     startDate: taskDateSchema.optional(),
     targetDate: taskDateSchema.optional(),
+    /** A milestone of the same project to put the task in (ST-96); tasks only. */
+    milestoneId: z.uuid().nullable().optional(),
   })
   .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
 
@@ -166,6 +168,8 @@ export const updateTaskInput = z
     targetDate: taskDateSchema,
     /** Marks a task as having no code to ship (ST-93), so it needs no release. */
     noCode: z.boolean(),
+    /** Puts the task in a milestone of its project (ST-96); null takes it out (it may still inherit its parent's). */
+    milestoneId: z.uuid().nullable(),
   })
   .partial();
 
@@ -225,6 +229,7 @@ export const bulkTaskChanges = z
     startDate: taskDateSchema,
     targetDate: taskDateSchema,
     noCode: z.boolean(),
+    milestoneId: z.uuid().nullable(),
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
@@ -257,9 +262,10 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
 
 /**
  * Words with a meaning in assignee filters ("me" the viewer, "mine" the viewer's person and their
- * agents, "none" unassigned), and "github", the GitHub bot's handle (ST-82); no other actor may take them.
+ * agents, "none" unassigned), "github", the GitHub bot's handle (ST-82), and "spider", the Spider
+ * Tracker bot's (ST-96); no other actor may take them.
  */
-export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none", "github"];
+export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none", "github", "spider"];
 
 /** A handle as typed in a filter or a command: trimmed, without a leading "@", lowercase. */
 export const normalizeHandle = (value: string) => value.trim().replace(/^@/, "").toLowerCase();
@@ -271,7 +277,7 @@ const agentHandle = z
   .toLowerCase()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
   .max(32)
-  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine", "none" and "github" are reserved`);
+  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine", "none", "github" and "spider" are reserved`);
 
 export const createAgentInput = z.object({
   name: agentName,
@@ -786,3 +792,29 @@ export const releaseChangelogInput = z.object({
 });
 
 export type ReleaseChangelogInput = z.input<typeof releaseChangelogInput>;
+
+// Milestones (ST-96): tasks of kind "milestone" that group tasks of their project.
+
+/**
+ * A new milestone: a task of kind "milestone" (Planned unless `statusId` says otherwise). Its goal
+ * and "Done when" go in the description; start and target dates place it on the roadmap.
+ */
+export const createMilestoneInput = z
+  .object({
+    title: taskTitle,
+    description: taskDescription.optional(),
+    statusId: z.uuid().optional(),
+    assigneeIds: z.array(z.uuid()).max(20).optional(),
+    startDate: taskDateSchema.optional(),
+    targetDate: taskDateSchema.optional(),
+  })
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
+
+export type CreateMilestoneInput = z.input<typeof createMilestoneInput>;
+
+/** A project's milestones: by status (id, name or category of the milestone workflow). */
+export const milestoneListFilters = z.object({
+  status: z.array(filterValue).max(20).optional(),
+});
+
+export type MilestoneListFilters = z.input<typeof milestoneListFilters>;
