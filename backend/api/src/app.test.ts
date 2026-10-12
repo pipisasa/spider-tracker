@@ -511,6 +511,33 @@ withDb("SDK and client-declared source", () => {
     expect(nothing).toMatchObject({ status: 400 });
   });
 
+  test("marking a duplicate through the SDK: one call, idempotent, 400 for self and cycles, 409 for a second original (ST-114)", async () => {
+    const client = sdk({ source: "cli" });
+    const copy = await client.tasks.create(slug, "SPI", { title: "Dup copy" });
+    const original = await client.tasks.create(slug, "SPI", { title: "Dup original" });
+    const other = await client.tasks.create(slug, "SPI", { title: "Dup other" });
+    const canceled = (await client.projects.get(slug, "SPI")).statuses.find((s) => s.category === "canceled");
+
+    const marked = await client.tasks.markDuplicate(slug, copy.key, { of: original.key, comment: "Subset" });
+    expect(marked).toMatchObject({ key: copy.key, statusId: canceled?.id, url: copy.url });
+    expect((await client.tasks.relations.list(slug, copy.key)).items.map((r) => `${r.kind} ${r.task.key}`)).toEqual([
+      `duplicates ${original.key}`,
+    ]);
+    expect((await client.comments.list(slug, copy.key)).items.map((c) => c.body)).toEqual([
+      `Duplicate of ${original.key}: Dup original\n\nSubset`,
+    ]);
+    expect(await client.tasks.markDuplicate(slug, copy.key, { of: original.key })).toMatchObject({ updatedAt: marked.updatedAt });
+    expect((await client.comments.list(slug, copy.key)).items).toHaveLength(1);
+    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, copy.id));
+    expect(new Set(log.map((e) => e.source))).toEqual(new Set(["cli"]));
+
+    const fail = (key: string, of: string) => client.tasks.markDuplicate(slug, key, { of }).catch((e: unknown) => e);
+    expect(await fail(copy.key, copy.key)).toMatchObject({ status: 400, code: "validation" });
+    expect(await fail(original.key, copy.key)).toMatchObject({ status: 400, code: "validation" });
+    expect(await fail(copy.key, other.key)).toMatchObject({ status: 409, code: "conflict" });
+    expect(await fail(copy.key, "SPI-999")).toMatchObject({ status: 404 });
+  });
+
   test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
     const client = sdk();
     const doc = await client.documents.create(slug, { title: "Spec", project: "SPI", content: "v1" });

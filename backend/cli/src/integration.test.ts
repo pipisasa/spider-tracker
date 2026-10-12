@@ -566,6 +566,24 @@ withDb("spider CLI against the API", () => {
     expect((await spider("link", "SPI-1", "depends", other)).code).toBe(2);
   });
 
+  test("task duplicate: links, cancels and comments in one call; a repeat changes nothing; self is refused (ST-114)", async () => {
+    const create = async (title: string) => (await spider("task", "create", "--project", "SPI", "--title", title, "--json")).json().key as string;
+    const [copy, original] = [await create("Dup copy"), await create("Dup original")];
+    const marked = await spider("task", "duplicate", copy.toLowerCase(), "--of", original.toLowerCase(), "--comment", "Subset of it");
+    expect(marked.stdout).toStartWith(`Marked ${copy} as a duplicate of ${original}\n${copy}`);
+    expect(marked.stdout).toContain("Canceled");
+    const view = (await spider("task", "view", copy, "--json")).json();
+    expect(view).toMatchObject({ status: { category: "canceled" }, relations: [{ kind: "duplicates", task: original }] });
+    const again = await spider("task", "duplicate", copy, "--of", original, "--json");
+    expect(again.json()).toMatchObject({ key: copy, updatedAt: view.updatedAt });
+    const comments = (await spider("comments", copy, "--json")).json().items as { body: string }[];
+    expect(comments.map((c) => c.body)).toEqual([`Duplicate of ${original}: Dup original\n\nSubset of it`]);
+    const self = await spider("task", "duplicate", copy, "--of", copy);
+    expect(self.code).toBe(2);
+    expect(self.stderr).toContain("itself");
+    expect((await spider("task", "duplicate", original)).code).toBe(2);
+  });
+
   test("docs: create from a file and stdin, list by scope, view, edit from a base version", async () => {
     writeFileSync(join(repo, "spec.html"), "<h1>Spec</h1>");
     const spec = (await spider("doc", "create", "--title", "Spec", "--project", "spi", "--file", "spec.html", "--json")).json();

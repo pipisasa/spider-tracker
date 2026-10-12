@@ -19,6 +19,7 @@ export * from "./signup";
 export * from "./activity-feed";
 export * from "./tags";
 export * from "./relations";
+export * from "./duplicates";
 export * from "./documents";
 export * from "./project-rules";
 export * from "./document-edits";

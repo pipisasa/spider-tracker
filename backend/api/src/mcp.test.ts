@@ -140,6 +140,7 @@ withDb("MCP server", () => {
         "link_tasks",
         "list_projects",
         "list_tasks",
+        "mark_duplicate",
         "start_task",
         "unlink_tasks",
         "update_task",
@@ -235,6 +236,29 @@ withDb("MCP server", () => {
     expect(blocked.relations).toEqual([{ kind: "blocked_by", task: "SPI-1", title: expect.any(String) }]);
     expect((await call(client, "link_tasks", { key: other.key, kind: "blocks", task: "SPI-1" })).isError).toBe(true);
     expect((await call(client, "unlink_tasks", { key: other.key, kind: "blocked_by", task: "SPI-1" })).isError).toBeFalsy();
+  });
+
+  test("mark_duplicate: closes and links in one call, repeats change nothing, self and cycles are refused (ST-114)", async () => {
+    const create = async (title: string) => ((await call(client, "create_task", { projectKey: "SPI", title })).json() as { key: string }).key;
+    const [copy, original] = [await create("Copy"), await create("Original")];
+    const marked = await call(client, "mark_duplicate", { key: copy, of: original, comment: "Same thing" });
+    expect(marked.isError).toBeFalsy();
+    expect(marked.json()).toMatchObject({ key: copy, status: "Canceled", completedAt: expect.any(String) });
+    const seen = (await call(client, "get_task", { key: copy })).json() as { relations: { kind: string; task: string; title: string }[] };
+    expect(seen.relations).toEqual([{ kind: "duplicates", task: original, title: "Original" }]);
+    const again = await call(client, "mark_duplicate", { key: copy, of: original });
+    expect(again.json()).toMatchObject({ updatedAt: marked.json().updatedAt });
+    const comments = (await call(client, "list_comments", { key: copy })).text;
+    expect(comments).toContain(`Duplicate of ${original}: Original`);
+    expect(comments).toContain("Same thing");
+    expect(comments.match(/Duplicate of/g)).toHaveLength(1);
+
+    const self = await call(client, "mark_duplicate", { key: copy, of: copy });
+    expect(self).toMatchObject({ isError: true });
+    expect(self.text).toContain("itself");
+    const cycle = await call(client, "mark_duplicate", { key: original, of: copy });
+    expect(cycle).toMatchObject({ isError: true });
+    expect(cycle.text).toContain("cycle");
   });
 
   test("documents: create, list, read, update with baseVersion; shown on get_project and get_task", async () => {
