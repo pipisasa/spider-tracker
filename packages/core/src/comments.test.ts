@@ -81,22 +81,14 @@ run("comments, inbox and loop guards", () => {
     expect(after.at(-1)?.kind).toBe("assigned");
   });
 
-  test("agents can't run away: per-minute limit and a streak cap without a person", async () => {
+  test("agents are limited per minute, but agent-only threads can go on (ST-102)", async () => {
     await createTask(db, owner, "SPI", { title: "Chatty" });
     for (let i = 0; i < AGENT_COMMENT_LIMIT.perMinute; i++) await addComment(db, alpha, "SPI-2", { body: `ping ${i}` });
     await expect(addComment(db, alpha, "SPI-2", { body: "one more" })).rejects.toMatchObject({ code: "rate_limited" });
 
-    // Five agent comments so far; one more from beta reaches the streak cap.
-    await addComment(db, beta, "SPI-2", { body: "pong" });
-    await expect(addComment(db, beta, "SPI-2", { body: "pong again" })).rejects.toMatchObject({
-      code: "rate_limited",
-      message: expect.stringContaining("Wait for a person"),
-    });
-
-    // A person replying resets the streak.
-    await addComment(db, owner, "SPI-2", { body: "carry on" });
-    await addComment(db, beta, "SPI-2", { body: "thanks" });
-    expect((await listComments(db, owner.orgId, "SPI-2")).length).toBe(8);
+    // The limit is per agent; a long agent-only thread no longer waits for a person.
+    for (let i = 0; i < AGENT_COMMENT_LIMIT.perMinute; i++) await addComment(db, beta, "SPI-2", { body: `pong ${i}` });
+    expect((await listComments(db, owner.orgId, "SPI-2")).length).toBe(2 * AGENT_COMMENT_LIMIT.perMinute);
   });
 
   test("guests can't comment; parents must be on the same task", async () => {

@@ -1,6 +1,6 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { assertCanWrite, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { CommentDto, InboxKind } from "./contracts";
@@ -13,8 +13,8 @@ import { parseInput } from "./validate";
 
 const { actors, comments, taskAssignees } = schema;
 
-/** Loop guards: agents talking to each other must not run away without a person. */
-export const AGENT_COMMENT_LIMIT = { perMinute: 5, streakWithoutHuman: 6 };
+/** Loop guard: an agent posts at most this many comments per task per minute. */
+export const AGENT_COMMENT_LIMIT = { perMinute: 5 };
 
 /** Handles mentioned as @handle (not inside emails such as a@b.com). */
 export function parseMentions(body: string): string[] {
@@ -72,19 +72,6 @@ export async function addComment(db: Db, ctx: ActorContext, taskKey: string, inp
         );
       if (recent.length >= AGENT_COMMENT_LIMIT.perMinute) {
         throw new DomainError("rate_limited", "Too many comments on this task in the last minute. Slow down");
-      }
-      const latest = await tx
-        .select({ type: actors.type })
-        .from(comments)
-        .innerJoin(actors, eq(comments.authorId, actors.id))
-        .where(and(eq(comments.taskId, task.id), isNull(comments.deletedAt)))
-        .orderBy(desc(comments.createdAt))
-        .limit(AGENT_COMMENT_LIMIT.streakWithoutHuman);
-      if (latest.length === AGENT_COMMENT_LIMIT.streakWithoutHuman && latest.every((c) => c.type === "agent")) {
-        throw new DomainError(
-          "rate_limited",
-          `The last ${AGENT_COMMENT_LIMIT.streakWithoutHuman} comments on ${taskKey} are all from agents. Wait for a person to reply`,
-        );
       }
     }
 

@@ -618,7 +618,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "add_comment",
     {
       description:
-        "Comment on a task (Markdown). Mention people or agents with @handle to notify them; set parent_id to reply to a comment. Agents are rate-limited and must wait for a person after a long agent-only thread.",
+        "Comment on a task (Markdown). Mention people or agents with @handle to notify them; set parent_id to reply to a comment. Agents may post at most 5 comments per task per minute.",
       inputSchema: {
         key: z.string().describe('Task key, e.g. "ST-12"'),
         body: z.string().min(1).describe("Comment text (Markdown). Never include secrets"),
