@@ -72,8 +72,23 @@ export interface ProjectDto {
   archivedAt: string | null;
   /** The project's rules for agents (ST-111): one of its project-level documents, or null. */
   rulesDocumentId: string | null;
+  /** Status automation from pull request events (ST-85), with the defaults filled in. */
+  gitAutomation: GitAutomationSettings;
   /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
   url?: string;
+}
+
+/** A pull request event that can move its tasks (ST-85). */
+export type GitAutomationEvent = "draft" | "opened" | "merged" | "closed";
+
+/**
+ * A project's status automation (ST-85): for each pull request event, the status category its
+ * linked tasks move to (the first status of that category in the task's workflow), or null for
+ * no change. `opened` covers opened, reopened and ready for review; `draft` opened as or
+ * converted to a draft.
+ */
+export interface GitAutomationSettings extends Record<GitAutomationEvent, StatusCategory | null> {
+  enabled: boolean;
 }
 
 export interface ProjectDetailDto extends ProjectDto {

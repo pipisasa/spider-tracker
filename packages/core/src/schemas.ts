@@ -34,6 +34,26 @@ export const createProjectInput = z.object({
 
 export type CreateProjectInput = z.infer<typeof createProjectInput>;
 
+export const statusCategorySchema = z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]);
+
+const gitAutomationTarget = statusCategorySchema.nullable();
+
+/** A project's status automation from pull request events (ST-85); see GitAutomationSettings. */
+export const gitAutomationSchema = z.strictObject({
+  enabled: z.boolean(),
+  draft: gitAutomationTarget,
+  opened: gitAutomationTarget,
+  merged: gitAutomationTarget,
+  closed: gitAutomationTarget,
+});
+
+/** Changes to it: only the fields given change. */
+export const gitAutomationInput = gitAutomationSchema
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type GitAutomationInput = z.infer<typeof gitAutomationInput>;
+
 /** The key can't change: it is part of every task key. */
 export const updateProjectInput = z
   .object({
@@ -41,6 +61,8 @@ export const updateProjectInput = z
     description: z.string().trim().max(2000).nullable().optional(),
     /** One of the project's own (project-level) documents as its rules for agents; null clears it. */
     rulesDocumentId: z.uuid("A document id").nullable().optional(),
+    /** Status automation from pull request events (ST-85); null goes back to the defaults. */
+    gitAutomation: gitAutomationInput.nullable().optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
 
@@ -51,7 +73,6 @@ export const taskKindSchema = z.enum(["task", "release", "milestone"]);
 
 export const TASK_KINDS = taskKindSchema.options;
 
-export const statusCategorySchema = z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]);
 
 const statusName = z.string().trim().min(1, "Required").max(40, "At most 40 characters");
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "A hex colour like #22c55e");

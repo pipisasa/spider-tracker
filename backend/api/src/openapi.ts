@@ -59,6 +59,11 @@ const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
 /** The `url` field: the web page of a project, task or document (ST-115). */
 const webUrl = (what: string): JsonSchema =>
   string({ format: "uri", description: `The ${what}'s page in the web app, from the server's web origin` });
+const automationTarget = (description: string): JsonSchema => ({
+  type: ["string", "null"],
+  enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled", null],
+  description,
+});
 const listOf = (item: string): JsonSchema => object({ items: { type: "array", items: ref(item) } });
 
 /** Request-side JSON Schema of a Zod schema, without the $schema header. */
@@ -115,8 +120,22 @@ const schemas: Record<string, JsonSchema> = {
       format: "uuid",
       description: "The project's rules for agents: one of its project-level documents (set with PATCH rulesDocumentId)",
     }),
+    gitAutomation: ref("GitAutomation"),
     url: webUrl("project"),
   }),
+  GitAutomation: {
+    ...object({
+      enabled: { type: "boolean" },
+      draft: automationTarget("A PR opened as or converted to a draft (default in_progress)"),
+      opened: automationTarget("A PR opened, reopened or marked ready for review (default in_review)"),
+      merged: automationTarget("A PR merged (default done)"),
+      closed: automationTarget("A PR closed without merging (default null: no change)"),
+    }),
+    description:
+      "Status automation from pull request events (set with PATCH gitAutomation; null resets to the defaults). Each event names the status category " +
+      "its linked tasks move to: the first status of that category in the task's workflow. Only tasks of kind task move, only for PRs linked by " +
+      "closing keyword, branch or title, and only forward (a draft may move In Review back to In Progress); merged waits for the task's other open PRs.",
+  },
   ProjectDetail: {
     allOf: [
       ref("Project"),
@@ -1069,7 +1088,7 @@ const paths = {
     patch: {
       operationId: "updateProject",
       summary:
-        "Change a project's name, description or rules document (owners, admins and their agents); the key can't change. Setting rules notifies the project's agents",
+        "Change a project's name, description, rules document or status automation from pull requests (owners, admins and their agents); the key can't change. Setting rules notifies the project's agents",
       requestBody: body("UpdateProjectInput"),
       responses: { "200": ok("Updated project", "ProjectDetail"), ...errors },
     },

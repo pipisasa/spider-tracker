@@ -6,6 +6,8 @@ import type {
   BulkUpdateTasksResponse,
   DocumentFormat,
   DocumentSummaryDto,
+  GitAutomationEvent,
+  GitAutomationSettings,
   ProjectDetailDto,
   ProjectDto,
   ReleaseChangelogDto,
@@ -19,7 +21,7 @@ import type {
   TaskKind,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { TASK_KINDS } from "@repo/core/schemas";
+import { TASK_KINDS, statusCategorySchema } from "@repo/core/schemas";
 import { allStatuses, workflowOf } from "@repo/core/statuses";
 import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
@@ -48,6 +50,7 @@ import type {
   UpdateAppInput,
   UpdateRepoInput,
   DocumentEdit,
+  GitAutomationInput,
   UpdateDocumentInput,
   UpdateProjectInput,
   UpdateTaskInput,
@@ -575,6 +578,42 @@ function bulkLines(
 }
 
 const projectLine = (p: ProjectDto) => `${p.key}  ${p.name}${p.archivedAt ? "  (archived)" : ""}`;
+
+// Status automation from pull requests (ST-85): `project update --automation/--on-*` and `project view`.
+const AUTOMATION_EVENTS: GitAutomationEvent[] = ["draft", "opened", "merged", "closed"];
+type AutomationFlag = "onDraft" | "onOpened" | "onMerged" | "onClosed";
+const AUTOMATION_FLAGS: Record<GitAutomationEvent, AutomationFlag> = { draft: "onDraft", opened: "onOpened", merged: "onMerged", closed: "onClosed" };
+
+/** "In Review", "in-review" or "in_review" → in_review; "none" → null (no change). */
+function automationTarget(value: string, event: GitAutomationEvent): GitAutomationSettings[GitAutomationEvent] {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "none" || normalized === "") return null;
+  const parsed = statusCategorySchema.safeParse(normalized);
+  if (!parsed.success) {
+    throw usageError(`--on-${event}: unknown category "${value}". Use one of ${statusCategorySchema.options.join(", ")} or none`);
+  }
+  return parsed.data;
+}
+
+/** The gitAutomation change the options ask for: undefined for none, null to reset to the defaults. */
+function automationInput(opts: { automation?: string } & Partial<Record<AutomationFlag, string>>): GitAutomationInput | null | undefined {
+  const input: GitAutomationInput = {};
+  for (const event of AUTOMATION_EVENTS) {
+    const value = opts[AUTOMATION_FLAGS[event]];
+    if (value !== undefined) input[event] = automationTarget(value, event);
+  }
+  if (opts.automation === "defaults") {
+    if (Object.keys(input).length > 0) throw usageError("--automation defaults resets every event; don't combine it with --on-*");
+    return null;
+  }
+  if (opts.automation !== undefined) input.enabled = opts.automation === "on";
+  return Object.keys(input).length > 0 ? input : undefined;
+}
+
+const automationLine = (a: GitAutomationSettings) =>
+  `Status automation from pull requests: ${
+    a.enabled ? AUTOMATION_EVENTS.map((event) => `${event} → ${a[event] ?? "no change"}`).join(", ") : "off"
+  }`;
 
 /** One kind's workflow, a status per line with its category (and task count, when given). */
 function workflowLines(kind: TaskKind, statuses: (StatusDto & { taskCount?: number })[]): string[] {
@@ -1536,6 +1575,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
           ...TASK_KINDS.flatMap((kind) => (workflows[kind]?.length ? ["", ...workflowLines(kind, workflows[kind])] : [])),
+          ...(detail.gitAutomation ? ["", automationLine(detail.gitAutomation)] : []),
           ...(detail.description ? ["", detail.description] : []),
           ...(rules ? ["", `Rules for agents: ${rules.title} (${rules.documentId}, v${rules.version})`, "", rules.content] : []),
         ].join("\n"),
@@ -1550,17 +1590,31 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .argument("<key>")
       .option("--name <text>", "name")
       .option("--description <text>", 'description (Markdown; "" clears it)')
-      .option("--rules <document-id>", 'one of the project\'s documents as its rules for agents ("" clears them); its agents are notified'),
-  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string; rules?: string }) => {
-    const input: UpdateProjectInput = {};
-    if (opts.name !== undefined) input.name = opts.name;
-    if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
-    if (opts.rules !== undefined) input.rulesDocumentId = opts.rules === "" ? null : opts.rules;
-    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name, --description or --rules");
-    const { sdk, org } = conn();
-    const updated = await (await sdk()).projects.update(await org(), key, input);
-    output(opts, updated, () => `Updated ${projectLine(updated)}`);
-  });
+      .option("--rules <document-id>", 'one of the project\'s documents as its rules for agents ("" clears them); its agents are notified')
+      .addOption(new Option("--automation <state>", "status automation from pull requests: on, off, or defaults (resets every --on-* too)").choices(["on", "off", "defaults"]))
+      .option("--on-draft <category>", 'status category for tasks when a linked PR is opened as or converted to a draft ("none": no change)')
+      .option("--on-opened <category>", "status category when a linked PR is opened, reopened or ready for review")
+      .option("--on-merged <category>", "status category when a linked PR is merged")
+      .option("--on-closed <category>", "status category when a linked PR is closed without merging"),
+  ).action(
+    async (
+      key: string,
+      opts: JsonOption & { name?: string; description?: string; rules?: string; automation?: string } & Partial<Record<AutomationFlag, string>>,
+    ) => {
+      const input: UpdateProjectInput = {};
+      if (opts.name !== undefined) input.name = opts.name;
+      if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
+      if (opts.rules !== undefined) input.rulesDocumentId = opts.rules === "" ? null : opts.rules;
+      const automation = automationInput(opts);
+      if (automation !== undefined) input.gitAutomation = automation;
+      if (Object.keys(input).length === 0) {
+        throw usageError("Nothing to update. Pass --name, --description, --rules, --automation or --on-draft/--on-opened/--on-merged/--on-closed");
+      }
+      const { sdk, org } = conn();
+      const updated = await (await sdk()).projects.update(await org(), key, input);
+      output(opts, updated, () => `Updated ${projectLine(updated)}`);
+    },
+  );
 
   withJson(
     projectCommand

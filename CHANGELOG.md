@@ -64,6 +64,12 @@ Done means finished, not shipped; releases ship Done tasks.
 - API: `GET|POST /v1/orgs/{org}/documents/{id}/comments` and `PATCH …/comments/{commentId}` (`{ resolved }`). `GET /inbox` returns `document_*` items only when `kinds` asks for them, so older CLIs are unaffected; inbox items' `document.projectKey` can now be null (an organization-wide document).
 - Database migration `0019_document_comments` (`comments.task_id` nullable, new `document_id`, `quote`, `document_version`, `resolved_at`, `resolved_by`, and two check constraints).
 
+### Status automation from pull requests (ST-85)
+
+- A `pull_request` event moves the tasks it is linked to by closing keyword, branch or title (a mention in the body doesn't): opened as or converted to a draft → In Progress, opened, reopened or ready for review → In Review, merged → Done (once no other linked PR is open), closed without merging → no change. Forward only (except a draft moving In Review back to In Progress), only tasks of kind `task`, as the @github bot with source `git` ([git-integration.md](docs/git-integration.md#status-automation-st-85)).
+- Per project, on by default: `ProjectDto.gitAutomation` `{ enabled, draft, opened, merged, closed }` (status categories or null). API: `PATCH …/projects/{key}` takes `gitAutomation` (partial; `null` resets). MCP: `update_project` takes `gitAutomation`. CLI: `spider project update KEY --automation on|off|defaults --on-draft|--on-opened|--on-merged|--on-closed <category|none>`; `project view` shows the settings. Web: Status automation in project settings.
+- Database migration `0026_git_automation` (`projects.git_automation`).
+
 ### Branches, commits and pull requests on tasks (ST-84)
 
 - GitHub `create`, `delete`, `push` and `pull_request` webhooks link branches named after a task, commits that mention it (or were pushed to its branch) and pull requests that name it in their branch, title or body. Only keys of tasks in projects attached to the repo count. Each link says how it was found (`via`: `closing`, `branch`, `title`, `body`, `message`). A `pull_request` event older than the stored PR changes nothing, and a merged PR stays merged. Subscribe the GitHub App to Create, Delete, Push and Pull request ([git-integration.md](docs/git-integration.md#linking-work-to-tasks-st-84)).

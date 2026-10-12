@@ -6,6 +6,7 @@ import type { ActorContext, Viewer } from "./access";
 import type { GitBranchDto, GitCommitDto, GitLinkVia, PullRequestDto, PullRequestState, TaskGitDto } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
+import { automatePullRequest } from "./git-automation";
 import { closingKeysIn, taskKeyFromBranch, taskKeysIn } from "./git";
 import type { GithubEventHandler } from "./github-webhooks";
 import { repoFullName } from "./remotes";
@@ -232,12 +233,11 @@ export interface PullRequestChange {
 }
 
 /**
- * Status automation from pull request events (ST-85) goes here: it runs in the delivery's
- * transaction after the PR and its links are saved (never for stale events) and says whether it
- * changed something. Nothing yet.
+ * Status automation from pull request events (ST-85, automatePullRequest in git-automation.ts): it
+ * runs in the delivery's transaction after the PR and its links are saved (never for stale events)
+ * and says whether it changed something.
  */
 export type PullRequestAutomation = (tx: Tx, ctx: ActorContext, change: PullRequestChange) => Promise<boolean>;
-const automatePullRequest: PullRequestAutomation = async () => false;
 
 const STATE_RANK: Record<PullRequestState, number> = { open: 0, closed: 1, merged: 2 };
 

@@ -602,6 +602,13 @@ withDb("MCP server", () => {
     });
     const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
     expect(updated.json()).toMatchObject({ name: "Operations", description: null });
+    // Status automation from pull requests (ST-85): only the fields given change; null resets.
+    expect((await call(client, "update_project", { projectKey: "OPS", gitAutomation: { enabled: false, merged: null } })).json()).toMatchObject({
+      gitAutomation: { enabled: false, draft: "in_progress", opened: "in_review", merged: null, closed: null },
+    });
+    expect((await call(client, "update_project", { projectKey: "OPS", gitAutomation: null })).json()).toMatchObject({
+      gitAutomation: { enabled: true, merged: "done" },
+    });
     expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archivedAt: expect.any(String) });
     expect((await call(client, "list_projects")).json()).toEqual({
       items: [
@@ -613,6 +620,7 @@ withDb("MCP server", () => {
           createdAt: expect.any(String),
           archivedAt: null,
           rulesDocumentId: null,
+          gitAutomation: { enabled: true, draft: "in_progress", opened: "in_review", merged: "done", closed: null },
           url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI`,
         },
       ],

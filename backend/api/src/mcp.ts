@@ -65,6 +65,7 @@ import {
   listTags,
   listTaskActivity,
   getTaskGit,
+  gitAutomationInput,
   listInbox,
   listTasks,
   markInboxRead,
@@ -323,7 +324,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "update_project",
     {
       description:
-        "Change a project's name, description or rules document (the key can't change). The rules are one of the project's own documents; agents of the project get them automatically and are notified when they change. Owners, admins and their agents only.",
+        "Change a project's name, description, rules document or status automation from pull requests (the key can't change). The rules are one of the project's own documents; agents of the project get them automatically and are notified when they change. Owners, admins and their agents only.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         name: projectName.optional(),
@@ -333,10 +334,19 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           .nullable()
           .optional()
           .describe("Id of a document in this project (not a task's) to use as its rules; null clears them"),
+        gitAutomation: gitAutomationInput
+          .nullable()
+          .optional()
+          .describe(
+            "Status automation from pull request events; only the fields given change, null resets to the defaults. " +
+              "enabled: on or off. draft (PR opened as or converted to a draft; default in_progress), opened (opened, reopened or ready for review; default in_review), " +
+              "merged (default done), closed (closed unmerged; default null): the status category linked tasks move to, or null for no change. " +
+              "Tasks move forward only, and only for PRs linked by closing keyword, branch or title.",
+          ),
       },
     },
-    ({ projectKey, name, description, rulesDocumentId }) =>
-      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description, rulesDocumentId }))),
+    ({ projectKey, name, description, rulesDocumentId, gitAutomation }) =>
+      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description, rulesDocumentId, gitAutomation }))),
   );
 
   server.registerTool(

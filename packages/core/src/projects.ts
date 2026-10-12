@@ -7,6 +7,7 @@ import { publish } from "./events";
 import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto, TaskKind } from "./contracts";
 import { DomainError } from "./errors";
 import { announceRulesChange, assertRulesDocument } from "./project-rules";
+import { gitAutomationOf } from "./git-automation-rules";
 import { TASK_KINDS, createProjectInput, updateProjectInput } from "./schemas";
 import { parseInput } from "./validate";
 
@@ -57,6 +58,7 @@ export function toProjectDto(row: ProjectRow): ProjectDto {
     createdAt: row.createdAt.toISOString(),
     archivedAt: row.archivedAt?.toISOString() ?? null,
     rulesDocumentId: row.rulesDocumentId,
+    gitAutomation: gitAutomationOf(row.gitAutomation),
   };
 }
 
@@ -167,7 +169,8 @@ export async function withStatuses(tx: Db | Tx, project: ProjectRow): Promise<Pr
 }
 
 /**
- * Renames a project, changes its description or sets its rules document (ST-111); the key stays.
+ * Renames a project, changes its description, sets its rules document (ST-111) or changes its
+ * status automation from pull requests (ST-85); the key stays.
  * Setting rules tells the project's agents (see announceRulesChange).
  */
 export async function updateProject(db: Db, ctx: ActorContext, key: string, input: unknown): Promise<ProjectDetailDto> {
@@ -180,6 +183,13 @@ export async function updateProject(db: Db, ctx: ActorContext, key: string, inpu
       name: data.name ?? current.name,
       description: data.description === undefined ? current.description : data.description || null,
       rulesDocumentId: data.rulesDocumentId === undefined ? current.rulesDocumentId : data.rulesDocumentId,
+      // Stored in full once changed; null (the defaults) again when reset.
+      gitAutomation:
+        data.gitAutomation === undefined
+          ? current.gitAutomation
+          : data.gitAutomation === null
+            ? null
+            : { ...gitAutomationOf(current.gitAutomation), ...data.gitAutomation },
     };
     const changes: Record<string, [unknown, unknown]> = {};
     if (next.name !== current.name) changes.name = [current.name, next.name];
@@ -187,6 +197,14 @@ export async function updateProject(db: Db, ctx: ActorContext, key: string, inpu
     if (next.rulesDocumentId !== current.rulesDocumentId) {
       if (next.rulesDocumentId) await assertRulesDocument(tx, current, next.rulesDocumentId);
       changes.rulesDocumentId = [current.rulesDocumentId, next.rulesDocumentId];
+    }
+    const automationBefore = gitAutomationOf(current.gitAutomation);
+    const automationAfter = gitAutomationOf(next.gitAutomation);
+    if (JSON.stringify(automationBefore) !== JSON.stringify(automationAfter)) {
+      changes.gitAutomation = [automationBefore, automationAfter];
+    } else {
+      // Nothing to record; keep what is stored (null stays the defaults).
+      next.gitAutomation = current.gitAutomation;
     }
     if (Object.keys(changes).length === 0) return withStatuses(tx, current);
 
