@@ -11,16 +11,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  agentsQuery,
   invitationsQuery,
   membersQuery,
   useCreateInvitation,
   useRevokeInvitation,
 } from "@/lib/work";
-import type { ActorRole, InvitationDto } from "@repo/core/contracts";
+import type { ActorDto, ActorRole, InvitationDto } from "@repo/core/contracts";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { CopyIcon, LinkIcon, PlusIcon } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/$orgSlug/settings/members")({
@@ -50,10 +51,33 @@ function MembersPage() {
   const { data: members } = useSuspenseQuery(membersQuery(orgSlug));
   const role = membership.actor.role;
   const canInvite = role === "owner" || role === "admin";
-  const sorted = [...members].sort(
-    (a, b) =>
-      roleOrder[a.role] - roleOrder[b.role] || a.name.localeCompare(b.name),
-  );
+  // Owners of agents come from the agents list; guests may not see it, then agents stay flat.
+  const { data: agents = [] } = useQuery({
+    ...agentsQuery(orgSlug),
+    enabled: role !== "guest",
+  });
+  const { people, agentsOf, unowned } = useMemo(() => {
+    const ownerOf = new Map(agents.map((a) => [a.actor.id, a.ownerId]));
+    const people = members
+      .filter((m) => m.type === "human")
+      .sort(
+        (a, b) =>
+          roleOrder[a.role] - roleOrder[b.role] || a.name.localeCompare(b.name),
+      );
+    const personIds = new Set(people.map((p) => p.id));
+    const agentsOf = new Map<string, ActorDto[]>();
+    const unowned: ActorDto[] = [];
+    for (const m of members) {
+      if (m.type !== "agent") continue;
+      const owner = ownerOf.get(m.id);
+      if (owner && personIds.has(owner))
+        agentsOf.set(owner, [...(agentsOf.get(owner) ?? []), m]);
+      else unowned.push(m);
+    }
+    for (const list of agentsOf.values())
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    return { people, agentsOf, unowned };
+  }, [members, agents]);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-8">
@@ -61,27 +85,33 @@ function MembersPage() {
         <header className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">Members</h1>
           <p className="text-sm text-muted-foreground">
-            People and agents in {membership.organization.name}.
+            People in {membership.organization.name}, each with their agents.
           </p>
         </header>
         <ul className="divide-y rounded-lg border">
-          {sorted.map((member) => (
-            <li key={member.id} className="flex items-center gap-3 px-4 py-3">
-              <ActorAvatar actor={member} className="size-8" />
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate font-medium">{member.name}</span>
-                <span className="truncate text-sm text-muted-foreground">
-                  @{member.handle}
-                </span>
-              </div>
-              <div className="ml-auto flex items-center gap-2">
-                {member.type === "agent" && (
-                  <Badge variant="outline">Agent</Badge>
+          {people.map((person) => {
+            const own = agentsOf.get(person.id) ?? [];
+            return (
+              <li key={person.id} className="flex flex-col">
+                <MemberRow member={person} />
+                {own.length > 0 && (
+                  <ul
+                    aria-label={`${person.name}'s agents`}
+                    className="flex flex-col pb-2 pl-11"
+                  >
+                    {own.map((agent) => (
+                      <li key={agent.id} className="border-l">
+                        <MemberRow member={agent} compact />
+                      </li>
+                    ))}
+                  </ul>
                 )}
-                <Badge variant="secondary" className="capitalize">
-                  {member.role}
-                </Badge>
-              </div>
+              </li>
+            );
+          })}
+          {unowned.map((agent) => (
+            <li key={agent.id}>
+              <MemberRow member={agent} />
             </li>
           ))}
         </ul>
@@ -91,6 +121,47 @@ function MembersPage() {
         <Invitations orgSlug={orgSlug} isOwner={role === "owner"} />
       )}
     </main>
+  );
+}
+
+function MemberRow({
+  member,
+  compact = false,
+}: {
+  member: ActorDto;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={
+        compact
+          ? "flex items-center gap-3 px-4 py-1.5"
+          : "flex items-center gap-3 px-4 py-3"
+      }
+    >
+      <ActorAvatar actor={member} className={compact ? "size-6" : "size-8"} />
+      <div className="flex min-w-0 flex-col">
+        <span
+          className={
+            compact ? "truncate text-sm font-medium" : "truncate font-medium"
+          }
+        >
+          {member.name}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          @{member.handle}
+        </span>
+      </div>
+      <div className="ml-auto flex items-center gap-2">
+        {member.type === "agent" ? (
+          <Badge variant="outline">Agent</Badge>
+        ) : (
+          <Badge variant="secondary" className="capitalize">
+            {member.role}
+          </Badge>
+        )}
+      </div>
+    </div>
   );
 }
 
