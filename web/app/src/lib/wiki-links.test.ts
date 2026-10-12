@@ -17,6 +17,8 @@ const doc = (id: string, title: string, projectKey: string | null, updatedAt = "
 
 const docs = [
   doc("1", "Release plan", "ST"),
+  doc("5", "Plan | draft", "ST"),
+  doc("6", "Plan #2", "ST"),
   doc("2", "Plan", "OPS", "2026-10-05"),
   doc("3", "Plan", null),
   doc("4", "Roadmap", "ST"),
@@ -32,7 +34,7 @@ describe("wikiDestination", () => {
 });
 
 describe("wikiSuggestions", () => {
-  test("prefix matches first, one entry per title, the edited document left out", () => {
+  test("prefix matches first, one entry per title; the edited document and unlinkable titles left out", () => {
     expect(wikiSuggestions(docs, "pla", { fromProjectKey: "ST", excludeId: "4" }).map((s) => [s.title, s.hint])).toEqual([
       ["Plan", "OPS"],
       ["Release plan", "ST"],

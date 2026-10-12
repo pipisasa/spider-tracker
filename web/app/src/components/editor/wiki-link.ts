@@ -93,12 +93,21 @@ export const WikiLink = Node.create<WikiLinkOptions>({
       dom.className = "wiki-link";
       dom.dataset.wikiLink = "";
       dom.textContent = (node.attrs.label as string | null) ?? target;
-      const href = this.options.host()?.href(target) ?? null;
-      if (href) dom.href = href;
-      else if (this.options.host()) dom.classList.add("wiki-link-missing");
-      if (editor.isEditable) dom.title = href ? "⌘/Ctrl-click to open in a new tab" : "No document has this title yet";
+      // Re-resolved on hover and click: the documents list may load after the editor opens.
+      const refresh = () => {
+        const host = this.options.host();
+        const href = host?.href(target) ?? null;
+        if (href) dom.href = href;
+        else dom.removeAttribute("href");
+        dom.classList.toggle("wiki-link-missing", host !== null && !href);
+        if (editor.isEditable) dom.title = href ? "⌘/Ctrl-click to open in a new tab" : "No document has this title yet";
+        return href;
+      };
+      refresh();
+      dom.addEventListener("mouseenter", refresh);
       dom.addEventListener("click", (event) => {
         event.preventDefault();
+        const href = refresh();
         // While editing, a plain click selects the link; opening would leave unsaved changes.
         if (!editor.isEditable) this.options.host()?.open(target);
         else if (href && (event.metaKey || event.ctrlKey)) window.open(href, "_blank", "noopener");

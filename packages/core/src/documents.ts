@@ -509,11 +509,14 @@ export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise
 export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<DocumentGraphDto> {
   const docs = await listDocuments(db, viewer);
   const byId = new Map(docs.map((d) => [d.id, d]));
+  // The organization's live documents' links; scope applies through `byId` (a join, not an id
+  // list, so a large organization stays under Postgres' parameter limit).
   const rows = docs.length
     ? await db
-        .select()
+        .select({ documentId: documentLinks.documentId, kind: documentLinks.kind, target: documentLinks.target })
         .from(documentLinks)
-        .where(inArray(documentLinks.documentId, [...byId.keys()]))
+        .innerJoin(documents, eq(documentLinks.documentId, documents.id))
+        .where(and(eq(documents.orgId, orgIdOf(viewer)), isNull(documents.deletedAt)))
         .orderBy(asc(documentLinks.documentId), asc(documentLinks.kind), asc(documentLinks.target))
     : [];
 
@@ -524,17 +527,25 @@ export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<Document
   const knownTasks = new Set(graphTasks.map((t) => t.key));
 
   const links: DocumentLinkDto[] = [];
+  // Rows differing only in case ("Plan", "plan") resolve alike; each edge is listed once.
+  const seen = new Set<string>();
+  const add = (link: DocumentLinkDto) => {
+    const to = link.to;
+    const key = `${link.from}|${to.type === "document" ? to.id : to.type === "task" ? to.key : normalizeTitle(to.title)}|${to.type}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    links.push(link);
+  };
   for (const r of rows) {
     const source = byId.get(r.documentId);
     if (!source) continue;
     if (r.kind === "task") {
-      if (knownTasks.has(r.target) && r.target !== source.taskKey)
-        links.push({ from: source.id, to: { type: "task", key: r.target } });
+      if (knownTasks.has(r.target) && r.target !== source.taskKey) add({ from: source.id, to: { type: "task", key: r.target } });
       continue;
     }
     const target = resolveTitle(docs, r.target, source.projectKey);
     if (target?.id === source.id) continue;
-    links.push({
+    add({
       from: source.id,
       to: target ? { type: "document", id: target.id } : { type: "unresolved", title: r.target },
     });

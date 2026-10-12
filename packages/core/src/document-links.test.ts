@@ -62,12 +62,18 @@ run("document links, backlinks and the graph (ST-100)", () => {
     });
     const fromOps = await createDocument(db, ctx, { project: "OPS", title: "Runbook", content: "[[GUIDE]] [[OPS-1]]" });
 
+    // Rows differing only in case (as the migration's backfill could write) give one edge.
+    await db.insert(schema.documentLinks).values([
+      { documentId: onTask.id, kind: "document", target: "GUIDE" },
+      { documentId: onTask.id, kind: "document", target: "missing PAGE" },
+    ]);
     const graph = await getDocumentGraph(db, ctx);
     const from = (id: string) => graph.links.filter((l) => l.from === id).map((l) => l.to);
     // Same-project titles win; self links and the document's own task are left out.
+    // Which spelling of a duplicated unresolved title survives depends on collation.
     expect(from(onTask.id)).toEqual([
       { type: "document", id: guide.id },
-      { type: "unresolved", title: "Missing page" },
+      { type: "unresolved", title: expect.stringMatching(/^missing page$/i) },
     ]);
     expect(from(fromOps.id)).toEqual([
       { type: "document", id: opsGuide.id },

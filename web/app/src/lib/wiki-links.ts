@@ -20,6 +20,9 @@ export function wikiDestination(
   return doc ? { type: "document", id: doc.id } : { type: "missing", title };
 }
 
+/** Characters a `[[link]]` target can't contain: brackets end it, `|` starts a label, `#` a heading. */
+export const UNLINKABLE = /[[\]|#]/;
+
 /**
  * Documents to offer after `[[query`: titles starting with the query first, then containing it;
  * the same project's before others; never the document being edited. A task key offers the task.
@@ -32,7 +35,8 @@ export function wikiSuggestions(
   const q = normalizeTitle(query);
   const scored: { doc: DocumentSummaryDto; score: number }[] = [];
   for (const doc of documents) {
-    if (doc.id === excludeId) continue;
+    // `[[…]]` can't hold these: a title with them can't be linked to (docs/features.md).
+    if (doc.id === excludeId || UNLINKABLE.test(doc.title)) continue;
     const title = normalizeTitle(doc.title);
     const at = q ? title.indexOf(q) : 0;
     if (at < 0) continue;
