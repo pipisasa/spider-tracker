@@ -3,7 +3,8 @@ import { RELATION_LABELS } from "@/components/relations";
 import { ActorAvatar } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/mention-textarea";
-import { activityQuery, commentsQuery, tagsQuery, useAddComment } from "@/lib/work";
+import { mentionOf, nameOf } from "@/lib/assignees";
+import { actorsQuery, activityQuery, commentsQuery, tagsQuery, useAddComment } from "@/lib/work";
 import type {
   ActivityDto,
   ActorDto,
@@ -36,7 +37,7 @@ export function describeActivity(
   const names = (ids: unknown) =>
     Array.isArray(ids) && ids.length > 0
       ? ids
-          .map((id) => `@${members.get(String(id))?.handle ?? "unknown"}`)
+          .map((id) => mentionOf(members.get(String(id))))
           .join(", ")
       : "nobody";
   if (entry.action === "task.created") return "created the task";
@@ -168,7 +169,7 @@ function CommentItem({
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">
-            {author?.name ?? "Unknown"}
+            {nameOf(author, "Unknown")}
           </span>
           {author?.type === "agent" && (
             <BotIcon className="size-3" aria-label="agent" />
@@ -207,7 +208,12 @@ export function TaskComments({
   const add = useAddComment(orgSlug, taskKey);
   // The comment being replied to; its thread shows the reply box.
   const [replyTo, setReplyTo] = useState<CommentDto | null>(null);
-  const byId = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  // Naming uses every actor, deactivated ones included; mentions use only the active `members`.
+  const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
+  const byId = useMemo(
+    () => new Map([...actors, ...members].map((m) => [m.id, m])),
+    [actors, members],
+  );
   const handles = useMemo(
     () => new Set(members.map((m) => m.handle)),
     [members],
@@ -270,7 +276,7 @@ export function TaskComments({
                 <HistoryIcon className="size-3.5 shrink-0" />
                 <span>
                   <span className="font-medium text-foreground">
-                    {actor?.name ?? "Someone"}
+                    {nameOf(actor, "Someone")}
                   </span>{" "}
                   {text}
                   {item.activity.source !== "ui" &&
