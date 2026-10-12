@@ -99,6 +99,9 @@ export interface TaskDto {
   /** The parent's key, e.g. "ST-3", when parentId is set. */
   parentKey: string | null;
   sortKey: string;
+  /** Plan dates (ST-91), "YYYY-MM-DD" or null; start ≤ target. */
+  startDate: string | null;
+  targetDate: string | null;
   assigneeIds: string[];
   tagIds: string[];
   creatorId: string;

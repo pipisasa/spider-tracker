@@ -81,6 +81,12 @@ const tagsInput = z.array(z.string()).max(20).describe("Tag names (see list_tags
 /** A filter value, or several matched with OR (as repeated API query parameters). */
 const oneOrMany = z.union([z.string(), z.array(z.string()).max(50)]);
 const tagMatchSchema = z.enum(["all", "any"]);
+const dateInput = z.string().describe('A date as "YYYY-MM-DD"');
+const startDateInput = dateInput.nullable().describe('Start date, "YYYY-MM-DD"; null clears it');
+const targetDateInput = dateInput.nullable().describe('Target date, "YYYY-MM-DD", on or after the start date; null clears it');
+const overdueInput = z
+  .boolean()
+  .describe("true: only tasks past their target date (today = the server's UTC date) that aren't done or canceled");
 const assigneesInput = z
   .array(z.string())
   .max(20)
@@ -319,7 +325,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "list_tasks",
     {
       description:
-        "List tasks in a project, in board order. Filter by status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority and title text; status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
+        "List tasks in a project, in board order. Filter by status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority, title text and overdue (target date passed, not done or canceled); status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         status: oneOrMany.optional().describe('Status id, name ("In Progress") or category ("in_progress"); an array matches any'),
@@ -332,10 +338,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         tagMatch: tagMatchSchema.optional().describe('"all" (default): every tag; "any": at least one'),
         priority: z.array(priority).max(5).optional().describe("Any of these priorities: 0 none, 1 urgent, 2 high, 3 medium, 4 low"),
         query: z.string().optional().describe("Case-insensitive text to find in titles"),
+        overdue: overdueInput.optional(),
         limit: z.number().int().min(1).max(200).optional().describe("Maximum tasks to return (default 50)"),
       },
     },
-    ({ projectKey, status, assignee, tags, tagMatch, priority: priorities, query, limit }) =>
+    ({ projectKey, status, assignee, tags, tagMatch, priority: priorities, query, overdue, limit }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const tasks = await listTasks(db, ctx, project.key, {
@@ -345,6 +352,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           tagMatch,
           priority: priorities,
           q: query,
+          overdue,
         });
         const shown = tasks.slice(0, limit ?? 50);
         return {
@@ -393,9 +401,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
         parent: z.string().optional().describe('Parent task key, e.g. "ST-3", to create a sub-task'),
+        startDate: dateInput.optional().describe('Start date, "YYYY-MM-DD"'),
+        targetDate: dateInput.optional().describe('Target date, "YYYY-MM-DD", on or after the start date'),
       },
     },
-    ({ projectKey, title, description, status, priority, assignees, tags, parent }) =>
+    ({ projectKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const task = await createTask(db, ctx, project.key, {
@@ -406,6 +416,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent ? (await getTask(db, ctx, parent)).id : undefined,
+          startDate,
+          targetDate,
         });
         return describeTask(task, project);
       }),
@@ -424,9 +436,11 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
         parent: z.string().nullable().optional().describe('Parent task key; null makes it a top-level task'),
+        startDate: startDateInput.optional(),
+        targetDate: targetDateInput.optional(),
       },
     },
-    ({ key: taskKey, title, description, status, priority, assignees, tags, parent }) =>
+    ({ key: taskKey, title, description, status, priority, assignees, tags, parent, startDate, targetDate }) =>
       run(async () => {
         const project = await projectOfTask(taskKey);
         const task = await updateTask(db, ctx, taskKey, {
@@ -437,6 +451,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
           tagIds: tags ? await resolveTags(tags) : undefined,
           parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
+          startDate,
+          targetDate,
         });
         return describeTask(task, project);
       }),
@@ -458,6 +474,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             tagMatch: tagMatchSchema.optional(),
             priority: z.array(priority).max(5).optional().describe("Any of these priorities"),
             query: z.string().optional().describe("Case-insensitive text to find in titles"),
+            overdue: overdueInput.optional(),
           })
           .optional()
           .describe(`Tasks to change, as in list_tasks; fails if more than ${MAX_BULK_TASKS} match`),
@@ -466,10 +483,12 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         assignees: assigneesInput.optional(),
         tags: tagsInput.optional(),
         parent: z.string().nullable().optional().describe("New parent task key; null makes them top-level tasks"),
+        startDate: startDateInput.optional(),
+        targetDate: targetDateInput.optional(),
         dryRun: z.boolean().optional().describe("Report what would change without changing anything"),
       },
     },
-    ({ keys, filter, status, priority, assignees, tags, parent, dryRun }) =>
+    ({ keys, filter, status, priority, assignees, tags, parent, startDate, targetDate, dryRun }) =>
       run(async () => {
         const result = await updateTasks(db, ctx, {
           keys,
@@ -482,6 +501,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             tagMatch: filter.tagMatch,
             priority: filter.priority,
             q: filter.query,
+            overdue: filter.overdue,
           },
           set: {
             status,
@@ -489,6 +509,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
             assigneeIds: assignees ? await resolveAssignees(assignees) : undefined,
             tagIds: tags ? await resolveTags(tags) : undefined,
             parentId: parent === undefined ? undefined : parent === null ? null : (await getTask(db, ctx, parent)).id,
+            startDate,
+            targetDate,
           },
           dryRun,
         });

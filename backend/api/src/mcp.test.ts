@@ -228,6 +228,27 @@ withDb("MCP server", () => {
     expect(cleared.json()).toMatchObject({ parentKey: null, parentId: null });
   });
 
+  test("start and target dates on create_task, update_task and update_tasks; list_tasks overdue (ST-91)", async () => {
+    const created = await call(client, "create_task", { projectKey: "SPI", title: "Dated", startDate: "2020-01-01", targetDate: "2020-01-31" });
+    expect(created.json()).toMatchObject({ startDate: "2020-01-01", targetDate: "2020-01-31", status: { category: "todo" } });
+    const key = String(created.json().key);
+    expect((await call(client, "list_tasks", { projectKey: "SPI", overdue: true })).json()).toMatchObject({ total: 1, items: [{ key }] });
+
+    const backwards = await call(client, "update_task", { key, startDate: "2020-02-15" });
+    expect(backwards).toMatchObject({ isError: true, text: expect.stringContaining("on or before the target date") });
+    expect(await call(client, "create_task", { projectKey: "SPI", title: "Bad", targetDate: "Jan 31" })).toMatchObject({ isError: true });
+
+    expect((await call(client, "update_task", { key, startDate: null, targetDate: "2999-12-31" })).json()).toMatchObject({
+      startDate: null,
+      targetDate: "2999-12-31",
+    });
+    expect((await call(client, "list_tasks", { projectKey: "SPI", overdue: true })).json()).toMatchObject({ total: 0 });
+    const bulk = await call(client, "update_tasks", { keys: [key], targetDate: "2020-06-01" });
+    expect(bulk.json()).toMatchObject({ summary: { changed: 1 }, results: [{ task: { targetDate: "2020-06-01" } }] });
+    const cleared = await call(client, "update_tasks", { filter: { projectKey: "SPI", overdue: true }, targetDate: null });
+    expect(cleared.json()).toMatchObject({ summary: { changed: 1 }, results: [{ key, task: { targetDate: null } }] });
+  });
+
   test("relations: link, see them on get_task from both sides, unlink", async () => {
     const other = (await call(client, "create_task", { projectKey: "SPI", title: "Blocked" })).json() as { key: string };
     expect((await call(client, "link_tasks", { key: "SPI-1", kind: "blocks", task: other.key })).isError).toBeFalsy();

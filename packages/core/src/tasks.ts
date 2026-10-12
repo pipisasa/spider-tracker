@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { aliasedTable, and, asc, desc, eq, exists, inArray, isNull, not, or, sql, type SQL } from "drizzle-orm";
+import { aliasedTable, and, asc, desc, eq, exists, inArray, isNull, lt, not, or, sql, type SQL } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
@@ -11,12 +11,15 @@ import { DomainError } from "./errors";
 import { listMembers } from "./organizations";
 import { getProject } from "./projects";
 import {
+  DATES_OUT_OF_ORDER,
   MAX_BULK_TASKS,
   bulkUpdateTasksInput,
   createTaskInput,
+  datesInOrder,
   normalizeHandle,
   parseTaskKey,
   taskListFilters,
+  todayUtc,
   updateTaskInput,
   type UpdateTaskInput,
 } from "./schemas";
@@ -51,6 +54,8 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
     parentId: parentHidden ? null : row.parentId,
     parentKey: row.parentId ? parentKey : null,
     sortKey: row.sortKey,
+    startDate: row.startDate,
+    targetDate: row.targetDate,
     assigneeIds,
     tagIds,
     creatorId: row.creatorId,
@@ -258,6 +263,8 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
         statusId: status.id,
         priority: data.priority ?? 0,
         parentId: data.parentId ?? null,
+        startDate: data.startDate ?? null,
+        targetDate: data.targetDate ?? null,
         sortKey: await sortKeyFor(tx, project.id, status.id),
         creatorId: ctx.actorId,
         completedAt: CLOSED.includes(status.category) ? new Date() : null,
@@ -277,7 +284,14 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       entityType: "task",
       entityId: task.id,
       action: "task.created",
-      changes: { title: task.title, statusId: status.id, assigneeIds, ...(tagIds.length ? { tagIds } : {}) },
+      changes: {
+        title: task.title,
+        statusId: status.id,
+        assigneeIds,
+        ...(tagIds.length ? { tagIds } : {}),
+        ...(task.startDate ? { startDate: task.startDate } : {}),
+        ...(task.targetDate ? { targetDate: task.targetDate } : {}),
+      },
     });
 
     await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
@@ -393,6 +407,11 @@ async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDt
     });
     where.push(eq(tasks.parentId, parent.task.id));
   }
+  if (data.overdue) {
+    // Today is the server's UTC date (todayUtc); closed means a done or canceled status.
+    const open = project.statuses.filter((s) => !CLOSED.includes(s.category)).map((s) => s.id);
+    where.push(lt(tasks.targetDate, todayUtc()), inArray(tasks.statusId, open));
+  }
   return where;
 }
 
@@ -505,6 +524,14 @@ async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, projectKey }: 
   if (data.parentId !== undefined) {
     if (data.parentId) await assertParent(tx, ctx.orgId, scope, data.parentId, task.id);
     track("parentId", data.parentId);
+  }
+  if (data.startDate !== undefined || data.targetDate !== undefined) {
+    // Checked against the stored date the update leaves unchanged, too.
+    const start = data.startDate === undefined ? task.startDate : data.startDate;
+    const target = data.targetDate === undefined ? task.targetDate : data.targetDate;
+    if (!datesInOrder(start, target)) throw new DomainError("validation", DATES_OUT_OF_ORDER);
+    if (data.startDate !== undefined) track("startDate", data.startDate);
+    if (data.targetDate !== undefined) track("targetDate", data.targetDate);
   }
 
   // A position move wins over a bare status change; both re-sort the task.

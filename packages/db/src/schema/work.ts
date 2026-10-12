@@ -3,6 +3,7 @@ import {
   bigint,
   customType,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -90,6 +91,9 @@ export const tasks = pgTable(
     parentId: uuid("parent_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
     // Fractional index: ordering within a status column.
     sortKey: sortKeyText("sort_key").notNull(),
+    // Optional plan dates (ST-91), plain YYYY-MM-DD with no time zone; start ≤ target.
+    startDate: date("start_date"),
+    targetDate: date("target_date"),
     creatorId: uuid("creator_id")
       .notNull()
       .references(() => actors.id),
@@ -102,6 +106,7 @@ export const tasks = pgTable(
     unique("tasks_project_number_key").on(t.projectId, t.number),
     index("tasks_board_idx").on(t.projectId, t.statusId, t.sortKey),
     check("tasks_priority_range", sql`${t.priority} between 0 and 4`),
+    check("tasks_dates_ordered", sql`${t.startDate} is null or ${t.targetDate} is null or ${t.startDate} <= ${t.targetDate}`),
   ],
 );
 

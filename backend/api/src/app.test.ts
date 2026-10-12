@@ -287,6 +287,20 @@ withDb("projects and tasks API", () => {
     expect((await call(owner, "GET", "/projects/SPI/tasks?tag=nope")).status).toBe(400);
     expect((await call(owner, "GET", "/projects/SPI/tasks?priority=9")).status).toBe(400);
 
+    // Dates (ST-91): set, validated, cleared; ?overdue=true finds open tasks past their target.
+    const dated = await call(owner, "POST", "/projects/SPI/tasks", { title: "Late", startDate: "2020-01-01", targetDate: "2020-01-31" });
+    expect(dated.status).toBe(201);
+    expect(await dated.json()).toMatchObject({ key: "SPI-2", startDate: "2020-01-01", targetDate: "2020-01-31" });
+    expect((await call(owner, "POST", "/projects/SPI/tasks", { title: "Bad", targetDate: "31.01.2020" })).status).toBe(400);
+    expect((await call(owner, "PATCH", "/tasks/SPI-2", { startDate: "2020-02-01" })).status).toBe(400);
+    expect(await count("overdue=true")).toBe(1);
+    expect(await count("overdue=false")).toBe(2);
+    expect((await call(owner, "GET", "/projects/SPI/tasks?overdue=maybe")).status).toBe(400);
+    const undated = await call(owner, "PATCH", "/tasks/SPI-2", { startDate: null, targetDate: null });
+    expect(await undated.json()).toMatchObject({ startDate: null, targetDate: null });
+    expect(await count("overdue=true")).toBe(0);
+    expect((await call(owner, "DELETE", "/tasks/SPI-2")).status).toBe(204);
+
     expect((await call(owner, "DELETE", "/tasks/SPI-1")).status).toBe(204);
     expect((await call(owner, "GET", "/tasks/SPI-1")).status).toBe(404);
   });
@@ -470,6 +484,11 @@ withDb("SDK and client-declared source", () => {
     expect((await client.tasks.list(slug, "SPI", { priority: [4], q: "SDK" })).items).toHaveLength(0);
     // An agent's "mine": itself, its owner and the owner's other agents.
     expect((await client.tasks.list(slug, "SPI", { assignee: ["mine"] })).items).toHaveLength(1);
+    // Dates and the overdue filter (ST-91); the task is done, so it isn't overdue.
+    expect(await client.tasks.update(slug, created.key, { targetDate: "2020-01-01" })).toMatchObject({ targetDate: "2020-01-01" });
+    expect((await client.tasks.list(slug, "SPI", { overdue: true })).items).toHaveLength(0);
+    await client.tasks.bulkUpdate(slug, { keys: [created.key], set: { status: "todo" } });
+    expect((await client.tasks.list(slug, "SPI", { overdue: true })).items.map((t) => t.key)).toEqual([created.key]);
 
     expect(await client.tasks.delete(slug, created.key)).toBeUndefined();
     const error = await client.tasks.get(slug, created.key).catch((e: unknown) => e);

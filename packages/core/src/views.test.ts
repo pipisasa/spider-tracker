@@ -15,6 +15,8 @@ const task: TaskDto = {
   parentId: null,
   parentKey: null,
   sortKey: "a0",
+  startDate: null,
+  targetDate: "2026-02-01",
   assigneeIds: ["a1", "a2", "a3"],
   tagIds: ["g1", "g9"],
   creatorId: "a1",

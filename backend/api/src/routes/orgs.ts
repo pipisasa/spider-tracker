@@ -225,7 +225,7 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     c.json(project(c, await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false))),
   );
 
-  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any; see taskListFilters.
+  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any, ?overdue=true; see taskListFilters.
   app.get("/projects/:projectKey/tasks", async (c) => {
     const query = c.req.queries();
     const filters = {
@@ -236,6 +236,7 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
       priority: query.priority,
       q: c.req.query("q"),
       parent: c.req.query("parent"),
+      overdue: c.req.query("overdue"),
     };
     return c.json(list((await listTasks(db, c.get("actor"), c.req.param("projectKey"), filters)).map((t) => task(c, t))));
   });

@@ -110,6 +110,12 @@ const schemas: Record<string, JsonSchema> = {
     parentId: nullable("string", { format: "uuid" }),
     parentKey: nullable("string", { examples: ["SPI-3"] }),
     sortKey: string(),
+    startDate: nullable("string", { format: "date", description: "Plan start, YYYY-MM-DD", examples: ["2026-10-01"] }),
+    targetDate: nullable("string", {
+      format: "date",
+      description: "Plan target, YYYY-MM-DD, on or after startDate; past it (UTC) and not done or canceled = overdue",
+      examples: ["2026-10-31"],
+    }),
     assigneeIds: { type: "array", items: string({ format: "uuid" }) },
     tagIds: { type: "array", items: string({ format: "uuid" }) },
     creatorId: string({ format: "uuid" }),
@@ -810,6 +816,12 @@ const paths = {
         },
         { name: "q", in: "query", schema: { type: "string" }, description: "Case-insensitive text in the title" },
         { name: "parent", in: "query", schema: { type: "string" }, description: 'Direct sub-tasks of this task key, e.g. "SPI-3"' },
+        {
+          name: "overdue",
+          in: "query",
+          schema: { type: "boolean" },
+          description: "true: only tasks whose targetDate is before today (the server's UTC date) and whose status isn't done or canceled",
+        },
       ],
       responses: { "200": ok("Tasks", "TaskList"), ...errors },
     },
@@ -864,7 +876,7 @@ const paths = {
       summary: "Update several tasks at once, by keys or a filter (at most 100)",
       description:
         "Pass `keys` (any projects) or `filter` (one project; the same filters as listing tasks, plus `parent`), and `set`: " +
-        "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`. " +
+        "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`, `startDate`, `targetDate` (null clears; start ≤ target). " +
         "Each task is updated on its own with the same permission and agent-scope checks as PATCH /tasks/{taskKey}; " +
         "a task that fails (missing, out of scope, unknown status, …) is reported in `results` without stopping the others, so the response is 200. " +
         "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing.",

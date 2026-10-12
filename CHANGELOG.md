@@ -25,6 +25,14 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 
 Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
+### Start and target dates (ST-91)
+
+- **API:** tasks carry `startDate` and `targetDate` (`YYYY-MM-DD` or `null`); create, update and bulk update take them (start ≤ target). `GET …/projects/:key/tasks?overdue=true` lists open tasks past their target date (today = the server's UTC date). SDK: the same fields and `tasks.list(…, { overdue: true })`.
+- **MCP:** `create_task`, `update_task` and `update_tasks` take `startDate` / `targetDate` (null clears on update); `list_tasks` and the `update_tasks` filter take `overdue`. Task outputs gain the two fields (additive).
+- **CLI:** `--start` / `--target` on `task create` and `task update` (`""` clears), `--set-start` / `--set-target` for several keys or `--project`, and `task list --overdue`. `task view` shows the dates; `task list` rows show `due <date>`, marked `(overdue)`. `--json` task output gains `startDate` and `targetDate`.
+- **Web:** start and target date fields in the task page sidebar; list rows show the target date (red when overdue); an "Overdue" filter on the project page, kept in saved views.
+- Database migration `0018_task_dates` (two nullable columns and a check constraint).
+
 ### CLI
 
 - `task view --json` adds `documents`; `project view --json` adds the project's `documents`, and its `rules` gain `projectKey`, `projectName`, `format`, `updatedAt` and `url` (the full `ProjectRulesDto`); `doc diff --json` adds `diff` (the unified text); `comment --json` and `comments --json` add `author` (the handle). Nothing was removed or renamed (ST-107).

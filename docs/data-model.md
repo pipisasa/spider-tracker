@@ -56,6 +56,7 @@ activity (append-only log for everything)
 | Explicit columns on `documents` (not a generic "attached to" pair) | Foreign keys and cascading deletes keep working. |
 | Run events kept separate from comments | `agent_run_events` holds the full trace and chat; comments hold the clean result people read. |
 | Soft delete (`deleted_at`) on tasks, documents and comments | Supports undo and keeps the audit history intact. |
+| Task dates are `date` columns, "overdue" uses the server's UTC date | Start and target dates (ST-91) are calendar days, `YYYY-MM-DD` everywhere, with no time zone to convert. A task is overdue when its target date is before today in UTC and its status isn't done or canceled (`isOverdue` in `@repo/core/schemas`); a team far from UTC may see a task turn overdue a few hours early or late. `start ≤ target` is checked in core (with the stored date when an update changes only one) and by the `tasks_dates_ordered` constraint. |
 
 ## Schema
 
@@ -178,7 +179,9 @@ create table tasks (
   priority smallint not null default 0 check (priority between 0 and 4),
   parent_id uuid references tasks,
   cycle_id uuid references cycles,
-  estimate numeric, due_on date,
+  estimate numeric,
+  -- Plan dates (ST-91): calendar dates with no time zone, both optional; start ≤ target.
+  start_date date, target_date date,
   sort_key text not null,
   custom_fields jsonb not null default '{}',
   creator_id uuid not null references actors,
@@ -187,7 +190,8 @@ create table tasks (
   completed_at timestamptz, deleted_at timestamptz,
   search tsvector generated always as
     (to_tsvector('simple', title || ' ' || coalesce(description, ''))) stored,
-  unique (project_id, number)
+  unique (project_id, number),
+  constraint tasks_dates_ordered check (start_date is null or target_date is null or start_date <= target_date)
 );
 create index on tasks (project_id, status_id, sort_key) where deleted_at is null;
 create index on tasks using gin (custom_fields jsonb_path_ops);
@@ -220,7 +224,7 @@ create table task_tags (
 );
 
 -- Saved filter sets per project (ST-15). Personal unless shared; `filters` is validated by
--- viewFiltersSchema in core: { status?: id[], assignee?: (id|'me'|'none')[], priority?: 0-4[], tag?: id[], q?: text }.
+-- viewFiltersSchema in core: { status?: id[], assignee?: (id|'me'|'none')[], priority?: 0-4[], tag?: id[], q?: text, overdue?: boolean }.
 create table saved_views (
   id uuid primary key default uuidv7(),
   org_id uuid not null references organizations on delete cascade,

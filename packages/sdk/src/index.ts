@@ -73,6 +73,8 @@ export interface TaskListQuery {
   q?: string;
   /** Direct sub-tasks of this task key. */
   parent?: string;
+  /** Only tasks past their target date (the server's UTC today) that aren't done or canceled. */
+  overdue?: boolean;
 }
 
 /** What the client tells the API it is; recorded as the activity source. */
@@ -324,6 +326,7 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         for (const value of query.priority ?? []) params.append("priority", String(value));
         if (query.q) params.set("q", query.q);
         if (query.parent) params.set("parent", query.parent);
+        if (query.overdue !== undefined) params.set("overdue", String(query.overdue));
         const qs = params.size ? `?${params}` : "";
         return request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks${qs}`);
       },
