@@ -1,5 +1,6 @@
 import { TagChips } from "@/components/tags";
-import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
+import { AvatarStack } from "@/components/avatar-stack";
+import { PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { assigneesOf } from "@/lib/assignees";
 import { useUpdateTask } from "@/lib/work";
@@ -46,11 +47,7 @@ function TaskCard({
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <PriorityIcon priority={task.priority} className="size-3.5" />
         <span>{task.key}</span>
-        <span className="ml-auto flex -space-x-1.5">
-          {assignees.slice(0, 3).map((m) => (
-            <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-card" />
-          ))}
-        </span>
+        <AvatarStack actors={assignees} ringClassName="ring-card" className="ml-auto" />
       </div>
       <Link
         to="/$orgSlug/tasks/$taskKey"

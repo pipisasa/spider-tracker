@@ -1,4 +1,5 @@
-import { ActorAvatar, StatusIcon } from "@/components/task-fields";
+import { AvatarStack } from "@/components/avatar-stack";
+import { StatusIcon } from "@/components/task-fields";
 import { Input } from "@/components/ui/input";
 import { assigneesOf } from "@/lib/assignees";
 import { keys, subtasksQuery, useCreateTask } from "@/lib/work";
@@ -70,13 +71,7 @@ export function Subtasks({
                   <StatusIcon status={child.status} />
                   <span className="w-16 shrink-0 text-muted-foreground">{child.key}</span>
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                  <span className="flex -space-x-1.5">
-                    {assigneesOf(child.assigneeIds, memberMap)
-                      .slice(0, 3)
-                      .map((m) => (
-                        <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-background" />
-                      ))}
-                  </span>
+                  <AvatarStack actors={assigneesOf(child.assigneeIds, memberMap)} />
                 </Link>
               </li>
             );
