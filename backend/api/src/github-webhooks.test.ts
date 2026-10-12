@@ -228,3 +228,84 @@ withDb("GitHub links on tasks (ST-84)", () => {
     await expect(client.tasks.git(slug, "ST-99")).rejects.toMatchObject({ status: 404 });
   });
 });
+
+withDb("status automation from signed pull_request events (ST-85)", () => {
+  const stamp = Date.now();
+  const slug = `gh-auto-api-${stamp}`;
+  const userId = `test-${crypto.randomUUID()}`;
+  const installationId = stamp + 400;
+  let token = "";
+
+  beforeAll(async () => {
+    await db.insert(schema.user).values({ id: userId, name: "Owner", email: `${userId}@example.com` });
+    const created = await createOrganization(db, { id: userId, name: "Owner", email: "o@example.com" }, { name: "Automation API", slug });
+    const owner: ActorContext = { orgId: created.organization.id, actorId: created.actor.id, role: "owner", source: "ui" };
+    await createProject(db, owner, { name: "Spider", key: "ST" });
+    await createTask(db, owner, "ST", { title: "Ship it" });
+    await createRepo(db, owner, { url: "acme/web", projects: ["ST"] });
+    await saveGithubInstallation(db, owner, {
+      installation: { id: installationId, account: "acme", accountType: "Organization", repositorySelection: "selected", suspended: false },
+      repositories: [{ owner: "acme", name: "web", defaultBranch: "main" }],
+    });
+    const agent = await createAgent(db, owner, { name: "Reader" });
+    token = (await createApiKey(db, owner, agent.actor.id, { name: "test" })).secret;
+  });
+
+  afterAll(async () => {
+    await db.delete(schema.githubDeliveries).where(inArray(schema.githubDeliveries.id, deliveries));
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db.delete(schema.user).where(eq(schema.user.id, userId));
+  });
+
+  test("opened → In Review, merged → Done, with no manual step", async () => {
+    const client = createClient({ baseUrl: env.API_ORIGIN, token, fetch: (input, init) => app.request(input, init) });
+    const project = await client.projects.get(slug, "ST");
+    const statusName = async () => {
+      const { statusId } = await client.tasks.get(slug, "ST-1");
+      return project.statuses.find((s) => s.id === statusId)?.name;
+    };
+    expect(project.gitAutomation).toEqual({ enabled: true, draft: "in_progress", opened: "in_review", merged: "done", closed: null });
+    expect(await statusName()).toBe("Todo");
+
+    const event = (action: string, fields: Record<string, unknown>) =>
+      JSON.stringify({
+        action,
+        number: 5,
+        installation: { id: installationId },
+        repository: { name: "web", owner: { login: "acme" } },
+        pull_request: {
+          number: 5,
+          title: "Ship it",
+          body: "Fixes ST-1",
+          state: "open",
+          draft: false,
+          merged: false,
+          head: { ref: "st-1-ship-it" },
+          base: { ref: "main" },
+          user: { login: "ann" },
+          ...fields,
+        },
+      });
+
+    const opened = await post(event("opened", { updated_at: "2026-10-12T11:00:00Z" }), { event: "pull_request" });
+    expect(await opened.json()).toEqual({ status: "processed" });
+    expect(await statusName()).toBe("In Review");
+
+    const merged = event("closed", {
+      state: "closed",
+      merged: true,
+      merged_at: "2026-10-12T12:00:00Z",
+      closed_at: "2026-10-12T12:00:00Z",
+      updated_at: "2026-10-12T12:00:00Z",
+    });
+    expect(await (await post(merged, { event: "pull_request" })).json()).toEqual({ status: "processed" });
+    const done = await client.tasks.get(slug, "ST-1");
+    expect(await statusName()).toBe("Done");
+    expect(done.completedAt).not.toBeNull();
+
+    // The moves are the @github bot's, from source git.
+    const activity = await client.tasks.activity(slug, "ST-1");
+    const moves = activity.items.filter((a) => a.action === "task.updated");
+    expect(moves.map((a) => a.source)).toEqual(["git", "git"]);
+  });
+});

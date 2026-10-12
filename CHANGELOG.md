@@ -71,6 +71,19 @@ Done means finished, not shipped; releases ship Done tasks.
 - API: `GET|POST /v1/orgs/{org}/documents/{id}/comments` and `PATCH …/comments/{commentId}` (`{ resolved }`). `GET /inbox` returns `document_*` items only when `kinds` asks for them, so older CLIs are unaffected; inbox items' `document.projectKey` can now be null (an organization-wide document).
 - Database migration `0019_document_comments` (`comments.task_id` nullable, new `document_id`, `quote`, `document_version`, `resolved_at`, `resolved_by`, and two check constraints).
 
+### Opening pull requests (ST-87)
+
+- CLI: new `spider pr [key] [--draft] [--base <branch>] [--no-push] [--repo owner/name]` (also `spider task pr`): pushes the current branch with your own git, then opens its pull request on GitHub as the Spider Tracker App and links it to the task (default: the branch's task). The title is the task's (`<title> (KEY)`) and the body closes it (`Closes KEY`), so the task moves to In Review now and to Done on merge. `--json` prints `{ taskKey, pullRequest }`; a PR already open for the branch exits 2 with its URL (`error.url` in `--json` errors).
+- MCP: new tool `open_pull_request` for a branch already pushed, returning the same JSON as `spider pr --json`.
+- API: `POST /v1/orgs/{org}/tasks/{key}/pull-request` `{ repo?, head?, base?, title?, body?, draft? }` → `201 { taskKey, pullRequest }`; `409` with `error.url` when a PR is already open for the branch, `400` for no or ambiguous repo or GitHub's refusal, `502` GitHub unavailable, `503` without the App. Error bodies may now carry `error.url`. SDK: `tasks.openPullRequest`, and `SpiderApiError.url`.
+- The GitHub App needs **Pull requests: read and write** ([git-integration.md](docs/git-integration.md#opening-pull-requests-st-87)).
+
+### Status automation from pull requests (ST-85)
+
+- A `pull_request` event moves the tasks it is linked to by closing keyword, branch or title (a mention in the body doesn't): opened as or converted to a draft → In Progress, opened, reopened or ready for review → In Review, merged → Done (once no other linked PR is open), closed without merging → no change. Forward only (except a draft moving In Review back to In Progress), only tasks of kind `task`, as the @github bot with source `git` ([git-integration.md](docs/git-integration.md#status-automation-st-85)).
+- Per project, on by default: `ProjectDto.gitAutomation` `{ enabled, draft, opened, merged, closed }` (status categories or null). API: `PATCH …/projects/{key}` takes `gitAutomation` (partial; `null` resets). MCP: `update_project` takes `gitAutomation`. CLI: `spider project update KEY --automation on|off|defaults --on-draft|--on-opened|--on-merged|--on-closed <category|none>`; `project view` shows the settings. Web: Status automation in project settings.
+- Database migration `0026_git_automation` (`projects.git_automation`).
+
 ### Branches, commits and pull requests on tasks (ST-84)
 
 - GitHub `create`, `delete`, `push` and `pull_request` webhooks link branches named after a task, commits that mention it (or were pushed to its branch) and pull requests that name it in their branch, title or body. Only keys of tasks in projects attached to the repo count. Each link says how it was found (`via`: `closing`, `branch`, `title`, `body`, `message`). A `pull_request` event older than the stored PR changes nothing, and a merged PR stays merged. Subscribe the GitHub App to Create, Delete, Push and Pull request ([git-integration.md](docs/git-integration.md#linking-work-to-tasks-st-84)).
@@ -97,6 +110,10 @@ Done means finished, not shipped; releases ship Done tasks.
 - Actors can have `type: "integration"`: the per-organization GitHub bot (`@github`, now a reserved handle). `GET /members` leaves it out; `?all=true` includes it, so clients that switch on `type` should expect a third value.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+
+### Plugin 0.3.11
+
+- The `tasks` skill shows how to open the task's pull request when the work is ready: `spider pr` (pushes and opens it, closing the task on merge), or MCP `open_pull_request` after pushing (ST-87).
 
 ### Plugin 0.3.10
 

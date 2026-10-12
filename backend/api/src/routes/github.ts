@@ -25,7 +25,7 @@ import type { AppEnv } from "../types";
 // /github/setup callback GitHub sends the person back to after installing. Without the App's
 // settings (GITHUB_APP_*) GET /github says `configured: false` and the rest answer 503.
 
-const notConfigured: ApiErrorBody = { error: { code: "not_configured", message: "GitHub isn't configured on this server" } };
+export const notConfigured: ApiErrorBody = { error: { code: "not_configured", message: "GitHub isn't configured on this server" } };
 
 /** GitHub's installation id in a path or query; null when it isn't one. */
 function installationIdOf(value: string | undefined): number | null {

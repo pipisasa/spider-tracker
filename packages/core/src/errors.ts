@@ -1,12 +1,17 @@
 export type DomainErrorCode = "validation" | "not_found" | "conflict" | "forbidden" | "rate_limited";
 
 export class DomainError extends Error {
+  /** What the error is about, when it has an address (the open pull request of a 409); sent as `error.url`. */
+  readonly url?: string;
+
   constructor(
     readonly code: DomainErrorCode,
     message: string,
+    options?: { url?: string },
   ) {
     super(message);
     this.name = "DomainError";
+    if (options?.url !== undefined) this.url = options.url;
   }
 }
 

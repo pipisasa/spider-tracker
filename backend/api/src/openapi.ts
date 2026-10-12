@@ -9,6 +9,7 @@ import {
   resolveDocumentCommentInput,
   createTagInput,
   attachRepoInput,
+  openPullRequestInput,
   createAppInput,
   createRepoInput,
   updateAppInput,
@@ -60,6 +61,11 @@ const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
 /** The `url` field: the web page of a project, task or document (ST-115). */
 const webUrl = (what: string): JsonSchema =>
   string({ format: "uri", description: `The ${what}'s page in the web app, from the server's web origin` });
+const automationTarget = (description: string): JsonSchema => ({
+  type: ["string", "null"],
+  enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled", null],
+  description,
+});
 const listOf = (item: string): JsonSchema => object({ items: { type: "array", items: ref(item) } });
 
 /** Request-side JSON Schema of a Zod schema, without the $schema header. */
@@ -70,7 +76,20 @@ function fromZod(schema: z.ZodType): JsonSchema {
 }
 
 const schemas: Record<string, JsonSchema> = {
-  Error: object({ error: object({ code: string(), message: string() }) }),
+  Error: object({
+    error: {
+      type: "object",
+      properties: {
+        code: string(),
+        message: string(),
+        url: string({
+          format: "uri",
+          description: "What the error is about, when it has an address: the pull request already open (409 from POST /tasks/{taskKey}/pull-request)",
+        }),
+      },
+      required: ["code", "message"],
+    },
+  }),
   Organization: object({ id: string({ format: "uuid" }), slug: string(), name: string() }),
   Actor: object({
     id: string({ format: "uuid" }),
@@ -116,8 +135,22 @@ const schemas: Record<string, JsonSchema> = {
       format: "uuid",
       description: "The project's rules for agents: one of its project-level documents (set with PATCH rulesDocumentId)",
     }),
+    gitAutomation: ref("GitAutomation"),
     url: webUrl("project"),
   }),
+  GitAutomation: {
+    ...object({
+      enabled: { type: "boolean" },
+      draft: automationTarget("A PR opened as or converted to a draft (default in_progress)"),
+      opened: automationTarget("A PR opened, reopened or marked ready for review (default in_review)"),
+      merged: automationTarget("A PR merged (default done)"),
+      closed: automationTarget("A PR closed without merging (default null: no change)"),
+    }),
+    description:
+      "Status automation from pull request events (set with PATCH gitAutomation; null resets to the defaults). Each event names the status category " +
+      "its linked tasks move to: the first status of that category in the task's workflow. Only tasks of kind task move, only for PRs linked by " +
+      "closing keyword, branch or title, and only forward (a draft may move In Review back to In Progress); merged waits for the task's other open PRs.",
+  },
   ProjectDetail: {
     allOf: [
       ref("Project"),
@@ -480,6 +513,11 @@ const schemas: Record<string, JsonSchema> = {
     pullRequests: { type: "array", items: ref("PullRequest"), description: "Recently updated first" },
     branches: { type: "array", items: ref("GitBranch"), description: "Newest first" },
     commits: { type: "array", items: ref("GitCommit"), description: "The latest 100, newest first" },
+  }),
+  OpenPullRequestInput: fromZod(openPullRequestInput),
+  OpenedPullRequest: object({
+    taskKey: string(),
+    pullRequest: ref("PullRequest"),
   }),
   CreateRepoInput: fromZod(createRepoInput),
   UpdateRepoInput: fromZod(updateRepoInput),
@@ -1131,7 +1169,7 @@ const paths = {
     patch: {
       operationId: "updateProject",
       summary:
-        "Change a project's name, description or rules document (owners, admins and their agents); the key can't change. Setting rules notifies the project's agents",
+        "Change a project's name, description, rules document or status automation from pull requests (owners, admins and their agents); the key can't change. Setting rules notifies the project's agents",
       requestBody: body("UpdateProjectInput"),
       responses: { "200": ok("Updated project", "ProjectDetail"), ...errors },
     },
@@ -1360,6 +1398,24 @@ const paths = {
       summary:
         "Branches, commits and pull requests linked to the task from GitHub: a branch named after it, commits and PRs that mention it (only in repos attached to its project)",
       responses: { "200": ok("Git links", "TaskGit"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/pull-request": {
+    parameters: [orgSlug, taskKey],
+    post: {
+      operationId: "openPullRequest",
+      summary:
+        "Open the task's pull request on GitHub as the App (installation token) for a branch already pushed, and link it to the task at once (ST-87). " +
+        "The repo is the one named, or the only one attached to the task's project; head defaults to the task's branch, base to the repo's default branch. " +
+        'The title defaults to "<task title> (KEY)"; the body always closes the task ("Closes KEY"), so status automation moves it',
+      requestBody: { required: false, ...json("OpenPullRequestInput") },
+      responses: {
+        "201": ok("The pull request, as linked to the task", "OpenedPullRequest"),
+        ...errors,
+        "409": { description: "A pull request is already open for the branch: error.url is its address", ...json("Error") },
+        "502": githubDown,
+        "503": githubOff,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/backlinks": {

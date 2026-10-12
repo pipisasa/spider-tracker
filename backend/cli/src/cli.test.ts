@@ -336,6 +336,124 @@ describe("spider start", () => {
   });
 });
 
+describe("spider pr (ST-87)", () => {
+  const opened = {
+    taskKey: "ST-1",
+    pullRequest: {
+      repo: "acme/app",
+      number: 7,
+      title: "Write the CLI (ST-1)",
+      url: "https://github.com/acme/app/pull/7",
+      state: "open",
+      draft: false,
+      headBranch: "st-1-write-the-cli",
+      baseBranch: "main",
+      author: "spider-tracker[bot]",
+      mergedAt: null,
+      closedAt: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      via: "closing",
+    },
+  };
+
+  /** git for `spider pr`: a repo on `branch` with an origin remote; push succeeds unless `failPush`. */
+  function prGit({ repo = true, branch = "st-1-write-the-cli", origin = "git@github.com:acme/app.git" as string | null, failPush = false } = {}) {
+    const calls: string[] = [];
+    const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
+    const fail = (stderr = "") => ({ exitCode: 128, stdout: "", stderr });
+    const git: GitRunner = (args, cwd) => {
+      expect(cwd).toBe("/work");
+      calls.push(args.join(" "));
+      if (!repo) return fail("fatal: not a git repository");
+      const command = args.join(" ");
+      if (command === "rev-parse --is-inside-work-tree") return ok("true\n");
+      if (command === "branch --show-current") return ok(branch ? `${branch}\n` : "");
+      if (command === "remote get-url origin") return origin ? ok(`${origin}\n`) : fail("error: No such remote 'origin'");
+      if (args[0] === "push") return failPush ? fail("fatal: Authentication failed") : ok();
+      return fail(`unexpected git ${command}`);
+    };
+    return { git, calls };
+  }
+
+  /** The API: records the pull-request body; answers `respond`. */
+  function prApi(respond: () => Response = () => Response.json(opened, { status: 201 })) {
+    const bodies: unknown[] = [];
+    const api = fakeApi();
+    const fetch = (input: string, init: RequestInit) => {
+      if (init.method === "POST" && new URL(input).pathname === "/v1/orgs/acme/tasks/ST-1/pull-request") {
+        bodies.push(JSON.parse(String(init.body)));
+        return respond();
+      }
+      return api.fetch(input, init);
+    };
+    return { fetch, bodies };
+  }
+
+  test("pushes the current branch with git, then opens the PR for the branch's task", async () => {
+    const { git, calls } = prGit();
+    const api = prApi();
+    const result = await cli(["pr"], { git, fetch: api.fetch, cwd: "/work" });
+    expect(result.code).toBe(0);
+    expect(calls).toContain("push --set-upstream origin st-1-write-the-cli");
+    expect(api.bodies).toEqual([{ repo: "acme/app", head: "st-1-write-the-cli" }]);
+    expect(result.stdout).toBe(
+      "Pushed st-1-write-the-cli to origin\nOpened acme/app#7 for ST-1: Write the CLI (ST-1)  (st-1-write-the-cli → main)\nhttps://github.com/acme/app/pull/7\n",
+    );
+  });
+
+  test("--json is the API's answer (as MCP open_pull_request); --draft, --base and --no-push", async () => {
+    const { git, calls } = prGit({ branch: "feature-x" });
+    const api = prApi();
+    const result = await cli(["pr", "ST-1", "--draft", "--base", "develop", "--no-push", "--json"], { git, fetch: api.fetch, cwd: "/work" });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(opened);
+    expect(calls.some((c) => c.startsWith("push"))).toBe(false);
+    expect(api.bodies).toEqual([{ repo: "acme/app", head: "feature-x", base: "develop", draft: true }]);
+  });
+
+  test("outside a repository: --no-push lets the API pick the task's branch; without it, a usage error", async () => {
+    const api = prApi();
+    const noPush = await cli(["task", "pr", "ST-1", "--no-push", "--repo", "https://github.com/acme/app"], {
+      git: prGit({ repo: false }).git,
+      fetch: api.fetch,
+      cwd: "/work",
+    });
+    expect(noPush.code).toBe(0);
+    expect(api.bodies).toEqual([{ repo: "acme/app" }]);
+
+    const pushing = await cli(["pr", "ST-1"], { git: prGit({ repo: false }).git, fetch: api.fetch, cwd: "/work" });
+    expect(pushing.code).toBe(2);
+    expect(pushing.stderr).toContain("Not in a git repository");
+    expect((await cli(["pr", "ST-1"], { git: prGit({ branch: "" }).git, fetch: api.fetch, cwd: "/work" })).stderr).toContain("detached HEAD");
+    expect((await cli(["pr", "ST-1", "--repo", "not a repo"], { git: prGit().git, fetch: api.fetch, cwd: "/work" })).code).toBe(2);
+  });
+
+  test("a failed push stops before the API; no origin remote is a usage error", async () => {
+    const api = prApi();
+    const failed = await cli(["pr"], { git: prGit({ failPush: true }).git, fetch: api.fetch, cwd: "/work" });
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toBe("spider: git push failed: fatal: Authentication failed\n");
+    const noOrigin = await cli(["pr"], { git: prGit({ origin: null }).git, fetch: api.fetch, cwd: "/work" });
+    expect(noOrigin.code).toBe(2);
+    expect(noOrigin.stderr).toContain("no origin remote");
+    expect(api.bodies).toEqual([]);
+  });
+
+  test("a PR already open: exit 2 with its URL, in --json as error.url", async () => {
+    const url = "https://github.com/acme/app/pull/3";
+    const api = prApi(() =>
+      Response.json({ error: { code: "conflict", message: `A pull request is already open for st-1-write-the-cli: ${url}`, url } }, { status: 409 }),
+    );
+    const human = await cli(["pr", "--no-push"], { git: prGit().git, fetch: api.fetch, cwd: "/work" });
+    expect(human.code).toBe(2);
+    expect(human.stderr).toBe(`spider: A pull request is already open for st-1-write-the-cli: ${url}\n`);
+    const json = await cli(["pr", "--no-push", "--json"], { git: prGit().git, fetch: api.fetch, cwd: "/work" });
+    expect(JSON.parse(json.stderr)).toEqual({
+      error: { code: "conflict", message: `A pull request is already open for st-1-write-the-cli: ${url}`, url },
+    });
+  });
+});
+
 describe("saved agents", () => {
   test("which key: --as > SPIDER_TOKEN > SPIDER_AGENT > default", async () => {
     const { env, cleanup } = savedAgents();

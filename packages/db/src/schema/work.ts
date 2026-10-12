@@ -54,6 +54,9 @@ export const projects = pgTable(
     rulesDocumentId: uuid("rules_document_id").references((): AnyPgColumn => documents.id, {
       onDelete: "set null",
     }),
+    // Status automation from pull request events (ST-85): { enabled, draft, opened, merged, closed },
+    // validated in @repo/core (gitAutomationSchema); null means the defaults.
+    gitAutomation: jsonb("git_automation").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },

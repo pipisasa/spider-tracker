@@ -23,8 +23,11 @@ export const runTmux: TmuxRunner = (args) => {
 /** Quotes a word for a POSIX shell command line (tmux runs window commands through the user's shell). */
 export const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
 
-/** tmux treats `:` and `.` in a target as window and pane separators, so a session name can't hold them. */
-export const isSessionName = (name: string) => /^[^\s:.]+$/.test(name);
+/**
+ * tmux treats `:` and `.` in a target as window and pane separators, so a session name can't hold them;
+ * a leading `=` (exact match), `$` (session id) or `%` (pane id) would change what the target means.
+ */
+export const isSessionName = (name: string) => /^[^\s:.=$%][^\s:.]*$/.test(name);
 
 export const TMUX_MISSING =
   "tmux isn't installed (or not on PATH). Install it (macOS: brew install tmux; Debian/Ubuntu: sudo apt install tmux) and run this again";

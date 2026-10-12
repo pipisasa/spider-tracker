@@ -75,7 +75,7 @@ Code can't do these; until they're done the feature stays off in production.
    - Callback URL: `https://tracker-api.batele.plus/github/setup`. Tick **Request user authorization (OAuth) during installation** (required: the callback uses the code to check the person can access the installation). Leave "Expire user authorization tokens" on.
    - Setup URL: leave empty (ignored when OAuth during installation is on).
    - Webhook: active, URL `https://tracker-api.batele.plus/webhooks/github`, secret from `openssl rand -hex 32` (the same value goes into `GITHUB_APP_WEBHOOK_SECRET`). GitHub Apps always send JSON.
-   - Repository permissions: Metadata read, Contents read, Pull requests read and write (write is for ST-87's `spider pr`; read is enough until then), Checks read, Commit statuses read.
+   - Repository permissions: Metadata read, Contents read, Pull requests read and write (write lets `spider pr` and MCP `open_pull_request` open pull requests, ST-87), Checks read, Commit statuses read.
    - Events to subscribe to now: **Repository** (handled from ST-83), **Create**, **Delete**, **Push** and **Pull request** (handled from ST-84). Pull request review, Check suite, Check run and Status can be ticked too; they are recorded and ignored until ST-86 handles them. `installation` and `installation_repositories` aren't in the list: GitHub sends them to every App.
    - Where can it be installed: only on this account.
 2. **Generate a private key** (downloads a `.pem`). Note the App ID, the slug (from `github.com/apps/<slug>`), the Client ID, and generate a Client secret.
@@ -104,7 +104,7 @@ Branches, commits and pull requests link to tasks from the [webhooks](#webhooks-
 | A commit (`push`) | Every task its message names, and the branch's task. |
 | A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names. |
 
-Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. Status automation (ST-85) will act only on `closing`, `branch` and `title`.
+Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. [Status automation](#status-automation-st-85) acts only on `closing`, `branch` and `title`.
 
 - **Branches** stay linked when deleted on GitHub (`delete`, or a `push` with `deleted`); they are shown as deleted, and live again if pushed again.
 - **Pull requests** are stored in `pull_requests` (only those that link to a task). Their links follow the latest title, body and branch: an edit that drops a key removes that task's link. The state is `open` (with `draft`), `closed` (without merging) or `merged`.
@@ -112,7 +112,7 @@ Each link records **how** the key was found (`via`), the strongest when several 
 - Each change publishes `task.git` (realtime), so an open task page refreshes its Development panel.
 - No activity entries are written for links; the task's git links are the record.
 
-**Status automation (ST-85)** plugs into `automatePullRequest` in `git-links.ts`: it runs in the delivery's transaction after the PR and its links are saved (never for stale events) and receives the action, the PR before and after, and the linked tasks with `via`.
+**Status automation (ST-85)** runs as `automatePullRequest` (`git-automation.ts`), called from `git-links.ts` in the delivery's transaction after the PR and its links are saved (never for stale events), with the action, the PR before and after, and the linked tasks with `via`; see [Status automation](#status-automation-st-85).
 
 **Reading:** `GET /v1/orgs/:org/tasks/:key/git` returns `TaskGitDto`: `pullRequests` (recently updated first), `branches` and `commits` (newest first, the latest 100), each with the repo's `owner/name` and a GitHub URL built from the repo's current name. Also `client.tasks.git` (SDK), MCP `get_task_git`, `spider task git [key]`, and the **Development** panel on the task page. Project settings list the project's repos.
 
@@ -135,20 +135,52 @@ Also in `@repo/core/git`:
 
 Matching is syntactic: `UTF-8` and `SHA-256` look like keys. Link processing keeps only keys of existing tasks in projects attached to the repo.
 
-## Status automation
+## Status automation (ST-85)
 
-Planned in ST-85 (the seam is in place, see [Linking work to tasks](#linking-work-to-tasks-st-84)). Configurable per project. The defaults:
+A `pull_request` event moves the tasks the PR is linked to, with no manual step: open a PR for `st-12-…` and ST-12 goes to In Review; merge it and ST-12 is Done. Configurable per project (`projects.git_automation`, null = the defaults); each event names a status **category**, and the task moves to the first status of that category (board order) in its own project's task workflow.
 
-| Git event | Task status |
-|---|---|
-| Branch created / first commit | In Progress |
-| Pull request opened | In Review |
-| Pull request merged | Done |
-| Pull request closed without merge | No change (it's logged) |
+| Pull request event | Setting | Default |
+|---|---|---|
+| Opened as a draft, or converted to a draft | `draft` | In Progress (`in_progress`) |
+| Opened (not a draft), reopened, or marked ready for review | `opened` | In Review (`in_review`) |
+| Merged | `merged` | Done (`done`) |
+| Closed without merging | `closed` | No change (`null`) |
+
+`enabled: false` turns it off for the project. Other actions (`edited`, `synchronize`, …) move nothing.
+
+Rules (`decideTransition` and `pullRequestEvent` in `@repo/core/git-automation-rules`, browser-safe):
+
+- **Which links:** only a closing keyword, the head branch or the title (`via` `closing`, `branch`, `title`). A key mentioned only in the PR body links the PR but doesn't move the task.
+- **Which tasks:** only kind `task`; releases and milestones never move (ST-93 ships releases separately; Done means finished, not shipped).
+- **Forward only:** a task never moves back in its workflow (by category: backlog, todo, in progress, in review, done/canceled), and a done or canceled task stays. The one exception: a draft event moves a task from the `opened` category (In Review) back to the `draft` one (In Progress), unless another linked PR is open and ready.
+- **Several PRs:** a closing move (merged → Done) waits until no other PR linked to the task (by closing keyword, branch or title) is open.
+- **Who:** the change is the @github bot's, with activity source `git`, through the same `applyTaskUpdate` as a manual change (activity, `completedAt`, realtime).
+- **Out of order:** stale events are ignored before automation runs (see above), and a late `opened` for a merged PR moves nothing.
+
+Settings: `PATCH /v1/orgs/:org/projects/:key` with `gitAutomation` (only the fields given change; `null` resets to the defaults), MCP `update_project`, `spider project update KEY --automation on|off|defaults --on-draft|--on-opened|--on-merged|--on-closed <category|none>`, and **Status automation** in the web app's project settings. `ProjectDto.gitAutomation` always has every field, defaults filled in.
+
+## Opening pull requests (ST-87)
+
+`spider pr` opens the task's pull request without leaving the terminal; the API opens it on GitHub as the App, so it works the same for people and agents.
+
+1. **Push** (CLI only): `git push --set-upstream origin <current branch>` with the person's own git and credentials (the injected `git` runner, `pushBranch` in `backend/cli/src/git.ts`). `--no-push` skips it for a branch already pushed. A failed push stops before the API (exit 1).
+2. **Open:** `POST /v1/orgs/:org/tasks/:key/pull-request` (`openTaskPullRequest` in `packages/core/src/pull-request-open.ts`). The API's GitHub port (`createPullRequest` in `backend/api/src/github.ts`) calls `POST /repos/{owner}/{repo}/pulls` with the repo's installation token.
+3. **Link at once:** the answer is saved with the webhook code (`savePullRequest` in `git-links.ts`) as an `opened` event from the @github bot, so the task's Development panel shows it and [status automation](#status-automation-st-85) moves the task (In Review, or In Progress for a draft) right away. GitHub's own `pull_request` event arrives later and changes nothing more.
+
+Rules:
+
+- **Task:** the key given, or the current branch's (CLI). Guests can't; a scoped agent only in its projects (`404` otherwise).
+- **Repo:** one of the repos attached to the task's project: the one named (`repo`; the CLI sends the folder's `origin` remote, or `--repo owner/name`), or the only one. None attached, several without a name, or one not attached is `400`. The repo must be granted to a connected, unsuspended installation (`400` otherwise).
+- **Branches:** `head` defaults to the CLI's current branch, else the task's branch (`branchNameFor`); `base` to the repo's default branch. `head` equal to `base` is `400`.
+- **Title and body:** the title defaults to `<task title> (KEY)`; the body to a link to the task. The body always closes the task: `Closes KEY` is appended unless it already has a closing keyword for it, so merging the PR moves the task to Done.
+- **Already open:** a PR open for the head branch is `409 conflict` with `error.url` (the PR's address; in the message too). It is found in `pull_requests` first, without asking GitHub; when only GitHub knows it (its 422 "A pull request already exists"), it is fetched, linked when it names the task (as `edited`: nothing moves) and reported the same way.
+- **GitHub refusing it** (422: no commits between the branches, a branch that isn't pushed) is `400` with GitHub's reason; GitHub unreachable or refusing otherwise (no `Pull requests: write`) is `502 github_unavailable`. Without the App, `503 not_configured`.
+
+MCP `open_pull_request` does steps 2 and 3 for a branch already pushed (agents on MCP can't push) and returns the same JSON as `spider pr --json`: `OpenedPullRequestDto` `{ taskKey, pullRequest }`.
 
 ## Agents and Git
 
-- Agents can create branches, push commits and open pull requests linked to the task.
+- Agents can create branches, push commits and open pull requests linked to the task (`spider pr`, or MCP `open_pull_request` after pushing).
 - Pushing and merging can require a person's approval (see [agents.md](./agents.md#guardrails)).
 
 ## Processing

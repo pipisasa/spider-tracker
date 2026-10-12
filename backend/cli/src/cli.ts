@@ -6,6 +6,8 @@ import type {
   BulkUpdateTasksResponse,
   DocumentFormat,
   DocumentSummaryDto,
+  GitAutomationEvent,
+  GitAutomationSettings,
   MilestoneDto,
   ProjectDetailDto,
   ProjectDto,
@@ -20,7 +22,7 @@ import type {
   TaskKind,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { TASK_KINDS } from "@repo/core/schemas";
+import { TASK_KINDS, statusCategorySchema } from "@repo/core/schemas";
 import { allStatuses, workflowOf } from "@repo/core/statuses";
 import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
@@ -51,6 +53,7 @@ import type {
   UpdateAppInput,
   UpdateRepoInput,
   DocumentEdit,
+  GitAutomationInput,
   UpdateDocumentInput,
   UpdateProjectInput,
   UpdateTaskInput,
@@ -103,6 +106,7 @@ import {
   isDirty,
   isRepo,
   originUrl,
+  pushBranch,
   remoteRepo,
   runGit,
   taskKeyFromBranch,
@@ -639,6 +643,42 @@ function bulkLines(
 }
 
 const projectLine = (p: ProjectDto) => `${p.key}  ${p.name}${p.archivedAt ? "  (archived)" : ""}`;
+
+// Status automation from pull requests (ST-85): `project update --automation/--on-*` and `project view`.
+const AUTOMATION_EVENTS: GitAutomationEvent[] = ["draft", "opened", "merged", "closed"];
+type AutomationFlag = "onDraft" | "onOpened" | "onMerged" | "onClosed";
+const AUTOMATION_FLAGS: Record<GitAutomationEvent, AutomationFlag> = { draft: "onDraft", opened: "onOpened", merged: "onMerged", closed: "onClosed" };
+
+/** "In Review", "in-review" or "in_review" → in_review; "none" → null (no change). */
+function automationTarget(value: string, event: GitAutomationEvent): GitAutomationSettings[GitAutomationEvent] {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "none" || normalized === "") return null;
+  const parsed = statusCategorySchema.safeParse(normalized);
+  if (!parsed.success) {
+    throw usageError(`--on-${event}: unknown category "${value}". Use one of ${statusCategorySchema.options.join(", ")} or none`);
+  }
+  return parsed.data;
+}
+
+/** The gitAutomation change the options ask for: undefined for none, null to reset to the defaults. */
+function automationInput(opts: { automation?: string } & Partial<Record<AutomationFlag, string>>): GitAutomationInput | null | undefined {
+  const input: GitAutomationInput = {};
+  for (const event of AUTOMATION_EVENTS) {
+    const value = opts[AUTOMATION_FLAGS[event]];
+    if (value !== undefined) input[event] = automationTarget(value, event);
+  }
+  if (opts.automation === "defaults") {
+    if (Object.keys(input).length > 0) throw usageError("--automation defaults resets every event; don't combine it with --on-*");
+    return null;
+  }
+  if (opts.automation !== undefined) input.enabled = opts.automation === "on";
+  return Object.keys(input).length > 0 ? input : undefined;
+}
+
+const automationLine = (a: GitAutomationSettings) =>
+  `Status automation from pull requests: ${
+    a.enabled ? AUTOMATION_EVENTS.map((event) => `${event} → ${a[event] ?? "no change"}`).join(", ") : "off"
+  }`;
 
 /** One kind's workflow, a status per line with its category (and task count, when given). */
 function workflowLines(kind: TaskKind, statuses: (StatusDto & { taskCount?: number })[]): string[] {
@@ -1242,12 +1282,17 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     .option("--project <key>", "with --all: only saved agents scoped to this project")
     .option("--dry-run", "with --tmux: print the launch plan, start nothing")
     .action(async (named: string | undefined, rest: string[], opts: ClaudeOptions) => {
-      // Everything after "--" goes to claude; an agent is only an operand before it.
+      // Everything after "--" goes to claude; an agent is only an operand before it. Commander puts the
+      // args after "--" into the operands too, so drop as many from the end: for
+      // `spider claude a b -- -p hi` the operands are [a, b, -p, hi], afterDash is [-p, hi], agents are [a, b].
       const dash = argv.indexOf("--");
-      const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
-      const given = (dash >= 0 && named !== undefined && 1 + rest.length <= extra.length ? undefined : named) ?? globals().as;
-      // The operands before "--": with --tmux, all of them are agents.
-      const operands = [...(named === undefined ? [] : [named]), ...rest].slice(0, dash >= 0 ? Math.max(0, 1 + rest.length - extra.length) : undefined);
+      const afterDash = dash >= 0 ? argv.slice(dash + 1) : [];
+      const positional = [...(named === undefined ? [] : [named]), ...rest];
+      const operands = positional.slice(0, Math.max(0, positional.length - afterDash.length));
+      const given = operands[0] ?? globals().as;
+      // With --tmux every operand before "--" is an agent, so claude gets only what follows "--". A single
+      // agent also takes claude args without "--" (`spider claude a -p hi`).
+      const extra = dash >= 0 || opts.tmux !== undefined ? afterDash : rest;
 
       const store = await readStore(options.env);
       const all = listAgents(store);
@@ -1258,7 +1303,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
       }
       if (opts.tmux !== undefined) {
-        const names = operands.length ? operands : globals().as ? [globals().as ?? ""] : [];
+        const names = operands.length ? operands : given ? [given] : [];
         return claudeInTmux(store, opts.tmux, names, extra, opts);
       }
       const loose = opts.all ? "--all" : opts.project !== undefined ? "--project" : opts.dryRun ? "--dry-run" : undefined;
@@ -1609,6 +1654,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
           ...TASK_KINDS.flatMap((kind) => (workflows[kind]?.length ? ["", ...workflowLines(kind, workflows[kind])] : [])),
+          ...(detail.gitAutomation ? ["", automationLine(detail.gitAutomation)] : []),
           ...(detail.description ? ["", detail.description] : []),
           ...(rules ? ["", `Rules for agents: ${rules.title} (${rules.documentId}, v${rules.version})`, "", rules.content] : []),
         ].join("\n"),
@@ -1623,17 +1669,31 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .argument("<key>")
       .option("--name <text>", "name")
       .option("--description <text>", 'description (Markdown; "" clears it)')
-      .option("--rules <document-id>", 'one of the project\'s documents as its rules for agents ("" clears them); its agents are notified'),
-  ).action(async (key: string, opts: JsonOption & { name?: string; description?: string; rules?: string }) => {
-    const input: UpdateProjectInput = {};
-    if (opts.name !== undefined) input.name = opts.name;
-    if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
-    if (opts.rules !== undefined) input.rulesDocumentId = opts.rules === "" ? null : opts.rules;
-    if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --name, --description or --rules");
-    const { sdk, org } = conn();
-    const updated = await (await sdk()).projects.update(await org(), key, input);
-    output(opts, updated, () => `Updated ${projectLine(updated)}`);
-  });
+      .option("--rules <document-id>", 'one of the project\'s documents as its rules for agents ("" clears them); its agents are notified')
+      .addOption(new Option("--automation <state>", "status automation from pull requests: on, off, or defaults (resets every --on-* too)").choices(["on", "off", "defaults"]))
+      .option("--on-draft <category>", 'status category for tasks when a linked PR is opened as or converted to a draft ("none": no change)')
+      .option("--on-opened <category>", "status category when a linked PR is opened, reopened or ready for review")
+      .option("--on-merged <category>", "status category when a linked PR is merged")
+      .option("--on-closed <category>", "status category when a linked PR is closed without merging"),
+  ).action(
+    async (
+      key: string,
+      opts: JsonOption & { name?: string; description?: string; rules?: string; automation?: string } & Partial<Record<AutomationFlag, string>>,
+    ) => {
+      const input: UpdateProjectInput = {};
+      if (opts.name !== undefined) input.name = opts.name;
+      if (opts.description !== undefined) input.description = opts.description === "" ? null : opts.description;
+      if (opts.rules !== undefined) input.rulesDocumentId = opts.rules === "" ? null : opts.rules;
+      const automation = automationInput(opts);
+      if (automation !== undefined) input.gitAutomation = automation;
+      if (Object.keys(input).length === 0) {
+        throw usageError("Nothing to update. Pass --name, --description, --rules, --automation or --on-draft/--on-opened/--on-merged/--on-closed");
+      }
+      const { sdk, org } = conn();
+      const updated = await (await sdk()).projects.update(await org(), key, input);
+      output(opts, updated, () => `Updated ${projectLine(updated)}`);
+    },
+  );
 
   withJson(
     projectCommand
@@ -2383,6 +2443,70 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     output(opts, found, () => taskGitLines(found));
   });
 
+  // Pushes the branch with the person's own git, then the API opens the pull request as the
+  // GitHub App and links it to the task (ST-87).
+  type PrOptions = JsonOption & { draft?: boolean; base?: string; push: boolean; repo?: string };
+  const openPullRequest = async (key: string | undefined, opts: PrOptions) => {
+    const resolved = taskKey(key, cwd, git);
+    const inRepo = isRepo(cwd, git);
+    const head = inRepo ? currentBranch(cwd, git) : null;
+    if (opts.push && !head) {
+      throw usageError(
+        inRepo
+          ? "Not on a branch (detached HEAD): check out the task's branch, or pass --no-push to open a PR for a branch already pushed"
+          : "Not in a git repository: run spider pr in the task's repo, or pass --no-push to open a PR for a branch already pushed",
+      );
+    }
+    let repo: string | undefined;
+    if (opts.repo !== undefined) {
+      const remote = parseRepoRemote(opts.repo);
+      if (!remote) throw usageError(`Not a GitHub repo: "${opts.repo}". Use owner/name or a GitHub URL`);
+      repo = repoFullName(remote);
+    } else if (inRepo) {
+      repo = remoteRepo(cwd, git) ?? undefined;
+    }
+    const notes: string[] = [];
+    if (opts.push && head) {
+      if (!originUrl(cwd, git)) throw usageError("This repository has no origin remote: push the branch yourself and pass --no-push");
+      try {
+        pushBranch(cwd, head, git);
+      } catch (err) {
+        throw new CliError(EXIT.unexpected, `git push failed: ${err instanceof Error ? err.message : String(err)}`, "git");
+      }
+      notes.push(`Pushed ${head} to origin`);
+    }
+    const { sdk, org } = conn();
+    const opened = await (await sdk()).tasks.openPullRequest(await org(), resolved, {
+      ...(repo !== undefined ? { repo } : {}),
+      ...(head ? { head } : {}),
+      ...(opts.base !== undefined ? { base: opts.base } : {}),
+      ...(opts.draft ? { draft: true } : {}),
+    });
+    const pr = opened.pullRequest;
+    output(opts, opened, () =>
+      [
+        ...notes,
+        `Opened ${pr.repo}#${pr.number}${pr.draft ? " (draft)" : ""} for ${opened.taskKey}: ${pr.title}  (${pr.headBranch} → ${pr.baseBranch})`,
+        pr.url,
+      ].join("\n"),
+    );
+  };
+  const prCommand = (cmd: Command) =>
+    withJson(
+      cmd
+        .description(
+          "push the current branch, then open its pull request on GitHub for the task (default: the branch's) and link it; the body closes the task",
+        )
+        .argument("[key]")
+        .option("--draft", "open it as a draft")
+        .option("--base <branch>", "the branch to merge into (default: the repo's default branch)")
+        .option("--no-push", "don't push: open the PR for a branch already pushed")
+        .option("--repo <owner/name>", "the repo, when the project has several (default: the origin remote)"),
+    ).action(openPullRequest);
+
+  prCommand(task.command("pr"));
+  prCommand(program.command("pr"));
+
   taskOptions(
     task
       .command("create")
@@ -3113,7 +3237,9 @@ export async function run(argv: string[], options: RunOptions): Promise<number> 
     // Every failure says something, even when the cause had no message (ST-107).
     const message = err.message.trim() || `Failed with ${err.code === "error" ? "an unknown error" : err.code} (exit code ${err.exitCode})`;
     options.stderr.write(
-      json ? `${JSON.stringify({ error: { code: err.code, message } })}\n` : `spider: ${message}\n`,
+      json
+        ? `${JSON.stringify({ error: err.url === undefined ? { code: err.code, message } : { code: err.code, message, url: err.url } })}\n`
+        : `spider: ${message}\n`,
     );
     return err.exitCode;
   };

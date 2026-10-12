@@ -66,6 +66,8 @@ import {
   listTags,
   listTaskActivity,
   getTaskGit,
+  openTaskPullRequest,
+  gitAutomationInput,
   listInbox,
   listTasks,
   markInboxRead,
@@ -100,6 +102,7 @@ import {
 import type { Db, schema } from "@repo/db";
 import { Hono } from "hono";
 import { z } from "zod";
+import { GithubUnavailableError, type GithubApp } from "./github";
 import type { Realtime } from "./realtime";
 import type { AppEnv } from "./types";
 
@@ -185,7 +188,7 @@ async function isInitialize(request: Request): Promise<boolean> {
 }
 
 /** Tracker tools for one request, acting as the key's agent inside its organization. */
-function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string, instructions?: string) {
+function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string, github: GithubApp | null, instructions?: string) {
   const ctx: ActorContext = {
     orgId: key.organization.id,
     actorId: key.actor.id,
@@ -328,7 +331,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "update_project",
     {
       description:
-        "Change a project's name, description or rules document (the key can't change). The rules are one of the project's own documents; agents of the project get them automatically and are notified when they change. Owners, admins and their agents only.",
+        "Change a project's name, description, rules document or status automation from pull requests (the key can't change). The rules are one of the project's own documents; agents of the project get them automatically and are notified when they change. Owners, admins and their agents only.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
         name: projectName.optional(),
@@ -338,10 +341,19 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           .nullable()
           .optional()
           .describe("Id of a document in this project (not a task's) to use as its rules; null clears them"),
+        gitAutomation: gitAutomationInput
+          .nullable()
+          .optional()
+          .describe(
+            "Status automation from pull request events; only the fields given change, null resets to the defaults. " +
+              "enabled: on or off. draft (PR opened as or converted to a draft; default in_progress), opened (opened, reopened or ready for review; default in_review), " +
+              "merged (default done), closed (closed unmerged; default null): the status category linked tasks move to, or null for no change. " +
+              "Tasks move forward only, and only for PRs linked by closing keyword, branch or title.",
+          ),
       },
     },
-    ({ projectKey, name, description, rulesDocumentId }) =>
-      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description, rulesDocumentId }))),
+    ({ projectKey, name, description, rulesDocumentId, gitAutomation }) =>
+      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description, rulesDocumentId, gitAutomation }))),
   );
 
   server.registerTool(
@@ -1345,6 +1357,45 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   );
 
   server.registerTool(
+    "open_pull_request",
+    {
+      description:
+        "Open a task's pull request on GitHub (as the Spider Tracker App) for a branch already pushed: you can't push from here, so push first (or have `spider pr` push and open it). " +
+        'The title is the task\'s ("Title (ST-12)") and the body closes the task ("Closes ST-12"), so status automation moves it to review and, once merged, to done. ' +
+        "The PR is linked to the task at once (get_task_git). Returns { taskKey, pullRequest }, as `spider pr --json`. Fails with the URL when a PR is already open for the branch.",
+      inputSchema: {
+        key: z.string().describe('Task key, e.g. "ST-12"'),
+        head: z
+          .string()
+          .optional()
+          .describe('The pushed branch with the changes; default the task\'s branch ("st-12-short-title", as `spider start` names it)'),
+        base: z.string().optional().describe("The branch to merge into; default the repo's default branch"),
+        repo: z
+          .string()
+          .optional()
+          .describe('"owner/name": needed only when the task\'s project has several repos (list_repos)'),
+        title: z.string().optional().describe('Default "<task title> (KEY)"'),
+        body: z.string().optional().describe('Markdown; "Closes KEY" is added unless it already closes the task. Never include secrets'),
+        draft: z.boolean().optional().describe("Open it as a draft (the task moves to In Progress, not In Review)"),
+      },
+    },
+    ({ key: taskKey, head, base, repo, title, body, draft }) =>
+      run(async () => {
+        if (!github) throw new DomainError("validation", "GitHub isn't configured on this server");
+        try {
+          return await openTaskPullRequest(db, ctx, taskKey, { head, base, repo, title, body, draft }, {
+            create: (request) => github.createPullRequest(request),
+            taskUrl: (key) => urls.task(key),
+          });
+        } catch (err) {
+          if (!(err instanceof GithubUnavailableError)) throw err;
+          console.error(err);
+          throw new DomainError("validation", "GitHub couldn't be reached or refused the request. Try again");
+        }
+      }),
+  );
+
+  server.registerTool(
     "add_comment",
     {
       description:
@@ -1450,7 +1501,8 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
  * transport, so there are no session ids and any instance can serve any request.
  * Only agent API keys are accepted; browser sessions are not.
  */
-export function mcpRoutes(db: Db, realtime: Realtime, webOrigin: string) {
+/** `github`: the GitHub App port, for open_pull_request; null when the server has none. */
+export function mcpRoutes(db: Db, realtime: Realtime, webOrigin: string, github: GithubApp | null = null) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
@@ -1471,7 +1523,7 @@ export function mcpRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     const instructions = (await isInitialize(c.req.raw))
       ? rulesInstructions(key.actor.handle, await listProjectRules(db, { orgId: key.organization.id, actorId: key.actor.id, role: key.actor.role, source: "mcp" }))
       : undefined;
-    const server = createMcpServer(db, key, realtime, webOrigin, instructions);
+    const server = createMcpServer(db, key, realtime, webOrigin, github, instructions);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     await server.connect(transport);
     try {

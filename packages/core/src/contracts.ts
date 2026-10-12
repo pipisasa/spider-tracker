@@ -37,7 +37,8 @@ export interface MeResponse {
 }
 
 export interface ApiErrorBody {
-  error: { code: string; message: string };
+  /** `url`: what the error is about, e.g. the pull request that is already open (409 from `POST /tasks/:key/pull-request`). */
+  error: { code: string; message: string; url?: string };
 }
 
 export type AuthProvider = "magic-link" | "github" | "batele-id";
@@ -72,8 +73,23 @@ export interface ProjectDto {
   archivedAt: string | null;
   /** The project's rules for agents (ST-111): one of its project-level documents, or null. */
   rulesDocumentId: string | null;
+  /** Status automation from pull request events (ST-85), with the defaults filled in. */
+  gitAutomation: GitAutomationSettings;
   /** The web page's address (ST-115); set in API, CLI and MCP responses, not by core itself. */
   url?: string;
+}
+
+/** A pull request event that can move its tasks (ST-85). */
+export type GitAutomationEvent = "draft" | "opened" | "merged" | "closed";
+
+/**
+ * A project's status automation (ST-85): for each pull request event, the status category its
+ * linked tasks move to (the first status of that category in the task's workflow), or null for
+ * no change. `opened` covers opened, reopened and ready for review; `draft` opened as or
+ * converted to a draft.
+ */
+export interface GitAutomationSettings extends Record<GitAutomationEvent, StatusCategory | null> {
+  enabled: boolean;
 }
 
 export interface ProjectDetailDto extends ProjectDto {
@@ -534,6 +550,12 @@ export interface TaskGitDto {
   branches: GitBranchDto[];
   /** The latest 100. */
   commits: GitCommitDto[];
+}
+
+/** `POST /tasks/:key/pull-request` (ST-87): the pull request opened on GitHub, as linked to the task. */
+export interface OpenedPullRequestDto {
+  taskKey: string;
+  pullRequest: PullRequestDto;
 }
 
 /** `POST /github/install`: the GitHub page that installs the App; it returns to `/github/setup`. */

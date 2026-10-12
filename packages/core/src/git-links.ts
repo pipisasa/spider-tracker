@@ -6,6 +6,7 @@ import type { ActorContext, Viewer } from "./access";
 import type { GitBranchDto, GitCommitDto, GitLinkVia, PullRequestDto, PullRequestState, TaskGitDto } from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
+import { automatePullRequest } from "./git-automation";
 import { closingKeysIn, taskKeyFromBranch, taskKeysIn } from "./git";
 import type { GithubEventHandler } from "./github-webhooks";
 import { repoFullName } from "./remotes";
@@ -71,7 +72,26 @@ const repoUrl = (repo: { owner: string; name: string }) =>
 const branchUrl = (repo: { owner: string; name: string }, branch: string) =>
   `${repoUrl(repo)}/tree/${branch.split("/").map(encodeURIComponent).join("/")}`;
 const commitUrl = (repo: { owner: string; name: string }, sha: string) => `${repoUrl(repo)}/commit/${sha}`;
-const pullRequestUrl = (repo: { owner: string; name: string }, number: number) => `${repoUrl(repo)}/pull/${number}`;
+export const pullRequestUrl = (repo: { owner: string; name: string }, number: number) => `${repoUrl(repo)}/pull/${number}`;
+
+/** A saved pull request as the API shows it, with how it names the task. */
+export function toPullRequestDto(repo: { owner: string; name: string }, pr: PullRequestRow, via: GitLinkVia): PullRequestDto {
+  return {
+    repo: repoFullName(repo),
+    number: pr.number,
+    title: pr.title,
+    url: pullRequestUrl(repo, pr.number),
+    state: pr.state,
+    draft: pr.draft,
+    headBranch: pr.headBranch,
+    baseBranch: pr.baseBranch,
+    author: pr.authorLogin,
+    mergedAt: pr.mergedAt?.toISOString() ?? null,
+    closedAt: pr.closedAt?.toISOString() ?? null,
+    updatedAt: pr.githubUpdatedAt.toISOString(),
+    via,
+  };
+}
 
 // --- Finding repos and tasks ----------------------------------------------------------------------
 
@@ -232,16 +252,16 @@ export interface PullRequestChange {
 }
 
 /**
- * Status automation from pull request events (ST-85) goes here: it runs in the delivery's
- * transaction after the PR and its links are saved (never for stale events) and says whether it
- * changed something. Nothing yet.
+ * Status automation from pull request events (ST-85, automatePullRequest in git-automation.ts): it
+ * runs in the delivery's transaction after the PR and its links are saved (never for stale events)
+ * and says whether it changed something.
  */
 export type PullRequestAutomation = (tx: Tx, ctx: ActorContext, change: PullRequestChange) => Promise<boolean>;
-const automatePullRequest: PullRequestAutomation = async () => false;
 
 const STATE_RANK: Record<PullRequestState, number> = { open: 0, closed: 1, merged: 2 };
 
-interface PullRequestData {
+/** A pull request as GitHub describes it (from a webhook, or the API's answer when one is opened). */
+export interface PullRequestData {
   number: number;
   title: string;
   body: string | null;
@@ -272,8 +292,12 @@ export function nextPullRequestState(
   return incoming.state;
 }
 
-/** Saves a pull request event and links it to the tasks it names; false when stale or nothing to link. */
-async function savePullRequest(
+/**
+ * Saves a pull request event and links it to the tasks it names; false when stale or nothing to
+ * link. `ctx` is the @github bot: status automation runs as it. Also used when Spider Tracker opens
+ * the pull request itself (ST-87), so the link is there before GitHub's webhook arrives.
+ */
+export async function savePullRequest(
   tx: Tx,
   ctx: ActorContext,
   repo: RepoRow,
@@ -519,21 +543,7 @@ export async function getTaskGit(db: Db, viewer: Viewer, taskKey: string): Promi
     .orderBy(sql`${gitLinks.occurredAt} desc nulls last`, desc(gitLinks.createdAt))
     .limit(COMMITS_LISTED);
 
-  const pullRequestDtos: PullRequestDto[] = prRows.map(({ repo, pr, via }) => ({
-    repo: repoFullName(repo),
-    number: pr.number,
-    title: pr.title,
-    url: pullRequestUrl(repo, pr.number),
-    state: pr.state,
-    draft: pr.draft,
-    headBranch: pr.headBranch,
-    baseBranch: pr.baseBranch,
-    author: pr.authorLogin,
-    mergedAt: pr.mergedAt?.toISOString() ?? null,
-    closedAt: pr.closedAt?.toISOString() ?? null,
-    updatedAt: pr.githubUpdatedAt.toISOString(),
-    via,
-  }));
+  const pullRequestDtos: PullRequestDto[] = prRows.map(({ repo, pr, via }) => toPullRequestDto(repo, pr, via));
   const branches: GitBranchDto[] = branchRows.map(({ repo, link }) => ({
     repo: repoFullName(repo),
     name: link.ref,
