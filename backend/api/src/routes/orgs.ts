@@ -88,6 +88,10 @@ import {
   getReleaseChangelog,
   writeReleaseChangelog,
   type ReleaseDto,
+  createMilestone,
+  getMilestone,
+  listMilestones,
+  type MilestoneDto,
   webUrls,
   withChangelogUrls,
   withDocumentUrl,
@@ -162,6 +166,8 @@ export function orgRoutes(
   const document = <T extends { id: string }>(c: C, d: T) => withDocumentUrl(c.get("urls"), d);
   /** A release and its included tasks carry their web pages (ST-93). */
   const release = (c: C, r: ReleaseDto) => ({ ...task(c, r), tasks: r.tasks.map((t) => task(c, t)) });
+  /** A milestone and its tasks carry their web pages (ST-96). */
+  const milestone = (c: C, m: MilestoneDto) => ({ ...task(c, m), tasks: m.tasks.map((t) => task(c, t)) });
 
   // GET /members?all=true includes deactivated actors, to name the ones still assigned to tasks.
   app.get("/members", async (c) => {
@@ -393,6 +399,21 @@ export function orgRoutes(
       ),
     ),
   );
+
+  // Milestones (ST-96): the project's roadmap, by date, with progress, tasks and releases. ?status= repeats.
+  app.get("/projects/:projectKey/milestones", async (c) =>
+    c.json(
+      list(
+        (await listMilestones(db, c.get("actor"), c.req.param("projectKey"), { status: c.req.queries().status })).map((m) => milestone(c, m)),
+      ),
+    ),
+  );
+
+  app.post("/projects/:projectKey/milestones", async (c) =>
+    c.json(milestone(c, await createMilestone(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  app.get("/milestones/:taskKey", async (c) => c.json(milestone(c, await getMilestone(db, c.get("actor"), c.req.param("taskKey")))));
 
   app.get("/projects/:projectKey/views", async (c) =>
     c.json(list(await listSavedViews(db, c.get("actor"), c.req.param("projectKey")))),

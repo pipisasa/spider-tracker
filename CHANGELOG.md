@@ -25,6 +25,13 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 
 Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
+### Milestones and the project Roadmap (ST-96)
+
+- **API:** tasks carry `milestoneId` (their own; a milestone of the same project) and `milestone { id, key, title, status, inherited }` (own, or inherited from the nearest ancestor). `POST …/tasks`, `PATCH /tasks/:key` and bulk `set` take `milestoneId` (`null` takes a task out). New `GET|POST /v1/orgs/:org/projects/:key/milestones[?status=]` (the roadmap, by target date) and `GET /v1/orgs/:org/milestones/:key`, each `MilestoneDto` with `progress { total, done, canceled, withCode, shipped, complete }`, `tasks` and `releases`. When every task of an open milestone is Done and all their code has shipped, the tracker moves it to Ready to close as the `@spider` bot (activity source `system`, now in the OpenAPI enum); `spider` is a reserved handle. SDK: `milestones.list|get|create`.
+- **MCP:** new `list_milestones`, `get_milestone`, `create_milestone`; `create_task`, `update_task` and `update_tasks` take `milestone` (a milestone's key; null takes it out). Tasks in every tool's output have `milestoneId` and `milestone`.
+- **CLI:** `spider roadmap [project] [--status]`, `spider milestone list|view|create`, and `--milestone <key>` on `task create` and `task update` (`--set-milestone` with `--project`). `task view` shows the milestone.
+- **Roadmap import:** `bun run roadmap:import --as <agent> [--dry-run]` creates one milestone per phase of `docs/roadmap.md` in ST and puts the existing tasks in them; it is idempotent and never moves a task out of a milestone a person chose.
+
 ### Task kinds and per-project workflows (ST-90)
 
 - **API:** tasks carry `kind` (`task`, `release`, `milestone`; default `task`, fixed at creation). Projects have one workflow per kind: `ProjectDetailDto.workflows` (`{ task, release, milestone }`), statuses gain `kind`, and `statuses` stays the task workflow. New projects get all three default workflows; the migration gives existing projects the release and milestone ones. New `POST …/projects/:key/statuses`, `PATCH|DELETE …/statuses/:id?moveTo=` edit workflows (owners, admins and their agents). `POST …/tasks` takes `kind`; `GET …/tasks?kind=` filters by it. A task's status must be of its own project and kind (create, update, bulk update, duplicates). SDK: `projects.statuses.create|update|delete`, `tasks.list(…, { kind })`.
@@ -103,6 +110,10 @@ Done means finished, not shipped; releases ship Done tasks.
 - Actors can have `type: "integration"`: the per-organization GitHub bot (`@github`, now a reserved handle). `GET /members` leaves it out; `?all=true` includes it, so clients that switch on `type` should expect a third value.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+
+### Plugin 0.3.12
+
+- The `tasks` skill explains milestones and the roadmap: how to read a task's milestone, put a task in one (`update_task` with `milestone`, `spider task update --milestone`) and that the tracker moves a finished milestone to Ready to close while a person closes it (ST-96).
 
 ### Plugin 0.3.11
 

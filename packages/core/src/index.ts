@@ -47,3 +47,6 @@ export * from "./git-links";
 export * from "./git-automation";
 export * from "./git-automation-rules";
 export * from "./pull-request-open";
+export * from "./bots";
+export * from "./milestone-membership";
+export * from "./milestones";

@@ -37,6 +37,7 @@ import {
   updateProjectInput,
   updateTaskInput,
   createReleaseInput,
+  createMilestoneInput,
   updateReleaseInput,
   releaseTasksInput,
   releaseChangelogInput,
@@ -211,7 +212,22 @@ const schemas: Record<string, JsonSchema> = {
       description: "Where a Done task's code is (Done means finished, not shipped); null for releases, milestones and tasks that aren't Done and in no release",
       oneOf: [{ type: "null" }, ref("TaskShipping")],
     },
+    milestoneId: nullable("string", {
+      format: "uuid",
+      description: "The milestone (a task of kind milestone, same project) the task was put in itself; null when none (it may still inherit its parent's)",
+    }),
+    milestone: {
+      description: "The milestone the task belongs to: its own, else the nearest ancestor's (inherited); null when in none or in one the caller can't see",
+      oneOf: [{ type: "null" }, ref("MilestoneRef")],
+    },
     url: webUrl("task"),
+  }),
+  MilestoneRef: object({
+    id: string({ format: "uuid" }),
+    key: string(),
+    title: string({ examples: ["Phase 4: Git and GitHub"] }),
+    status: ref("StatusRef"),
+    inherited: { type: "boolean", description: "Taken from an ancestor; the task has no milestone of its own" },
   }),
   StatusRef: object({
     id: string({ format: "uuid" }),
@@ -263,6 +279,52 @@ const schemas: Record<string, JsonSchema> = {
     ],
   },
   ReleaseList: listOf("Release"),
+  Milestone: {
+    allOf: [
+      ref("Task"),
+      object({
+        status: ref("StatusRef"),
+        progress: object({
+          total: { type: "integer", description: "Its tasks (own and inherited by sub-tasks) that aren't canceled" },
+          done: { type: "integer", description: "Of those, in a done status" },
+          canceled: { type: "integer", description: "Canceled tasks, not part of total" },
+          withCode: { type: "integer", description: "Of the done ones, those with code to ship (not noCode)" },
+          shipped: { type: "integer", description: "Of the done ones with code, those whose release is Released" },
+          complete: { type: "boolean", description: "Every task done and all their code shipped (and at least one task)" },
+        }),
+        tasks: {
+          type: "array",
+          description: "Its tasks the caller can see, by project key and number",
+          items: object({
+            id: string({ format: "uuid" }),
+            key: string(),
+            title: string(),
+            projectKey: string(),
+            status: ref("StatusRef"),
+            parentKey: nullable("string"),
+            inherited: { type: "boolean", description: "In the milestone through an ancestor" },
+            completedAt: nullable("string", { format: "date-time" }),
+            shipping: { oneOf: [{ type: "null" }, ref("TaskShipping")] },
+            url: webUrl("task"),
+          }),
+        },
+        releases: {
+          type: "array",
+          description: "Releases that include its tasks: Released ones first (oldest first), then those on their way",
+          items: object({
+            id: string({ format: "uuid" }),
+            key: string(),
+            title: string({ examples: ["2026.10.13"] }),
+            status: ref("StatusRef"),
+            shippedAt: nullable("string", { format: "date-time" }),
+            tasks: { type: "array", items: string(), description: "Keys of the milestone's tasks it includes" },
+          }),
+        },
+      }),
+    ],
+  },
+  MilestoneList: listOf("Milestone"),
+  CreateMilestoneInput: fromZod(createMilestoneInput),
   CreateReleaseInput: fromZod(createReleaseInput),
   UpdateReleaseInput: fromZod(updateReleaseInput),
   ReleaseTasksInput: fromZod(releaseTasksInput),
@@ -705,7 +767,7 @@ const schemas: Record<string, JsonSchema> = {
       additionalProperties: true,
       description: "For task.updated: field → [before, after] (statusId, assigneeIds, tagIds, parentId, title, priority, …)",
     },
-    source: string({ enum: ["ui", "api", "mcp", "cli", "git", "agent_run"] }),
+    source: string({ enum: ["ui", "api", "mcp", "cli", "git", "agent_run", "system"] }),
     actorId: string({ format: "uuid" }),
     createdAt: string({ format: "date-time" }),
   }),
@@ -1261,7 +1323,7 @@ const paths = {
       summary: "Update several tasks at once, by keys or a filter (at most 100)",
       description:
         "Pass `keys` (any projects) or `filter` (one project; the same filters as listing tasks, plus `parent`), and `set`: " +
-        "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`, `startDate`, `targetDate` (null clears; start ≤ target). " +
+        "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`, `startDate`, `targetDate` (null clears; start ≤ target), `noCode`, `milestoneId` (a milestone of each task's own project; null takes it out). " +
         "Each task is updated on its own with the same permission and agent-scope checks as PATCH /tasks/{taskKey}; " +
         "a task that fails (missing, out of scope, unknown status, …) is reported in `results` without stopping the others, so the response is 200. " +
         "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing.",
@@ -1462,6 +1524,28 @@ const paths = {
       summary: "Detach a repo from the project; detaching one that isn't attached changes nothing",
       responses: { "200": ok("The repo", "Repo"), ...errors },
     },
+  },
+  "/v1/orgs/{orgSlug}/projects/{projectKey}/milestones": {
+    parameters: [orgSlug, projectKey],
+    get: {
+      operationId: "listMilestones",
+      summary:
+        "The project's roadmap: its milestones (tasks of kind milestone) by target date, then start date (undated last), with progress, tasks and the releases that shipped them",
+      parameters: [
+        { name: "status", in: "query", schema: { type: "array", items: { type: "string" } }, description: "Status ids, names or categories of the milestone workflow; repeat for several" },
+      ],
+      responses: { "200": ok("Milestones", "MilestoneList"), ...errors },
+    },
+    post: {
+      operationId: "createMilestone",
+      summary: "Create a milestone: a task of kind milestone (Planned unless statusId), goal and Done when in the description. Tasks join it with PATCH /tasks/{key} { milestoneId }",
+      requestBody: body("CreateMilestoneInput"),
+      responses: { "201": ok("Created milestone", "Milestone"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/milestones/{taskKey}": {
+    parameters: [orgSlug, taskKey],
+    get: { operationId: "getMilestone", summary: "A milestone with its progress, tasks and releases", responses: { "200": ok("Milestone", "Milestone"), ...errors } },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/releases": {
     parameters: [orgSlug, projectKey],

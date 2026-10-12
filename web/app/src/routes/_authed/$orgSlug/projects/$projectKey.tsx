@@ -2,6 +2,7 @@ import { Board } from "@/components/board";
 import { DocumentList, NewDocumentDialog } from "@/components/documents";
 import { NewTaskDialog } from "@/components/new-task-dialog";
 import { NewReleaseDialog, ReleasesView } from "@/components/releases";
+import { RoadmapView } from "@/components/roadmap";
 import { TaskList } from "@/components/task-list";
 import { ProjectSettingsDialog } from "@/components/project-settings";
 import { SavedViewsMenu } from "@/components/saved-views";
@@ -16,6 +17,7 @@ import {
   documentQuery,
   documentsQuery,
   membersQuery,
+  milestonesQuery,
   projectQuery,
   releasesQuery,
   tagsQuery,
@@ -35,10 +37,10 @@ import type { SavedViewDto } from "@repo/core/contracts";
 import { kindOf } from "@repo/core/statuses";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileTextIcon, KanbanIcon, ListIcon, PackageIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
+import { FileTextIcon, FlagIcon, KanbanIcon, ListIcon, PackageIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-type View = "board" | "list" | "docs" | "releases";
+type View = "board" | "list" | "docs" | "releases" | "roadmap";
 
 /** The board setting "Release columns" (ST-93): on by default, remembered per project in this browser. */
 function useReleaseColumns(projectKey: string): [boolean, (on: boolean) => void] {
@@ -74,7 +76,7 @@ type ProjectSearch = TaskFilters & { view?: View };
 
 export const Route = createFileRoute("/_authed/$orgSlug/projects/$projectKey")({
   validateSearch: (search: Record<string, unknown>): ProjectSearch => ({
-    ...(search.view === "list" || search.view === "board" || search.view === "docs" || search.view === "releases"
+    ...(search.view === "list" || search.view === "board" || search.view === "docs" || search.view === "releases" || search.view === "roadmap"
       ? { view: search.view }
       : {}),
     ...parseFilters(search),
@@ -107,6 +109,7 @@ function ProjectPage() {
   const [newReleaseOpen, setNewReleaseOpen] = useState(false);
   const [releaseColumns, setReleaseColumns] = useReleaseColumns(projectKey);
   const { data: releases = [] } = useQuery({ ...releasesQuery(orgSlug, projectKey), enabled: view === "releases" || (view === "board" && releaseColumns) });
+  const { data: milestones = [], isPending: milestonesPending } = useQuery({ ...milestonesQuery(orgSlug, projectKey), enabled: view === "roadmap" });
   const restore = useArchiveProject(orgSlug);
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
   const archived = project.archivedAt !== null;
@@ -173,6 +176,12 @@ function ProjectPage() {
               <span className="max-sm:sr-only">Releases</span>
             </Link>
           </Button>
+          <Button variant={view === "roadmap" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+            <Link to="." search={{ view: "roadmap" }}>
+              <FlagIcon />
+              <span className="max-sm:sr-only">Roadmap</span>
+            </Link>
+          </Button>
           <Button variant={view === "docs" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
             <Link to="." search={{ view: "docs" }}>
               <FileTextIcon />
@@ -209,7 +218,7 @@ function ProjectPage() {
               onApply={applyView}
             />
           )}
-          {view === "releases" ? null : view === "docs" ? (
+          {view === "releases" || view === "roadmap" ? null : view === "docs" ? (
             membership.actor.role !== "guest" &&
             !archived && (
               <Button size="sm" className="ml-2 max-md:h-10" onClick={() => setNewDocumentOpen(true)}>
@@ -280,7 +289,15 @@ function ProjectPage() {
           Showing {visibleTasks.length} of {tasks.length} tasks
         </p>
       )}
-      {view === "releases" ? (
+      {view === "roadmap" ? (
+        <RoadmapView
+          orgSlug={orgSlug}
+          project={project}
+          milestones={milestones}
+          isPending={milestonesPending}
+          canWrite={membership.actor.role !== "guest" && !archived}
+        />
+      ) : view === "releases" ? (
         <ReleasesView orgSlug={orgSlug} project={project} releases={releases} canWrite={membership.actor.role !== "guest" && !archived} />
       ) : view === "docs" ? (
         <ProjectDocuments orgSlug={orgSlug} projectKey={project.key} rulesDocumentId={project.rulesDocumentId} />

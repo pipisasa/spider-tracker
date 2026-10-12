@@ -29,6 +29,8 @@ const task: TaskDto = {
   shippedAt: null,
   noCode: false,
   shipping: null,
+  milestoneId: null,
+  milestone: null,
 };
 const actors = [
   { id: "a1", handle: "alice", deactivated: false },

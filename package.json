@@ -21,6 +21,7 @@
     "deploy:web": "bun run --cwd web/app deploy",
     "deploy:api": "railway up --service api --detach",
     "release:cli": "bun scripts/release-cli.ts",
+    "roadmap:import": "bun scripts/roadmap-import.ts",
     "claude:channel": "claude --mcp-config .claude/channel.mcp.json --dangerously-load-development-channels server:spider-channel"
   },
   "devDependencies": {
