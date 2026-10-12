@@ -41,6 +41,7 @@ export function useOrgEvents(orgSlug: string) {
       // A task's change can move releases and shipping states (ST-93).
       void qc.invalidateQueries({ queryKey: keys.releaseLists(orgSlug) });
     });
+    on("task.git", (e) => void qc.invalidateQueries({ queryKey: keys.git(orgSlug, e.taskKey) }));
     on("task.deleted", (e) => {
       refreshSubtasks();
       void qc.invalidateQueries({ queryKey: keys.releaseLists(orgSlug) });

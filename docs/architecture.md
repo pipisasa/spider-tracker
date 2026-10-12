@@ -63,7 +63,7 @@ packages/
 
 ## Realtime
 
-1. Core writes call `publish()` (`packages/core/src/events.ts`), which runs `pg_notify('spider_events', <event>)` inside the write's transaction, so only committed changes are announced. Events: `task.changed`, `task.deleted`, `comment.created`, `project.changed`, `inbox.created` (with recipient actor ids).
+1. Core writes call `publish()` (`packages/core/src/events.ts`), which runs `pg_notify('spider_events', <event>)` inside the write's transaction, so only committed changes are announced. Events: `task.changed`, `task.deleted`, `task.git` (git links changed, ST-84), `comment.created`, `project.changed`, `inbox.created` (with recipient actor ids).
 2. Each `backend/api` instance keeps one `LISTEN spider_events` connection (`src/realtime.ts`, opened on first use; postgres.js reconnects it) and fans events out in-process.
 3. `GET /v1/orgs/:org/events` streams the organization's events over SSE (`ready` on connect, `ping` every 20 s). The web app subscribes in the organization layout (`useOrgEvents`) and invalidates the matching TanStack Query keys; after a reconnect it refreshes the organization's data once.
 4. Waiting inbox requests (`/inbox?wait=`, MCP `get_inbox`, the Claude Code channel) wake on `inbox.created` for their actor instead of polling, with a 5 s re-check as a safety net.

@@ -1,3 +1,4 @@
+import { Development } from "@/components/development";
 import { TaskDocuments, TaskMentions } from "@/components/documents";
 import { DuplicateDialog } from "@/components/duplicate-dialog";
 import { Relations } from "@/components/relations";
@@ -225,6 +226,7 @@ function TaskPage() {
           members={actors}
         />
         <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={statuses} />
+        <Development orgSlug={orgSlug} taskKey={task.key} />
         <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
         <TaskMentions orgSlug={orgSlug} taskKey={task.key} />
         <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={statuses} />

@@ -21,10 +21,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { documentsQuery, useArchiveProject, useUpdateProject } from "@/lib/work";
+import { documentsQuery, reposQuery, useArchiveProject, useUpdateProject } from "@/lib/work";
 import type { ProjectDto } from "@repo/core/contracts";
 import { updateProjectInput } from "@repo/core/schemas";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
 const NO_RULES = "none";
@@ -47,6 +48,9 @@ export function ProjectSettingsDialog({
   // Only the project's own documents (not its tasks') can be its rules.
   const { data: documents = [] } = useQuery({ ...documentsQuery(orgSlug, { project: project.key }), enabled: open });
   const candidates = documents.filter((d) => d.taskKey === null);
+  // Its repos (ST-84): branches, commits and PRs there link to its tasks. Attached in Settings → Repos.
+  const { data: repos = [] } = useQuery({ ...reposQuery(orgSlug), enabled: open });
+  const attached = repos.filter((r) => r.projects.includes(project.key));
   const [error, setError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const update = useUpdateProject(orgSlug, project.key);
@@ -135,6 +139,20 @@ export function ProjectSettingsDialog({
               <p className="text-xs text-muted-foreground">
                 One of this project&apos;s documents. Agents working in {project.key} get it automatically and are
                 notified when it changes; only owners, admins and their agents can edit it.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Repos</Label>
+              <p className="text-sm">
+                {attached.length ? attached.map((r) => r.fullName).join(", ") : <span className="text-muted-foreground">None</span>}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Branches, commits and pull requests in these repos that name a {project.key} task link to it. Attach or
+                detach repos in{" "}
+                <Link to="/$orgSlug/settings/repos" params={{ orgSlug }} className="underline underline-offset-2" onClick={() => onOpenChange(false)}>
+                  Settings → Repos
+                </Link>
+                .
               </p>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}

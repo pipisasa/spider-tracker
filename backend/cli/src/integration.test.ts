@@ -3,8 +3,9 @@ import { createApp } from "@repo/api/src/app";
 import { createAuth } from "@repo/api/src/auth";
 import { loadEnv } from "@repo/api/src/env";
 import type { Mailer } from "@repo/api/src/mailer";
+import { handleGithubWebhook, saveGithubInstallation, type ActorContext } from "@repo/core";
 import { createDb, schema } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +48,7 @@ withDb("spider CLI against the API", () => {
 
   afterAll(async () => {
     rmSync(repo, { recursive: true, force: true });
+    await db.delete(schema.githubDeliveries).where(like(schema.githubDeliveries.id, `${stamp}-cli-%`));
     await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.email, ownerEmail));
     await db.$client.end();
@@ -1042,6 +1044,71 @@ withDb("spider CLI against the API", () => {
     expect((await spider("repo", "view", "not a repo")).code).toBe(2);
   });
 
+  test("task git: pull requests, branches and commits linked from GitHub (ST-84)", async () => {
+    // GitHub events, as the webhook hands them to core: SPI uses the repo too.
+    expect((await spider("repo", "attach", "pipisasa/spider-tracker", "SPI")).code).toBe(0);
+    const [org] = await db.select().from(schema.organizations).where(eq(schema.organizations.slug, slug));
+    const [ownerActor] = await db
+      .select()
+      .from(schema.actors)
+      .where(and(eq(schema.actors.orgId, org?.id ?? ""), eq(schema.actors.role, "owner")));
+    const owner: ActorContext = { orgId: org?.id ?? "", actorId: ownerActor?.id ?? "", role: "owner", source: "ui" };
+    const installationId = stamp + 400;
+    await saveGithubInstallation(db, owner, {
+      installation: { id: installationId, account: "pipisasa", accountType: "User", repositorySelection: "selected", suspended: false },
+      repositories: [{ owner: "pipisasa", name: "spider-tracker", defaultBranch: "main" }],
+    });
+    const repository = { name: "spider-tracker", owner: { login: "pipisasa" } };
+    let n = 0;
+    const deliver = (event: string, payload: Record<string, unknown>) =>
+      handleGithubWebhook(db, { deliveryId: `${stamp}-cli-${++n}`, event, payload: { installation: { id: installationId }, repository, ...payload } });
+
+    expect((await spider("task", "git", "SPI-1")).stdout).toBe("Nothing linked to SPI-1 in git yet\n");
+    await deliver("push", {
+      ref: "refs/heads/spi-1-ship-the-cli",
+      commits: [{ id: "a".repeat(40), message: "Ship the CLI\n\nmore", timestamp: "2026-10-12T10:00:00Z", author: { name: "Ann", username: "ann" } }],
+    });
+    await deliver("pull_request", {
+      action: "opened",
+      number: 12,
+      pull_request: {
+        number: 12,
+        title: "Ship the CLI",
+        body: "Closes SPI-1",
+        state: "open",
+        draft: true,
+        updated_at: "2026-10-12T11:00:00Z",
+        head: { ref: "spi-1-ship-the-cli" },
+        base: { ref: "main" },
+        user: { login: "ann" },
+      },
+    });
+    expect((await spider("task", "git", "SPI-1")).stdout).toBe(
+      [
+        "Pull requests:",
+        "  pipisasa/spider-tracker#12  draft  Ship the CLI  (spi-1-ship-the-cli → main, @ann)",
+        "",
+        "Branches:",
+        "  pipisasa/spider-tracker  spi-1-ship-the-cli",
+        "",
+        "Commits:",
+        "  aaaaaaa  2026-10-12  Ship the CLI  (ann)",
+        "",
+      ].join("\n"),
+    );
+    expect((await spider("task", "git", "SPI-1", "--json")).json()).toMatchObject({
+      taskKey: "SPI-1",
+      pullRequests: [{ number: 12, state: "open", draft: true, via: "closing" }],
+      branches: [{ name: "spi-1-ship-the-cli", deleted: false }],
+      commits: [{ sha: "a".repeat(40), via: "branch" }],
+    });
+    // From the current branch's key.
+    Bun.spawnSync({ cmd: ["git", "checkout", "-q", "-B", "spi-1-ship-the-cli"], cwd: repo });
+    expect((await spider("task", "git", "--json")).json()).toMatchObject({ taskKey: "SPI-1" });
+    expect((await spider("task", "git", "nope")).code).toBe(2);
+    expect((await spider("task", "git", "SPI-999")).code).toBe(3);
+  });
+
   test("releases: a release in ST includes three Done tasks and is marked Released; all three show shipped <version>; the board puts it in Released (ST-93)", async () => {
     const done = async (project: string, title: string) => {
       const created = await spider("task", "create", "--project", project, "--title", title, "--status", "Done", "--json");
@@ -1158,6 +1225,8 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("get_document", { id: doc?.id, version: 1 })).toEqual(await cli("doc", "view", doc?.id ?? "", "--rev", "1"));
       expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(await cli("doc", "diff", doc?.id ?? "", "--from", "1"));
       expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(await cli("comments", "SPI-1"));
+      // Git links (ST-84): TaskGitDto on both sides.
+      expect(await mcp("get_task_git", { key: "SPI-1" })).toEqual(await cli("task", "git", "SPI-1"));
       // Document comments (ST-118), with a quoted fragment, a reply and a resolved thread.
       const docComment = (await cli("doc", "comment", doc?.id ?? "", "Parity review")) as { id: string };
       await cli("doc", "comment", doc?.id ?? "", "Agreed", "--reply-to", docComment.id);

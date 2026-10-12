@@ -35,7 +35,7 @@ See [agents.md](./agents.md).
 See [git-integration.md](./git-integration.md).
 
 - GitHub App per organization (ST-82): owners and admins connect it in Settings → GitHub; the repos it grants are linked to the organization's repos or added, and git-driven changes are attributed to a GitHub bot
-- Branches, commits and pull requests link to tasks automatically
+- Branches, commits and pull requests link to tasks automatically (ST-84): a branch named after the task, commits that mention its key, pull requests that name it in their branch, title or body, in repos attached to its project. The task page's Development panel lists them with PR state (open, draft, closed, merged); `spider task git` and MCP `get_task_git` give agents the same
 - Status changes driven by pull request events
 - Agents can open pull requests
 

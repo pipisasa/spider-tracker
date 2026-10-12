@@ -7,3 +7,4 @@ export * from "./documents";
 export * from "./views";
 export * from "./github";
 export * from "./repos";
+export * from "./git";

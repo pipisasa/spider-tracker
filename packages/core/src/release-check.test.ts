@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkRelease, commitKeys, gitLogArgs, mergedBranch, parseGitLog, taskAppsFrom, touchesApp, type AppRange, type GitCommit } from "./release-check";
+import { checkRelease, releaseCommitKeys, gitLogArgs, mergedBranch, parseGitLog, taskAppsFrom, touchesApp, type AppRange, type GitCommit } from "./release-check";
 
 /** `git log` output in the format of gitLogArgs. */
 const log = (commits: { sha: string; parents?: string; subject: string; body?: string; files?: string[] }[]) =>
@@ -36,11 +36,11 @@ describe("parsing git log", () => {
     expect(mergedBranch("feat: x")).toBeNull();
 
     const commit = (subject: string, body = ""): GitCommit => ({ sha: "c", parents: ["p"], subject, body, files: [] });
-    expect(commitKeys(commit("feat: utf-8 names (ST-5)", "Fixes OPS-2"))).toEqual(["UTF-8", "ST-5", "OPS-2"]);
-    expect(commitKeys(commit("feat: utf-8 names (ST-5)", "Fixes OPS-2"), new Set(["ST", "OPS"]))).toEqual(["ST-5", "OPS-2"]);
-    expect(commitKeys({ ...commit("Merge branch 'st-7-cli'"), parents: ["a", "b"] })).toEqual(["ST-7"]);
+    expect(releaseCommitKeys(commit("feat: utf-8 names (ST-5)", "Fixes OPS-2"))).toEqual(["UTF-8", "ST-5", "OPS-2"]);
+    expect(releaseCommitKeys(commit("feat: utf-8 names (ST-5)", "Fixes OPS-2"), new Set(["ST", "OPS"]))).toEqual(["ST-5", "OPS-2"]);
+    expect(releaseCommitKeys({ ...commit("Merge branch 'st-7-cli'"), parents: ["a", "b"] })).toEqual(["ST-7"]);
     // A key only mentioned in the body isn't the commit's task.
-    expect(commitKeys(commit("feat(github): webhooks (ST-83)", "githubEventHandlers is the seam for ST-84."))).toEqual(["ST-83"]);
+    expect(releaseCommitKeys(commit("feat(github): webhooks (ST-83)", "githubEventHandlers is the seam for ST-84."))).toEqual(["ST-83"]);
   });
 
   test("files map to an app's folder and shared paths", () => {

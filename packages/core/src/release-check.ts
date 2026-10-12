@@ -60,7 +60,7 @@ export const isBranchMerge = (commit: GitCommit) => commit.parents.length > 1 &&
  * ("Fixes ST-12"), and the key of the branch it merges. Other keys in the body are only mentions
  * ("the seam for ST-84") and don't count. With `projects`, only keys of those projects ("UTF-8").
  */
-export function commitKeys(commit: GitCommit, projects?: Set<string>): string[] {
+export function releaseCommitKeys(commit: GitCommit, projects?: Set<string>): string[] {
   const keys = new Set([...taskKeysIn(commit.subject), ...closingKeysIn(commit.body)]);
   const branch = mergedBranch(commit.subject);
   const branchKey = branch ? taskKeyFromBranch(branch) : null;
@@ -104,7 +104,7 @@ export function taskAppsFrom(ranges: AppRange[], projects?: Set<string>): Record
   const result: Record<string, string[]> = {};
   for (const range of ranges) {
     for (const commit of touching(range)) {
-      for (const key of commitKeys(commit, projects)) {
+      for (const key of releaseCommitKeys(commit, projects)) {
         const apps = (result[key] ??= []);
         if (!apps.includes(range.name)) apps.push(range.name);
       }
@@ -149,17 +149,17 @@ export function checkRelease(input: {
       since: range.since,
       until: range.until,
       commits: commits.length,
-      tasks: sortKeys(commits.flatMap((c) => commitKeys(c, projects))),
+      tasks: sortKeys(commits.flatMap((c) => releaseCommitKeys(c, projects))),
     };
   });
 
   const released = ranges.filter((r) => r.inRelease);
   const included = new Set(input.included.map((t) => t.key));
-  const mentioned = new Set(released.flatMap((r) => r.commits.flatMap((c) => commitKeys(c, projects))));
+  const mentioned = new Set(released.flatMap((r) => r.commits.flatMap((c) => releaseCommitKeys(c, projects))));
   const touchedBy = new Map<string, { apps: Set<string>; commits: Set<string> }>();
   for (const range of released) {
     for (const commit of touching(range)) {
-      for (const key of commitKeys(commit, projects)) {
+      for (const key of releaseCommitKeys(commit, projects)) {
         const entry = touchedBy.get(key) ?? { apps: new Set(), commits: new Set() };
         entry.apps.add(range.name);
         entry.commits.add(commit.sha.slice(0, 7));
