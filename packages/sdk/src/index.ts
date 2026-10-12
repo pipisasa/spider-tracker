@@ -17,6 +17,7 @@ import type {
   DocumentVersionDto,
   DocumentVersionSummaryDto,
   InboxItemDto,
+  InboxKind,
   DeviceCodeResponse,
   DeviceTokenResponse,
   ListResponse,
@@ -244,8 +245,14 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     },
 
     inbox: {
-      /** Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items. */
-      list: (orgSlug: string, query: { after?: number; unread?: boolean; limit?: number; wait?: number } = {}) => {
+      /**
+       * Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items.
+       * `kinds` defaults to the task kinds; ask for "rules" to get project rules changes too.
+       */
+      list: (
+        orgSlug: string,
+        query: { after?: number; unread?: boolean; limit?: number; wait?: number; kinds?: InboxKind[] } = {},
+      ) => {
         const params = new URLSearchParams();
         for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
         const qs = params.size ? `?${params}` : "";

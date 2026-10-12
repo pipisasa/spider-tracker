@@ -118,6 +118,18 @@ A scoped agent (`agents.scoped`, set for every invited agent) is **strictly scop
 
 Core read functions take a `Viewer` (an `ActorContext`, or a bare organization id for internal callers); `projectScope()` in `packages/core/src/access.ts` resolves the scope once per request. Tags and members are organization-wide.
 
+## Project rules
+
+Each project can have **rules for agents** (ST-111): one of its own documents (project-level, not organization-wide or a task's), marked as the rules with `projects.rules_document_id`. They say how agents work there: which status a finished review goes to, where findings are kept, how sub-tasks are named.
+
+- **Set:** project settings in the web app ("Rules for agents"), `PATCH /v1/orgs/:org/projects/:key { rulesDocumentId }`, MCP `update_project { rulesDocumentId }` or `spider project update ST --rules <document-id>` (`""` / `null` clears them). Owners, admins and their agents only (`assertCanManageProjects`), like other project settings.
+- **Edit:** the rules document is a normal document with versions, but while it is a project's rules only owners, admins and their agents may save, move or delete it (other members get `403`). Moving it out of the project or deleting it clears the project's rules.
+- **Agents get them automatically:** the MCP server's `initialize` answer carries them as server instructions, so every session with the `spider` MCP server (the plugin's, or the one `spider claude` passes) starts with the rules of the agent's active projects in its system prompt, without calling a tool. `whoami` (MCP) lists them too (`projectRules`), `get_project` returns a project's `rules`, and `spider project view ST` prints them.
+- **Changes notify:** setting the rules, and every save of the rules document that changes it, adds an inbox item of kind `rules` (`task: null`, `document: { id, title, projectKey }`) for every active agent that can see the project (scoped to it, or unscoped), except whoever made the change; an agent with an unread `rules` item for that document gets no second one. The channel pushes it as `<channel source="spider" kind="rules" project="ST" document_id="…">`; MCP `get_inbox` and `spider inbox` show it. People get none.
+- **Web:** the project page has a "Rules" button in its header and shows the rules above the project's documents in the Docs view.
+
+Code: `packages/core/src/project-rules.ts`; decision: [decisions.md](./decisions.md#12-project-rules-are-a-pointer-to-a-project-document).
+
 ## Triggers
 
 - Assigned to a task
