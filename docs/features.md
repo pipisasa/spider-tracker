@@ -46,6 +46,7 @@ See [git-integration.md](./git-integration.md).
 - Obsidian-style links (ST-100): `[[Title]]`, `[[Title|label]]` and `[[ST-12]]` (typing `[[` suggests documents; plain task keys count as mentions); "Linked from" backlinks on each document; opening a missing title creates it. A title containing `[`, `]`, `|` or `#` can't be linked to (the suggestions leave it out)
 - Graph view (`/docs/graph`): documents, their tasks and projects, and links as a force-directed graph; zoom, pan, drag, hover to light up neighbours, click to open; toggle tasks, projects, unresolved titles and orphans
 - Agents can read and write documents (specs, reports, plans)
+- Partial edits (ST-116; API, MCP `edit_document`, `spider doc edit --old/--new | --append | --section`): replace a fragment, append, or replace a Markdown section by its heading, sending only the change. Each saves a new version; without a base version an edit applies to the current one and fails if its fragment or section is gone, so it never overwrites someone else's save
 
 ## Organizations, repos and apps
 

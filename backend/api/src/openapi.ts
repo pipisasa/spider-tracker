@@ -21,6 +21,7 @@ import {
   markInboxReadInput,
   updateAgentInput,
   updateDocumentInput,
+  editDocumentInput,
   moveDocumentInput,
   updateProjectInput,
   updateTaskInput,
@@ -230,6 +231,7 @@ const schemas: Record<string, JsonSchema> = {
   }),
   CreateDocumentInput: fromZod(createDocumentInput),
   UpdateDocumentInput: fromZod(updateDocumentInput),
+  EditDocumentInput: fromZod(editDocumentInput),
   MoveDocumentInput: fromZod(moveDocumentInput),
   Invitation: object({
     id: string({ format: "uuid" }),
@@ -917,6 +919,16 @@ const paths = {
       responses: { "200": ok("Updated document", "Document"), ...errors },
     },
     delete: { operationId: "deleteDocument", summary: "Delete a document", responses: { "204": { description: "Deleted" }, ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/edit": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    post: {
+      operationId: "editDocument",
+      summary:
+        "Partial edits saved as one new version: replace a fragment ({ old, new, all? }; it must occur once unless all), append ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }). With baseVersion, 409 if saved since; without, applies to the current version. 409 when a fragment or section isn't there, 400 when ambiguous",
+      requestBody: body("EditDocumentInput"),
+      responses: { "200": ok("Edited document", "Document"), ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/move": {
     parameters: [orgSlug, pathParam("documentId", "Document id")],

@@ -44,6 +44,7 @@ import type {
   RelationInput,
   UpdateAgentInput,
   UpdateDocumentInput,
+  EditDocumentInput,
   MoveDocumentInput,
   UpdateProjectInput,
   UpdateSavedViewInput,
@@ -271,6 +272,9 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       /** Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. */
       update: (orgSlug: string, id: string, input: UpdateDocumentInput) =>
         request<DocumentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}`, input),
+      /** Partial edits (replace a fragment, append, replace a section), saved as one new version. */
+      edit: (orgSlug: string, id: string, input: EditDocumentInput) =>
+        request<DocumentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/edit`, input),
       move: (orgSlug: string, id: string, input: MoveDocumentInput) =>
         request<DocumentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/move`, input),
       delete: (orgSlug: string, id: string) => request<void>("DELETE", `${org(orgSlug)}/documents/${seg(id)}`),

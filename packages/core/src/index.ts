@@ -20,6 +20,7 @@ export * from "./activity-feed";
 export * from "./tags";
 export * from "./relations";
 export * from "./documents";
+export * from "./document-edits";
 export * from "./links";
 export * from "./invitations";
 export * from "./agent-invites";

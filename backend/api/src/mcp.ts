@@ -10,6 +10,7 @@ import {
   archiveProject,
   authenticateApiKey,
   createDocument,
+  editDocument,
   getDocument,
   getDocumentVersion,
   listDocuments,
@@ -610,7 +611,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "update_document",
     {
       description:
-        "Save a new version of a document. Only the fields you pass change; content replaces the whole text. Fails if someone saved since baseVersion: read it again with get_document and reapply your edit.",
+        "Save a new version of a document. Only the fields you pass change; content replaces the whole text (to change part of it, use edit_document). Fails if someone saved since baseVersion: read it again with get_document and reapply your edit.",
       inputSchema: {
         id: z.string().describe("Document id"),
         baseVersion: z.number().int().positive().describe("The version you read (from get_document)"),
@@ -621,6 +622,39 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     },
     ({ id, baseVersion, title, content, format }) =>
       run(async () => describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }))),
+  );
+
+  server.registerTool(
+    "edit_document",
+    {
+      description:
+        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        baseVersion: z.number().int().positive().optional().describe("The version you read; omit to edit the current version"),
+        edits: z
+          .array(
+            z.union([
+              z.strictObject({
+                old: z.string().describe("Exact text to replace"),
+                new: z.string().describe("Replacement text"),
+                all: z.boolean().optional().describe("Replace every occurrence"),
+              }),
+              z.strictObject({ append: z.string().describe("Text added at the end, on a new line") }),
+              z.strictObject({
+                section: z.string().describe('Heading of the section, e.g. "## Decisions"'),
+                content: z.string().describe("The section's new body, without the heading"),
+              }),
+            ]),
+          )
+          .min(1),
+      },
+    },
+    ({ id, baseVersion, edits }) =>
+      run(async () => {
+        const document = await editDocument(db, ctx, id, { baseVersion, edits });
+        return describeDocument(document);
+      }),
   );
 
   server.registerTool(

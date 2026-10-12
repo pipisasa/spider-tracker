@@ -16,6 +16,7 @@ import { MIN_CLI_HEADER } from "@repo/core/version";
 import type {
   BulkUpdateTasksInput,
   CreateTaskInput,
+  DocumentEdit,
   UpdateDocumentInput,
   UpdateProjectInput,
   UpdateTaskInput,
@@ -51,6 +52,16 @@ import {
   writeProjectSettings,
   type RunClaude,
 } from "./claude-setup";
+import {
+  DEFAULT_PERMISSION_MODE,
+  PERMISSION_MODES,
+  brokenHooks,
+  claudeCommand,
+  isPermissionMode,
+  permissionLine,
+  permissionModeFor,
+  type PermissionMode,
+} from "./claude-launch";
 import { branchNameFor, taskKeysIn } from "@repo/core/git";
 import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
 import { isCompiled } from "./self-update";
@@ -162,7 +173,19 @@ interface JsonOption {
   json?: boolean;
 }
 
-type DocEditOptions = JsonOption & { title?: string; format?: string; file?: string; baseVersion?: string; force?: boolean };
+type DocEditOptions = JsonOption & {
+  title?: string;
+  format?: string;
+  file?: string;
+  baseVersion?: string;
+  force?: boolean;
+  old?: string;
+  new?: string;
+  all?: boolean;
+  append?: boolean;
+  section?: string;
+  text?: string;
+};
 
 interface TaskFields extends JsonOption {
   title?: string;
@@ -781,6 +804,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         projects: a.saved.projects,
         source: a.saved.source,
         createdAt: a.saved.createdAt,
+        permissionMode: a.saved.permissionMode ?? null,
         default: a.ref === current?.ref,
       }));
       output(opts, { default: current?.ref ?? null, items }, () => {
@@ -809,6 +833,34 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       output(opts, { default: entry.ref }, () => `Default agent: ${entry.ref}`);
     },
   );
+
+  withJson(
+    agents
+      .command("permission-mode")
+      .description("show or set the Claude Code permission mode spider claude starts a saved agent in")
+      .argument("<agent>")
+      .argument("[mode]", `one of ${PERMISSION_MODES.join(", ")}`)
+      .option("--clear", "go back to the spider default (auto)"),
+  ).action(async (ref: string, mode: string | undefined, opts: JsonOption & { clear?: boolean }) => {
+    if (mode !== undefined && !isPermissionMode(mode)) {
+      throw usageError(`Unknown permission mode ${mode}. Use one of ${PERMISSION_MODES.join(", ")}`);
+    }
+    if (mode !== undefined && opts.clear) throw usageError("Give a mode or --clear, not both");
+    const store = await readStore(options.env);
+    const entry = findAgent(store, ref);
+    if (mode !== undefined || opts.clear) {
+      const saved = store.servers[entry.server]?.orgs[entry.org]?.agents[entry.agent];
+      if (saved) {
+        if (mode === undefined) delete saved.permissionMode;
+        else saved.permissionMode = mode;
+      }
+      await writeStore(options.env, store);
+    }
+    const current = mode ?? (opts.clear ? undefined : entry.saved.permissionMode);
+    output(opts, { agent: entry.ref, permissionMode: current ?? null, effective: current ?? DEFAULT_PERMISSION_MODE }, () =>
+      current ? `${entry.ref} starts in ${current}` : `${entry.ref} starts in ${DEFAULT_PERMISSION_MODE} (the spider default)`,
+    );
+  });
 
   withJson(
     agents
@@ -844,7 +896,12 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     .argument("[agent]", "handle, org/handle or server/org/handle (default: pick one, or the default agent)")
     .argument("[claudeArgs...]", "arguments for claude, after --")
     .option("--no-channel", "don't push the agent's inbox into the session")
-    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean }) => {
+    .addOption(
+      new Option("--permission-mode <mode>", "the permission mode to start in (default: the agent's, see spider agents permission-mode, else auto)").choices(
+        PERMISSION_MODES,
+      ),
+    )
+    .action(async (named: string | undefined, rest: string[], opts: { channel: boolean; permissionMode?: PermissionMode }) => {
       // Everything after "--" goes to claude; an agent is only an operand before it.
       const dash = argv.indexOf("--");
       const extra = dash >= 0 ? argv.slice(dash + 1) : rest;
@@ -880,20 +937,27 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const config = join(dir, "mcp.json");
       await writeFile(config, `${JSON.stringify(claudeMcpConfig(entry, self, opts.channel), null, 2)}\n`, { mode: 0o600 });
       const agentName = extra.includes("--agent") ? undefined : await claudeAgentFor(options.env, entry);
-      const command = [
-        "claude",
-        ...extra,
-        ...(agentName ? ["--agent", agentName] : []),
-        // Both options take several values, so they come last.
-        "--mcp-config",
-        config,
-        ...(opts.channel ? ["--dangerously-load-development-channels", "server:spider-channel"] : []),
-      ];
+      if (opts.permissionMode && (extra.includes("--dangerously-skip-permissions") || extra.some((a) => a === "--permission-mode" || a.startsWith("--permission-mode=")))) {
+        throw usageError("Give the permission mode once: spider claude --permission-mode, or after --, not both");
+      }
+      const permission = permissionModeFor(opts.permissionMode, extra, entry.saved.permissionMode);
+      const command = claudeCommand({ claudeArgs: extra, agent: agentName, mcpConfig: config, channel: opts.channel, permission });
       // The child acts as this agent: its mcp-headers and channel resolve SPIDER_AGENT, never a stray SPIDER_TOKEN.
       const env: Record<string, string | undefined> = { ...options.env, SPIDER_AGENT: entry.ref };
       delete env.SPIDER_TOKEN;
       if (noticeAllowed(argv, options.env, options.isInteractive)) await startNotice(options.env, httpFetch, (l) => stderr.write(l))();
       stderr.write(`Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`);
+      stderr.write(`${permissionLine(permission)}\n`);
+      if (opts.channel) {
+        stderr.write(
+          "Inbox channel: Claude Code asks to confirm development channels at every start (no setting skips it); choose \"I am using this for local development\", or use --no-channel\n",
+        );
+      }
+      for (const hook of await brokenHooks(options.env, cwd)) {
+        stderr.write(
+          `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`,
+        );
+      }
       try {
         result.exitCode = await options.spawn(command, { env });
       } finally {
@@ -1631,21 +1695,35 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   withJson(
     doc
       .command("edit")
-      .description("save a new version of a document; fails if someone saved it after --base-version")
+      .description(
+        "save a new version of a document: replace its content (--file, with --base-version or --force), " +
+          "or change part of it (--old/--new, --append, --section) without resending the rest",
+      )
       .argument("<id>")
       .option("--title <text>", "new title")
       .option("--format <md|html>", "new format")
-      .option("--file <path>", 'new content from a file, or "-" for standard input')
+      .option("--file <path>", 'new content from a file, or "-" for standard input; with --append or --section, the text to write')
+      .option("--old <text>", "replace this exact fragment (it must occur once; see --all) with --new")
+      .option("--new <text>", "the fragment's replacement")
+      .option("--all", "with --old: replace every occurrence")
+      .option("--append", "add --text or --file to the end, on a new line")
+      .option("--section <heading>", 'replace the body of this Markdown section (e.g. "## Decisions") with --text or --file')
+      .option("--text <text>", "the text for --append or --section")
       .option("--base-version <n>", "the version your edit is based on (from doc view / doc list)")
       .option("--force", "without --base-version: save on top of whatever the current version is"),
   ).action(async (id: string, opts: DocEditOptions) => {
+    const partial = opts.old !== undefined || opts.append === true || opts.section !== undefined;
+    if (partial) return editDocumentPart(id, opts);
+    if (opts.new !== undefined || opts.all || opts.text !== undefined) {
+      throw usageError("--new and --all go with --old; --text goes with --append or --section");
+    }
     if (opts.title === undefined && opts.format === undefined && opts.file === undefined) {
-      throw usageError("Nothing to change. Pass --title, --format or --file");
+      throw usageError("Nothing to change. Pass --title, --format or --file, or a partial edit (--old/--new, --append, --section)");
     }
     // ST-21: the base version must be the one the edit was made from, not one re-read just before saving.
     if (opts.baseVersion === undefined && !opts.force) {
       throw usageError(
-        "Pass --base-version <n> (the version you read with doc view) so a newer save isn't overwritten, or --force to overwrite whatever is current",
+        "Pass --base-version <n> (the version you read with doc view) so a newer save isn't overwritten, or --force to overwrite whatever is current. To change part of the document, use --old/--new, --append or --section instead",
       );
     }
     const baseVersion = opts.baseVersion === undefined ? undefined : parseVersion(opts.baseVersion);
@@ -1662,6 +1740,40 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       saved.version === current.version ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
     );
   });
+
+  /**
+   * One partial edit (ST-116). Without --base-version it applies to the current version and
+   * fails (conflict) if the fragment or section isn't there, so it never overwrites anyone.
+   */
+  async function editDocumentPart(id: string, opts: DocEditOptions) {
+    const modes = [opts.old !== undefined, opts.append === true, opts.section !== undefined].filter(Boolean).length;
+    if (modes > 1) throw usageError("Pass one of --old/--new, --append or --section");
+    if (opts.title !== undefined || opts.format !== undefined) {
+      throw usageError("--title and --format can't be combined with a partial edit; change them in a separate doc edit");
+    }
+    let edit: DocumentEdit;
+    if (opts.old !== undefined) {
+      if (opts.new === undefined) throw usageError('--old needs --new (use --new "" to delete the fragment)');
+      if (opts.text !== undefined || opts.file !== undefined) throw usageError("--old/--new take the text inline; --text and --file go with --append or --section");
+      edit = { old: opts.old, new: opts.new, ...(opts.all ? { all: true } : {}) };
+    } else {
+      if (opts.new !== undefined || opts.all) throw usageError("--new and --all go with --old");
+      if ((opts.text !== undefined) === (opts.file !== undefined)) {
+        throw usageError(`${opts.append ? "--append" : "--section"} needs the text: pass --text <text> or --file <path|->`);
+      }
+      const text = opts.text ?? (await readContent(opts.file ?? "-"));
+      edit = opts.section !== undefined ? { section: opts.section, content: text } : { append: text };
+    }
+    const baseVersion = opts.baseVersion === undefined ? undefined : parseVersion(opts.baseVersion);
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const slug = await org();
+    const before = baseVersion ?? (await client.documents.get(slug, id)).version;
+    const saved = await client.documents.edit(slug, id, { baseVersion, edits: [edit] });
+    output(opts, saved, () =>
+      saved.version === before ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
+    );
+  }
 
   withJson(
     doc

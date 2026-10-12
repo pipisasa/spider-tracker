@@ -579,6 +579,39 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "view", "00000000-0000-7000-8000-000000000000")).code).toBe(3);
   });
 
+  test("docs: partial edits with --old/--new, --append and --section, no --force needed (ST-116)", async () => {
+    stdin = "# Plan\n\nIntro.\n\n## Decisions\n\nOld.\n\n## Next\n\nLater.\n";
+    const created = (await spider("doc", "create", "--title", "Plan", "--project", "SPI", "--file", "-", "--json")).json();
+    const id = created.id as string;
+
+    expect((await spider("doc", "edit", id, "--old", "Intro.", "--new", "Hello.")).stdout).toBe("Saved Plan as version 2\n");
+    stdin = "New.\n";
+    expect((await spider("doc", "edit", id, "--section", "## Decisions", "--file", "-", "--base-version", "2")).stdout).toBe(
+      "Saved Plan as version 3\n",
+    );
+    const appended = (await spider("doc", "edit", id, "--append", "--text", "Done.", "--json")).json();
+    expect(appended).toMatchObject({
+      version: 4,
+      content: "# Plan\n\nHello.\n\n## Decisions\n\nNew.\n\n## Next\n\nLater.\nDone.",
+    });
+    expect((await spider("doc", "edit", id, "--old", "Done.", "--new", "Done.")).stdout).toBe("No changes to Plan\n");
+
+    const missing = await spider("doc", "edit", id, "--old", "Intro.", "--new", "x", "--json");
+    expect(missing.code).toBe(2);
+    expect(missing.stderr).toContain('"code":"conflict"');
+    const stale = await spider("doc", "edit", id, "--append", "--text", "late", "--base-version", "3");
+    expect(stale.code).toBe(2);
+    expect((await spider("doc", "edit", id, "--old", "e", "--new", "E")).code).toBe(2);
+
+    // Usage errors: a partial edit is one of the three, with its text.
+    expect((await spider("doc", "edit", id, "--old", "Hello.")).code).toBe(2);
+    expect((await spider("doc", "edit", id, "--append")).code).toBe(2);
+    expect((await spider("doc", "edit", id, "--append", "--text", "a", "--section", "## Next")).code).toBe(2);
+    expect((await spider("doc", "edit", id, "--old", "a", "--new", "b", "--title", "T")).code).toBe(2);
+    expect((await spider("doc", "edit", id, "--text", "a", "--force")).code).toBe(2);
+    expect((await spider("doc", "view", id, "--json")).json()).toMatchObject({ version: 4, title: "Plan" });
+  });
+
   test("docs: move to the organization and back to a project", async () => {
     stdin = "# Movable";
     const created = (await spider("doc", "create", "--title", "Movable", "--project", "SPI", "--file", "-", "--json")).json();

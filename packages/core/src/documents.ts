@@ -19,6 +19,7 @@ import type {
   DocumentVersionDto,
   DocumentVersionSummaryDto,
 } from "./contracts";
+import { applyDocumentEdits } from "./document-edits";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
@@ -26,6 +27,8 @@ import { normalizeTitle, outgoingLinksIn, resolveTitle } from "./links";
 import {
   createDocumentInput,
   documentListQuery,
+  editDocumentInput,
+  MAX_DOCUMENT_BYTES,
   moveDocumentInput,
   updateDocumentInput,
 } from "./schemas";
@@ -287,63 +290,111 @@ export async function updateDocument(
 
   return db.transaction(async (tx) => {
     const { document: current, scope } = await findDocument(tx, ctx, id, true);
-    const version = current.version;
-    if (data.baseVersion !== version) {
-      throw new DomainError(
-        "conflict",
-        `The document was changed since version ${data.baseVersion} (it is now at version ${version}). Reload it and apply your edit again`,
-      );
-    }
-
-    const next = {
+    assertBaseVersion(current, data.baseVersion);
+    return saveVersion(tx, ctx, current, scope, {
       title: data.title ?? current.title,
       format: data.format ?? current.format,
       content: data.content ?? current.content,
-    };
-    const changed = (["title", "format", "content"] as const).filter(
-      (field) => next[field] !== current[field],
-    );
-    if (changed.length === 0) return toDocumentDto(current, scope);
-
-    const [updated] = await tx
-      .update(documents)
-      .set({
-        ...next,
-        version: version + 1,
-        authorId: ctx.actorId,
-        updatedAt: new Date(),
-      })
-      .where(eq(documents.id, current.id))
-      .returning();
-    if (!updated) throw new Error("Failed to update document");
-    if (changed.includes("content")) await writeLinks(tx, updated.id, updated.content);
-
-    await tx.insert(documentVersions).values({
-      documentId: updated.id,
-      version: updated.version,
-      title: updated.title,
-      format: updated.format,
-      content: updated.content,
-      authorId: ctx.actorId,
     });
-    await recordActivity(tx, ctx, {
-      entityType: "document",
-      entityId: updated.id,
-      action: "document.updated",
-      changes: {
-        version: [version, updated.version],
-        fields: changed,
-        ...(changed.includes("title")
-          ? { title: [current.title, updated.title] }
-          : {}),
-        ...(changed.includes("format")
-          ? { format: [current.format, updated.format] }
-          : {}),
-      },
-    });
-    await announce(tx, ctx, "document.changed", updated.id, scope);
-    return toDocumentDto(updated, scope);
   });
+}
+
+/**
+ * Applies partial edits (ST-116: replace a fragment, append, replace a Markdown section) and
+ * saves the result as one new version. With `baseVersion` it fails on a newer save, like
+ * updateDocument; without it the edits apply to the current version under the row lock, so a
+ * concurrent save can't be overwritten: a fragment that is no longer there is a "conflict".
+ */
+export async function editDocument(
+  db: Db,
+  ctx: ActorContext,
+  id: string,
+  input: unknown,
+): Promise<DocumentDto> {
+  assertCanWrite(ctx);
+  const data = parseInput(editDocumentInput, input);
+
+  return db.transaction(async (tx) => {
+    const { document: current, scope } = await findDocument(tx, ctx, id, true);
+    if (data.baseVersion !== undefined) assertBaseVersion(current, data.baseVersion);
+    const content = applyDocumentEdits(current.content, current.format, data.edits);
+    if (new TextEncoder().encode(content).length > MAX_DOCUMENT_BYTES) {
+      throw new DomainError("validation", "The edited document would be over 1 MB");
+    }
+    return saveVersion(
+      tx,
+      ctx,
+      current,
+      scope,
+      { title: current.title, format: current.format, content },
+      { edits: data.edits.map((e) => ("old" in e ? "replace" : "append" in e ? "append" : "section")) },
+    );
+  });
+}
+
+function assertBaseVersion(current: DocumentRow, baseVersion: number) {
+  if (baseVersion !== current.version) {
+    throw new DomainError(
+      "conflict",
+      `The document was changed since version ${baseVersion} (it is now at version ${current.version}). Reload it and apply your edit again`,
+    );
+  }
+}
+
+/** Saves `next` as a new version of the locked `current` row; returns it unchanged when nothing differs. */
+async function saveVersion(
+  tx: Tx,
+  ctx: ActorContext,
+  current: DocumentRow,
+  scope: Scope,
+  next: Pick<DocumentRow, "title" | "format" | "content">,
+  details: Record<string, unknown> = {},
+): Promise<DocumentDto> {
+  const version = current.version;
+  const changed = (["title", "format", "content"] as const).filter(
+    (field) => next[field] !== current[field],
+  );
+  if (changed.length === 0) return toDocumentDto(current, scope);
+
+  const [updated] = await tx
+    .update(documents)
+    .set({
+      ...next,
+      version: version + 1,
+      authorId: ctx.actorId,
+      updatedAt: new Date(),
+    })
+    .where(eq(documents.id, current.id))
+    .returning();
+  if (!updated) throw new Error("Failed to update document");
+  if (changed.includes("content")) await writeLinks(tx, updated.id, updated.content);
+
+  await tx.insert(documentVersions).values({
+    documentId: updated.id,
+    version: updated.version,
+    title: updated.title,
+    format: updated.format,
+    content: updated.content,
+    authorId: ctx.actorId,
+  });
+  await recordActivity(tx, ctx, {
+    entityType: "document",
+    entityId: updated.id,
+    action: "document.updated",
+    changes: {
+      version: [version, updated.version],
+      fields: changed,
+      ...(changed.includes("title")
+        ? { title: [current.title, updated.title] }
+        : {}),
+      ...(changed.includes("format")
+        ? { format: [current.format, updated.format] }
+        : {}),
+      ...details,
+    },
+  });
+  await announce(tx, ctx, "document.changed", updated.id, scope);
+  return toDocumentDto(updated, scope);
 }
 
 /**

@@ -35,6 +35,7 @@ import {
   deleteTask,
   createDocument,
   deleteDocument,
+  editDocument,
   getDocument,
   getDocumentGraph,
   getDocumentVersion,
@@ -318,6 +319,11 @@ export function orgRoutes(db: Db, realtime: Realtime) {
 
   app.patch("/documents/:documentId", async (c) =>
     c.json(await updateDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
+  );
+
+  // POST { baseVersion?, edits: [{ old, new, all? } | { append } | { section, content }] }: partial edits (ST-116).
+  app.post("/documents/:documentId/edit", async (c) =>
+    c.json(await editDocument(db, c.get("actor"), c.req.param("documentId"), await body(c))),
   );
 
   // POST { project: "KEY" | null }: move to a project, or make the document organization-wide.
