@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { MIN_CLI_VERSION, type MeResponse, type MembershipDto } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { SpiderApiError, createClient } from "@repo/sdk";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { createApp } from "./app";
 import { createAuth } from "./auth";
 import { loadEnv } from "./env";
@@ -498,7 +498,13 @@ withDb("SDK and client-declared source", () => {
     expect(applied.results.map((r) => r.key)).toEqual(keys);
     expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(2);
 
-    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, kids[0]?.id ?? ""));
+    // Ordered by id: without ORDER BY, Postgres returns heap order, which after deletes from other
+    // tests sharing the database needn't be insertion order (ST-120).
+    const log = await db
+      .select()
+      .from(schema.activity)
+      .where(eq(schema.activity.entityId, kids[0]?.id ?? ""))
+      .orderBy(asc(schema.activity.id));
     expect(log.map((e) => e.action)).toEqual(["task.created", "task.updated", "task.updated"]);
 
     const bad = await client.tasks.bulkUpdate(slug, { keys, filter, set: { priority: 1 } }).catch((e: unknown) => e);

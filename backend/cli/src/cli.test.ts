@@ -161,6 +161,16 @@ describe("exit codes", () => {
     expect(result.stderr).toBe("spider: Unable to connect\n");
   });
 
+  test("an error response without a JSON body still prints a message (ST-107)", async () => {
+    // A proxy's HTML page over HTTP/2, which has no status text.
+    const proxy = fakeApi({ "GET /v1/whoami": () => new Response("<html>Bad gateway</html>", { status: 502 }) });
+    const result = await cli(["whoami"], { fetch: proxy.fetch });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe("spider: GET /v1/whoami failed with HTTP 502\n");
+    const json = await cli(["whoami", "--json"], { fetch: proxy.fetch });
+    expect(JSON.parse(json.stderr)).toEqual({ error: { code: "unknown", message: "GET /v1/whoami failed with HTTP 502" } });
+  });
+
   test("--help and --version exit 0 without a token", async () => {
     const help = await cli(["task", "--help"], { env: {} });
     expect(help.code).toBe(0);
@@ -342,6 +352,30 @@ describe("saved agents", () => {
       const ambiguous = await cli(["mcp-headers", "--as", "writer"], { env });
       expect(ambiguous.code).toBe(2);
       expect(ambiguous.stderr).toContain("prod/acme/writer, local/acme/writer");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("not found as an agent limited to some projects names the agent and its projects (ST-107)", async () => {
+    const { env, cleanup } = savedAgents();
+    try {
+      // The default agent sees only ST, so ANT-49 reads as missing: say who acted.
+      const scoped = await cli(["task", "update", "ANT-49", "--status", "Todo", "--priority", "1"], { env });
+      expect(scoped.code).toBe(3);
+      expect(scoped.stderr).toBe(
+        "spider: Task not found (acting as prod/acme/reviewer, the default agent, which sees only ST; pass --as <agent> to act as another)\n",
+      );
+      const json = await cli(["task", "update", "ANT-49", "--status", "Todo", "--json"], { env: { ...env, SPIDER_AGENT: "reviewer" } });
+      expect(JSON.parse(json.stderr)).toEqual({
+        error: {
+          code: "not_found",
+          message: "Task not found (acting as prod/acme/reviewer, named by SPIDER_AGENT, which sees only ST; pass --as <agent> to act as another)",
+        },
+      });
+      // An agent that sees every project gets the plain message.
+      const unscoped = await cli(["task", "view", "ANT-49", "--as", "prod/acme/writer"], { env });
+      expect(unscoped).toMatchObject({ code: 3, stderr: "spider: Task not found\n" });
     } finally {
       cleanup();
     }
