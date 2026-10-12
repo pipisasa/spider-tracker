@@ -25,6 +25,12 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 
 Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
+### Releases and changelogs within an agent's project scope (ST-93, ST-95 follow-up)
+
+- **API (behavior change for project-scoped agents):** releasing, unreleasing, canceling or deleting a release that includes tasks outside the agent's projects is refused (`403`, without naming them); so is writing its changelog. A release's `repos`, `apps` and `deployments` list only those in repos attached to the agent's projects, `PATCH …/releases/:key { repos, apps }` from it keeps the links it can't see, and `release deploy` only finds apps it can see. Task activity no longer names a release the reader can't see: `task.shipped`/`task.unshipped` read `{ releaseId, release, version }` (all null when hidden), a hidden `releaseId` reads `"hidden"`, and a release's `repos`/`apps`/`release.deployed` entries drop hidden repos.
+- **Changelog (behavior change):** the generated changelog holds only the tasks of the release's own project and its apps in repos attached to that project, for every reader (other projects' titles and notes are never written into the description). Marker strings and leading `#`, `*`, `_` in titles and notes are escaped; `#` lines inside fenced code in a note stay as they are.
+- **CLI:** `spider release check` warns when an app of the release has no earlier tag (run `git fetch --tags`, or pass `--since`).
+
 ### Deployments (ST-94)
 
 - **API:** new `POST /v1/orgs/:org/releases/:key/deployments` (`{ app, repo?, environment, commitSha }`, 201 with `{ deployment, release, movedFrom }`) and `GET …/releases/:key/deployments[?app=&environment=]`. A deployment is one of the release's apps deployed to one of the app's environments at a commit, by whom, when (`DeploymentDto`, with `production` for the app's last environment). Releases carry `deployments` (newest first). The first deployment moves a Planned release to On staging as the `@spider` bot; nothing moves a release backwards. **Behavior change:** moving a release to Released is refused until every app with environments has a deployment to its last one (prod); apps without environments, like the CLI, are exempt. SDK: `releases.deploy`, `releases.deployments`.

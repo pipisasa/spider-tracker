@@ -714,7 +714,7 @@ export async function applyTaskUpdate(
       if (!isClosed && wasClosed) patch.completedAt = null;
       // A release marked Released ships its tasks; leaving Released or canceling undoes that (ST-93).
       if (task.kind === "release" && previous) {
-        const shipped = await applyReleaseTransition(tx, ctx, { ...task, key: `${projectKey}-${task.number}` }, previous.category, status.category, now);
+        const shipped = await applyReleaseTransition(tx, ctx, scope, { ...task, key: `${projectKey}-${task.number}` }, previous.category, status.category, now);
         if (shipped !== undefined) patch.shippedAt = shipped;
       }
     }
@@ -887,7 +887,7 @@ export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Pr
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.deleted" });
     await publish(tx, { type: "task.deleted", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
     // A deleted release no longer holds its tasks (ST-93); shipped ones stay shipped.
-    if (task.kind === "release") await releaseTasksOnDelete(tx, ctx, task.id);
+    if (task.kind === "release") await releaseTasksOnDelete(tx, ctx, await projectScope(tx, ctx), { id: task.id, key: `${projectKey}-${task.number}` });
     // A deleted milestone no longer holds its tasks (ST-96).
     if (task.kind === "milestone") await milestoneTasksOnDelete(tx, ctx, task.id);
 

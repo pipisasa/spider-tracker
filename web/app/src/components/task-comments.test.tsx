@@ -45,3 +45,13 @@ test("a move by status automation names the pull request event and who sent it (
   );
   expect(describe({ statusId: ["s1", "s2"], pullRequest: "odd" })).toBe("moved In Review → Done");
 });
+
+test("shipping and deployments of releases the viewer can't see read without naming them (ST-93, ST-94)", () => {
+  const entry = (action: string, changes: Record<string, unknown>): ActivityDto => ({ ...update(changes), action });
+  const describe = (e: ActivityDto) => describeActivity(e, [], new Map(), tags);
+  expect(describe(entry("task.shipped", { releaseId: "r", release: "ST-1", version: "2026.10.13" }))).toBe("shipped in 2026.10.13");
+  expect(describe(entry("task.shipped", { releaseId: null, release: null, version: null }))).toBe("shipped in a release");
+  expect(describe(entry("release.deployed", { app: "web", environment: "prod", commitSha: "3f2c1ab9" }))).toBe("deployed web to prod at 3f2c1ab");
+  expect(describe(entry("release.deployed", { app: null, repo: null, environment: null, commitSha: null }))).toBe("deployed an app");
+  expect(describe(update({ releaseId: [null, "hidden"] }))).toBe("added it to a release");
+});

@@ -679,7 +679,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     "get_release_changelog",
     {
       description:
-        "Get a release's changelog, generated from its included tasks: each task's title plus the \"What changed\" section of its handoff note (the latest comment with one by an assignee, else by anyone), with a section per app for a one-app release. description.state says whether the release's description has it: missing, current, outdated (generated earlier) or edited (by hand). write: true saves it into the description (replacing the changelog block, keeping the rest); an edited block is refused unless force: true. Grouping a multi-app release by app needs local git: spider release changelog ST-NN --write.",
+        "Get a release's changelog, generated from its included tasks of the release's own project (other projects' tasks are left out): each task's title plus the \"What changed\" section of its handoff note (the latest comment with one by an assignee, else by anyone), with a section per app for a one-app release. description.state says whether the release's description has it: missing, current, outdated (generated earlier) or edited (by hand). write: true saves it into the description (replacing the changelog block, keeping the rest); an edited block is refused unless force: true, and a project-scoped agent can't write it when the release includes tasks outside its projects. Grouping a multi-app release by app needs local git: spider release changelog ST-NN --write.",
       inputSchema: {
         key: releaseKeyInput,
         write: z.boolean().optional().describe("Save it into the release's description"),

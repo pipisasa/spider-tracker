@@ -210,6 +210,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - `shipped_at` on each task keeps "when did this reach users" readable without a join, and lets a release's status move back (Released → Release review) by clearing it.
 - "No code" can't be derived yet: commits are linked to tasks only in a later step (ST-84). An explicit flag is the conservative choice; once commits are linked, "no commits and no apps" can be its default.
 - Releasing refuses while an included task isn't Done, and canceling or deleting a release takes its tasks out, so `release_id` always points at a release that can still ship them.
+- Agents can move a release to Released, like people: shipping only sets `shipped_at` and never changes an included task's status, so the rule that only a person marks tasks Done holds. Since ST-94 Released is gated by deployments (every app with environments in production). A project-scoped agent makes the moves that write to every included task (Released, back out of it, Canceled, delete) only when it can see all of them; otherwise it is refused without naming the hidden tasks. Activity on included tasks stores the release's id, resolved for each reader, so a release the reader can't see isn't named.
 
 **Trade-off:** `release_id` is a self-reference on `tasks`, so the database can't check that it points at a release or that the task is Done; core enforces both. A task reopened after it was added stays in the release and blocks Released until it is Done again.
 
@@ -222,6 +223,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 - An explicit write keeps the description editable: automatic regeneration on every task change would overwrite the release owner's wording. The hash notices edits without storing a second copy.
 - The server has no clone of the repo and no permission to push tags or create GitHub releases, and commit links (ST-84) aren't there yet. The local clone has everything, and every git call goes through the CLI's injected runner, so tests fake it.
 - Keys count from commit subjects, closing keywords and merged branch names only: commit bodies often mention other tasks ("the seam for ST-84").
+- The description is readable by everyone who can see the release, so the changelog never publishes other projects' data: it holds only the tasks of the release's own project and its apps in repos attached to that project. Included tasks of other projects are left out, even when the writer can see them (they are listed in their own project's releases' changelogs, or written by hand). This also makes the changelog the same for every reader. A project-scoped writer is refused when the release includes tasks it can't see.
 
 **Trade-off:** a multi-app changelog written over MCP isn't grouped by app (the server can't tell which task touched which app) until ST-84 links commits; the CLI groups it. The check depends on the local clone being up to date and on app tags (`web-2026.10.13`, `cli-v0.1.8`) existing; an app never tagged is compared from `--since` or the start of history.
 

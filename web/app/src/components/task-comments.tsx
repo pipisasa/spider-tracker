@@ -56,7 +56,9 @@ export function describeActivity(
   // Deployments (ST-94): "deployed web to staging at 3f2c1ab".
   if (entry.action === "release.deployed" && entry.changes) {
     const { app, environment, commitSha } = entry.changes;
-    return `deployed ${String(app)} to ${String(environment)} at ${String(commitSha).slice(0, 7)}`;
+    // An app in a repo the viewer can't see comes without its details.
+    if (typeof app !== "string") return "deployed an app";
+    return `deployed ${app} to ${String(environment)} at ${String(commitSha).slice(0, 7)}`;
   }
   if (entry.action !== "task.updated" || !entry.changes) return null;
   const parts: string[] = [];
