@@ -233,7 +233,7 @@ function OrgLayout() {
         {sidebar}
       </aside>
 
-      <div id="org-content" data-scroll-restoration-id="org-content" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+      <div id="org-content" data-scroll-restoration-id="org-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
         <Outlet />
       </div>
 
