@@ -1,6 +1,7 @@
 import type { DocumentSummaryDto } from "@repo/core/contracts";
 import {
   documentIdTarget,
+  isLinkableTitle,
   normalizeTitle,
   resolveTitle,
   taskKeyTarget,
@@ -43,9 +44,6 @@ export function wikiLabel(
   return id ? (documents.find((d) => d.id === id)?.title ?? null) : null;
 }
 
-/** Characters a `[[link]]` target can't contain: brackets end it, `|` starts a label, `#` a heading. */
-export const UNLINKABLE = /[[\]|#]/;
-
 /**
  * Documents to offer after `[[query`: titles starting with the query first, then containing it;
  * the same project's before others; never the document being edited. A task key offers the task.
@@ -58,8 +56,8 @@ export function wikiSuggestions(
   const q = normalizeTitle(query);
   const scored: { doc: DocumentSummaryDto; score: number }[] = [];
   for (const doc of documents) {
-    // `[[…]]` can't hold these: a title with them can't be linked to (docs/features.md).
-    if (doc.id === excludeId || UNLINKABLE.test(doc.title)) continue;
+    // A title with `[`, `]`, `|` or `#` can't be linked to by title (docs/features.md).
+    if (doc.id === excludeId || !isLinkableTitle(doc.title)) continue;
     const title = normalizeTitle(doc.title);
     const at = q ? title.indexOf(q) : 0;
     if (at < 0) continue;

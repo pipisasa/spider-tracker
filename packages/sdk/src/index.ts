@@ -30,6 +30,7 @@ import type {
   TagDto,
   SubtaskDto,
   TaskDto,
+  UpdatedDocumentDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
 import type {
@@ -273,14 +274,17 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       get: (orgSlug: string, id: string) => request<DocumentDto>("GET", `${org(orgSlug)}/documents/${seg(id)}`),
       /** Every visible document, the tasks and projects around them, and their links. */
       graph: (orgSlug: string) => request<DocumentGraphDto>("GET", `${org(orgSlug)}/documents/graph`),
-      /** Documents linking here with `[[its title]]`, most recently updated first. */
+      /** Documents linking here with `[[its title]]` or `[[doc:<id>]]`, most recently updated first. */
       backlinks: (orgSlug: string, id: string) =>
         request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/backlinks`),
       create: (orgSlug: string, input: CreateDocumentInput) =>
         request<DocumentDto>("POST", `${org(orgSlug)}/documents`, input),
-      /** Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. */
+      /**
+       * Saves a new version; fails with 409 "conflict" if someone saved since `baseVersion`. A rename
+       * rewrites `[[Old title]]` links in the documents linking here and reports them in `relinked`.
+       */
       update: (orgSlug: string, id: string, input: UpdateDocumentInput) =>
-        request<DocumentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}`, input),
+        request<UpdatedDocumentDto>("PATCH", `${org(orgSlug)}/documents/${seg(id)}`, input),
       /** Partial edits (replace a fragment, append, replace a section), saved as one new version. */
       edit: (orgSlug: string, id: string, input: EditDocumentInput) =>
         request<DocumentDto>("POST", `${org(orgSlug)}/documents/${seg(id)}/edit`, input),
@@ -345,6 +349,9 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
             `${org(orgSlug)}/tasks/${seg(taskKey)}/relations?${new URLSearchParams({ kind: input.kind, task: input.task })}`,
           ),
       },
+      /** Documents mentioning the task (`[[ST-12]]` or a plain ST-12), most recently updated first; not its own. */
+      backlinks: (orgSlug: string, taskKey: string) =>
+        request<ListResponse<DocumentSummaryDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/backlinks`),
       /** Direct sub-tasks, oldest first. */
       subtasks: (orgSlug: string, taskKey: string) =>
         request<ListResponse<SubtaskDto>>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}/subtasks`),

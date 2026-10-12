@@ -28,12 +28,52 @@ export function parseWikiLink(inner: string, label?: string | null): WikiLink | 
   return { target, label: shown ? shown : null };
 }
 
+/** Code, in the order it is taken out: fenced blocks, HTML <pre>/<code> elements, inline code spans. */
+const CODE = [
+  /^(```|~~~)[^\n]*\n[\s\S]*?(?:^\1[^\S\n]*$|(?![\s\S]))/gm,
+  /<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi,
+  /(`+)[\s\S]*?\1/g,
+];
+
 /** Text without code: fenced blocks, inline code spans and HTML <pre>/<code> elements. */
 function withoutCode(text: string): string {
-  return text
-    .replace(/^(```|~~~)[^\n]*\n[\s\S]*?(?:^\1[^\S\n]*$|(?![\s\S]))/gm, " ")
-    .replace(/<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
-    .replace(/(`+)[\s\S]*?\1/g, " ");
+  return CODE.reduce((rest, code) => rest.replace(code, " "), text);
+}
+
+/** The same code blanked out with spaces instead, so offsets into the text still hold. */
+function maskCode(text: string): string {
+  return CODE.reduce((rest, code) => rest.replace(code, (match) => match.replace(/[^\n]/g, " ")), text);
+}
+
+/**
+ * Whether `[[title]]` links to a document of this title: not when it holds `[`, `]`, `|` or `#`
+ * (they end the link or start a label or heading), or reads as a task key or a `doc:<id>`.
+ */
+export function isLinkableTitle(title: string): boolean {
+  return title.trim() !== "" && !/[[\]|#\n]/.test(title) && !taskKeyTarget(title) && !documentIdTarget(title);
+}
+
+/**
+ * `content` with its `[[oldTitle]]` links (any case or spacing, keeping a `#heading` and a
+ * `|label`) leading to `newTarget` instead: a new title or a `doc:<id>` (ST-101). Links in code
+ * stay as written.
+ */
+export function retargetTitleLinks(content: string, oldTitle: string, newTarget: string): string {
+  const wanted = normalizeTitle(oldTitle);
+  let out = "";
+  let last = 0;
+  for (const match of maskCode(content).matchAll(WIKI_LINK)) {
+    const inner = match[1] ?? "";
+    const hash = inner.indexOf("#");
+    const target = hash < 0 ? inner : inner.slice(0, hash);
+    if (normalizeTitle(target) !== wanted || taskKeyTarget(target) || documentIdTarget(target)) continue;
+    // What follows the target as written: `#heading`, then `|label]]` or `]]`.
+    const end = match.index + match[0].length;
+    const rest = content.slice(match.index + 2 + target.length, end);
+    out += `${content.slice(last, match.index)}[[${newTarget}${rest}`;
+    last = end;
+  }
+  return last ? out + content.slice(last) : content;
 }
 
 /** Every wiki link in `text`, in order, code excluded. */

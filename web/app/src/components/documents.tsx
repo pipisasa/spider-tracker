@@ -20,6 +20,7 @@ import {
 import {
   archivedProjectsQuery,
   documentsQuery,
+  taskBacklinksQuery,
   actorsQuery,
   projectsQuery,
   useCreateDocument,
@@ -247,6 +248,31 @@ export function TaskDocuments({
         open={open}
         onOpenChange={setOpen}
       />
+    </section>
+  );
+}
+
+/** Documents mentioning the task with `[[ST-12]]` or a plain ST-12 (ST-101); hidden when none do. */
+export function TaskMentions({
+  orgSlug,
+  taskKey,
+}: {
+  orgSlug: string;
+  taskKey: string;
+}) {
+  const { data: documents = [] } = useQuery(
+    taskBacklinksQuery(orgSlug, taskKey),
+  );
+  if (!documents.length) return null;
+  return (
+    <section aria-labelledby="mentions-heading" className="flex flex-col gap-2">
+      <h2
+        id="mentions-heading"
+        className="text-sm font-medium text-muted-foreground"
+      >
+        Mentioned in documents
+      </h2>
+      <DocumentList orgSlug={orgSlug} documents={documents} showScope />
     </section>
   );
 }

@@ -1785,6 +1785,39 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
 
   withJson(
     doc
+      .command("backlinks")
+      .description("list the documents linking to a document, or mentioning a task ([[ST-12]] or a plain ST-12)")
+      .argument("<id|task>", "a document id or a task key"),
+  ).action(async (target: string, opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const client = await sdk();
+    const parsed = parseTaskKey(target.trim());
+    const { items } = parsed
+      ? await client.tasks.backlinks(await org(), `${parsed.projectKey}-${parsed.number}`)
+      : await client.documents.backlinks(await org(), target);
+    output(opts, { items }, () => (items.length ? documentLines(items) : "No documents link here"));
+  });
+
+  withJson(
+    doc
+      .command("graph")
+      .description("the documents you can see as a graph: documents, their tasks and projects, and every link (use --json)"),
+  ).action(async (opts: JsonOption) => {
+    const { sdk, org } = conn();
+    const graph = await (await sdk()).documents.graph(await org());
+    output(opts, graph, () => {
+      const titles = new Map(graph.documents.map((d) => [d.id, d.title]));
+      const name = (to: (typeof graph.links)[number]["to"]) =>
+        to.type === "document" ? (titles.get(to.id) ?? to.id) : to.type === "task" ? to.key : `${to.title} (no such document)`;
+      return [
+        `${graph.documents.length} documents, ${graph.tasks.length} tasks, ${graph.projects.length} projects, ${graph.links.length} links`,
+        ...graph.links.map((l) => `${titles.get(l.from) ?? l.from} -> ${name(l.to)}`),
+      ].join("\n");
+    });
+  });
+
+  withJson(
+    doc
       .command("create")
       .description("create a document (organization-wide unless --project or --task)")
       .requiredOption("--title <text>", "title")
@@ -1852,9 +1885,18 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (opts.title !== undefined) input.title = opts.title;
     if (opts.format !== undefined) input.format = parseFormat(opts.format);
     const saved = await client.documents.update(slug, id, input);
-    output(opts, saved, () =>
-      saved.version === current.version ? `No changes to ${saved.title}` : `Saved ${saved.title} as version ${saved.version}`,
-    );
+    output(opts, saved, () => {
+      if (saved.version === current.version) return `No changes to ${saved.title}`;
+      const lines = [`Saved ${saved.title} as version ${saved.version}`];
+      // A rename rewrites [[Old title]] links in the documents linking here (ST-101).
+      const { rewritten = [], skipped = [] } = saved.relinked ?? {};
+      if (rewritten.length) lines.push(`Updated links in ${rewritten.map((d) => d.title).join(", ")}`);
+      for (const d of skipped) {
+        const why = d.reason === "rules" ? "project rules; only owners and admins can change them" : "it would pass 1 MB";
+        lines.push(`Left [[${current.title}]] in ${d.title} (${d.id}): ${why}`);
+      }
+      return lines.join("\n");
+    });
   });
 
   /**

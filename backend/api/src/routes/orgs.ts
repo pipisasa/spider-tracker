@@ -41,6 +41,7 @@ import {
   diffDocumentVersions,
   getDocumentVersion,
   listBacklinks,
+  listTaskBacklinks,
   listDocuments,
   listDocumentVersions,
   moveDocument,
@@ -306,6 +307,11 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     c.json(list(await listTaskActivity(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
+  // Documents mentioning the task: [[ST-12]] or a plain ST-12 (ST-101).
+  app.get("/tasks/:taskKey/backlinks", async (c) =>
+    c.json(list((await listTaskBacklinks(db, c.get("actor"), c.req.param("taskKey"))).map((d) => document(c, d)))),
+  );
+
   app.get("/tasks/:taskKey/comments", async (c) => {
     const actor = c.get("actor");
     const taskKey = c.req.param("taskKey");
@@ -328,7 +334,7 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   // Registered before /documents/:documentId, which would take "graph" for an id.
   app.get("/documents/graph", async (c) => {
     const graph = await getDocumentGraph(db, c.get("actor"));
-    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)) });
+    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)), tasks: graph.tasks.map((t) => task(c, t)) });
   });
 
   app.get("/documents/:documentId/backlinks", async (c) =>

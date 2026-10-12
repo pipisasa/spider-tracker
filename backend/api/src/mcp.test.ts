@@ -122,6 +122,8 @@ withDb("MCP server", () => {
         "create_tag",
         "create_task",
         "get_document",
+        "get_document_graph",
+        "list_backlinks",
         "list_documents",
         "move_document",
         "edit_document",
@@ -267,6 +269,32 @@ withDb("MCP server", () => {
     const orgWide = await call(client, "move_document", { id: doc.id, project: null });
     expect(orgWide.json()).toMatchObject({ id: doc.id, project: null, version: 2 });
     expect((await call(client, "move_document", { id: doc.id, project: "NOPE" })).isError).toBe(true);
+  });
+
+  test("list_backlinks and get_document_graph follow links; a rename relinks (ST-101)", async () => {
+    const target = (await call(client, "create_document", { title: "MCP target", project: "SPI" })).json() as { id: string };
+    const source = (await call(client, "create_document", { title: "MCP source", content: "[[MCP target]] and SPI-1" })).json() as {
+      id: string;
+    };
+    const renamed = await call(client, "update_document", { id: target.id, baseVersion: 1, title: "MCP target 2" });
+    expect(renamed.json()).toMatchObject({ title: "MCP target 2", relinked: { rewritten: [{ id: source.id }], skipped: [] } });
+    expect((await call(client, "get_document", { id: source.id })).json()).toMatchObject({ content: "[[MCP target 2]] and SPI-1" });
+
+    const docBacklinks = (await call(client, "list_backlinks", { id: target.id })).json() as unknown as { id: string; url: string }[];
+    expect(docBacklinks).toEqual([expect.objectContaining({ id: source.id, url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${source.id}` })]);
+    const taskBacklinks = (await call(client, "list_backlinks", { task: "spi-1" })).json() as unknown as { id: string }[];
+    expect(taskBacklinks.map((d) => d.id)).toEqual([source.id]);
+    expect((await call(client, "list_backlinks", {})).isError).toBe(true);
+
+    const graph = (await call(client, "get_document_graph")).json() as {
+      links: { from: string; to: unknown }[];
+      tasks: { key: string; url: string }[];
+    };
+    expect(graph.links.filter((l) => l.from === source.id).map((l) => l.to)).toEqual([
+      { type: "document", id: target.id },
+      { type: "task", key: "SPI-1" },
+    ]);
+    expect(graph.tasks).toContainEqual(expect.objectContaining({ key: "SPI-1", url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1` }));
   });
 
   test("update_tasks: by keys or a filter, per-task results, dry run, scope checked per task (ST-106)", async () => {
