@@ -1,6 +1,7 @@
 import { RESERVED_HANDLES } from "./schemas";
 
-function toKebab(source: string, maxLength: number): string {
+/** Lowercase ASCII words joined by single dashes, at most `maxLength` characters; accents dropped, other scripts removed. */
+export function toKebab(source: string, maxLength: number): string {
   return source
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
