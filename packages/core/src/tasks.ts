@@ -343,8 +343,10 @@ export async function updateTask(db: Db, ctx: ActorContext, taskKey: string, inp
     let assigneeIds = current.assigneeIds;
     if (data.assigneeIds !== undefined) {
       const next = [...new Set(data.assigneeIds)];
-      await assertActorsInOrg(tx, ctx.orgId, next);
       const added = next.filter((id) => !assigneeIds.includes(id));
+      // Only new assignees must be active members: a deactivated agent stays assigned
+      // (deleteAgent keeps assignments) without blocking later updates (ST-38).
+      await assertActorsInOrg(tx, ctx.orgId, added);
       const removed = assigneeIds.filter((id) => !next.includes(id));
       if (removed.length > 0) {
         await tx
