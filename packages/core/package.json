@@ -14,7 +14,8 @@
     "./events": "./src/events.ts",
     "./version": "./src/version.ts",
     "./links": "./src/links.ts",
-    "./urls": "./src/urls.ts"
+    "./urls": "./src/urls.ts",
+    "./views": "./src/views.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

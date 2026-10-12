@@ -384,7 +384,7 @@ export interface DocumentGraphTaskDto {
 export interface DocumentGraphDto {
   documents: DocumentSummaryDto[];
   tasks: DocumentGraphTaskDto[];
-  projects: { key: string; name: string }[];
+  projects: { key: string; name: string; /** The web page's address (ST-107); set by the API and MCP. */ url?: string }[];
   links: DocumentLinkDto[];
 }
 

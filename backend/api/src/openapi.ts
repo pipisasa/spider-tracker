@@ -297,7 +297,7 @@ const schemas: Record<string, JsonSchema> = {
         url: webUrl("task"),
       }),
     },
-    projects: { type: "array", items: object({ key: string(), name: string() }) },
+    projects: { type: "array", items: object({ key: string(), name: string(), url: webUrl("project") }) },
     links: { type: "array", items: ref("DocumentLink") },
   }),
   CreateDocumentInput: fromZod(createDocumentInput),

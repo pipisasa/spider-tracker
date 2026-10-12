@@ -50,11 +50,19 @@ describe("createClient", () => {
     expect(error).toMatchObject({ status: 404, code: "not_found", message: "Task not found" });
   });
 
-  test("falls back to the status text for non-JSON errors", async () => {
-    const { fetch } = recorder(() => new Response("oops", { status: 502, statusText: "Bad Gateway" }));
-    const error = await createClient({ baseUrl: "https://api.test", fetch })
-      .whoami()
-      .catch((e: unknown) => e);
-    expect(error).toMatchObject({ status: 502, code: "unknown", message: "Bad Gateway" });
+  test("non-JSON errors name the request and the status, even without status text (HTTP/2)", async () => {
+    const fail = async (res: Response) =>
+      createClient({ baseUrl: "https://api.test", fetch: recorder(() => res).fetch })
+        .whoami()
+        .catch((e: unknown) => e);
+    expect(await fail(new Response("oops", { status: 502, statusText: "Bad Gateway" }))).toMatchObject({
+      status: 502,
+      code: "unknown",
+      message: "GET /v1/whoami failed with HTTP 502 Bad Gateway",
+    });
+    expect(await fail(new Response("<html></html>", { status: 403 }))).toMatchObject({
+      status: 403,
+      message: "GET /v1/whoami failed with HTTP 403",
+    });
   });
 });

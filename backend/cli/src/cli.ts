@@ -6,7 +6,6 @@ import type {
   DocumentSummaryDto,
   ProjectDetailDto,
   ProjectDto,
-  StatusDto,
   TagDto,
   TaskDto,
   WhoAmIResponse,
@@ -14,6 +13,17 @@ import type {
 import { INBOX_KINDS, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
+import {
+  actorHandle,
+  commentView,
+  documentDiffView,
+  documentVersionView,
+  projectRulesView,
+  relationView,
+  taskView,
+  type RelationView,
+  type TaskView,
+} from "@repo/core/views";
 import type {
   BulkUpdateTasksInput,
   CreateTaskInput,
@@ -177,12 +187,8 @@ export function selfInvocation(): string[] {
   return isCompiled() ? [process.execPath] : [process.execPath, join(import.meta.dir, "index.ts")];
 }
 
-/** A task as the CLI prints it with --json: the API task plus its status and assignee handles. */
-export interface CliTask extends TaskDto {
-  status: Pick<StatusDto, "id" | "name" | "category"> | null;
-  assignees: string[];
-  tags: string[];
-}
+/** A task as the CLI prints it with --json (the same shape MCP returns, ST-107). */
+export type CliTask = TaskView;
 
 interface JsonOption {
   json?: boolean;
@@ -271,19 +277,21 @@ interface Credentials {
   baseUrl: string;
   /** The saved agent in use; undefined for SPIDER_TOKEN. */
   entry?: AgentEntry;
+  /** Why this saved agent: chosen with --as, named by SPIDER_AGENT, or the default agent. */
+  via?: string;
 }
 
 /** Which key a command uses: --as, then SPIDER_TOKEN, then SPIDER_AGENT, then the default saved agent. */
 async function credentialsFor(options: RunOptions, globals: Globals): Promise<Credentials> {
   const store = await readStore(options.env);
-  const saved = (entry: AgentEntry) => ({ token: entry.saved.token, baseUrl: entry.serverUrl, entry });
-  if (globals.as) return saved(findAgent(store, globals.as));
+  const saved = (entry: AgentEntry, via: string) => ({ token: entry.saved.token, baseUrl: entry.serverUrl, entry, via });
+  if (globals.as) return saved(findAgent(store, globals.as), "chosen with --as");
   const token = options.env.SPIDER_TOKEN?.trim();
   if (token) return { token, baseUrl: apiUrlOf(options.env) };
   const named = options.env.SPIDER_AGENT?.trim();
-  if (named) return saved(findAgent(store, named));
+  if (named) return saved(findAgent(store, named), "named by SPIDER_AGENT");
   const fallback = defaultAgent(store);
-  if (fallback) return saved(fallback);
+  if (fallback) return saved(fallback, "the default agent");
   const message = listAgents(store).length
     ? `No default agent. Pass --as <agent> or run \`spider agents default <agent>\` (${agentList(store)})`
     : "Not signed in. Run `spider accept-invite <code>` or `spider login`, or set SPIDER_TOKEN to an agent API key";
@@ -375,22 +383,14 @@ function connect(options: RunOptions, globals: Globals, apiFetch: FetchLike) {
     return cached;
   };
 
-  /** Adds the status and assignee handles, for printing. */
-  const describe = async (raw: TaskDto): Promise<CliTask> => {
-    // Servers from before tags (ST-8) don't send tagIds.
-    const task = { ...raw, tagIds: raw.tagIds ?? [] };
-    const [detail, rows, tagRows] = await Promise.all([
+  /** Adds the status, assignee handles and tag names, for printing (`taskView`, shared with MCP). */
+  const describe = async (task: TaskDto): Promise<CliTask> => {
+    const [detail, actors, tags] = await Promise.all([
       project(projectKeyOf(task.key)),
       loadActors(),
-      task.tagIds.length ? loadTags() : [],
+      task.tagIds?.length ? loadTags() : [],
     ]);
-    const status = detail.statuses.find((s) => s.id === task.statusId);
-    return {
-      ...task,
-      status: status ? { id: status.id, name: status.name, category: status.category } : null,
-      assignees: task.assigneeIds.map((id) => handleOf(rows, id)),
-      tags: task.tagIds.map((id) => tagRows.find((t) => t.id === id)?.name ?? id),
-    };
+    return taskView(task, { statuses: detail.statuses, actors, tags });
   };
 
   return { sdk, credentials, whoami, org, members: loadMembers, actors: loadActors, tags: loadTags, project, describe };
@@ -420,13 +420,6 @@ function taskKey(given: string | undefined, cwd: string, git: GitRunner): string
 }
 
 // Human-readable output: one line per item, short enough for an agent's context window.
-
-/** An actor's handle, marked when deactivated; the id if unknown. */
-const handleOf = (rows: ActorDto[], id: string) => {
-  const actor = rows.find((m) => m.id === id);
-  if (!actor) return id;
-  return actor.deactivated ? `${actor.handle} (deactivated)` : actor.handle;
-};
 
 const assigneeList = (task: CliTask) => task.assignees.map((h) => `@${h}`).join(" ");
 
@@ -1310,12 +1303,22 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const { sdk, org } = conn();
       const client = await sdk();
       const slug = await org();
-      const [detail, tasks] = await Promise.all([client.projects.get(slug, key), client.tasks.list(slug, key)]);
+      const [detail, tasks, documents] = await Promise.all([
+        client.projects.get(slug, key),
+        client.tasks.list(slug, key),
+        // Servers from before documents (ST-21) have no such route.
+        client.documents
+          .list(slug, { project: key.toUpperCase() })
+          .then((r) => r.items)
+          .catch(() => [] as DocumentSummaryDto[]),
+      ]);
       const rulesDoc = detail.rulesDocumentId ? await client.documents.get(slug, detail.rulesDocumentId) : null;
-      const rules = rulesDoc && { documentId: rulesDoc.id, title: rulesDoc.title, version: rulesDoc.version, content: rulesDoc.content };
+      // ProjectRulesDto, as MCP get_project and whoami give them.
+      const rules = rulesDoc && projectRulesView(detail, rulesDoc);
       const statuses = detail.statuses.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
       const nameWidth = Math.max(0, ...statuses.map((s) => s.name.length));
-      output(opts, { ...detail, statuses, rules }, () =>
+      // MCP get_project has the same shape, without taskCount.
+      output(opts, { ...detail, statuses, rules, documents }, () =>
         [
           projectLine(detail),
           `Created ${detail.createdAt}${detail.archivedAt ? ` · Archived ${detail.archivedAt}` : ""}`,
@@ -1435,23 +1438,29 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const { sdk, org, describe } = conn();
       const client = await sdk();
       const resolved = taskKey(key, cwd, git);
-      const [found, subtasks, relations] = await Promise.all([
+      const [found, subtasks, relations, documents] = await Promise.all([
         client.tasks.get(await org(), resolved).then(describe),
-        // Servers from before sub-tasks (ST-9) and relations (ST-10) have no such routes.
+        // Servers from before sub-tasks (ST-9), relations (ST-10) and documents (ST-21) have no such routes.
         client.tasks
           .subtasks(await org(), resolved)
           .then(async (r) => Promise.all(r.items.map(describe)))
           .catch(() => [] as CliTask[]),
         client.tasks.relations
           .list(await org(), resolved)
-          .then((r) => r.items.map((rel) => ({ kind: rel.kind, task: rel.task.key, title: rel.task.title })))
-          .catch(() => [] as { kind: string; task: string; title: string }[]),
+          .then((r) => r.items.map(relationView))
+          .catch(() => [] as RelationView[]),
+        client.documents
+          .list(await org(), { task: resolved })
+          .then((r) => r.items)
+          .catch(() => [] as DocumentSummaryDto[]),
       ]);
-      output(opts, { ...found, subtasks, relations }, () =>
+      // The same shape as MCP get_task (TaskDetailView).
+      output(opts, { ...found, subtasks, relations, documents }, () =>
         [
           taskDetail(found),
           ...(relations.length ? ["", "Links:", ...relations.map((r) => `  ${r.kind.replace("_", " ")} ${r.task}  ${r.title}`)] : []),
           ...(subtasks.length ? ["", "Sub-tasks:", taskLines(subtasks)] : []),
+          ...(documents.length ? ["", "Documents:", documentLines(documents)] : []),
         ].join("\n"),
       );
     },
@@ -1648,9 +1657,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const body = (explicitKey ? rest : args).join(" ").trim();
     if (!body) throw usageError("Nothing to say. Usage: spider comment [ST-12] \"text\"");
     const key = taskKey(explicitKey, cwd, git);
-    const { sdk, org } = conn();
+    const { sdk, org, actors } = conn();
     const comment = await (await sdk()).comments.create(await org(), key, { body });
-    output(opts, comment, () => `Commented on ${comment.taskKey}`);
+    output(opts, commentView(comment, await actors()), () => `Commented on ${comment.taskKey}`);
   });
 
   withJson(program.command("comments").description("show a task's comments").argument("[key]")).action(
@@ -1658,8 +1667,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const resolved = taskKey(key, cwd, git);
       const { sdk, org, actors } = conn();
       const [{ items }, rows] = await Promise.all([(await sdk()).comments.list(await org(), resolved), actors()]);
-      const handle = (id: string) => handleOf(rows, id);
-      output(opts, { items }, () =>
+      const handle = (id: string) => actorHandle(rows, id);
+      output(opts, { items: items.map((c) => commentView(c, rows)) }, () =>
         items.length === 0
           ? `No comments on ${resolved}`
           : items.map((c) => `@${handle(c.authorId)} · ${c.createdAt.slice(0, 16).replace("T", " ")}\n${c.body}`).join("\n\n"),
@@ -1747,10 +1756,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const old = opts.rev === undefined ? undefined : await client.documents.versions.get(slug, id, parseLimit(opts.rev));
     const shown = old ?? { ...current, createdAt: current.updatedAt };
     const rows = await actors();
-    const handle = shown.authorId ? handleOf(rows, shown.authorId) : "?";
-    const item = old
-      ? { ...old, projectKey: current.projectKey, taskKey: current.taskKey, currentVersion: current.version, url: current.url }
-      : current;
+    const handle = shown.authorId ? actorHandle(rows, shown.authorId) : "?";
+    const item = old ? documentVersionView(current, old) : current;
     output(opts, item, () =>
       [
         `${shown.title}  (${documentScope(current)}, ${shown.format}, v${shown.version}${old ? ` of ${current.version}` : ""})`,
@@ -1774,7 +1781,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const from = parseVersion(opts.from);
     const to = opts.to === undefined ? undefined : parseVersion(opts.to);
     const diff = await (await sdk()).documents.diff(await org(), id, { from, to });
-    output(opts, diff, () => {
+    // DocumentDiffView: the API's diff plus its unified text, as MCP diff_document.
+    output(opts, documentDiffView(diff), () => {
       const label = (v: typeof diff.from) => `${v.title} (v${v.version})`;
       const text = formatUnifiedDiff(diff.hunks, label(diff.from), label(diff.to));
       if (text) return text;
@@ -1977,15 +1985,28 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       await closed;
     });
 
-  return { program, result };
+  /**
+   * For "not found" and "forbidden": which saved agent acted, when it sees only some projects. A task
+   * in another project reads as missing, and the default agent is easy to use by mistake (ST-107).
+   */
+  const scopeHint = async (): Promise<string> => {
+    const entry = api ? (await api.credentials.catch(() => undefined))?.entry : undefined;
+    if (!api || !entry?.saved.projects) return "";
+    const { via } = await api.credentials;
+    return ` (acting as ${entry.ref}${via ? `, ${via}` : ""}, which sees only ${scopeOf(entry)}; pass --as <agent> to act as another)`;
+  };
+
+  return { program, result, scopeHint };
 }
 
 /** Runs the CLI with `argv` (arguments after the program name) and resolves to the exit code. */
 export async function run(argv: string[], options: RunOptions): Promise<number> {
   const json = argv.includes("--json");
   const fail = (err: CliError) => {
+    // Every failure says something, even when the cause had no message (ST-107).
+    const message = err.message.trim() || `Failed with ${err.code === "error" ? "an unknown error" : err.code} (exit code ${err.exitCode})`;
     options.stderr.write(
-      json ? `${JSON.stringify({ error: { code: err.code, message: err.message } })}\n` : `spider: ${err.message}\n`,
+      json ? `${JSON.stringify({ error: { code: err.code, message } })}\n` : `spider: ${message}\n`,
     );
     return err.exitCode;
   };
@@ -2001,10 +2022,11 @@ export async function run(argv: string[], options: RunOptions): Promise<number> 
 }
 
 async function runProgram(argv: string[], options: RunOptions, json: boolean, fail: (err: CliError) => number) {
+  let built: ReturnType<typeof buildProgram> | undefined;
   try {
-    const { program, result } = buildProgram(options, options.cwd ?? process.cwd(), argv, json);
-    await program.parseAsync(argv, { from: "user" });
-    return result.exitCode ?? EXIT.ok;
+    built = buildProgram(options, options.cwd ?? process.cwd(), argv, json);
+    await built.program.parseAsync(argv, { from: "user" });
+    return built.result.exitCode ?? EXIT.ok;
   } catch (err) {
     if (err instanceof CommanderError) {
       // Commander's exitCode is 0 for --help, --version and `help`, and non-zero for real usage
@@ -2014,7 +2036,10 @@ async function runProgram(argv: string[], options: RunOptions, json: boolean, fa
       return json ? fail(new CliError(EXIT.usage, err.message.replace(/^error: /, ""), "usage")) : EXIT.usage;
     }
     if (err instanceof CliError) return fail(err);
-    if (err instanceof SpiderApiError) return fail(fromApiError(err));
+    if (err instanceof SpiderApiError) {
+      const hint = err.status === 403 || err.status === 404 ? await built?.scopeHint().catch(() => "") : "";
+      return fail(fromApiError(err, hint));
+    }
     const message = err instanceof Error ? err.message : String(err);
     return fail(new CliError(EXIT.unexpected, message, "unexpected"));
   }

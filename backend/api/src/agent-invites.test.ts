@@ -167,9 +167,9 @@ withDb("agent invites over HTTP", () => {
       (await client.callTool({ name, arguments: args })) as ToolText;
 
     const projects = await call("list_projects");
-    expect(JSON.parse(projects.content[0]?.text ?? "[]")).toEqual([
-      { key: "ST", name: "Spider", description: null, url: expect.stringMatching(/\/projects\/ST$/) },
-    ]);
+    expect(JSON.parse(projects.content[0]?.text ?? "{}")).toEqual({
+      items: [expect.objectContaining({ key: "ST", name: "Spider", description: null, url: expect.stringMatching(/\/projects\/ST$/) })],
+    });
     const hidden = await call("list_tasks", { projectKey: "XY" });
     expect(hidden.isError).toBe(true);
     expect((await call("get_task", { key: "XY-1" })).isError).toBe(true);
