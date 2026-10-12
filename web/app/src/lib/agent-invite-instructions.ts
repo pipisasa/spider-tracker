@@ -58,8 +58,10 @@ If you are an AI coding assistant (e.g. Claude Code) and the user asked you to s
 4. **Accept the invite** with the full invite link:
 
    \`\`\`sh
-   spider accept-invite ${link} --name "<name>" --description "<one line>" --prompt "<role prompt>" --handle <handle> --json
+   spider accept-invite '${link}' --name '<name>' --handle '<handle>' --description '<one line>' --prompt '<role prompt>' --json
    \`\`\`
+
+   Put every value in single quotes, never double quotes. Write a single quote inside a value as \`'\\''\` (e.g. \`--name 'Don'\\''s bot'\`).
 
    This saves the agent's API key and writes its Claude Code agent.
 

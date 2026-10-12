@@ -29,33 +29,67 @@ esac
 
 asset="spider-$os-$arch"
 if [ -n "${SPIDER_VERSION:-}" ]; then
-  url="https://github.com/$REPO/releases/download/$SPIDER_VERSION/$asset"
+  base="https://github.com/$REPO/releases/download/$SPIDER_VERSION"
 else
-  url="https://github.com/$REPO/releases/latest/download/$asset"
+  base="https://github.com/$REPO/releases/latest/download"
 fi
+url="$base/$asset"
 
-tmp="$(mktemp "${TMPDIR:-/tmp}/spider.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT INT TERM
-
-echo "Downloading $url"
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$url" -o "$tmp" || fail "download failed: $url"
+  download() { curl -fsSL "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
-  wget -q "$url" -O "$tmp" || fail "download failed: $url"
+  download() { wget -q "$1" -O "$2"; }
 else
   fail "curl or wget is required"
 fi
 
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d ' ' -f 1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d ' ' -f 1
+  else
+    return 1
+  fi
+}
+
+tmp=""
+sums=""
+cleanup() {
+  if [ -n "$tmp" ]; then rm -f "$tmp"; fi
+  if [ -n "$sums" ]; then rm -f "$sums"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Download next to the target so the final mv is an atomic rename.
+mkdir -p "$INSTALL_DIR"
+tmp="$(mktemp "$INSTALL_DIR/.spider.XXXXXX")"
+sums="$(mktemp "$INSTALL_DIR/.spider-sums.XXXXXX")"
+
+echo "Downloading $url"
+download "$url" "$tmp" || fail "download failed: $url"
 [ -s "$tmp" ] || fail "downloaded file is empty: $url"
+
+# Releases before cli-v0.1.3 have no SHA256SUMS.
+if download "$base/SHA256SUMS" "$sums" 2>/dev/null; then
+  expected="$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1; exit }' "$sums")"
+  [ -n "$expected" ] || fail "$asset is not listed in $base/SHA256SUMS"
+  actual="$(sha256 "$tmp")" || fail "sha256sum or shasum is required to verify the download"
+  [ "$actual" = "$expected" ] || fail "checksum mismatch for $asset (expected $expected, got $actual)"
+else
+  echo "spider install: warning: $base/SHA256SUMS not found; skipping checksum verification" >&2
+fi
+
 chmod 755 "$tmp"
 if [ "$os" = darwin ]; then
   xattr -d com.apple.quarantine "$tmp" 2>/dev/null || true
 fi
 "$tmp" --version >/dev/null 2>&1 || fail "the downloaded binary does not run on this machine"
 
-mkdir -p "$INSTALL_DIR"
 mv -f "$tmp" "$INSTALL_DIR/spider"
-trap - EXIT INT TERM
+tmp=""
 
 echo "Installed spider $("$INSTALL_DIR/spider" --version) to $INSTALL_DIR/spider"
 
