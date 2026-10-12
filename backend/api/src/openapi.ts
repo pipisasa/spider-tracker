@@ -893,7 +893,7 @@ const paths = {
       ],
       responses: {
         "302": { description: "Back to the web app" },
-        "400": { description: "Invalid or expired state" },
+        "400": { description: "Invalid, expired or already used state (a state works once)" },
         "401": { description: "Not signed in" },
         "403": { description: "Started by someone else, or no longer an owner or admin" },
         "503": githubOff,

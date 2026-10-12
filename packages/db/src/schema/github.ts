@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { bigint, check, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { user } from "./auth";
 import { actors, organizations } from "./tenancy";
 
 // GitHub App installations connected to an organization (ST-82). The id is GitHub's installation
@@ -51,4 +52,23 @@ export const githubDeliveries = pgTable(
     index("github_deliveries_received_at_idx").on(t.receivedAt),
     check("github_deliveries_result_check", sql`${t.result} in ('processed', 'ignored')`),
   ],
+);
+
+// Install links issued for the GitHub App's setup flow (ST-137): the nonce of each signed `state`.
+// The setup callback deletes the row to use the state, so a state works once; rows past
+// `expires_at` are cleaned up when new links are issued.
+export const githubInstallStates = pgTable(
+  "github_install_states",
+  {
+    nonce: text("nonce").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("github_install_states_expires_at_idx").on(t.expiresAt)],
 );

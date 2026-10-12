@@ -22,7 +22,7 @@ import { apiDocsRoutes } from "./api-docs";
 import { CLIENT_IP_HEADER, enabledAuthProviders, type Auth } from "./auth";
 import { toActorDto, toMembership } from "./dto";
 import { githubAppConfig, type Env } from "./env";
-import { GithubUnavailableError, type GithubApp } from "./github";
+import { GithubUnavailableError, logGithubFailure, type GithubApp } from "./github";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
 import { clientIp, createRateLimiter } from "./rate-limit";
@@ -243,7 +243,7 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
       return c.json(errorBody(err.code, err.message, err.url), errorStatus[err.code]);
     }
     if (err instanceof GithubUnavailableError) {
-      console.error(err);
+      logGithubFailure(err);
       return c.json(errorBody("github_unavailable", "GitHub couldn't be reached or refused the request. Try again"), 502);
     }
     console.error(err);
