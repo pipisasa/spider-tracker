@@ -19,7 +19,19 @@ export function enabledAuthProviders(env: Env): AuthProvider[] {
   return providers;
 }
 
-export function createAuth(db: Db, env: Env, mailer: Mailer) {
+/**
+ * The header carrying the client IP Better Auth sees. app.ts sets it from `clientIp` (governed by
+ * `TRUSTED_PROXY`) and drops any client-sent copy, so Better Auth never reads a forgeable header.
+ */
+export const CLIENT_IP_HEADER = "x-spider-client-ip";
+
+export function createAuth(
+  db: Db,
+  env: Env,
+  mailer: Mailer,
+  /** Better Auth's own rate limits; on in production by default. */
+  { rateLimit = env.NODE_ENV === "production" }: { rateLimit?: boolean } = {},
+) {
   const github =
     env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
       ? { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } }
@@ -85,8 +97,8 @@ export function createAuth(db: Db, env: Env, mailer: Mailer) {
     },
     // OAuth errors land on the web app's login page (`?error=<code>`), not on the API.
     onAPIError: { errorURL: `${env.WEB_ORIGIN}/login` },
-    // Production traffic always arrives through the Cloudflare proxy.
-    advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for"] } },
+    rateLimit: { enabled: rateLimit },
+    advanced: { ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] } },
     telemetry: { enabled: false },
   });
 }

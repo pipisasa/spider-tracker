@@ -19,7 +19,7 @@ import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { apiDocsRoutes } from "./api-docs";
-import { enabledAuthProviders, type Auth } from "./auth";
+import { CLIENT_IP_HEADER, enabledAuthProviders, type Auth } from "./auth";
 import { toActorDto, toMembership } from "./dto";
 import type { Env } from "./env";
 import { mcpRoutes } from "./mcp";
@@ -98,7 +98,15 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   });
   app.route("/device", deviceRoutes(db, env));
 
-  app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+  // Better Auth keys its rate limits on CLIENT_IP_HEADER only: set it to the trusted client IP
+  // and drop any copy the client sent.
+  app.on(["GET", "POST"], "/api/auth/*", (c) => {
+    const headers = new Headers(c.req.raw.headers);
+    headers.delete(CLIENT_IP_HEADER);
+    const ip = ipOf(c);
+    if (ip !== "unknown") headers.set(CLIENT_IP_HEADER, ip);
+    return auth.handler(new Request(c.req.raw, { headers }));
+  });
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
   app.route("/mcp", mcpRoutes(db, realtime));
