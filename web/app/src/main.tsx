@@ -14,6 +14,9 @@ const router = createRouter({
   context: { queryClient },
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
+  // Org pages scroll in the content column, not the window.
+  scrollRestoration: true,
+  scrollToTopSelectors: ["#org-content"],
 });
 
 declare module "@tanstack/react-router" {
