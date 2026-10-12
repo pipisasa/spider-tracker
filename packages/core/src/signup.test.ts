@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isEmailAllowed, isSignupAllowed, parseAllowlist } from "./signup";
+import { isEmailAllowed, isSignupAllowed, mayReceiveMagicLink, parseAllowlist } from "./signup";
 
 describe("sign-up allowlist", () => {
   const list = parseAllowlist(" Alice@Example.com, @batele.plus\n@users.batele-id.invalid ");
@@ -26,5 +26,12 @@ describe("sign-up allowlist", () => {
     expect(isSignupAllowed({ email: "bob@batele.plus", emailVerified: false }, list)).toBe(false);
     expect(isSignupAllowed({ email: "bob@example.com", emailVerified: true }, list)).toBe(false);
     expect(isSignupAllowed({ email: "anyone@example.com", emailVerified: false }, parseAllowlist(""))).toBe(true);
+  });
+
+  test("magic links go to existing users and to addresses that may sign up", () => {
+    expect(mayReceiveMagicLink({ email: "bob@batele.plus", allowlist: list, userExists: false })).toBe(true);
+    expect(mayReceiveMagicLink({ email: "bob@example.com", allowlist: list, userExists: true })).toBe(true);
+    expect(mayReceiveMagicLink({ email: "bob@example.com", allowlist: list, userExists: false })).toBe(false);
+    expect(mayReceiveMagicLink({ email: "anyone@example.com", allowlist: [], userExists: false })).toBe(true);
   });
 });
