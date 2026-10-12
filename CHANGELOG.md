@@ -31,11 +31,16 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 - `task view --json` adds `documents`; `project view --json` adds the project's `documents`, and its `rules` gain `projectKey`, `projectName`, `format`, `updatedAt` and `url` (the full `ProjectRulesDto`); `doc diff --json` adds `diff` (the unified text); `comment --json` and `comments --json` add `author` (the handle). Nothing was removed or renamed (ST-107).
 - `task update` and other commands that fail with "not found" or "forbidden" while acting as a saved agent limited to some projects say which agent acted, how it was chosen (`--as`, `SPIDER_AGENT` or the default agent) and which projects it sees: a task in another project reads as missing to it (ST-107).
 - An error response without a JSON body (a proxy page, or HTTP/2 without status text) no longer prints an empty `spider: ` line; it says which request failed with which HTTP status (ST-107).
+- `spider doc publish <dir> [--project ST] [--dry-run]` creates or updates documents from a folder's `.md` files in one command (ST-119). Front matter maps a file to its document (`title`, `project`, `task`; publish writes back `id` and `version`), so a rerun updates instead of duplicating. `[[Title]]` and relative `.md` links between the files are published as `[[doc:<id>]]` links. Updates are based on the file's `version`: a document changed in the tracker since then is reported as a conflict and not overwritten (no `--force`). One line per file (`created`, `updated`, `unchanged`, `conflict`, `failed`); `--json` prints `{ dryRun, results, summary }`; exit code `1` when any file is a conflict or failed.
 
 ### API
 
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+
+### Plugin 0.3.7
+
+- The `tasks` skill mentions `spider doc publish <dir>` for publishing a set of documents from local files (ST-119).
 
 ### Plugin 0.3.6
 
