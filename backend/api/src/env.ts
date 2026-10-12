@@ -13,7 +13,14 @@ const envSchema = z.object({
   /** Emails and "@domain" entries allowed to create accounts; empty = anyone (ST-17). */
   SIGNUP_ALLOWLIST: z.string().optional(),
   BATELE_ID_ISSUER: z.url().default("https://api-v2.batele.plus/auth"),
+  /**
+   * The proxy in front of the API whose client-IP header rate limits trust (ST-45):
+   * "none" (socket address), "cloudflare" (CF-Connecting-IP) or "railway" (right-most X-Forwarded-For).
+   */
+  TRUSTED_PROXY: z.enum(["none", "cloudflare", "railway"]).default("none"),
 });
+
+export type TrustedProxy = z.infer<typeof envSchema>["TRUSTED_PROXY"];
 
 export type Env = z.infer<typeof envSchema>;
 

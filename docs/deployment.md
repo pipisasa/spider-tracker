@@ -93,6 +93,17 @@ The API **deploys automatically from GitHub**: Railway builds `main` on every pu
 | `WEB_ORIGIN` | `https://tracker.batele.plus` |
 | `BETTER_AUTH_SECRET` | random, set with `--stdin` so it never appears in output |
 | `NODE_ENV` | `production` |
+| `TRUSTED_PROXY` | `railway` (see below) |
+
+**Client IP for rate limits (`TRUSTED_PROXY`).** The API's own rate limits (device codes, agent invite accepts, invitation codes) key on the client IP, taken only from the proxy named in `TRUSTED_PROXY`; every other client-supplied header is ignored so a client can't get a fresh bucket per request:
+
+| Value | Client IP | Use when |
+|---|---|---|
+| `none` (default) | The TCP peer address from Bun; one shared `unknown` bucket if there is none (e.g. `app.request` in tests) | Local development, no proxy |
+| `railway` | The **right-most** `X-Forwarded-For` entry | Production: Railway's edge proxy in front of the API |
+| `cloudflare` | `CF-Connecting-IP` | Only if the API hostname is proxied by Cloudflare (orange cloud) **and** unreachable any other way |
+
+Production uses `railway` because `tracker-api` is a DNS-only (grey cloud) record: requests reach Railway's edge directly, so `CF-Connecting-IP` is whatever the client sent, and Bun's socket address is Railway's proxy (the same for everyone). Assumption: Railway's edge appends the address that connected to it to `X-Forwarded-For` (it also sets `X-Real-IP`). The right-most entry is used rather than `X-Real-IP` because an appended entry is correct whether or not the edge drops a client-sent header, while Railway doesn't document whether it overwrites a client-sent `X-Real-IP`. Anything to the left of that entry is client-controlled and ignored. If the hostname is ever switched to a proxied (orange cloud) record, the right-most entry becomes a Cloudflare edge address: switch to `cloudflare` at the same time. Better Auth's own sign-in rate limit still reads `cf-connecting-ip`/`x-forwarded-for` itself (`backend/api/src/auth.ts`).
 
 **Deploy:** push to `main` (`git push`). Follow it with `railway service status -s api` and `railway logs -s api`. `bun run deploy:api` (`railway up`) still uploads the working tree directly, for emergencies.
 
