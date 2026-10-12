@@ -35,6 +35,7 @@ import type {
   DiffLineDto,
   DocumentDto,
   DocumentFormat,
+  RelinkedDocumentsDto,
 } from "@repo/core/contracts";
 import {
   useQuery,
@@ -296,6 +297,22 @@ function DocumentPage() {
       )}
     </div>
   );
+}
+
+/** What a rename did to the links leading here (ST-101), for the save toast. */
+function relinkedSummary(relinked: RelinkedDocumentsDto | undefined) {
+  if (!relinked) return undefined;
+  const parts: string[] = [];
+  const { rewritten, skipped } = relinked;
+  if (rewritten.length)
+    parts.push(
+      `Updated links in ${rewritten.length} ${rewritten.length === 1 ? "document" : "documents"}.`,
+    );
+  if (skipped.length)
+    parts.push(
+      `Not in ${skipped.map((d) => d.title).join(", ")} (${skipped.some((d) => d.reason === "rules") ? "project rules: only owners and admins can change them" : "too large"}).`,
+    );
+  return parts.join(" ") || undefined;
 }
 
 /** Documents linking here with `[[this title]]` (ST-100). */
@@ -651,7 +668,9 @@ function DocumentEditor({
       {
         onSuccess: (saved) => {
           if (saved.version !== baseVersion)
-            toast.success(`Saved version ${saved.version}`);
+            toast.success(`Saved version ${saved.version}`, {
+              description: relinkedSummary(saved.relinked),
+            });
           onDone();
         },
         onError: (err) => {

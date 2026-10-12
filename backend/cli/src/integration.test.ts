@@ -674,6 +674,36 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "diff", id)).code).toBe(2);
   });
 
+  test("docs: a rename updates [[links]]; backlinks of a document or a task; the graph (ST-101)", async () => {
+    stdin = "# Target";
+    const target = (await spider("doc", "create", "--title", "Link target", "--project", "SPI", "--file", "-", "--json")).json();
+    stdin = "See [[Link target|it]] for SPI-1.";
+    const source = (await spider("doc", "create", "--title", "Link source", "--file", "-", "--json")).json();
+    const targetId = target.id as string;
+    const sourceId = source.id as string;
+
+    expect((await spider("doc", "backlinks", targetId)).stdout).toBe(`${sourceId}  org  v1  Link source\n`);
+    const mentions = (await spider("doc", "backlinks", "spi-1", "--json")).json().items as { id: string; url: string }[];
+    expect(mentions.map((d) => [d.id, d.url])).toEqual([[sourceId, `${env.WEB_ORIGIN}/${slug}/docs/${sourceId}`]]);
+
+    expect((await spider("doc", "edit", targetId, "--title", "Link target 2", "--base-version", "1")).stdout).toBe(
+      "Saved Link target 2 as version 2\nUpdated links in Link source\n",
+    );
+    expect((await spider("doc", "view", sourceId, "--json")).json()).toMatchObject({ version: 2, content: "See [[Link target 2|it]] for SPI-1." });
+
+    const graph = (await spider("doc", "graph", "--json")).json() as {
+      links: { from: string; to: unknown }[];
+      tasks: { key: string; url: string }[];
+    };
+    expect(graph.links.filter((l) => l.from === sourceId).map((l) => l.to)).toEqual([
+      { type: "document", id: targetId },
+      { type: "task", key: "SPI-1" },
+    ]);
+    expect(graph.tasks).toContainEqual(expect.objectContaining({ key: "SPI-1", url: `${env.WEB_ORIGIN}/${slug}/tasks/SPI-1` }));
+    expect((await spider("doc", "graph")).stdout).toContain("Link source -> Link target 2\nLink source -> SPI-1");
+    expect((await spider("doc", "backlinks", "00000000-0000-7000-8000-000000000000")).code).toBe(3);
+  });
+
   test("docs: move to the organization and back to a project", async () => {
     stdin = "# Movable";
     const created = (await spider("doc", "create", "--title", "Movable", "--project", "SPI", "--file", "-", "--json")).json();
@@ -783,6 +813,13 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("get_document", { id: doc?.id, version: 1 })).toEqual(await cli("doc", "view", doc?.id ?? "", "--rev", "1"));
       expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(await cli("doc", "diff", doc?.id ?? "", "--from", "1"));
       expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(await cli("comments", "SPI-1"));
+      // Backlinks and the documents graph (ST-101), with a document that mentions SPI-1.
+      stdin = "Mentions [[SPI-1]]";
+      await cli("doc", "create", "--title", "Parity links", "--project", "SPI", "--file", "-");
+      const backlinks = await cli("doc", "backlinks", "SPI-1");
+      expect(backlinks).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ title: "Parity links" })]) });
+      expect(await mcp("list_backlinks", { task: "SPI-1" })).toEqual(backlinks);
+      expect(await mcp("get_document_graph")).toEqual(await cli("doc", "graph"));
       expect(await mcp("list_projects")).toEqual(await cli("projects"));
       // With rules (ST-111), get_project and project view give them as ProjectRulesDto.
       expect(await cli("project", "update", "SPI", "--rules", doc?.id ?? "")).toMatchObject({ rulesDocumentId: doc?.id });

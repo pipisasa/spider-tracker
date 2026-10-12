@@ -21,6 +21,8 @@ MCP tools now return the same JSON as the CLI's `--json` output, built from the 
 - **Project rules** (ST-111; `rules` on `get_project`, `projectRules` on `whoami`) are the API's `ProjectRulesDto` plus `url`: `project` is now `projectKey`, and `projectName` and `format` are new.
 - **Document diffs** (`diff_document`, ST-117) are the API's diff plus the unified `diff` text: `id` is now `documentId`; `from`/`to` have `authorId` and `createdAt` instead of `savedBy` and `savedAt`; `hunks` (the structured lines) are new.
 
+- **Backlinks and the documents graph** (ST-101): `list_backlinks` returns `{ items }` of document summaries instead of a bare array. `get_document_graph` returns the API's graph: documents are summaries (`projectKey`, `taskKey`, `version`, … instead of `project`, `task`), tasks have `projectKey` and `statusCategory` instead of `status`. `update_document` still adds `relinked` to the document after a rename.
+
 Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity`, `list_tags`, `list_members`, `link_tasks`, `unlink_tasks`, `mark_inbox_read`, `create_tag`.
 
 ### CLI
@@ -32,6 +34,7 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 ### API
 
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
+- `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
 
 ### Plugin 0.3.6
 

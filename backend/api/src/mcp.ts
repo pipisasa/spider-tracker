@@ -6,7 +6,6 @@ import type {
   ActorRef,
   DocumentSummaryDto,
   ProjectDetailDto,
-  ProjectDto,
   ProjectRulesDto,
   StatusDto,
   TaskDto,
@@ -23,8 +22,11 @@ import {
   editDocument,
   documentDiffView,
   getDocument,
+  getDocumentGraph,
   getDocumentVersion,
+  listBacklinks,
   listDocuments,
+  listTaskBacklinks,
   moveDocument,
   updateDocument,
   createProject,
@@ -209,7 +211,7 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
     return withTaskUrl(urls, taskView(task, { statuses: project.statuses, actors, tags }));
   };
 
-  const describeProject = <T extends ProjectDto>(project: T) => withProjectUrl(urls, project);
+  const describeProject = <T extends { key: string }>(project: T) => withProjectUrl(urls, project);
 
   const describeDocument = <T extends DocumentSummaryDto>(d: T) => withDocumentUrl(urls, d);
 
@@ -646,10 +648,49 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   );
 
   server.registerTool(
+    "list_backlinks",
+    {
+      description:
+        "Follow the knowledge base backwards: the documents linking to a document ([[its title]] or [[doc:<id>]]), or mentioning a task ([[ST-12]] or a plain ST-12; not the task's own documents). Most recently updated first. Pass id or task.",
+      inputSchema: {
+        id: z.string().optional().describe("Document id"),
+        task: z.string().optional().describe('Task key, e.g. "ST-12"'),
+      },
+    },
+    ({ id, task }) =>
+      run(async () => {
+        if (!id === !task) throw new DomainError("validation", "Pass either id (a document) or task (a task key)");
+        const documents = task ? await listTaskBacklinks(db, ctx, task) : await listBacklinks(db, ctx, id ?? "");
+        // { items } of document summaries, as `spider doc backlinks --json`.
+        return { items: documents.map(describeDocument) };
+      }),
+  );
+
+  server.registerTool(
+    "get_document_graph",
+    {
+      description:
+        "The documents you can see as a graph: documents, the tasks and projects they sit in or link to, and every link (from a document to a document, a task, or a title no document has yet: unresolved). A task document belongs to its task, a task to its project.",
+      inputSchema: {},
+    },
+    () =>
+      run(async () => {
+        // DocumentGraphDto with urls, as GET …/documents/graph and `spider doc graph --json`.
+        const graph = await getDocumentGraph(db, ctx);
+        return {
+          ...graph,
+          documents: graph.documents.map(describeDocument),
+          tasks: graph.tasks.map((t) => withTaskUrl(urls, t)),
+          projects: graph.projects.map(describeProject),
+        };
+      }),
+  );
+
+  server.registerTool(
     "update_document",
     {
       description:
-        "Save a new version of a document. Only the fields you pass change; content replaces the whole text (to change part of it, use edit_document). Fails if someone saved since baseVersion: read it again with get_document and reapply your edit.",
+        "Save a new version of a document. Only the fields you pass change; content replaces the whole text (to change part of it, use edit_document). Fails if someone saved since baseVersion: read it again with get_document and reapply your edit. A new title rewrites [[Old title]] links in the documents you can edit that link here (relinked lists them, and any skipped).",
       inputSchema: {
         id: z.string().describe("Document id"),
         baseVersion: z.number().int().positive().describe("The version you read (from get_document)"),
@@ -659,7 +700,10 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
       },
     },
     ({ id, baseVersion, title, content, format }) =>
-      run(async () => describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }))),
+      run(async () => {
+        // UpdatedDocumentDto: the document, plus `relinked` when a new title rewrote links to it.
+        return describeDocument(await updateDocument(db, ctx, id, { baseVersion, title, content, format }));
+      }),
   );
 
   server.registerTool(
