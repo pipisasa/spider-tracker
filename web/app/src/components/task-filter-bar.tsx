@@ -4,9 +4,9 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { actorLabel } from "@/lib/assignees";
-import { isEmptyFilters, toggleValue, type TaskFilters } from "@/lib/task-filters";
+import { activeFilterCount, isEmptyFilters, toggleValue, type TaskFilters } from "@/lib/task-filters";
 import type { ActorDto, Priority, StatusDto, TagDto } from "@repo/core/contracts";
-import { CheckIcon, ChevronDownIcon, ListFilterIcon, SearchIcon, XIcon, type LucideIcon } from "lucide-react";
+import { CalendarClockIcon, CheckIcon, ChevronDownIcon, ListFilterIcon, SearchIcon, XIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 // Filter bar of the project page (ST-15): a text box, one multi-select per field, and chips
@@ -129,12 +129,7 @@ export function TaskFilterBar({
     ...members.filter((m) => m.id !== meId).map((m) => ({ value: m.id, label: actorLabel(m) })),
   ];
 
-  const activeCount =
-    (filters.status?.length ?? 0) +
-    (filters.assignee?.length ?? 0) +
-    (filters.priority?.length ?? 0) +
-    (filters.tag?.length ?? 0) +
-    (filters.q ? 1 : 0);
+  const activeCount = activeFilterCount(filters);
 
   return (
     <div role="search" aria-label="Filter tasks" className="flex flex-wrap items-center gap-2 border-b px-4 py-2 md:px-6">
@@ -205,6 +200,17 @@ export function TaskFilterBar({
           </div>
         }
       />
+      <Button
+        variant={filters.overdue ? "secondary" : "outline"}
+        size="sm"
+        className="max-md:h-10"
+        aria-pressed={filters.overdue === true}
+        title="Open tasks past their target date"
+        onClick={() => onChange({ ...filters, overdue: filters.overdue ? undefined : true })}
+      >
+        <CalendarClockIcon />
+        Overdue
+      </Button>
       {!isEmptyFilters(filters) && (
         <>
           <span className="mx-1 h-4 w-px bg-border" aria-hidden />
@@ -237,6 +243,7 @@ export function TaskFilterBar({
             );
           })}
           {filters.q && <FilterChip label={`“${filters.q}”`} onRemove={() => onChange({ ...filters, q: undefined })} />}
+          {filters.overdue && <FilterChip label="Overdue" onRemove={() => onChange({ ...filters, overdue: undefined })} />}
           <Button variant="ghost" size="sm" onClick={() => onChange({})}>
             Clear
           </Button>

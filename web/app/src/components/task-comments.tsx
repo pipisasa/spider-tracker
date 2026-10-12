@@ -1,6 +1,6 @@
 import { CommentBody } from "@/components/comment-body";
 import { RELATION_LABELS } from "@/components/relations";
-import { ActorAvatar } from "@/components/task-fields";
+import { ActorAvatar, formatDay } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { mentionOf, nameOf } from "@/lib/assignees";
@@ -62,6 +62,10 @@ export function describeActivity(
     else if (field === "parentId")
       parts.push(to ? "set a parent task" : "removed the parent task");
     else if (field === "tagIds") parts.push(describeTagChange(from, to, tags));
+    else if (field === "startDate" || field === "targetDate") {
+      const name = field === "startDate" ? "start date" : "target date";
+      parts.push(typeof to === "string" ? `set the ${name} to ${formatDay(to)}` : `removed the ${name}`);
+    }
     else parts.push(`changed ${field}`);
   }
   return parts.join(", ") || null;

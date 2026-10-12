@@ -37,7 +37,7 @@ import { useMemo, useState } from "react";
 
 type View = "board" | "list" | "docs";
 
-/** `view` plus the task filters (status, assignee, priority, tag, q), all in the URL so links can be shared. */
+/** `view` plus the task filters (status, assignee, priority, tag, q, overdue), all in the URL so links can be shared. */
 type ProjectSearch = TaskFilters & { view?: View };
 
 export const Route = createFileRoute("/_authed/$orgSlug/projects/$projectKey")({
@@ -75,7 +75,10 @@ function ProjectPage() {
 
   const meId = membership.actor.id;
   const mineIds = useMemo(() => mineActorIds(meId, actors), [meId, actors]);
-  const visibleTasks = useMemo(() => applyFilters(tasks, filters, meId, mineIds), [tasks, filters, meId, mineIds]);
+  const visibleTasks = useMemo(
+    () => applyFilters(tasks, filters, meId, mineIds, project.statuses),
+    [tasks, filters, meId, mineIds, project.statuses],
+  );
   const filtered = !isEmptyFilters(filters);
 
   const setFilters = (next: TaskFilters) =>

@@ -4,7 +4,7 @@ import { Relations } from "@/components/relations";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
-import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
+import { ActorAvatar, AssigneePicker, DateInput, PrioritySelect, StatusSelect } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
@@ -13,7 +13,7 @@ import { useWorkingNow } from "@/lib/use-presence";
 import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import { branchNameFor } from "@repo/core/git";
-import type { UpdateTaskInput } from "@repo/core/schemas";
+import { isOverdue, type UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, CopyIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
@@ -63,6 +63,7 @@ function TaskPage() {
   const save = (input: UpdateTaskInput, callbacks?: SaveCallbacks) =>
     update.mutate({ taskKey: task.key, input }, callbacks);
   const creator = actors.find((m) => m.id === task.creatorId);
+  const overdue = isOverdue(task, project.statuses.find((s) => s.id === task.statusId)?.category);
 
   function deleteTask() {
     remove.mutate(task.key, {
@@ -103,6 +104,18 @@ function TaskPage() {
         </Field>
         <Field label="Tags">
           <TagPicker orgSlug={orgSlug} value={task.tagIds ?? []} onChange={(tagIds) => save({ tagIds })} />
+        </Field>
+        <Field label="Start date">
+          <DateInput label="Start date" value={task.startDate} max={task.targetDate} onChange={(startDate) => save({ startDate })} />
+        </Field>
+        <Field label={overdue ? "Target date · overdue" : "Target date"}>
+          <DateInput
+            label="Target date"
+            value={task.targetDate}
+            min={task.startDate}
+            invalid={overdue}
+            onChange={(targetDate) => save({ targetDate })}
+          />
         </Field>
         <Field label="Created">
           <span className="flex items-center gap-2 text-sm">

@@ -9,6 +9,7 @@ import {
   matchStatuses,
   mineActorIds,
   parseLimit,
+  parseDate,
   parsePriority,
   resolveAssignees,
   resolveStatus,
@@ -122,6 +123,13 @@ describe("parsing and error mapping", () => {
     expect(() => parsePriority("5")).toThrow(/Invalid priority/);
   });
 
+  test("dates are YYYY-MM-DD, and empty clears them", () => {
+    expect(parseDate("2026-10-31", "--target")).toBe("2026-10-31");
+    expect(parseDate(" ", "--start")).toBeNull();
+    expect(() => parseDate("2026-02-30", "--target")).toThrow('Invalid date "2026-02-30" in --target');
+    expect(() => parseDate("tomorrow", "--start")).toThrow(/YYYY-MM-DD/);
+  });
+
   test("limit must be a positive integer", () => {
     expect(parseLimit("10")).toBe(10);
     expect(() => parseLimit("0")).toThrow();
@@ -151,6 +159,20 @@ describe("client-side task filter (older servers ignore the query)", () => {
     expect(matchesTaskFilter(task, { tagIds: ["t-bug", "t-api"], tagMatch: "any" })).toBe(true);
     expect(matchesTaskFilter(task, { tagIds: ["t-api"], tagMatch: "any" })).toBe(false);
   });
+  test("overdue keeps open tasks past their target date; servers without dates match nothing", () => {
+    const overdue = {
+      statuses: [
+        { id: "s-review", category: "in_review" as const },
+        { id: "s-done", category: "done" as const },
+      ],
+      today: "2026-10-13",
+    };
+    expect(matchesTaskFilter({ ...task, targetDate: "2026-10-12" }, { overdue })).toBe(true);
+    expect(matchesTaskFilter({ ...task, targetDate: "2026-10-13" }, { overdue })).toBe(false);
+    expect(matchesTaskFilter({ ...task, statusId: "s-done", targetDate: "2026-10-12" }, { overdue })).toBe(false);
+    expect(matchesTaskFilter(task, { overdue })).toBe(false);
+  });
+
   test("none matches unassigned tasks", () => {
     expect(matchesTaskFilter({ ...task, assigneeIds: [] }, { assignee: ["none"] })).toBe(true);
     expect(matchesTaskFilter(task, { assignee: ["none"] })).toBe(false);

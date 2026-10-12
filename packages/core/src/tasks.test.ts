@@ -8,7 +8,7 @@ import { createOrganization } from "./organizations";
 import { archiveProject, createProject, getProject, listProjects, updateProject } from "./projects";
 import { listTaskActivity } from "./activity-feed";
 import { createTag } from "./tags";
-import { MAX_BULK_TASKS } from "./schemas";
+import { MAX_BULK_TASKS, todayUtc } from "./schemas";
 import { createTask, deleteTask, getTask, listTasks, updateTask, updateTasks } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -358,6 +358,54 @@ run("projects and tasks", () => {
     await expect(updateTasks(db, botCtx, { filter: { project: hidden.key }, set: { priority: 1 } })).rejects.toMatchObject({
       code: "not_found",
     });
+  });
+
+  test("start and target dates: set, cleared, kept in order, recorded; overdue lists open tasks past their target", async () => {
+    const project = await createProject(db, ctx, { name: "Dates", key: "DAT" });
+    const done = project.statuses.find((s) => s.category === "done")?.id ?? "";
+    const today = todayUtc();
+    const created = await createTask(db, ctx, "DAT", { title: "Planned", startDate: "2020-01-01", targetDate: "2020-02-01" });
+    expect(created).toMatchObject({ startDate: "2020-01-01", targetDate: "2020-02-01" });
+    expect(await getTask(db, ctx, created.key)).toMatchObject({ startDate: "2020-01-01", targetDate: "2020-02-01" });
+
+    for (const input of [
+      { title: "Backwards", startDate: "2020-03-01", targetDate: "2020-02-01" },
+      { title: "Not a date", targetDate: "2020-02-30" },
+      { title: "With time", targetDate: "2020-02-01T00:00:00Z" },
+    ]) {
+      await expect(createTask(db, ctx, "DAT", input)).rejects.toMatchObject({ code: "validation" });
+    }
+    // Checked against the stored date too.
+    await expect(updateTask(db, ctx, created.key, { startDate: "2020-03-01" })).rejects.toMatchObject({
+      code: "validation",
+      message: "The start date must be on or before the target date",
+    });
+    const moved = await updateTask(db, ctx, created.key, { startDate: "2020-03-01", targetDate: "2020-04-01" });
+    expect(moved).toMatchObject({ startDate: "2020-03-01", targetDate: "2020-04-01" });
+    const cleared = await updateTask(db, ctx, created.key, { startDate: null });
+    expect(cleared).toMatchObject({ startDate: null, targetDate: "2020-04-01" });
+    const log = await listTaskActivity(db, ctx.orgId, created.key);
+    expect(log.map((e) => e.changes)).toContainEqual({ startDate: ["2020-03-01", null] });
+
+    const future = await createTask(db, ctx, "DAT", { title: "Future", targetDate: "2999-01-01" });
+    const dueToday = await createTask(db, ctx, "DAT", { title: "Due today", targetDate: today });
+    const closed = await createTask(db, ctx, "DAT", { title: "Late but done", targetDate: "2020-01-01", statusId: done });
+    await createTask(db, ctx, "DAT", { title: "Undated" });
+    const overdue = await listTasks(db, ctx, "DAT", { overdue: true });
+    expect(overdue.map((t) => t.key)).toEqual([created.key]);
+    expect((await listTasks(db, ctx, "DAT", { overdue: "true", q: "planned" })).map((t) => t.key)).toEqual([created.key]);
+    expect((await listTasks(db, ctx, "DAT", { overdue: "false" })).length).toBe(5);
+    expect([future, dueToday, closed].every((t) => !overdue.some((o) => o.id === t.id))).toBe(true);
+
+    // Bulk updates set and clear dates with the same check.
+    const bulk = await updateTasks(db, ctx, { keys: [future.key, dueToday.key], set: { targetDate: "2021-01-01" } });
+    expect(bulk.results.map((r) => [r.outcome, r.task?.targetDate])).toEqual([
+      ["changed", "2021-01-01"],
+      ["changed", "2021-01-01"],
+    ]);
+    const bad = await updateTasks(db, ctx, { keys: [created.key], set: { startDate: "2030-01-01" } });
+    expect(bad.results[0]).toMatchObject({ outcome: "error", error: { code: "validation" } });
+    expect((await listTasks(db, ctx, "DAT", { overdue: true })).length).toBe(3);
   });
 
   test("a missing project is not_found, filtered or not, before the filters are checked", async () => {

@@ -1,5 +1,5 @@
-import type { ActorDto, TaskDto } from "@repo/core/contracts";
-import { viewFiltersSchema, type ViewFilters } from "@repo/core/schemas";
+import type { ActorDto, StatusDto, TaskDto } from "@repo/core/contracts";
+import { isOverdue, viewFiltersSchema, type ViewFilters } from "@repo/core/schemas";
 
 // Filters of the project page (ST-15): they live in the URL search params, so links can be
 // shared, and are the same shape as saved views. Values within a key are OR-ed, keys AND-ed;
@@ -7,7 +7,7 @@ import { viewFiltersSchema, type ViewFilters } from "@repo/core/schemas";
 
 export type TaskFilters = ViewFilters;
 
-export const FILTER_KEYS = ["status", "assignee", "priority", "tag", "tagMatch", "q"] as const;
+export const FILTER_KEYS = ["status", "assignee", "priority", "tag", "tagMatch", "q", "overdue"] as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -39,6 +39,8 @@ export function parseFilters(search: Record<string, unknown>): TaskFilters {
   const raw = typeof search.q === "number" ? String(search.q) : search.q;
   const q = typeof raw === "string" ? raw.trim().slice(0, 200) : "";
   if (q) filters.q = q;
+  // Only "on" is kept; the router JSON-parses `?overdue=true` into a boolean.
+  if (search.overdue === true || search.overdue === "true") filters.overdue = true;
   return filters;
 }
 
@@ -58,7 +60,8 @@ export const activeFilterCount = (filters: TaskFilters) =>
   (filters.assignee?.length ?? 0) +
   (filters.priority?.length ?? 0) +
   (filters.tag?.length ?? 0) +
-  (filters.q ? 1 : 0);
+  (filters.q ? 1 : 0) +
+  (filters.overdue ? 1 : 0);
 
 export const isEmptyFilters = (filters: TaskFilters) => activeFilterCount(filters) === 0;
 
@@ -73,6 +76,7 @@ export function sameFilters(a: TaskFilters, b: TaskFilters): boolean {
       // With fewer than two tags, all and any select the same tasks.
       (f.tag?.length ?? 0) > 1 ? (f.tagMatch ?? "all") : "",
       (f.q ?? "").trim().toLowerCase(),
+      f.overdue === true,
     ]);
   return norm(a) === norm(b);
 }
@@ -94,12 +98,21 @@ export const mineActorIds = (meId: string, actors: ActorDto[]): string[] => [
 
 /**
  * The tasks matching every active filter; `meId` is the viewer's actor id (for `assignee=me`),
- * `mineIds` the actors of `assignee=mine` (see `mineActorIds`).
+ * `mineIds` the actors of `assignee=mine` (see `mineActorIds`), `statuses` the project's (for
+ * `overdue`: a done or canceled status closes a task) and `today` the UTC date, as the API's.
  */
-export function applyFilters(tasks: TaskDto[], filters: TaskFilters, meId: string, mineIds: string[] = [meId]): TaskDto[] {
+export function applyFilters(
+  tasks: TaskDto[],
+  filters: TaskFilters,
+  meId: string,
+  mineIds: string[] = [meId],
+  statuses: Pick<StatusDto, "id" | "category">[] = [],
+  today?: string,
+): TaskDto[] {
   if (isEmptyFilters(filters)) return tasks;
   const query = filters.q?.trim().toLowerCase();
   return tasks.filter((task) => {
+    if (filters.overdue && !isOverdue(task, statuses.find((s) => s.id === task.statusId)?.category, today)) return false;
     if (filters.status?.length && !filters.status.includes(task.statusId)) return false;
     if (filters.priority?.length && !filters.priority.includes(task.priority)) return false;
     if (filters.tag?.length) {

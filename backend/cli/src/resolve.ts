@@ -1,4 +1,4 @@
-import { normalizeHandle } from "@repo/core/schemas";
+import { isOverdue, normalizeHandle, taskDateSchema } from "@repo/core/schemas";
 import { matchStatuses } from "@repo/core/statuses";
 import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
@@ -39,6 +39,14 @@ export function parsePriority(value: string): Priority {
   const index = /^[0-4]$/.test(v) ? Number(v) : PRIORITY_NAMES.findIndex((n) => n === v);
   if (index < 0) throw usageError(`Invalid priority "${value}". Use 0-4 or ${PRIORITY_NAMES.join(", ")}`);
   return index as Priority;
+}
+
+/** A date option ("--start", "--target"): "YYYY-MM-DD", or "" for null (clears it). */
+export function parseDate(value: string, flag: string): string | null {
+  const v = value.trim();
+  if (v === "") return null;
+  if (!taskDateSchema.safeParse(v).success) throw usageError(`Invalid date "${value}" in ${flag}. Expected YYYY-MM-DD, or "" to clear it`);
+  return v;
 }
 
 export function parseLimit(value: string): number {
@@ -122,6 +130,8 @@ export interface TaskListFilter {
   tagIds?: string[];
   tagMatch?: "all" | "any";
   priority?: number[];
+  /** Only overdue tasks (see isOverdue): the categories of the project's statuses tell which are closed. */
+  overdue?: { statuses: Pick<StatusDto, "id" | "category">[]; today?: string };
 }
 
 /**
@@ -129,10 +139,15 @@ export interface TaskListFilter {
  * query parameters and returns every task, which must not reach an agent picking up work.
  */
 export function matchesTaskFilter(
-  task: { statusId: string; assigneeIds: string[]; tagIds?: string[]; priority: number },
+  task: { statusId: string; assigneeIds: string[]; tagIds?: string[]; priority: number; targetDate?: string | null },
   filter: TaskListFilter,
 ): boolean {
   if (filter.statusIds && !filter.statusIds.includes(task.statusId)) return false;
+  if (filter.overdue) {
+    const category = filter.overdue.statuses.find((s) => s.id === task.statusId)?.category;
+    // Servers from before dates (ST-91) send no targetDate: nothing is overdue.
+    if (!isOverdue({ targetDate: task.targetDate ?? null }, category, filter.overdue.today)) return false;
+  }
   if (filter.priority && !filter.priority.includes(task.priority)) return false;
   if (filter.tagIds) {
     const has = (id: string) => (task.tagIds ?? []).includes(id);

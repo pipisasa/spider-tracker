@@ -50,15 +50,38 @@ export const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2),
 const taskTitle = z.string().trim().min(1, "Required").max(255, "At most 255 characters");
 const taskDescription = z.string().max(50_000).nullable();
 
-export const createTaskInput = z.object({
-  title: taskTitle,
-  description: taskDescription.optional(),
-  statusId: z.uuid().optional(),
-  priority: prioritySchema.optional(),
-  assigneeIds: z.array(z.uuid()).max(20).optional(),
-  tagIds: z.array(z.uuid()).max(20).optional(),
-  parentId: z.uuid().nullable().optional(),
-});
+/** A calendar date, "YYYY-MM-DD", with no time or time zone (ST-91); null clears it. */
+export const taskDateSchema = z.iso.date("A date as YYYY-MM-DD").nullable();
+
+export const DATES_OUT_OF_ORDER = "The start date must be on or before the target date";
+
+/** Start ≤ target when both are set; ISO dates compare as strings. */
+export const datesInOrder = (start: string | null | undefined, target: string | null | undefined) =>
+  !start || !target || start <= target;
+
+/** Today's date in UTC, "YYYY-MM-DD": what "overdue" compares target dates with. */
+export const todayUtc = (now: Date = new Date()) => now.toISOString().slice(0, 10);
+
+/** The target date has passed (before `today`, UTC) and the task isn't closed (done or canceled). */
+export const isOverdue = (
+  task: { targetDate: string | null },
+  category: string | null | undefined,
+  today: string = todayUtc(),
+) => task.targetDate !== null && task.targetDate < today && category !== "done" && category !== "canceled";
+
+export const createTaskInput = z
+  .object({
+    title: taskTitle,
+    description: taskDescription.optional(),
+    statusId: z.uuid().optional(),
+    priority: prioritySchema.optional(),
+    assigneeIds: z.array(z.uuid()).max(20).optional(),
+    tagIds: z.array(z.uuid()).max(20).optional(),
+    parentId: z.uuid().nullable().optional(),
+    startDate: taskDateSchema.optional(),
+    targetDate: taskDateSchema.optional(),
+  })
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
 
 export type CreateTaskInput = z.infer<typeof createTaskInput>;
 
@@ -79,6 +102,8 @@ export const updateTaskInput = z
     tagIds: z.array(z.uuid()).max(20),
     parentId: z.uuid().nullable(),
     position: taskPositionInput,
+    startDate: taskDateSchema,
+    targetDate: taskDateSchema,
   })
   .partial();
 
@@ -113,6 +138,8 @@ export const taskListFilters = z.object({
   q: z.string().trim().max(200).optional(),
   /** Direct sub-tasks of this task key ("ST-3"). */
   parent: z.string().trim().min(1).max(30).optional(),
+  /** true: only overdue tasks (see `isOverdue`); "true"/"false" too, as they arrive in a query string. */
+  overdue: z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional(),
 });
 
 export type TaskListFilters = z.input<typeof taskListFilters>;
@@ -131,6 +158,8 @@ export const bulkTaskChanges = z
     assigneeIds: z.array(z.uuid()).max(20),
     tagIds: z.array(z.uuid()).max(20),
     parentId: z.uuid().nullable(),
+    startDate: taskDateSchema,
+    targetDate: taskDateSchema,
   })
   .partial()
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
@@ -387,7 +416,7 @@ export const invitationCodeInput = z.object({
  * OR-ed, except `tag`, which follows `tagMatch`; keys are AND-ed. `assignee` takes actor ids plus
  * `me` (the viewer), `mine` (the viewer's person and their agents) and `none` (unassigned).
  * Views store `tagMatch` explicitly ("all" when left out); views saved before it existed have
- * none and are read as "any", the web's match back then.
+ * none and are read as "any", the web's match back then. `overdue` (ST-91): only open tasks past their target date.
  */
 export const viewFiltersSchema = z.object({
   status: z.array(z.uuid()).max(50).optional(),
@@ -396,6 +425,7 @@ export const viewFiltersSchema = z.object({
   tag: z.array(z.uuid()).max(50).optional(),
   tagMatch: tagMatchSchema.optional(),
   q: z.string().trim().max(200).optional(),
+  overdue: z.boolean().optional(),
 });
 
 export type ViewFilters = z.infer<typeof viewFiltersSchema>;

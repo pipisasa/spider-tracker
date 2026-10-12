@@ -552,6 +552,38 @@ withDb("spider CLI against the API", () => {
     expect(await usage("task", "update", "--project", "SPI", "--status", "Nope", "--set-status", "Done")).toContain('Unknown status "Nope"');
   });
 
+  test("dates: --start and --target on create and update, cleared with \"\", shown on list and view; list --overdue (ST-91)", async () => {
+    const created = await spider("task", "create", "--project", "SPI", "--title", "Dated", "--start", "2020-01-01", "--target", "2020-01-31", "--json");
+    expect(created.json()).toMatchObject({ startDate: "2020-01-01", targetDate: "2020-01-31" });
+    const key = created.json().key as string;
+    const view = await spider("task", "view", key);
+    expect(view.stdout).toContain("Start: 2020-01-01 · Target: 2020-01-31 (overdue)");
+    const list = await spider("task", "list", "--project", "SPI", "--overdue");
+    expect(list.code).toBe(0);
+    expect(list.stdout.trim().split("\n")).toEqual([expect.stringMatching(new RegExp(`^${key}\\s.*Dated  due 2020-01-31 \\(overdue\\)`))]);
+
+    const usage = async (...argv: string[]) => {
+      const result = await spider(...argv);
+      expect(result.code).toBe(2);
+      return result.stderr;
+    };
+    expect(await usage("task", "update", key, "--target", "31/01/2020")).toContain('Invalid date "31/01/2020" in --target');
+    expect(await usage("task", "update", key, "--start", "2020-02-15")).toContain("on or before the target date");
+    expect(await usage("task", "update", key, "--overdue", "--status", "Done")).toContain("--project");
+    expect(await usage("task", "update", "--project", "SPI", "--target", "2020-01-01")).toContain("--set-target");
+
+    const cleared = await spider("task", "update", key, "--start", "", "--target", "2999-01-01", "--json");
+    expect(cleared.json()).toMatchObject({ startDate: null, targetDate: "2999-01-01" });
+    expect((await spider("task", "list", "--project", "SPI", "--overdue", "--json")).json()).toEqual({ items: [] });
+
+    // Several keys and filter mode take --set-start / --set-target too.
+    const late = await spider("task", "update", key, "--set-target", "2020-03-01", "--dry-run", "--json");
+    expect(late.json()).toMatchObject({ dryRun: true, results: [{ key, task: { targetDate: "2020-03-01" } }] });
+    await spider("task", "update", key, "--target", "2020-03-01");
+    const byFilter = await spider("task", "update", "--project", "SPI", "--overdue", "--set-target", "", "--yes", "--json");
+    expect(byFilter.json()).toMatchObject({ summary: { changed: 1 }, results: [{ key, task: { targetDate: null } }] });
+  });
+
   test("sub-tasks: --parent on create, shown by view, cleared with an empty --parent", async () => {
     const child = await spider("task", "create", "--project", "SPI", "--title", "Child", "--parent", "spi-1", "--json");
     expect(child.json()).toMatchObject({ parentKey: "SPI-1" });
@@ -906,7 +938,9 @@ withDb("spider CLI against the API", () => {
 
     try {
       // A task with a sub-task, a link, a document and a comment, so every nested list has something.
-      const child = (await spider("task", "create", "--project", "SPI", "--title", "Parity child", "--parent", "SPI-1", "--tag", "cli", "--json")).json();
+      const child = (
+        await spider("task", "create", "--project", "SPI", "--title", "Parity child", "--parent", "SPI-1", "--tag", "cli", "--target", "2020-01-31", "--json")
+      ).json();
       await spider("link", "SPI-1", "relates", child.key as string);
       await spider("comment", "SPI-1", "Parity check");
 
@@ -915,6 +949,10 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("list_tasks", { projectKey: "SPI", limit: 200 })).toEqual({
         ...((await cli("task", "list", "--project", "SPI", "--limit", "200")) as object),
         total: expect.any(Number),
+      });
+      expect(await mcp("list_tasks", { projectKey: "SPI", overdue: true })).toEqual({
+        ...((await cli("task", "list", "--project", "SPI", "--overdue")) as object),
+        total: 1,
       });
       expect(await mcp("list_documents", { project: "SPI" })).toEqual(await cli("doc", "list", "--project", "SPI"));
       const doc = ((await cli("doc", "list", "--project", "SPI")) as { items: { id: string; version: number }[] }).items.find((d) => d.version > 1);
@@ -947,6 +985,9 @@ withDb("spider CLI against the API", () => {
 
       // Writes return the same fields.
       expect(shape(await mcp("update_task", { key: "SPI-1", priority: 1 }))).toEqual(shape(await cli("task", "update", "SPI-1", "--priority", "2")));
+      expect(shape(await mcp("update_task", { key: "SPI-1", startDate: "2020-01-01", targetDate: "2020-02-01" }))).toEqual(
+        shape(await cli("task", "update", "SPI-1", "--start", "2020-01-02", "--target", "2020-02-02")),
+      );
       expect(shape(await mcp("add_comment", { key: "SPI-1", body: "From MCP" }))).toEqual(shape(await cli("comment", "SPI-1", "From CLI")));
       expect(shape(await mcp("update_tasks", { keys: ["SPI-1", "SPI-999"], priority: 3 }))).toEqual(
         shape(await spider("task", "update", "SPI-1", "SPI-999", "--priority", "3", "--json").then((r) => r.json())),

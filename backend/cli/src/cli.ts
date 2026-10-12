@@ -10,7 +10,7 @@ import type {
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { INBOX_KINDS, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
+import { INBOX_KINDS, isOverdue, normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { formatUnifiedDiff } from "@repo/core/diff";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import {
@@ -99,6 +99,7 @@ import {
   firstStatus,
   fromApiError,
   matchStatuses,
+  parseDate,
   parseLimit,
   parseVersion,
   matchesTaskFilter,
@@ -217,6 +218,8 @@ interface TaskFields extends JsonOption {
   assign?: string[];
   tag?: string[];
   parent?: string;
+  start?: string;
+  target?: string;
 }
 
 /** The changes `task update` makes, as typed (before resolving names to ids). */
@@ -226,6 +229,8 @@ interface TaskChanges {
   assign?: string[];
   tag?: string[];
   parent?: string;
+  start?: string;
+  target?: string;
 }
 
 /**
@@ -238,6 +243,9 @@ interface TaskUpdateOptions extends TaskFields {
   setAssign?: string[];
   setTag?: string[];
   setParent?: string;
+  setStart?: string;
+  setTarget?: string;
+  overdue?: boolean;
   project?: string;
   assignee?: string[];
   anyTag?: boolean;
@@ -253,6 +261,7 @@ interface TaskListOptions extends JsonOption {
   tag?: string[];
   anyTag?: boolean;
   priority?: string[];
+  overdue?: boolean;
   limit: string;
 }
 
@@ -434,6 +443,7 @@ function taskLines(tasks: CliTask[]): string {
         (t.status?.name ?? "?").padEnd(statusWidth),
         t.priority ? `P${t.priority}` : "  ",
         t.title,
+        t.targetDate ? `due ${t.targetDate}${isOverdue(t, t.status?.category) ? " (overdue)" : ""}` : "",
         t.tags.map((name) => `#${name}`).join(" "),
         assigneeList(t),
       ]
@@ -449,6 +459,10 @@ function taskDetail(task: CliTask): string {
     `Status: ${task.status?.name ?? "?"} · Priority: ${PRIORITY_NAMES[task.priority]} · Assignees: ${assigneeList(task) || "none"}${task.tags.length ? ` · Tags: ${task.tags.join(", ")}` : ""}`,
     `Created ${task.createdAt} · Updated ${task.updatedAt}${task.completedAt ? ` · Completed ${task.completedAt}` : ""}`,
   ];
+  if (task.startDate || task.targetDate) {
+    const overdue = isOverdue(task, task.status?.category) ? " (overdue)" : "";
+    lines.push([task.startDate && `Start: ${task.startDate}`, task.targetDate && `Target: ${task.targetDate}${overdue}`].filter(Boolean).join(" · "));
+  }
   if (task.parentKey) lines.push(`Parent: ${task.parentKey}`);
   if (task.description) lines.push("", task.description);
   return lines.join("\n");
@@ -593,6 +607,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       const { sdk, org } = conn();
       input.parentId = opts.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(opts.parent, cwd, git))).id;
     }
+    if (opts.start !== undefined) input.startDate = parseDate(opts.start, "--start");
+    if (opts.target !== undefined) input.targetDate = parseDate(opts.target, "--target");
     return input;
   };
 
@@ -604,7 +620,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         .option("--priority <0-4>", "0 none, 1 urgent, 2 high, 3 medium, 4 low")
         .option("--assign <handle>", "assignee handle or \"me\"; repeatable or comma-separated", collect)
         .option("--tag <name>", "tag name; repeatable or comma-separated (replaces the tags on update)", collect)
-        .option("--parent <key>", 'parent task key, making this a sub-task ("" makes it top-level)'),
+        .option("--parent <key>", 'parent task key, making this a sub-task ("" makes it top-level)')
+        .option("--start <date>", 'start date, YYYY-MM-DD ("" clears it)')
+        .option("--target <date>", 'target date, YYYY-MM-DD, on or after the start ("" clears it)'),
     );
 
   /** Updates a task and prints the result. */
@@ -1382,6 +1400,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--tag <name>", "carrying all of these tags; repeatable or comma-separated", collect)
       .option("--any-tag", "with --tag: carrying any of the tags instead of all")
       .option("--priority <0-4>", "any of these priorities (0-4 or a name); repeatable or comma-separated", collect)
+      .option("--overdue", "only tasks past their target date (UTC) that aren't done or canceled")
       .option("--limit <n>", "at most n tasks", "50"),
   ).action(async (opts: TaskListOptions) => {
     const limit = parseLimit(opts.limit);
@@ -1422,8 +1441,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         if (status.length === 0) continue;
         statusKnown = true;
       }
-      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, tagMatch, priority });
-      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee: assigneeCheck, tagIds, tagMatch, priority })));
+      const overdue = opts.overdue ? { statuses: detail.statuses } : undefined;
+      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, tagMatch, priority, overdue: opts.overdue });
+      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee: assigneeCheck, tagIds, tagMatch, priority, overdue })));
       if (found.length >= limit) break;
     }
     if (opts.status !== undefined && !statusKnown) {
@@ -1498,6 +1518,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (changes.parent !== undefined) {
       set.parentId = changes.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(changes.parent, cwd, git))).id;
     }
+    if (changes.start !== undefined) set.startDate = parseDate(changes.start, "--start");
+    if (changes.target !== undefined) set.targetDate = parseDate(changes.target, "--target");
     if (Object.keys(set).length === 0) throw usageError(hints.nothing);
 
     const response = await (await sdk()).tasks.bulkUpdate(await org(), { ...target, set, dryRun });
@@ -1521,7 +1543,10 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--set-assign <handle>", "new assignees: the same as --assign; repeatable or comma-separated", collect)
       .option("--set-tag <name>", "new tags: the same as --tag, which filters with --project; repeatable or comma-separated", collect)
       .option("--set-parent <key>", 'new parent: the same as --parent, which filters with --project ("" makes them top-level)')
-      .option("--project <key>", "update the tasks of this project matching --status, --parent, --assignee, --tag, --priority")
+      .option("--set-start <date>", 'new start date: the same as --start ("" clears it)')
+      .option("--set-target <date>", 'new target date: the same as --target ("" clears it)')
+      .option("--project <key>", "update the tasks of this project matching --status, --parent, --assignee, --tag, --priority, --overdue")
+      .option("--overdue", "with --project: only tasks past their target date that aren't done or canceled")
       .option("--assignee <handle>", 'with --project: assigned to any of these, "me", "mine" or "none"; repeatable or comma-separated', collect)
       .option("--any-tag", "with --project and --tag: any of the tags instead of all")
       .option("--yes", "with --project: apply the changes (without it, only list what would change)")
@@ -1530,9 +1555,17 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (opts.project !== undefined) {
       // Filter mode: the task-field flags select tasks; changes come only from --set-*.
       if (keys.length > 0) throw usageError("Pass task keys or --project with filters, not both");
-      for (const [flag, value] of [["--title", opts.title], ["--description", opts.description], ["--assign", opts.assign]] as const) {
+      for (const [flag, value] of [
+        ["--title", opts.title],
+        ["--description", opts.description],
+        ["--assign", opts.assign],
+        ["--start", opts.start],
+        ["--target", opts.target],
+      ] as const) {
         if (value !== undefined) {
-          throw usageError(`${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag and --set-parent`);
+          throw usageError(
+            `${flag} can't be used with --project; changes go in --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start and --set-target`,
+          );
         }
       }
       if (opts.parent !== undefined && !parseTaskKey(opts.parent.trim())) {
@@ -1546,17 +1579,26 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         tags: opts.tag,
         tagMatch: opts.anyTag ? "any" : undefined,
         priority: opts.priority?.split(",").map(parsePriority),
+        overdue: opts.overdue ? true : undefined,
       };
-      const changes = { status: opts.setStatus, priority: opts.setPriority, assign: opts.setAssign, tag: opts.setTag, parent: opts.setParent };
+      const changes: TaskChanges = {
+        status: opts.setStatus,
+        priority: opts.setPriority,
+        assign: opts.setAssign,
+        tag: opts.setTag,
+        parent: opts.setParent,
+        start: opts.setStart,
+        target: opts.setTarget,
+      };
       await bulkUpdate({ filter }, changes, opts.dryRun === true || !opts.yes, {
-        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag or --set-parent",
+        nothing: "Nothing to update. With --project, pass --set-status, --set-priority, --set-assign, --set-tag, --set-parent, --set-start or --set-target",
         apply: opts.dryRun ? undefined : "Run again with --yes to apply.",
       }, opts);
       return;
     }
 
-    if (opts.assignee !== undefined || opts.anyTag) {
-      throw usageError("--assignee and --any-tag filter tasks; use them with --project (--assign sets the assignees)");
+    if (opts.assignee !== undefined || opts.anyTag || opts.overdue) {
+      throw usageError("--assignee, --any-tag and --overdue filter tasks; use them with --project (--assign sets the assignees)");
     }
     // Outside filter mode, --status and --set-status (and the others) both set the field.
     const pick = (name: string, plain: string | undefined, set: string | undefined) => {
@@ -1573,6 +1615,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       assign: pickList("assign", opts.assign, opts.setAssign),
       tag: pickList("tag", opts.tag, opts.setTag),
       parent: pick("parent", opts.parent, opts.setParent),
+      start: pick("start", opts.start, opts.setStart),
+      target: pick("target", opts.target, opts.setTarget),
     };
 
     if (keys.length <= 1 && !opts.dryRun) {
@@ -1587,7 +1631,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       throw usageError("--title and --description change one task at a time");
     }
     const resolvedKeys = keys.length ? keys.map((k) => taskKey(k, cwd, git)) : [taskKey(undefined, cwd, git)];
-    await bulkUpdate({ keys: resolvedKeys }, changes, opts.dryRun === true, { nothing: "Nothing to update. Pass --status, --priority, --assign, --tag or --parent" }, opts);
+    await bulkUpdate({ keys: resolvedKeys }, changes, opts.dryRun === true, {
+      nothing: "Nothing to update. Pass --status, --priority, --assign, --tag, --parent, --start or --target",
+    }, opts);
   });
 
   /**

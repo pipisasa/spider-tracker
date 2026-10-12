@@ -1,6 +1,6 @@
 import { TagChips } from "@/components/tags";
 import { WorkingAvatars } from "@/components/working-avatars";
-import { PriorityIcon, StatusIcon } from "@/components/task-fields";
+import { PriorityIcon, StatusIcon, TargetDate } from "@/components/task-fields";
 import { assigneesOf } from "@/lib/assignees";
 import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
 import { ListChecksIcon } from "lucide-react";
@@ -65,6 +65,7 @@ export function TaskList({
                       {task.subtasks.done}/{task.subtasks.total}
                     </span>
                   )}
+                  <TargetDate task={task} category={status.category} />
                   <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
                   <WorkingAvatars orgSlug={orgSlug} taskKey={task.key} actors={assigneesOf(task.assigneeIds, memberMap)} interactive={false} />
                   <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
