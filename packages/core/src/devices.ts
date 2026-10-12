@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, isNull, like } from "drizzle-orm";
-import { resolveMembership, type ActorContext } from "./access";
+import { and, eq, isNull, like, lt } from "drizzle-orm";
+import { assertRole, resolveMembership, type ActorContext } from "./access";
 import { issueApiKey } from "./agents";
 import { recordActivity } from "./activity";
 import type { DeviceRequestDto } from "./contracts";
@@ -17,6 +17,7 @@ const { actors, agents, deviceCodes, organizations } = schema;
 
 export const DEVICE_CODE_TTL_SECONDS = 600;
 export const DEVICE_POLL_INTERVAL_SECONDS = 5;
+const DEVICE_CODE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 // No vowels, so codes never spell words; no easily confused letters (RFC 8628 §6.1).
 const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
@@ -36,6 +37,7 @@ export function normalizeUserCode(input: string) {
 
 export async function startDeviceAuthorization(db: Db, input: unknown) {
   const { client_name: clientName } = parseInput(deviceCodeInput, input ?? {});
+  await db.delete(deviceCodes).where(lt(deviceCodes.expiresAt, new Date(Date.now() - DEVICE_CODE_RETENTION_MS)));
   const deviceCode = randomBytes(32).toString("base64url");
   const userCode = newUserCode();
   await db.insert(deviceCodes).values({
@@ -75,16 +77,26 @@ export async function decideDevice(
   if (row.status !== "pending") throw new DomainError("conflict", "This code has already been used");
   if (row.expiresAt <= new Date()) throw new DomainError("validation", "This code has expired. Run spider login again");
 
+  const pending = and(eq(deviceCodes.id, row.id), eq(deviceCodes.status, "pending"));
+  let updated: { id: string }[];
   if (!decision.approve) {
-    await db.update(deviceCodes).set({ status: "denied" }).where(eq(deviceCodes.id, row.id));
-    return;
+    updated = await db.update(deviceCodes).set({ status: "denied" }).where(pending).returning({ id: deviceCodes.id });
+  } else {
+    const { organization, actor } = await resolveMembership(db, userId, decision.orgSlug);
+    if (actor.type !== "human") throw new DomainError("forbidden", "Only people can approve devices");
+    // The device becomes an agent; guests can't create agents.
+    assertRole(
+      { orgId: organization.id, actorId: actor.id, role: actor.role, source: "api" },
+      ["owner", "admin", "member"],
+      "connect devices",
+    );
+    updated = await db
+      .update(deviceCodes)
+      .set({ status: "approved", orgId: organization.id, decidedBy: actor.id })
+      .where(pending)
+      .returning({ id: deviceCodes.id });
   }
-  const { organization, actor } = await resolveMembership(db, userId, decision.orgSlug);
-  if (actor.type !== "human") throw new DomainError("forbidden", "Only people can approve devices");
-  await db
-    .update(deviceCodes)
-    .set({ status: "approved", orgId: organization.id, decidedBy: actor.id })
-    .where(and(eq(deviceCodes.id, row.id), eq(deviceCodes.status, "pending")));
+  if (updated.length === 0) throw new DomainError("conflict", "This code has already been used");
 }
 
 export type DevicePollResult =
@@ -123,9 +135,11 @@ export async function pollDeviceToken(db: Db, deviceCode: string): Promise<Devic
 
     const [approver] = await tx.select().from(actors).where(eq(actors.id, row.decidedBy)).limit(1);
     const [organization] = await tx.select().from(organizations).where(eq(organizations.id, row.orgId)).limit(1);
-    if (!approver || !organization || approver.deactivatedAt) return { status: "invalid_grant" };
+    if (!approver || !organization) return { status: "invalid_grant" };
+    // The approver may have been deactivated or demoted to guest since approving.
+    if (approver.deactivatedAt || approver.role === "guest") return { status: "access_denied" };
 
-    // The device acts with at most the approver's rights; guests stay read-only.
+    // The device acts for the approver, who can create agents (guests can't approve).
     const ctx: ActorContext = {
       orgId: organization.id,
       actorId: approver.id,
@@ -169,7 +183,7 @@ export async function pollDeviceToken(db: Db, deviceCode: string): Promise<Devic
           type: "agent",
           name,
           handle,
-          role: approver.role === "guest" ? "guest" : "member",
+          role: "member",
         })
         .returning();
       if (!agent) throw new Error("Failed to create device agent");

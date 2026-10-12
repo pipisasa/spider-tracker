@@ -80,6 +80,14 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   app.get("/openapi.json", (c) => c.json(openApi));
   app.route("/", apiDocsRoutes());
 
+  // Each device code is a database row; rate limited per client IP.
+  const deviceCodeRequests = createRateLimiter({ limit: 10, windowMs: 60_000 });
+  app.post("/device/code", async (c, next) => {
+    if (!deviceCodeRequests.attempt(clientIp(c.req.raw.headers))) {
+      return c.json(errorBody("rate_limited", "Too many attempts. Try again in a minute"), 429);
+    }
+    await next();
+  });
   app.route("/device", deviceRoutes(db, env));
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));

@@ -63,7 +63,8 @@ function EnterCode() {
 
 function Decide({ code }: { code: string }) {
   const { me } = Route.useRouteContext();
-  const memberships = me.memberships;
+  // The device becomes an agent member; guests can't create agents.
+  const memberships = me.memberships.filter((m) => m.actor.role !== "guest");
   const [orgSlug, setOrgSlug] = useState(memberships[0]?.organization.slug ?? "");
   const [done, setDone] = useState<"approved" | "denied" | null>(null);
 
@@ -132,6 +133,11 @@ function Decide({ code }: { code: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {memberships.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            Guests can't connect devices. Ask an owner or admin to change your role.
+          </p>
+        )}
         {memberships.length > 1 && (
           <div className="flex flex-col gap-2">
             <Label>Organization</Label>
@@ -151,9 +157,11 @@ function Decide({ code }: { code: string }) {
         )}
         {decide.isError && <p className="text-sm text-destructive">{decide.error.message}</p>}
         <div className="flex gap-2">
-          <Button className="flex-1" disabled={decide.isPending || !orgSlug} onClick={() => decide.mutate(true)}>
-            Approve
-          </Button>
+          {memberships.length > 0 && (
+            <Button className="flex-1" disabled={decide.isPending || !orgSlug} onClick={() => decide.mutate(true)}>
+              Approve
+            </Button>
+          )}
           <Button variant="outline" disabled={decide.isPending} onClick={() => decide.mutate(false)}>
             Deny
           </Button>
