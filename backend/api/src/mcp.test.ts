@@ -737,6 +737,11 @@ withDb("MCP server", () => {
       }),
     ]);
 
+    // mark_inbox_read up_to marks every kind get_inbox lists, rules included (ST-128).
+    const [rulesItem] = JSON.parse((await call(otherClient, "get_inbox", {})).text) as { id: number }[];
+    expect(JSON.parse((await call(otherClient, "mark_inbox_read", { up_to: rulesItem?.id })).text)).toEqual({ updated: 1 });
+    expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual([]);
+
     // The owner's agent can change them through update_project; a non-document id is a tool error.
     expect((await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: null })).json()).toMatchObject({
       rulesDocumentId: null,

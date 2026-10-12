@@ -1843,7 +1843,7 @@ const paths = {
     parameters: [orgSlug],
     post: {
       operationId: "markInboxRead",
-      summary: "Mark items read, by ids or up to an id",
+      summary: "Mark items read, by ids or up to an id (only `kinds`, default the task kinds)",
       requestBody: body("MarkInboxReadInput"),
       responses: { "200": ok("Number of items marked", "MarkedCount"), ...errors },
     },

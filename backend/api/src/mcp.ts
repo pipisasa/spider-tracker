@@ -1493,13 +1493,15 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
   server.registerTool(
     "mark_inbox_read",
     {
-      description: "Mark inbox items read, by ids or everything up to an id.",
+      description: "Mark inbox items read, by ids or everything up to an id (every kind get_inbox returns).",
       inputSchema: {
         ids: z.array(z.number().int().positive()).optional(),
         up_to: z.number().int().positive().optional(),
       },
     },
-    ({ ids, up_to }) => run(async () => ({ updated: await markInboxRead(db, ctx, { ids, upTo: up_to }) })),
+    // get_inbox lists every kind, so `up_to` marks every kind too.
+    ({ ids, up_to }) =>
+      run(async () => ({ updated: await markInboxRead(db, ctx, { ids, upTo: up_to, kinds: [...INBOX_KINDS] }) })),
   );
 
   server.registerTool(

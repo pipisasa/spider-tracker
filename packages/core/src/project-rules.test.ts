@@ -7,7 +7,7 @@ import { createDocument, deleteDocument, editDocument, moveDocument, updateDocum
 import { listInbox, markInboxRead } from "./inbox";
 import { createOrganization } from "./organizations";
 import { getProjectRules, listProjectRules } from "./project-rules";
-import { createProject, getProject, updateProject } from "./projects";
+import { archiveProject, createProject, getProject, updateProject } from "./projects";
 import { INBOX_KINDS } from "./schemas";
 import { createTask } from "./tasks";
 
@@ -111,10 +111,22 @@ run("project rules for agents (ST-111)", () => {
     expect((await listInbox(db, worker, { unread: true })).filter((i) => i.kind === "rules")).toEqual([]);
   });
 
+  test("marking read up to an id leaves rules items alone unless asked (ST-128)", async () => {
+    expect(await rulesItems(worker)).toHaveLength(1);
+    // Clients from before ST-111 never fetch `rules` items, so their `upTo` must not mark them.
+    await markInboxRead(db, worker, { upTo: Number.MAX_SAFE_INTEGER });
+    expect(await rulesItems(worker)).toHaveLength(1);
+    expect(await markInboxRead(db, worker, { upTo: Number.MAX_SAFE_INTEGER, kinds: ["rules"] })).toBe(1);
+    expect(await rulesItems(worker)).toEqual([]);
+    // Marking by id marks the item whatever its kind.
+    const [item] = (await listInbox(db, unscoped, { ...allKinds, unread: true })).filter((i) => i.kind === "rules");
+    expect(await markInboxRead(db, unscoped, { ids: [item?.id ?? 0] })).toBe(1);
+  });
+
   test("saving the rules notifies once per unread item", async () => {
     const { rulesDocumentId } = await getProject(db, owner.orgId, "RUL");
     if (!rulesDocumentId) throw new Error("No rules");
-    await markInboxRead(db, worker, { upTo: Number.MAX_SAFE_INTEGER });
+    await markInboxRead(db, worker, { upTo: Number.MAX_SAFE_INTEGER, ...allKinds });
 
     const v1 = await updateDocument(db, owner, rulesDocumentId, { baseVersion: (await getProjectRules(db, owner, "RUL"))?.version, content: "v2" });
     expect(await rulesItems(worker)).toHaveLength(1);
@@ -122,7 +134,7 @@ run("project rules for agents (ST-111)", () => {
     await editDocument(db, owner, rulesDocumentId, { edits: [{ append: "more" }] });
     expect(await rulesItems(worker)).toHaveLength(1);
     // Saving without a change notifies nobody.
-    await markInboxRead(db, worker, { upTo: Number.MAX_SAFE_INTEGER });
+    await markInboxRead(db, worker, { upTo: Number.MAX_SAFE_INTEGER, ...allKinds });
     await updateDocument(db, owner, rulesDocumentId, { baseVersion: v1.version + 1, content: "v2\nmore" });
     expect(await rulesItems(worker)).toEqual([]);
   });
@@ -185,5 +197,42 @@ run("project rules for agents (ST-111)", () => {
     expect(await getProjectRules(db, outsider, "OTH")).toBeNull();
     // The notification about deleted rules goes away with them.
     expect((await rulesItems(outsider)).map((i) => i.document?.id)).not.toContain(deleted.id);
+  });
+
+  test("a rules item goes away once its document is no longer the rules (ST-128)", async () => {
+    const first = await createDocument(db, owner, { title: "First rules", project: "OTH" });
+    const second = await createDocument(db, owner, { title: "Second rules", project: "OTH" });
+    const ids = async () => (await rulesItems(outsider)).map((i) => i.document?.id);
+
+    await updateProject(db, owner, "OTH", { rulesDocumentId: first.id });
+    expect(await ids()).toEqual([first.id]);
+    // Replaced: only the new rules are announced.
+    await updateProject(db, owner, "OTH", { rulesDocumentId: second.id });
+    expect(await ids()).toEqual([second.id]);
+    // Cleared: nothing is left.
+    await updateProject(db, owner, "OTH", { rulesDocumentId: null });
+    expect(await ids()).toEqual([]);
+    // Moved to another project: no longer anyone's rules.
+    await updateProject(db, owner, "OTH", { rulesDocumentId: first.id });
+    expect(await ids()).toEqual([first.id]);
+    await moveDocument(db, owner, first.id, { project: "RUL" });
+    expect(await ids()).toEqual([]);
+    expect((await rulesItems(unscoped)).map((i) => i.document?.id)).not.toContain(first.id);
+  });
+
+  test("archived projects' agents aren't told about rules changes (ST-128)", async () => {
+    await createProject(db, owner, { name: "Old", key: "OLD" });
+    const old = await agentOf(member, "Old Hand", ["OLD"]);
+    const doc = await createDocument(db, owner, { title: "Old rules", project: "OLD" });
+    await updateProject(db, owner, "OLD", { rulesDocumentId: doc.id });
+    expect(await rulesItems(old)).toHaveLength(1);
+    await markInboxRead(db, old, { upTo: Number.MAX_SAFE_INTEGER, ...allKinds });
+
+    await archiveProject(db, owner, "OLD", true);
+    await updateProject(db, owner, "OLD", { rulesDocumentId: null });
+    await updateProject(db, owner, "OLD", { rulesDocumentId: doc.id });
+    expect(await rulesItems(old)).toEqual([]);
+    const all = await listInbox(db, old, { ...allKinds });
+    expect(all.filter((i) => i.kind === "rules")).toHaveLength(1);
   });
 });

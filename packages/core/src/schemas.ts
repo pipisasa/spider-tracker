@@ -381,6 +381,12 @@ export const markInboxReadInput = z
   .object({
     ids: z.array(z.number().int().positive()).max(500).optional(),
     upTo: z.number().int().positive().optional(),
+    /**
+     * The kinds `upTo` marks (ST-128): pass the kinds you listed. Default: the task kinds, so
+     * clients from before ST-111 don't mark `rules` and `document_*` items they never saw. `ids`
+     * marks the given items whatever their kind.
+     */
+    kinds: z.array(z.enum(INBOX_KINDS)).min(1).default([...TASK_INBOX_KINDS]),
   })
   .refine((v) => v.ids !== undefined || v.upTo !== undefined, "Pass ids or upTo");
 
