@@ -44,10 +44,13 @@ export async function assertRulesDocument(
 
 /**
  * Tells the agents working in a project that its rules were set or changed: every active agent that
- * can see the project (scoped to it, or unscoped), except the actor. An agent that still has an
- * unread `rules` item for the document gets no second one.
+ * can see the project (scoped to it, or unscoped), except the actor; nobody for an archived project.
+ * An agent that still has an unread `rules` item for the document gets no second one.
  */
 export async function announceRulesChange(tx: Tx, ctx: ActorContext, projectId: string, documentId: string) {
+  // Archived projects' rules reach no agent (instructions, whoami), so nobody is told about them.
+  const [project] = await tx.select({ archivedAt: projects.archivedAt }).from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!project || project.archivedAt) return;
   const anyProjects = tx.select({ one: sql`1` }).from(agentProjects).where(eq(agentProjects.agentId, actors.id));
   const recipients = await tx
     .select({ id: actors.id })

@@ -1641,7 +1641,13 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
           .then((r) => r.items)
           .catch(() => [] as DocumentSummaryDto[]),
       ]);
-      const rulesDoc = detail.rulesDocumentId ? await client.documents.get(slug, detail.rulesDocumentId) : null;
+      // A rules document deleted meanwhile (a 404) shows as no rules rather than failing the view.
+      const rulesDoc = detail.rulesDocumentId
+        ? await client.documents.get(slug, detail.rulesDocumentId).catch((err: unknown) => {
+            if (err instanceof SpiderApiError && err.status === 404) return null;
+            throw err;
+          })
+        : null;
       // ProjectRulesDto, as MCP get_project and whoami give them.
       const rules = rulesDoc && projectRulesView(detail, rulesDoc);
       const counted = (list: StatusDto[]) => list.map((s) => ({ ...s, taskCount: tasks.items.filter((t) => t.statusId === s.id).length }));
@@ -2788,7 +2794,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const wait = opts.wait === undefined ? undefined : parseLimit(opts.wait);
     const { items } = await client.inbox.list(slug, { unread: !opts.all, wait, kinds: [...INBOX_KINDS] });
     const last = items.at(-1);
-    if (opts.markRead && last) await client.inbox.markRead(slug, { upTo: last.id });
+    if (opts.markRead && last) await client.inbox.markRead(slug, { upTo: last.id, kinds: [...INBOX_KINDS] });
     output(opts, { items }, () =>
       items.length === 0
         ? "Inbox is empty"
