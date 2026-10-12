@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { bigint, check, index, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { githubInstallations } from "./github";
 import { actors, organizations } from "./tenancy";
 import { projects, tasks } from "./work";
 
@@ -18,13 +19,19 @@ export const repos = pgTable(
     owner: text("owner").notNull(),
     name: text("name").notNull(),
     defaultBranch: text("default_branch").notNull().default("main"),
-    // GitHub's installation id once the GitHub App is installed on the repo (ST-82); null until then.
-    githubInstallationId: bigint("github_installation_id", { mode: "number" }),
+    // The GitHub App installation that grants access to the repo (ST-82); null when added by URL
+    // only, or once the installation loses the repo or is disconnected.
+    githubInstallationId: bigint("github_installation_id", { mode: "number" }).references(() => githubInstallations.id, {
+      onDelete: "set null",
+    }),
     createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // GitHub names are case-insensitive: one row per remote and organization.
-  (t) => [uniqueIndex("repos_org_remote_key").on(t.orgId, sql`lower(${t.owner})`, sql`lower(${t.name})`)],
+  (t) => [
+    uniqueIndex("repos_org_remote_key").on(t.orgId, sql`lower(${t.owner})`, sql`lower(${t.name})`),
+    index("repos_github_installation_idx").on(t.githubInstallationId),
+  ],
 );
 
 export const projectRepos = pgTable(

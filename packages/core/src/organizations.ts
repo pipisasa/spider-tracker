@@ -1,6 +1,6 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, getTableColumns, isNull } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull, ne } from "drizzle-orm";
 import { DomainError } from "./errors";
 import { handleFrom } from "./handles";
 import { createOrganizationInput } from "./schemas";
@@ -63,7 +63,7 @@ export async function listMemberships(db: Db, userId: string) {
 
 /**
  * Active members (people and agents) of an organization. `includeDeactivated` adds
- * deactivated ones, so tasks still assigned to them can show who they were.
+ * deactivated ones and integration bots, so tasks and activity can show who they were.
  * `ownerId` is the owning person's actor id for agents, null for people.
  */
 export async function listMembers(db: Db, orgId: string, opts: { includeDeactivated?: boolean } = {}) {
@@ -71,6 +71,11 @@ export async function listMembers(db: Db, orgId: string, opts: { includeDeactiva
     .select({ ...getTableColumns(actors), ownerId: agents.ownerId })
     .from(actors)
     .leftJoin(agents, eq(agents.actorId, actors.id))
-    .where(opts.includeDeactivated ? eq(actors.orgId, orgId) : and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt)))
+    // Integration bots (the GitHub one, ST-82) are listed only with the deactivated: never in pickers.
+    .where(
+      opts.includeDeactivated
+        ? eq(actors.orgId, orgId)
+        : and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt), ne(actors.type, "integration")),
+    )
     .orderBy(actors.name);
 }

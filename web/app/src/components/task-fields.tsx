@@ -93,7 +93,7 @@ export function ActorAvatar({
     <Avatar className={cn(className ?? "size-6", actor.deactivated && "opacity-50 grayscale")} title={title === false ? undefined : (title ?? actorLabel(actor))}>
       <AvatarImage src={actorAvatarSrc(actor)} alt="" />
       <AvatarFallback className="text-[10px]">
-        {actor.type === "agent" ? <BotIcon className="size-3" /> : initials || "?"}
+        {actor.type === "human" ? initials || "?" : <BotIcon className="size-3" />}
       </AvatarFallback>
     </Avatar>
   );
