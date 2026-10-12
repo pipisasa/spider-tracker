@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { clientIp, createRateLimiter } from "./rate-limit";
+import { loadEnv } from "./env";
 
 const request = (headers: Record<string, string>) => new Request("http://localhost/x", { headers });
 const server = (address: string) => ({ requestIP: () => ({ address, family: "IPv4", port: 1234 }) });
@@ -54,5 +55,19 @@ describe("createRateLimiter", () => {
     limiter.attempt("k", 0);
     expect(limiter.exhausted("k", 0)).toBe(true);
     expect(limiter.exhausted("k", 1000)).toBe(false);
+  });
+});
+
+describe("TRUSTED_PROXY in production", () => {
+  const base = {
+    DATABASE_URL: "postgres://localhost:5432/unused",
+    API_ORIGIN: "http://localhost:4000",
+    WEB_ORIGIN: "http://localhost:5173",
+    BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret-123",
+  };
+  test("is required, so a forgotten deploy step fails at startup", () => {
+    expect(() => loadEnv({ ...base, NODE_ENV: "production" })).toThrow("TRUSTED_PROXY");
+    expect(loadEnv({ ...base, NODE_ENV: "production", TRUSTED_PROXY: "railway" }).TRUSTED_PROXY).toBe("railway");
+    expect(loadEnv({ ...base, NODE_ENV: "development" }).TRUSTED_PROXY).toBe("none");
   });
 });

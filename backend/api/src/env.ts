@@ -34,5 +34,9 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     const issues = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid environment:\n${issues}`);
   }
+  // Behind a proxy the socket address is the proxy's, so "none" would put every client in one bucket.
+  if (parsed.data.NODE_ENV === "production" && !source.TRUSTED_PROXY) {
+    throw new Error("Invalid environment:\n  TRUSTED_PROXY: Required in production (none, cloudflare or railway)");
+  }
   return parsed.data;
 }

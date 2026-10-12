@@ -68,13 +68,21 @@ describe("client IP", () => {
 });
 
 describe("agent invite accepts", () => {
-  test("failed accepts from all clients together are capped at 100 an hour", async () => {
+  test("malformed codes don't count toward the global cap", async () => {
     const { app } = makeApp("railway");
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 150; i++) {
       const from = { "X-Forwarded-For": `198.51.100.${Math.floor(i / 10)}` };
       expect((await post(app, "/v1/agent-invites/accept", { code: "" }, from)).status).toBe(400);
     }
-    const limited = await post(app, "/v1/agent-invites/accept", { code: "" }, { "X-Forwarded-For": "203.0.113.200" });
+  });
+
+  (databaseUrl ? test : test.skip)("failed accepts of well-formed codes from all clients are capped at 100 an hour", async () => {
+    const { app } = makeApp("railway");
+    for (let i = 0; i < 100; i++) {
+      const from = { "X-Forwarded-For": `198.51.100.${Math.floor(i / 10)}` };
+      expect((await post(app, "/v1/agent-invites/accept", { code: "ZZZZ-ZZZZ" }, from)).status).toBe(400);
+    }
+    const limited = await post(app, "/v1/agent-invites/accept", { code: "ZZZZ-ZZZZ" }, { "X-Forwarded-For": "203.0.113.200" });
     expect(limited.status).toBe(429);
     expect(await limited.json()).toMatchObject({ error: { code: "rate_limited" } });
   });

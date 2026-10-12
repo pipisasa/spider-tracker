@@ -6,6 +6,7 @@ import {
   MIN_CLI_VERSION,
   acceptAgentInvite,
   acceptInvitation,
+  normalizeAgentInviteCode,
   authenticateApiKey,
   createOrganization,
   listMemberships,
@@ -36,6 +37,12 @@ const errorStatus: Record<DomainError["code"], ContentfulStatusCode> = {
   conflict: 409,
   rate_limited: 429,
 };
+
+/** An invite code (or link) with the shape of a real one: 8 letters or digits. */
+function isWellFormedCode(input: unknown): boolean {
+  if (typeof input !== "object" || input === null || !("code" in input) || typeof input.code !== "string") return false;
+  return /^[A-Z0-9]{8}$/.test(normalizeAgentInviteCode(input.code));
+}
 
 function errorBody(code: string, message: string): ApiErrorBody {
   return { error: { code, message } };
@@ -110,7 +117,9 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     const source = c.req.header("X-Spider-Source")?.trim().toLowerCase();
     const accepted = await acceptAgentInvite(db, input, source === "cli" || source === "mcp" ? source : "api").catch(
       (err: unknown) => {
-        if (err instanceof DomainError && (err.code === "validation" || err.code === "not_found")) {
+        // Only well-formed codes that don't match count: malformed input can't guess anything,
+        // and counting it would let one client block onboarding for everyone.
+        if (err instanceof DomainError && (err.code === "validation" || err.code === "not_found") && isWellFormedCode(input)) {
           failedInviteCodes.attempt("all");
         }
         throw err;
