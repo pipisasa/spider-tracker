@@ -41,6 +41,8 @@ export const formatKeys = (keys: readonly string[]): string => keys.join(" then 
 
 interface KeyEventLike {
   key: string;
+  /** Physical key, e.g. "KeyC"; used when the layout isn't Latin. */
+  code?: string;
   metaKey?: boolean;
   ctrlKey?: boolean;
   altKey?: boolean;
@@ -50,12 +52,19 @@ interface KeyEventLike {
 export function shortcutKey(event: KeyEventLike): string | null {
   if (event.metaKey || event.ctrlKey || event.altKey) return null;
   if (event.key.length !== 1) return null;
+  // Non-Latin layouts (e.g. Russian: "с" on the C key) fall back to the physical key.
+  if (/^[a-z]$/i.test(event.key) === false && event.code && /^Key[A-Z]$/.test(event.code)) {
+    return event.code.slice(3).toLowerCase();
+  }
   return event.key.toLowerCase();
 }
 
 /** Cmd+K (macOS) or Ctrl+K. */
 export const isPaletteKey = (event: KeyEventLike & { shiftKey?: boolean }): boolean =>
-  event.key.toLowerCase() === "k" && (event.metaKey === true || event.ctrlKey === true) && !event.altKey && !event.shiftKey;
+  (event.key.toLowerCase() === "k" || event.code === "KeyK") &&
+  (event.metaKey === true || event.ctrlKey === true) &&
+  !event.altKey &&
+  !event.shiftKey;
 
 export interface SequenceState {
   keys: readonly string[];

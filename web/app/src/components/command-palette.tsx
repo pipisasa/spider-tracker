@@ -45,7 +45,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const MAX_TASKS = 100;
@@ -89,16 +89,19 @@ export function CommandPalette({ me }: { me: MeResponse }) {
   };
   useOpenPaletteListener(openPalette);
 
+  // Subscribe once; the latest state and handler are read through a ref.
+  const paletteKey = useRef({ open, openPalette });
+  paletteKey.current = { open, openPalette };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!isPaletteKey(event)) return;
       event.preventDefault();
-      if (open) setOpen(false);
-      else openPalette();
+      if (paletteKey.current.open) setOpen(false);
+      else paletteKey.current.openPalette();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  }, []);
 
   const close = () => setOpen(false);
 

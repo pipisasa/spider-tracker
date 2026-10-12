@@ -116,3 +116,11 @@ describe("task keys", () => {
     expect(projectKeyOfTask("ST-12")).toBe("ST");
   });
 });
+
+test("non-Latin layouts fall back to the physical key", () => {
+  expect(shortcutKey({ key: "с", code: "KeyC" })).toBe("c");
+  expect(shortcutKey({ key: "п", code: "KeyG" })).toBe("g");
+  expect(shortcutKey({ key: "?", code: "Slash" })).toBe("?");
+  expect(shortcutKey({ key: "c", code: "KeyC" })).toBe("c");
+  expect(isPaletteKey({ key: "л", code: "KeyK", metaKey: true })).toBe(true);
+});
