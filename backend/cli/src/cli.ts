@@ -39,6 +39,7 @@ import {
   writeProjectSettings,
   type RunClaude,
 } from "./claude-setup";
+import packageJson from "../package.json" with { type: "json" };
 import { currentBranch, taskKeyFromBranch } from "./git";
 import {
   CliError,
@@ -59,7 +60,7 @@ import {
 export { EXIT, type ExitCode } from "./resolve";
 
 export const DEFAULT_API_URL = "https://tracker-api.batele.plus";
-const VERSION = "0.1.0";
+const VERSION = packageJson.version;
 
 export interface Writer {
   write(chunk: string): unknown;
