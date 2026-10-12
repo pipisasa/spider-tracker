@@ -8,7 +8,7 @@ Identity tables (users, sessions, OAuth clients and tokens) belong to Better Aut
 
 ```
 organizations ─┬─ actors (human | agent | integration) ── agents (1:1 config), api_tokens
-               ├─ tags, custom_field_defs, github_installations, repos, apps, documents
+               ├─ tags, custom_field_defs, github_installations, github_deliveries, repos, apps, documents
                └─ projects ─┬─ statuses, cycles, custom_field_defs (project-scoped)
                             └─ tasks ─┬─ task_assignees → actors
                                       ├─ task_tags, task_relations, sub-tasks (parent_id)
@@ -32,6 +32,7 @@ activity (append-only log for everything)
 | **Tag** | An organization-wide label |
 | **Custom field definition** | A user-defined field at organization or project scope |
 | **GitHub installation** | The GitHub App installed on a GitHub account and connected to one organization (ST-82); keyed by GitHub's installation id |
+| **GitHub delivery** | A webhook delivery GitHub sent (ST-83), by its `X-GitHub-Delivery` id: what makes each one handled once |
 | **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
 | **Git link** | A branch, commit or pull request linked to a task |
@@ -276,6 +277,20 @@ create table github_installations (
   updated_at timestamptz not null default now()
 );
 create index github_installations_org_idx on github_installations (org_id);
+
+-- ST-83: GitHub webhook deliveries, by X-GitHub-Delivery. Inserted first (on conflict do nothing) in the
+-- transaction that handles the event, so each delivery is handled once, even when copies arrive together.
+-- Deliveries of installations no organization has connected are kept too (org_id null).
+create table github_deliveries (
+  id text primary key,                                 -- X-GitHub-Delivery (a GUID)
+  event text not null,                                 -- X-GitHub-Event, e.g. 'installation'
+  action text,                                         -- the payload's action, when it has one
+  installation_id bigint,                              -- no foreign key: unknown here, or deleted since
+  org_id uuid references organizations on delete set null,
+  result text not null default 'ignored' check (result in ('processed', 'ignored')),
+  received_at timestamptz not null default now()
+);
+create index github_deliveries_received_at_idx on github_deliveries (received_at);
 
 -- Built in ST-92: repos added by remote URL. ST-82: connecting an installation sets
 -- github_installation_id on the existing rows (matched by owner/name, any case) and adds the others.

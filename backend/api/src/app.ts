@@ -21,14 +21,14 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { apiDocsRoutes } from "./api-docs";
 import { CLIENT_IP_HEADER, enabledAuthProviders, type Auth } from "./auth";
 import { toActorDto, toMembership } from "./dto";
-import type { Env } from "./env";
+import { githubAppConfig, type Env } from "./env";
 import { GithubUnavailableError, type GithubApp } from "./github";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
 import { clientIp, createRateLimiter } from "./rate-limit";
 import { deviceApprovalRoutes, deviceRoutes } from "./routes/device";
 import { createRealtime } from "./realtime";
-import { githubSetupRoutes } from "./routes/github";
+import { githubSetupRoutes, githubWebhookRoutes } from "./routes/github";
 import { orgRoutes } from "./routes/orgs";
 import type { AppEnv } from "./types";
 
@@ -113,6 +113,8 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
 
   // Where GitHub returns after installing the App; needs the browser session (ST-82).
   app.route("/github", githubSetupRoutes(db, auth, github, env));
+  // GitHub's webhook (ST-83): no session or key, the signature is the credential.
+  app.route("/webhooks", githubWebhookRoutes(db, github, githubAppConfig(env)?.webhookSecret ?? null));
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
   app.route("/mcp", mcpRoutes(db, realtime, env.WEB_ORIGIN));

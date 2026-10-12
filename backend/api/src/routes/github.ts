@@ -1,16 +1,21 @@
 import type { ApiErrorBody, GithubInstallUrlDto, GithubStatusDto } from "@repo/core";
 import {
   DomainError,
+  GITHUB_WEBHOOK_MAX_BYTES,
   assertCanSyncGithubInstallation,
   createGithubInstallState,
   disconnectGithubInstallation,
+  handleGithubWebhook,
   listGithubInstallations,
   resolveGithubSetup,
   saveGithubInstallation,
+  verifyGithubSignature,
   type ActorContext,
+  type GithubWebhookResult,
 } from "@repo/core";
 import type { Db } from "@repo/db";
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { Auth } from "../auth";
 import type { Env } from "../env";
 import { GithubUnavailableError, type GithubApp } from "../github";
@@ -140,6 +145,45 @@ export function githubSetupRoutes(db: Db, auth: Auth, github: GithubApp | null, 
       throw err;
     }
   });
+
+  return app;
+}
+
+const tooLarge: ApiErrorBody = { error: { code: "payload_too_large", message: "The webhook body is too large" } };
+
+/**
+ * POST /webhooks/github (ST-83): the App's webhook. The signature is checked over the raw bytes
+ * before anything is parsed; then core handles the delivery once (by X-GitHub-Delivery).
+ */
+export function githubWebhookRoutes(db: Db, github: GithubApp | null, webhookSecret: string | null) {
+  const app = new Hono<AppEnv>();
+  if (!github || !webhookSecret) {
+    app.post("/github", (c) => c.json(notConfigured, 503));
+    return app;
+  }
+  const secret = webhookSecret;
+
+  app.post(
+    "/github",
+    bodyLimit({ maxSize: GITHUB_WEBHOOK_MAX_BYTES, onError: (c) => c.json(tooLarge, 413) }),
+    async (c) => {
+      const body = new Uint8Array(await c.req.arrayBuffer());
+      if (body.byteLength > GITHUB_WEBHOOK_MAX_BYTES) return c.json(tooLarge, 413);
+      if (!verifyGithubSignature(secret, body, c.req.header("X-Hub-Signature-256"))) {
+        return c.json({ error: { code: "unauthorized", message: "Invalid webhook signature" } } satisfies ApiErrorBody, 401);
+      }
+      const deliveryId = c.req.header("X-GitHub-Delivery") ?? "";
+      const event = c.req.header("X-GitHub-Event") ?? "";
+      let payload: unknown;
+      try {
+        payload = JSON.parse(new TextDecoder().decode(body));
+      } catch {
+        throw new DomainError("validation", "The webhook body isn't JSON");
+      }
+      const status: GithubWebhookResult = await handleGithubWebhook(db, { deliveryId, event, payload });
+      return c.json({ status });
+    },
+  );
 
   return app;
 }

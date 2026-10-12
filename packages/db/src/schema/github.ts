@@ -28,3 +28,27 @@ export const githubInstallations = pgTable(
     check("github_installations_repository_selection_check", sql`${t.repositorySelection} in ('all', 'selected')`),
   ],
 );
+
+// GitHub webhook deliveries (ST-83), by GitHub's X-GitHub-Delivery id. The row is inserted first
+// in the transaction that handles the event, so a redelivery (or two copies arriving at once)
+// is handled once: the second insert waits for the first transaction and then does nothing.
+// Deliveries for installations no organization has connected are kept too (`org_id` null).
+export const githubDeliveries = pgTable(
+  "github_deliveries",
+  {
+    id: text("id").primaryKey(),
+    // X-GitHub-Event, e.g. "installation"; and the payload's `action`, when it has one.
+    event: text("event").notNull(),
+    action: text("action"),
+    // No foreign key: the installation may be unknown here, or deleted since.
+    installationId: bigint("installation_id", { mode: "number" }),
+    orgId: uuid("org_id").references(() => organizations.id, { onDelete: "set null" }),
+    // "processed" when it changed something for an organization; "ignored" otherwise.
+    result: text("result", { enum: ["processed", "ignored"] }).notNull().default("ignored"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("github_deliveries_received_at_idx").on(t.receivedAt),
+    check("github_deliveries_result_check", sql`${t.result} in ('processed', 'ignored')`),
+  ],
+);
