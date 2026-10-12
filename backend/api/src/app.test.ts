@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { MIN_CLI_VERSION, type MeResponse, type MembershipDto } from "@repo/core";
+import { MIN_CLI_VERSION, type MeResponse, type MembershipDto, type RecordDeploymentResponse } from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { SpiderApiError, createClient } from "@repo/sdk";
 import { asc, eq } from "drizzle-orm";
@@ -788,6 +788,40 @@ withDb("SDK and client-declared source", () => {
     expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web").catch((e: unknown) => e)).toMatchObject({ status: 404 });
     expect(await client.repos.delete(slug, "pipisasa/spider-tracker")).toBeUndefined();
     expect(await client.repos.get(slug, "pipisasa/spider-tracker").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+  });
+
+  test("deployments through the SDK: 201 with the release moved to On staging, list by environment, 400 and 404 (ST-94)", async () => {
+    const client = sdk({ source: "cli" });
+    await client.repos.create(slug, { url: "pipisasa/deploy-demo", projects: ["SPI"] });
+    await client.repos.apps.create(slug, "pipisasa/deploy-demo", { name: "web", path: "web", versioning: "date", environments: ["staging", "prod"] });
+    const release = await client.releases.create(slug, "SPI", {
+      title: "2026.10.13",
+      apps: [{ repo: "pipisasa/deploy-demo", app: "web", version: "2026.10.13" }],
+    });
+    const raw = await app.request(`/v1/orgs/${slug}/releases/${release.key}/deployments`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}`, "X-Spider-Source": "cli", "Content-Type": "application/json" },
+      body: JSON.stringify({ app: "web", environment: "staging", commitSha: "3f2c1ab" }),
+    });
+    expect(raw.status).toBe(201);
+    const recorded = (await raw.json()) as RecordDeploymentResponse;
+    expect(recorded).toMatchObject({
+      deployment: { app: "web", repo: "pipisasa/deploy-demo", environment: "staging", production: false, source: "cli" },
+      release: { key: release.key, status: { name: "On staging" }, url: expect.stringContaining(`/tasks/${release.key}`) },
+      movedFrom: { name: "Planned" },
+    });
+    const prod = await client.releases.deploy(slug, release.key, { app: "web", environment: "prod", commitSha: "4a5b6c7" });
+    expect(prod.release.deployments?.map((d) => d.environment)).toEqual(["prod", "staging"]);
+    expect((await client.releases.deployments(slug, release.key, { environment: "staging" })).items).toEqual([recorded.deployment]);
+    expect((await client.releases.get(slug, release.key)).deployments).toHaveLength(2);
+
+    expect(await client.releases.deploy(slug, release.key, { app: "web", environment: "qa", commitSha: "4a5b6c7" }).catch((e: unknown) => e)).toMatchObject({
+      status: 400,
+    });
+    expect(await client.releases.deploy(slug, release.key, { app: "web", environment: "prod", commitSha: "HEAD" }).catch((e: unknown) => e)).toMatchObject({
+      status: 400,
+    });
+    expect(await client.releases.deployments(slug, "SPI-99999").catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
   test("API-key clients declare their source; unknown values fall back to api", async () => {

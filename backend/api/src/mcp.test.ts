@@ -133,6 +133,8 @@ withDb("MCP server", () => {
         "remove_from_release",
         "list_release_candidates",
         "get_release_changelog",
+        "record_deployment",
+        "list_deployments",
         "list_milestones",
         "get_milestone",
         "create_milestone",
@@ -843,6 +845,28 @@ withDb("MCP server", () => {
     expect(refused).toMatchObject({ isError: true });
     expect(refused.text).toContain("edited by hand");
     expect((await call(client, "get_release_changelog", { key: release.key, write: true, force: true })).json()).toMatchObject({ written: "replaced" });
+
+    // Deployments (ST-94): the first moves it to On staging; Released waits for api in prod.
+    const staged = (await call(client, "record_deployment", { key: release.key, app: "api", environment: "staging", commitSha: "3f2c1ab" })).json() as {
+      deployment: unknown;
+    };
+    expect(staged).toMatchObject({
+      deployment: { app: "api", environment: "staging", production: false, commitSha: "3f2c1ab", source: "mcp" },
+      release: { key: release.key, status: { name: "On staging" }, url: expect.stringContaining(`/tasks/${release.key}`), assignees: [] },
+      movedFrom: { name: "Planned" },
+    });
+    expect(await call(client, "record_deployment", { key: release.key, app: "api", environment: "qa", commitSha: "3f2c1ab" })).toMatchObject({
+      isError: true,
+      text: 'api has no environment "qa"; its environments are staging, prod',
+    });
+    const blocked = await call(client, "update_task", { key: release.key, status: "Released" });
+    expect(blocked).toMatchObject({ isError: true });
+    expect(blocked.text).toContain("it isn't deployed api to prod yet");
+    await call(client, "record_deployment", { key: release.key, app: "api", environment: "prod", commitSha: "3f2c1ab" });
+    const deployments = (await call(client, "list_deployments", { key: release.key })).json() as { items: { environment: string }[] };
+    expect(deployments.items.map((d) => d.environment)).toEqual(["prod", "staging"]);
+    expect(deployments.items[1] as unknown).toEqual(staged.deployment);
+    expect((await call(client, "list_deployments", { key: release.key, environment: "staging" })).json()).toEqual({ items: [staged.deployment] });
 
     expect((await call(client, "update_task", { key: release.key, status: "Released" })).json()).toMatchObject({ status: { name: "Released" } });
     expect((await call(client, "get_task", { key: a.key })).json()).toMatchObject({
