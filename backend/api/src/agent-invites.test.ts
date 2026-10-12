@@ -42,17 +42,16 @@ const accept = (body: unknown, ip = "203.0.113.1") =>
   });
 
 test("accepting is rate limited per client IP", async () => {
+  // An empty code fails validation before any database lookup, so this runs without TEST_DATABASE_URL.
   const ip = "198.51.100.7";
   for (let i = 0; i < 10; i++)
-    expect((await accept({ code: "ZZZZ-ZZZZ" }, ip)).status).toBe(400);
-  const limited = await accept({ code: "ZZZZ-ZZZZ" }, ip);
+    expect((await accept({ code: "" }, ip)).status).toBe(400);
+  const limited = await accept({ code: "" }, ip);
   expect(limited.status).toBe(429);
   expect(await limited.json()).toMatchObject({
     error: { code: "rate_limited" },
   });
-  expect((await accept({ code: "ZZZZ-ZZZZ" }, "198.51.100.8")).status).toBe(
-    400,
-  );
+  expect((await accept({ code: "" }, "198.51.100.8")).status).toBe(400);
 });
 
 const withDb = databaseUrl ? describe : describe.skip;
