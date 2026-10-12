@@ -617,5 +617,8 @@ withDb("sign-up allowlist", () => {
     expect(await call("someone@elsewhere.test", "create-user")).toMatchObject({ error: "signup_not_allowed" });
     expect(await call("someone@allowed-domain.test", "create-user")).toBeUndefined();
     expect(await call("someone@elsewhere.test", "sign-in")).toBeUndefined();
+    // Email is optional for Batele ID: the placeholder address may always sign up.
+    expect(await call("01abc@users.batele-id.invalid", "create-user")).toBeUndefined();
+    expect(await call("", "create-user")).toMatchObject({ error: "signup_not_allowed" });
   });
 });

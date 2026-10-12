@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { magicLink } from "better-auth/plugins/magic-link";
-import { bateleIdProvider } from "./batele-id";
+import { BATELE_PLACEHOLDER_DOMAIN, bateleIdProvider } from "./batele-id";
 import type { Env } from "./env";
 import type { Mailer } from "./mailer";
 
@@ -62,7 +62,11 @@ export function createAuth(db: Db, env: Env, mailer: Mailer) {
       // Runs before any user is created, for every sign-in method (magic link, GitHub, Batele ID).
       validateUserInfo: ({ user, source }) => {
         if (source.action !== "create-user") return;
-        if (typeof user.email === "string" && isEmailAllowed(user.email, allowlist)) return;
+        const email = typeof user.email === "string" ? user.email : "";
+        // Email is optional: Batele users without one get a placeholder address and may always
+        // sign up. It can't be used elsewhere: `.invalid` never receives a magic link.
+        if (email.endsWith(`@${BATELE_PLACEHOLDER_DOMAIN}`)) return;
+        if (email && isEmailAllowed(email, allowlist)) return;
         return {
           error: "signup_not_allowed",
           errorDescription: "This account isn't allowed to sign up. Ask an admin to add you.",

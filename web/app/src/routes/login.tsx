@@ -51,6 +51,8 @@ function LoginPage() {
 
   const { data } = useQuery(authProvidersQuery);
   const providers = data?.providers ?? [];
+  // Email links are hidden when another method exists; development keeps them (links print to the API console).
+  const showEmail = providers.includes("magic-link") && (import.meta.env.DEV || providers.length === 1);
 
   async function signInWith(provider: Extract<AuthProvider, "github" | "batele-id">) {
     setError(null);
@@ -63,7 +65,7 @@ function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in to Spider Tracker</CardTitle>
-          <CardDescription>We'll email you a sign-in link.</CardDescription>
+          {showEmail && <CardDescription>We'll email you a sign-in link.</CardDescription>}
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {status === "sent" ? (
@@ -71,7 +73,7 @@ function LoginPage() {
               Check <strong>{email}</strong> for a sign-in link.
             </p>
           ) : (
-            <form onSubmit={sendLink} className="flex flex-col gap-3">
+            showEmail && <form onSubmit={sendLink} className="flex flex-col gap-3">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="email">Email</Label>
                 <Input

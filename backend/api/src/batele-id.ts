@@ -11,6 +11,9 @@ interface BateleUserinfo {
   picture?: string;
 }
 
+/** Domain of the placeholder email given to Batele users who have none. */
+export const BATELE_PLACEHOLDER_DOMAIN = "users.batele-id.invalid";
+
 export function bateleIdProvider(clientId: string, issuer: string): GenericOAuthConfig {
   return {
     providerId: "batele-id",
@@ -30,7 +33,7 @@ export function bateleIdProvider(clientId: string, issuer: string): GenericOAuth
         name: profile.name,
         // Batele users may sign in by phone and have no email; Better Auth needs one.
         // `.invalid` is reserved, so the placeholder can never receive mail or match a real address.
-        email: profile.email ?? `${profile.sub}@users.batele-id.invalid`,
+        email: profile.email ?? `${profile.sub}@${BATELE_PLACEHOLDER_DOMAIN}`,
         emailVerified: false,
         image: profile.picture,
       };
