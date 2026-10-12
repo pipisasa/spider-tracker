@@ -10,12 +10,12 @@ import {
   useRemoveFromRelease,
   useUpdateRelease,
 } from "@/lib/work";
-import { shippingLabel } from "@repo/core/board";
+import { appsAwaitingProduction, deploymentCells, shippingLabel } from "@repo/core/board";
 import type { ProjectDetailDto, ReleaseDto, StatusDto, TaskShippingDto } from "@repo/core/contracts";
 import { appVersionProblem, type ReleaseAppInput } from "@repo/core/schemas";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { PackageIcon, PlusIcon, XIcon } from "lucide-react";
+import { PackageIcon, PlusIcon, RocketIcon, XIcon } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 
 // Releases (ST-93): shipping chips on Done cards, release cards, the Releases view and the
@@ -421,6 +421,7 @@ export function ReleasePanel({ orgSlug, release, canWrite }: { orgSlug: string; 
       ) : (
         <p className="text-sm text-muted-foreground">No apps yet.</p>
       )}
+      <ReleaseDeployments release={release} />
       <h3 className="text-sm font-medium">
         Tasks <span className="text-muted-foreground">{release.tasks.length}</span>
       </h3>
@@ -479,5 +480,56 @@ export function ReleasePanel({ orgSlug, release, canWrite }: { orgSlug: string; 
         </form>
       )}
     </section>
+  );
+}
+
+const deployedAtFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/**
+ * A release's deployments (ST-94), per app and environment in deploy order: the latest commit, when
+ * and by whom, or "not deployed". Recorded by `spider release deploy` (the deploy scripts call it).
+ */
+export function ReleaseDeployments({ release }: { release: ReleaseDto }) {
+  const cells = deploymentCells(release);
+  if (cells.length === 0) return null;
+  const awaiting = appsAwaitingProduction(release);
+  const open = release.status.category !== "done" && release.status.category !== "canceled";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h3 className="flex items-center gap-1.5 text-sm font-medium">
+        <RocketIcon className="size-3.5 text-muted-foreground" aria-hidden />
+        Deployments
+      </h3>
+      <ul className="divide-y rounded-md border text-sm" aria-label="Deployments by app and environment">
+        {cells.map((cell) => (
+          <li key={`${cell.appId}:${cell.environment}`} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-2 py-1.5">
+            <span className="font-medium">{cell.app}</span>
+            <span className={`rounded px-1.5 text-xs ${cell.production ? "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" : "bg-muted"}`}>
+              {cell.environment}
+            </span>
+            {cell.latest ? (
+              <span className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-2 text-xs text-muted-foreground">
+                <span className="font-mono" title={cell.latest.commitSha}>
+                  {cell.latest.commitSha.slice(0, 7)}
+                </span>
+                <span>{deployedAtFormat.format(new Date(cell.latest.createdAt))}</span>
+                {cell.latest.deployedBy && <span>@{cell.latest.deployedBy.handle}</span>}
+                {cell.count > 1 && <span>· {cell.count} deploys</span>}
+              </span>
+            ) : (
+              <span className="flex-1 text-right text-xs text-muted-foreground">not deployed</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {open && awaiting.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Released needs {awaiting.map((c) => `${c.app} on ${c.environment}`).join(", ")}. Record a deploy with{" "}
+          <code className="font-mono">
+            spider release deploy {release.key} --app {awaiting[0]?.app} --env {awaiting[0]?.environment}
+          </code>
+        </p>
+      )}
+    </div>
   );
 }

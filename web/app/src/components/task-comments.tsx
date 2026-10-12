@@ -53,6 +53,11 @@ export function describeActivity(
     const version = String(entry.changes.version ?? entry.changes.release ?? "a release");
     return entry.action === "task.shipped" ? `shipped in ${version}` : `no longer shipped in ${version}`;
   }
+  // Deployments (ST-94): "deployed web to staging at 3f2c1ab".
+  if (entry.action === "release.deployed" && entry.changes) {
+    const { app, environment, commitSha } = entry.changes;
+    return `deployed ${String(app)} to ${String(environment)} at ${String(commitSha).slice(0, 7)}`;
+  }
   if (entry.action !== "task.updated" || !entry.changes) return null;
   const parts: string[] = [];
   for (const [field, value] of Object.entries(entry.changes)) {

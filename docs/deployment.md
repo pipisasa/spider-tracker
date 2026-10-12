@@ -22,8 +22,10 @@ Deploys are **manual** (no CI/CD): build locally, upload with `wrangler pages de
 **Deploy:**
 
 ```bash
-bunx wrangler login     # once; interactive
-bun run deploy:web      # build with .env.production, then upload to the spider-tracker project
+bunx wrangler login                          # once; interactive
+bun run deploy:web                           # build with .env.production, then upload to the spider-tracker project
+bun run deploy:web -- --release ST-120       # the same, then record it on release ST-120 (see "Recording deployments")
+bun run deploy:web -- --env staging --release ST-120   # build with .env.staging, upload to the Pages branch "staging"
 ```
 
 `VITE_API_URL` is baked into the bundle at build time: `https://tracker-api.batele.plus`. Vite's production mode reads `web/app/.env.production`, which overrides the local `.env`.
@@ -61,7 +63,7 @@ bun run spider release check ST-120                 # commits since each app's l
 bun run spider release changelog ST-120 --write     # changelog from the handoff notes, by app, into the release's description; edit it there
 bun run spider release notes ST-120 --append        # adds the release's section to CHANGELOG.md after Unreleased; commit and push it
 bun run release:cli --release ST-120                # cli-v<version> with the cli section of the changelog as its notes (the release's cli version must match package.json)
-bun run spider task done ST-120                     # Released: marks its tasks shipped
+bun run spider task done ST-120                     # Released: marks its tasks shipped (once web and api are deployed to prod, ST-94)
 ```
 
 `release changelog --write` never overwrites a changelog block edited by hand (`--force` does). Apps deployed without a script that takes notes (web, api) get their GitHub release by hand if wanted: `gh release create web-2026.10.13 --notes "$(bun run spider release notes ST-120 --app web)"`. The server can't push tags or create GitHub releases (no GitHub write access), so these steps stay local.
@@ -121,7 +123,7 @@ The API **deploys automatically from GitHub**: Railway builds `main` on every pu
 
 Production uses `railway` because `tracker-api` is a DNS-only (grey cloud) record: requests reach Railway's edge directly, so `CF-Connecting-IP` is whatever the client sent, and Bun's socket address is Railway's proxy (the same for everyone). Assumption: Railway's edge appends the address that connected to it to `X-Forwarded-For` (it also sets `X-Real-IP`). The right-most entry is used rather than `X-Real-IP` because an appended entry is correct whether or not the edge drops a client-sent header, while Railway doesn't document whether it overwrites a client-sent `X-Real-IP`. Anything to the left of that entry is client-controlled and ignored. If the hostname is ever switched to a proxied (orange cloud) record, the right-most entry becomes a Cloudflare edge address: switch to `cloudflare` at the same time. Better Auth gets the same IP: `app.ts` sets a private `X-Spider-Client-IP` header to it (dropping any client-sent copy) before handing `/api/auth/*` requests to Better Auth, which reads only that header (`backend/api/src/auth.ts`). Better Auth's rate limits are on when `NODE_ENV=production`.
 
-**Deploy:** push to `main` (`git push`). Follow it with `railway service status -s api` and `railway logs -s api`. `bun run deploy:api` (`railway up`) still uploads the working tree directly, for emergencies.
+**Deploy:** push to `main` (`git push`). Follow it with `railway service status -s api` and `railway logs -s api`. `bun run deploy:api` (`railway up --service api --detach` through `scripts/deploy.ts`) still uploads the working tree directly, for emergencies; `-- --release ST-120` records it, and `-- --env staging` deploys to the staging environment. When a push deploys a release's API, record it once Railway reports `SUCCESS`: `bun run spider release deploy ST-120 --app api --env prod --commit <pushed sha>`.
 
 **Custom domain DNS** (in the `batele.plus` zone):
 
@@ -135,6 +137,47 @@ Check progress with `railway domain status 85cd76b1-5729-478c-9941-b52346e5840e`
 **GitHub App:** the six `GITHUB_APP_*` variables (all or none) turn on Settings → GitHub; how to create the App and set them is in [git-integration.md](./git-integration.md#manual-checklist-a-person).
 
 **Email:** magic links are sent with [Resend](https://resend.com) when `RESEND_API_KEY` is set (`railway variable set RESEND_API_KEY --stdin -s api`), from `MAIL_FROM` (default `Spider Tracker <noreply@batele.plus>`; the `batele.plus` domain must be verified in Resend). Without the key the API logs a warning at startup and magic links only appear in `railway logs -s api`.
+
+## Recording deployments
+
+ST-94. Deploys stay **manual**; a tracker release records them. `bun run deploy:web` and `bun run deploy:api` run `scripts/deploy.ts` (logic and tests in `backend/cli/src/deploy.ts`):
+
+```bash
+bun scripts/deploy.ts <web|api> [--env prod|staging] [--release ST-NN] [--commit <sha>] [--as <agent>]
+```
+
+- Without `--release` it runs the same deploy as before (`--env` defaults to `prod`) and records nothing.
+- With `--release ST-NN` it reads HEAD first (warning about uncommitted changes, which the record can't name), runs the deploy, and only if that succeeded runs `spider release deploy ST-NN --app <app> --env <env> --commit <HEAD>`, signed in as `--as`, `SPIDER_TOKEN`, `SPIDER_AGENT` or the default saved agent. A failed deploy records nothing and keeps its exit code; a failed record exits 1 and prints the command to record it by hand.
+- Deployments are recorded on the tracker that holds the release (production), whichever environment was deployed.
+- `spider release deploy` works on its own too, for deploys made another way (a `git push` that Railway built): `bun run spider release deploy ST-120 --app api --env prod --commit <sha>`.
+
+The release follows its deployments, forward only: the first one moves a Planned release to **On staging** (as the `@spider` bot); moving it to **Released** stays the release owner's step (`bun run spider task done ST-120`) and is refused until every app with environments (web, api) has a deployment to its last one (prod). The CLI has no environments: its GitHub release (`bun run release:cli --release ST-120`) is its "prod". The release page and `spider release view ST-120` list the latest deployment per app and environment.
+
+A release, step by step (the release owner, from an up-to-date `main`):
+
+```bash
+bun run deploy:api -- --env staging --release ST-120   # staging API (Railway environment "staging")
+bun run deploy:web -- --env staging --release ST-120   # staging web; the release is now On staging
+# smoke-test staging, run `spider release check ST-120`, move it to Release review and review it
+git push                                               # prod API builds from main; then:
+bun run spider release deploy ST-120 --app api --env prod --commit "$(git rev-parse HEAD)"
+bun run deploy:web -- --release ST-120                 # prod web, recorded
+bun run spider task done ST-120                        # Released: ships its tasks
+```
+
+## Staging
+
+Not set up yet. A **checklist for a person** (it needs Railway, Cloudflare and DNS access; agents don't do it):
+
+1. **Staging database and API (Railway).** In the `spider-tracker` project, add an environment `staging` with its own `Postgres` (template `postgres-ssl:18`, private network only) and an `api` service built like production (pre-deploy `bun packages/db/src/migrate.ts`, start `bun backend/api/src/index.ts`, health check `/health/ready`). Variables as in production, with staging values: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `API_ORIGIN=https://tracker-api-staging.batele.plus`, `WEB_ORIGIN=https://tracker-staging.batele.plus`, a **new** `BETTER_AUTH_SECRET` (`--stdin`), `NODE_ENV=production`, `TRUSTED_PROXY=railway`; leave the `GITHUB_APP_*` variables out (or use a separate staging GitHub App) and `RESEND_API_KEY` optional. Turn off deploys from GitHub for `staging` (or point them at a `staging` branch), so staging changes only with `bun run deploy:api -- --env staging`. Keep `.railway/railway.ts` in step if it describes the environment.
+2. **Staging API domain.** `tracker-api-staging.batele.plus` on the staging `api` service, with its CNAME and `_railway-verify` TXT records (DNS only), as for production.
+3. **Staging web build.** Create `web/app/.env.staging` with `VITE_API_URL=https://tracker-api-staging.batele.plus` (public values only; `.gitignore` lets it be committed, like `.env.production`). `bun run deploy:web -- --env staging` refuses to run without it; it builds with `vite build --mode staging` and uploads to the Pages branch `staging` (`staging.spider-tracker.pages.dev`).
+4. **Staging web domain.** Add `tracker-staging.batele.plus` to the Pages project and a proxied CNAME `tracker-staging` → `staging.spider-tracker.pages.dev`.
+5. **A saved agent for staging.** Sign in on the staging web app, create an organization and an agent, and accept its invite against the staging API (`SPIDER_API_URL=https://tracker-api-staging.batele.plus spider accept-invite <code>`). It is saved under the staging server next to the production agents; use it with `--as` for smoke tests (`spider --as <agent> whoami`, `spider task list`). Deployments are still recorded with the production agent, on the production tracker.
+6. **Apps.** In production ST, web and api have environments `staging, prod` (`spider app update web --env staging,prod`, same for api); the cli has none.
+7. **Try it** on a Planned release: `bun run deploy:web -- --env staging --release ST-NN`; the release page shows web on staging and the release is On staging.
+
+Prod and staging deploys both stay manual; nothing deploys on its own except the production API's builds from `main`.
 
 ## Private access: Cloudflare Access
 

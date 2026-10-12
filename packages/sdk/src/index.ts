@@ -32,6 +32,8 @@ import type {
   RelationDto,
   ReleaseDto,
   ReleaseChangelogDto,
+  DeploymentDto,
+  RecordDeploymentResponse,
   MilestoneDto,
   AppDto,
   RepoDto,
@@ -75,6 +77,8 @@ import type {
   CreateReleaseInput,
   UpdateReleaseInput,
   ReleaseChangelogInput,
+  RecordDeploymentInput,
+  DeploymentListQuery,
   CreateMilestoneInput,
 } from "@repo/core/schemas";
 
@@ -353,6 +357,20 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
       /** Writes the changelog into the release's description; 409 when its block was edited by hand, unless `force`. */
       writeChangelog: (orgSlug: string, releaseKey: string, input: ReleaseChangelogInput = {}) =>
         request<ReleaseChangelogDto>("POST", `${org(orgSlug)}/releases/${seg(releaseKey)}/changelog`, input),
+      /**
+       * Records a deployment of one of its apps to one of the app's environments (ST-94). The first
+       * one moves a Planned release to On staging; Released needs every app deployed to its last environment.
+       */
+      deploy: (orgSlug: string, releaseKey: string, input: RecordDeploymentInput) =>
+        request<RecordDeploymentResponse>("POST", `${org(orgSlug)}/releases/${seg(releaseKey)}/deployments`, input),
+      /** Its deployments, newest first; `app` and `environment` narrow them. */
+      deployments: (orgSlug: string, releaseKey: string, query: DeploymentListQuery = {}) => {
+        const params = new URLSearchParams();
+        if (query.app) params.set("app", query.app);
+        if (query.environment) params.set("environment", query.environment);
+        const qs = params.size ? `?${params}` : "";
+        return request<ListResponse<DeploymentDto>>("GET", `${org(orgSlug)}/releases/${seg(releaseKey)}/deployments${qs}`);
+      },
       /** Done tasks with code in no release and not shipped, most recently finished first. */
       candidates: (orgSlug: string, query: { project?: string; release?: string } = {}) => {
         const params = new URLSearchParams();

@@ -36,7 +36,7 @@ activity (append-only log for everything)
 | **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
 | **Milestone** | A task of kind `milestone` (ST-96): goal and "Done when" in its description, start and target dates; tasks of its project join through `tasks.milestone_id`, and sub-tasks without one inherit their parent's (computed, not stored). The project's milestones by date are its roadmap |
-| **Release** | A task of kind `release` (ST-93): links repos (`release_repos`) and apps with a version each (`release_apps`), includes Done tasks of any project (`tasks.release_id`); marking it Released sets `shipped_at` on it and its tasks |
+| **Release** | A task of kind `release` (ST-93): links repos (`release_repos`) and apps with a version each (`release_apps`), includes Done tasks of any project (`tasks.release_id`), records `deployments` per app and environment (ST-94); marking it Released sets `shipped_at` on it and its tasks |
 | **Git link** | A branch, commit or pull request linked to a task, with how its key was found (ST-84) |
 | **Pull request** | A repo's GitHub pull request that links to a task: state, draft, branches, and its `updated_at` on GitHub for the out-of-order guard (ST-84) |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
@@ -361,6 +361,22 @@ create table release_apps (
   version text not null,                               -- 2026.10.13 (date) or 0.1.8 (semver)
   primary key (release_id, app_id)
 );
+-- ST-94: a release's app deployed to one of the app's environments (checked when recorded; later edits
+-- to the app's list keep the history). Written by `spider release deploy`; the first one moves a Planned
+-- release to On staging, and Released needs one to each app's last environment (apps with none are exempt).
+create table deployments (
+  id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
+  release_id uuid not null references tasks on delete cascade,
+  app_id uuid not null references apps on delete cascade,
+  environment text not null,                           -- e.g. staging, prod
+  commit_sha text not null,                            -- 7–64 hex digits, lower-case
+  actor_id uuid references actors on delete set null,  -- who recorded it
+  source text not null,                                -- cli | mcp | api | ui
+  created_at timestamptz not null default now()
+);
+create index deployments_release_idx on deployments (release_id, app_id, environment, created_at);
+create index deployments_app_idx on deployments (app_id);
 
 -- ST-84: a repo's pull requests that link to a task (others aren't kept). An event whose
 -- pull_request.updated_at is older than github_updated_at is stale and changes nothing; merged is final.

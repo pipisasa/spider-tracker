@@ -4,6 +4,7 @@ import { and, asc, desc, eq, exists, inArray, isNull, not, notInArray, sql, type
 import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type ProjectScope, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import type { ReleaseAppDto, ReleaseDto, ReleaseTaskDto, TaskDto } from "./contracts";
+import { deploymentDtos } from "./deployment-records";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { getProject } from "./projects";
@@ -38,7 +39,7 @@ export const MAX_RELEASE_CANDIDATES = 200;
 const keyOf = (projectKey: string, number: number) => `${projectKey}-${number}`;
 
 /** A release the viewer can see, locked for a change inside a transaction with `forUpdate`. */
-async function findRelease(db: Db | Tx, viewer: Viewer, releaseKey: string, forUpdate = false) {
+export async function findRelease(db: Db | Tx, viewer: Viewer, releaseKey: string, forUpdate = false) {
   const found = await findTask(db, viewer, releaseKey);
   if (found.task.kind !== "release") {
     throw new DomainError("validation", `${keyOf(found.projectKey, found.task.number)} is a ${found.task.kind}, not a release`);
@@ -136,7 +137,7 @@ async function linkLabels(db: Db | Tx, releaseId: string) {
   };
 }
 
-/** The status, repos, apps and (in-scope) included tasks of each release. */
+/** The status, repos, apps, (in-scope) included tasks and deployments of each release. */
 async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto[]): Promise<ReleaseDto[]> {
   if (releases.length === 0) return [];
   const ids = releases.map((r) => r.id);
@@ -170,6 +171,7 @@ async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
     .where(and(inArray(tasks.releaseId, ids), isNull(tasks.deletedAt), scope ? inArray(tasks.projectId, [...scope]) : undefined))
     .orderBy(asc(projects.key), asc(tasks.number));
+  const deploymentRows = await deploymentDtos(db, ids);
 
   return releases.map((release) => {
     const status = statusRows.find((s) => s.id === release.statusId);
@@ -203,11 +205,12 @@ async function toReleaseDtos(db: Db | Tx, scope: ProjectScope, releases: TaskDto
             shippedAt: t.task.shippedAt?.toISOString() ?? null,
           }),
         ),
+      deployments: deploymentRows.filter((d) => d.releaseId === release.id),
     };
   });
 }
 
-async function releaseDto(db: Db | Tx, viewer: Viewer, releaseKey: string): Promise<ReleaseDto> {
+export async function releaseDto(db: Db | Tx, viewer: Viewer, releaseKey: string): Promise<ReleaseDto> {
   const scope = await projectScope(db, viewer);
   const found = await findRelease(db, viewer, releaseKey);
   const [dto] = await toTaskDtos(db, scope, [found]);

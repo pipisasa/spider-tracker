@@ -4,6 +4,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { recordActivity } from "./activity";
 import type { StatusCategory } from "./contracts";
+import { appsNotInProduction } from "./deployment-records";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { effectiveMilestones, settleMilestones } from "./milestone-membership";
@@ -36,8 +37,9 @@ async function announce(tx: Tx, ctx: ActorContext, task: { number: number; proje
 
 /**
  * Runs when a release's status changes category, inside the update's transaction:
- * - into done (Released): every included task must be Done; they get `shippedAt` (the release
- *   time) and a "task.shipped" activity entry, "shipped in <version>";
+ * - into done (Released): every included task must be Done, and every app of the release that has
+ *   environments must be deployed (by this release) to its last one, its production (ST-94); the
+ *   tasks get `shippedAt` (the release time) and a "task.shipped" activity entry, "shipped in <version>";
  * - out of done: the shipping is undone ("task.unshipped");
  * - into canceled: the included tasks leave the release, free for another one.
  * Returns the release's own `shippedAt` when it changes (undefined when it doesn't).
@@ -61,6 +63,16 @@ export async function applyReleaseTransition(
       throw new DomainError(
         "validation",
         `Release ${release.key} can't be released: ${unfinished.map((t) => `${t.projectKey}-${t.number}`).join(", ")} ${unfinished.length === 1 ? "isn't" : "aren't"} Done. Finish or remove ${unfinished.length === 1 ? "it" : "them"} first`,
+      );
+    }
+    // Released follows deployments (ST-94): allowed once every app is in production, never automatic.
+    const pending = await appsNotInProduction(tx, release.id);
+    if (pending.length > 0) {
+      const names = pending.map((a) => `${a.name} to ${a.production}`).join(", ");
+      const [first] = pending;
+      throw new DomainError(
+        "validation",
+        `Release ${release.key} can't be released: it isn't deployed ${names} yet. Record each deploy first (spider release deploy ${release.key} --app ${first?.name} --env ${first?.production})`,
       );
     }
     const shipping = included.filter((t) => !t.shippedAt);
