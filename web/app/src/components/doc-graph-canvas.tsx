@@ -26,6 +26,10 @@ type SimLink = SimulationLinkDatum<SimNode> & { kind: GraphEdge["kind"] };
 type View = { x: number; y: number; k: number };
 
 const MIN_ZOOM = 0.15;
+/** In a big graph, only the best-connected nodes are labelled until zoomed in this far. */
+const ALL_LABELS_ZOOM = 1.6;
+const CROWDED_NODES = 40;
+const LABELLED_WHEN_CROWDED = 15;
 const MAX_ZOOM = 4;
 
 /** Distinct, theme-neutral hues per project. */
@@ -80,10 +84,22 @@ export function DocGraphCanvas({
   const hover = useRef<SimNode | null>(null);
   const frame = useRef(0);
   const searchRef = useRef(search);
+  // Until the viewer pans, zooms or drags, the view keeps the settling graph in frame.
+  const userMoved = useRef(false);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
 
   const adjacency = useMemo(() => neighbours(edges), [edges]);
+  const labelled = useMemo(
+    () =>
+      new Set(
+        [...nodes]
+          .sort((a, b) => b.degree - a.degree)
+          .slice(0, LABELLED_WHEN_CROWDED)
+          .map((n) => n.id),
+      ),
+    [nodes],
+  );
   const projects = useMemo(
     () => [...new Set(nodes.flatMap((n) => (n.projectKey ? [n.projectKey] : [])))].sort(),
     [nodes],
@@ -163,7 +179,8 @@ export function DocGraphCanvas({
       }
     }
 
-    // Labels: everything when zoomed in, otherwise what's highlighted and the bigger nodes.
+    // Labels: everything in a small graph or when zoomed in; otherwise what's highlighted and the
+    // best-connected nodes, so a big graph stays readable.
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     const fontSize = 11 / Math.max(k, 0.6);
@@ -171,14 +188,30 @@ export function DocGraphCanvas({
     for (const n of simNodes.current) {
       const on = lit(n);
       const highlighted = focus ? on : Boolean(query) && on;
-      const crowded = simNodes.current.length > 40 && k < 1.1;
-      if (!highlighted && crowded && n.degree < 4 && n.kind !== "project") continue;
+      const crowded = simNodes.current.length > CROWDED_NODES && k < ALL_LABELS_ZOOM;
+      if (!highlighted && crowded && !labelled.has(n.id)) continue;
       ctx.globalAlpha = on ? (highlighted || !crowded ? 1 : 0.75) : 0.15;
       ctx.fillStyle = n.kind === "unresolved" ? colors.muted : colors.foreground;
       const text = n.label.length > 40 ? `${n.label.slice(0, 39)}…` : n.label;
       ctx.fillText(text, n.x ?? 0, (n.y ?? 0) + radiusOf(n) + 3 / k);
     }
     ctx.globalAlpha = 1;
+  };
+
+  /** Zooms and centres the view on the nodes (never past 1:1). */
+  const fit = (ns: SimNode[]) => {
+    const { w, h } = size.current;
+    if (!ns.length || !w || !h) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of ns) {
+      minX = Math.min(minX, n.x ?? 0);
+      minY = Math.min(minY, n.y ?? 0);
+      maxX = Math.max(maxX, n.x ?? 0);
+      maxY = Math.max(maxY, n.y ?? 0);
+    }
+    const pad = 60;
+    const k = Math.max(MIN_ZOOM, Math.min(1, (w - pad * 2) / Math.max(1, maxX - minX), (h - pad * 2) / Math.max(1, maxY - minY)));
+    view.current = { k, x: -((minX + maxX) / 2) * k, y: -((minY + maxY) / 2) * k };
   };
 
   const requestDraw = () => {
@@ -216,6 +249,7 @@ export function DocGraphCanvas({
       .force("y", forceY<SimNode>(0).strength(0.04))
       .on("tick", () => {
         for (const n of ns) positions.current.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 });
+        if (!userMoved.current) fit(ns);
         requestDraw();
       });
     if (positions.current.size) sim.alpha(0.5);
@@ -290,6 +324,7 @@ export function DocGraphCanvas({
       const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.k * factor));
       const px = clientX - rect.left - size.current.w / 2;
       const py = clientY - rect.top - size.current.h / 2;
+      userMoved.current = true;
       view.current = { k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k };
       requestDraw();
     };
@@ -338,6 +373,7 @@ export function DocGraphCanvas({
       const dy = e.clientY - drag.startY;
       if (!drag.moved && Math.hypot(dx, dy) < 4) return;
       drag.moved = true;
+      userMoved.current = true;
       if (drag.node) {
         const p = toGraph(e.clientX, e.clientY);
         drag.node.fx = p.x;
