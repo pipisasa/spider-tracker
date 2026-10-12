@@ -8,6 +8,7 @@ const task: TaskDto = {
   key: "ST-1",
   number: 1,
   projectId: "p",
+  kind: "task",
   title: "Views",
   description: null,
   statusId: "s1",
@@ -46,11 +47,12 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
     expect(taskView({ ...task, statusId: "elsewhere" }, { statuses: [], actors, tags: [] }).status).toBeNull();
   });
 
-  test("tasks from servers before tags get an empty tag list", () => {
+  test("tasks from servers before tags get an empty tag list, and before kinds the kind task", () => {
     const old: Partial<TaskDto> = { ...task };
     delete old.tagIds;
+    delete old.kind;
     const view = taskView(old as TaskDto, { statuses: [], actors, tags: [] });
-    expect(view).toMatchObject({ tagIds: [], tags: [] });
+    expect(view).toMatchObject({ kind: "task", tagIds: [], tags: [] });
   });
 
   test("comments, relations and old document versions", () => {

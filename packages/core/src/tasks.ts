@@ -6,7 +6,7 @@ import { assertCanWrite, inScope, orgIdOf, projectScope, type ActorContext, type
 import { recordActivity } from "./activity";
 import { publish } from "./events";
 import { notify } from "./inbox";
-import type { BulkTaskResultDto, BulkUpdateTasksResponse, Priority, ProjectDetailDto, SubtaskDto, TaskDto } from "./contracts";
+import type { BulkTaskResultDto, BulkUpdateTasksResponse, Priority, ProjectDetailDto, SubtaskDto, TaskDto, TaskKind } from "./contracts";
 import { DomainError } from "./errors";
 import { listMembers } from "./organizations";
 import { getProject } from "./projects";
@@ -23,7 +23,7 @@ import {
   updateTaskInput,
   type UpdateTaskInput,
 } from "./schemas";
-import { matchStatuses } from "./statuses";
+import { allStatuses, matchStatuses, unknownStatusMessage, workflowOf } from "./statuses";
 import { parseInput } from "./validate";
 
 const { actors, agents, projects, statuses, tags, taskAssignees, taskTags, tasks } = schema;
@@ -47,6 +47,7 @@ function toTaskDto(row: TaskRow, projectKey: string, { assigneeIds, tagIds, pare
     key: `${projectKey}-${row.number}`,
     number: row.number,
     projectId: row.projectId,
+    kind: row.kind,
     title: row.title,
     description: row.description,
     statusId: row.statusId,
@@ -142,13 +143,17 @@ async function assertTagsInOrg(tx: Tx, orgId: string, tagIds: string[]) {
   if (rows.length !== tagIds.length) throw new DomainError("validation", "Tags must belong to this organization");
 }
 
-async function findStatus(tx: Tx, projectId: string, statusId: string) {
+/** A status of the project's workflow for `kind` (ST-90): another project's, or another kind's, is refused. */
+async function findStatus(tx: Tx, projectId: string, kind: TaskKind, statusId: string) {
   const [status] = await tx
     .select()
     .from(statuses)
     .where(and(eq(statuses.id, statusId), eq(statuses.projectId, projectId)))
     .limit(1);
   if (!status) throw new DomainError("validation", "Status doesn't belong to this project");
+  if (status.kind !== kind) {
+    throw new DomainError("validation", `Status "${status.name}" is in the ${status.kind} workflow; a ${kind} needs a status of the ${kind} workflow`);
+  }
   return status;
 }
 
@@ -237,14 +242,20 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
     // Throwing rolls back the counter bump.
     if (project.archivedAt) throw new DomainError("validation", `Project ${project.key} is archived`);
 
+    const kind = data.kind ?? "task";
     let status: StatusRow | undefined;
     if (data.statusId) {
-      status = await findStatus(tx, project.id, data.statusId);
+      status = await findStatus(tx, project.id, kind, data.statusId);
     } else {
-      const rows = await tx.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
+      // The kind's first todo status, else its first status.
+      const rows = await tx
+        .select()
+        .from(statuses)
+        .where(and(eq(statuses.projectId, project.id), eq(statuses.kind, kind)))
+        .orderBy(asc(statuses.position));
       status = rows.find((s) => s.category === "todo") ?? rows[0];
     }
-    if (!status) throw new DomainError("validation", "Project has no statuses");
+    if (!status) throw new DomainError("validation", `Project has no ${kind} statuses`);
 
     const assigneeIds = [...new Set(data.assigneeIds ?? [])];
     const tagIds = [...new Set(data.tagIds ?? [])];
@@ -257,6 +268,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       .values({
         orgId: ctx.orgId,
         projectId: project.id,
+        kind,
         number: project.taskSeq,
         title: data.title,
         description: data.description ?? null,
@@ -286,6 +298,7 @@ export async function createTask(db: Db, ctx: ActorContext, projectKey: string, 
       action: "task.created",
       changes: {
         title: task.title,
+        ...(kind !== "task" ? { kind } : {}),
         statusId: status.id,
         assigneeIds,
         ...(tagIds.length ? { tagIds } : {}),
@@ -319,18 +332,17 @@ function mineActorIds(db: Db, viewer: ActorContext) {
 async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDto, filters: unknown): Promise<SQL[]> {
   const data = parseInput(taskListFilters, filters);
   const where: SQL[] = [];
+  // Without a kind, names and categories match in every workflow ("done" finds done tasks and milestones).
+  const kind = data.kind ?? "all";
+  const known = kind === "all" ? allStatuses(project) : workflowOf(project, kind);
+  if (data.kind) where.push(eq(tasks.kind, data.kind));
 
   if (data.status?.length) {
     const ids = new Set<string>();
     for (const value of data.status) {
-      const byId = project.statuses.filter((s) => s.id === value);
-      const matched = byId.length ? byId : matchStatuses(project, value);
-      if (matched.length === 0) {
-        throw new DomainError(
-          "validation",
-          `Unknown status "${value}" in ${project.key}. Valid statuses: ${project.statuses.map((s) => s.name).join(", ")}`,
-        );
-      }
+      const byId = known.filter((s) => s.id === value);
+      const matched = byId.length ? byId : matchStatuses(project, value, kind);
+      if (matched.length === 0) throw new DomainError("validation", unknownStatusMessage(project, value, kind));
       for (const s of matched) ids.add(s.id);
     }
     where.push(inArray(tasks.statusId, [...ids]));
@@ -409,7 +421,7 @@ async function filterConditions(db: Db, viewer: Viewer, project: ProjectDetailDt
   }
   if (data.overdue) {
     // Today is the server's UTC date (todayUtc); closed means a done or canceled status.
-    const open = project.statuses.filter((s) => !CLOSED.includes(s.category)).map((s) => s.id);
+    const open = known.filter((s) => !CLOSED.includes(s.category)).map((s) => s.id);
     where.push(lt(tasks.targetDate, todayUtc()), inArray(tasks.statusId, open));
   }
   return where;
@@ -540,7 +552,7 @@ export async function applyTaskUpdate(tx: Tx, ctx: ActorContext, { task, project
   // A position move wins over a bare status change; both re-sort the task.
   const targetStatusId = data.position?.statusId ?? data.statusId;
   if (targetStatusId !== undefined) {
-    const status = await findStatus(tx, task.projectId, targetStatusId);
+    const status = await findStatus(tx, task.projectId, task.kind, targetStatusId);
     if (status.id !== task.statusId || data.position) {
       track("statusId", status.id);
       patch.sortKey = await sortKeyFor(tx, task.projectId, status.id, data.position);
@@ -654,28 +666,24 @@ export async function updateTasks(db: Db, ctx: ActorContext, input: unknown): Pr
     throw new DomainError("validation", "Pass either keys or a filter");
   }
 
-  // Statuses are per project, so a status name is matched in each task's own project.
+  // Statuses are per project and kind, so a status name is matched in each task's own workflow.
   const projectsByKey = new Map<string, Promise<ProjectDetailDto>>();
-  const statusIdIn = async (projectKey: string, value: string) => {
+  const statusIdIn = async (projectKey: string, kind: TaskKind, value: string) => {
     let project = projectsByKey.get(projectKey);
     if (!project) {
       project = getProject(db, ctx, projectKey);
       projectsByKey.set(projectKey, project);
     }
     const detail = await project;
-    const match = detail.statuses.find((s) => s.id === value) ?? matchStatuses(detail, value)[0];
-    if (!match) {
-      throw new DomainError(
-        "validation",
-        `Unknown status "${value}" in ${detail.key}. Valid statuses: ${detail.statuses.map((s) => s.name).join(", ")}`,
-      );
-    }
+    // An id of another kind's status is left to applyTaskUpdate, which says why it doesn't fit.
+    const match = allStatuses(detail).find((s) => s.id === value) ?? matchStatuses(detail, value, kind)[0];
+    if (!match) throw new DomainError("validation", unknownStatusMessage(detail, value, kind));
     return match.id;
   };
 
   const updateOne = async (tx: Tx, key: string) => {
     const found = await findTask(tx, ctx, key);
-    const statusId = status === undefined ? undefined : await statusIdIn(found.projectKey, status);
+    const statusId = status === undefined ? undefined : await statusIdIn(found.projectKey, found.task.kind, status);
     return applyTaskUpdate(tx, ctx, found, { ...changes, statusId });
   };
 

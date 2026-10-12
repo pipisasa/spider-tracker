@@ -19,6 +19,7 @@ import type {
   RepoDto,
   TagDto,
   CreatedApiKeyDto,
+  DeleteStatusResponse,
   ListResponse,
   ProjectDetailDto,
   ProjectDto,
@@ -36,6 +37,7 @@ import type {
   CreateProjectInput,
   CreateSavedViewInput,
   CreateTagInput,
+  CreateStatusInput,
   CreateAppInput,
   CreateRepoInput,
   UpdateAppInput,
@@ -45,6 +47,7 @@ import type {
   UpdateAgentInput,
   UpdateProjectInput,
   UpdateSavedViewInput,
+  UpdateStatusInput,
   UpdateDocumentInput,
   MoveDocumentInput,
   UpdateTaskInput,
@@ -226,6 +229,39 @@ export function useUpdateProject(org: string, projectKey: string) {
     },
     onError: (error) => toast.error(error.message),
   });
+}
+
+/** Workflow editing (ST-90): add, change (rename, recolor, move) and delete statuses of a project. */
+export function useWorkflowMutations(org: string, projectKey: string) {
+  const qc = useQueryClient();
+  const path = `${orgPath(org)}/projects/${projectKey}/statuses`;
+  const done = (project: ProjectDetailDto) => {
+    qc.setQueryData(keys.project(org, projectKey), project);
+    refreshProjects(qc, org);
+  };
+  const onError = (error: Error) => toast.error(error.message);
+  return {
+    create: useMutation({
+      mutationFn: (input: CreateStatusInput) => api<ProjectDetailDto>(path, { method: "POST", body: JSON.stringify(input) }),
+      onSuccess: done,
+      onError,
+    }),
+    update: useMutation({
+      mutationFn: ({ id, ...input }: UpdateStatusInput & { id: string }) =>
+        api<ProjectDetailDto>(`${path}/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+      onSuccess: done,
+      onError,
+    }),
+    remove: useMutation({
+      mutationFn: ({ id, moveTo }: { id: string; moveTo: string }) =>
+        api<DeleteStatusResponse>(`${path}/${id}?${new URLSearchParams({ moveTo })}`, { method: "DELETE" }),
+      onSuccess: (result) => {
+        toast.success(`Status deleted; ${result.movedTasks} task${result.movedTasks === 1 ? "" : "s"} moved`);
+        done(result.project);
+      },
+      onError,
+    }),
+  };
 }
 
 /** Archive (`archive: true`) or restore (`false`) a project. */

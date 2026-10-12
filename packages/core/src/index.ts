@@ -33,5 +33,6 @@ export * from "./invitations";
 export * from "./agent-invites";
 export * from "./version";
 export * from "./saved-views";
+export * from "./workflows";
 export * from "./repos";
 export * from "./remotes";

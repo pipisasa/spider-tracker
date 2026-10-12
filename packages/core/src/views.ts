@@ -75,15 +75,15 @@ export function actorHandle(actors: ActorRef[], id: string): string {
 }
 
 export interface TaskViewLookups {
-  /** The statuses of the task's project. */
+  /** The statuses of the task's project, every kind's (allStatuses). */
   statuses: Pick<StatusDto, "id" | "name" | "category">[];
   actors: ActorRef[];
   tags: Pick<TagDto, "id" | "name">[];
 }
 
 export function taskView(raw: TaskDto, { statuses, actors, tags }: TaskViewLookups): TaskView {
-  // Servers from before tags (ST-8) don't send tagIds.
-  const task = { ...raw, tagIds: raw.tagIds ?? [] };
+  // Servers from before tags (ST-8) don't send tagIds, nor from before kinds (ST-90) a kind.
+  const task = { ...raw, kind: raw.kind ?? "task", tagIds: raw.tagIds ?? [] };
   const status = statuses.find((s) => s.id === task.statusId);
   return {
     ...task,

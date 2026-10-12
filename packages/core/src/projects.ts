@@ -4,22 +4,46 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { assertCanManageProjects, inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
 import { publish } from "./events";
-import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto } from "./contracts";
+import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto, TaskKind } from "./contracts";
 import { DomainError } from "./errors";
 import { announceRulesChange, assertRulesDocument } from "./project-rules";
-import { createProjectInput, updateProjectInput } from "./schemas";
+import { TASK_KINDS, createProjectInput, updateProjectInput } from "./schemas";
 import { parseInput } from "./validate";
 
 const { agentProjects, projects, statuses } = schema;
 
-export const DEFAULT_STATUSES: { name: string; category: StatusCategory; color: string }[] = [
-  { name: "Backlog", category: "backlog", color: "#a1a1aa" },
-  { name: "Todo", category: "todo", color: "#71717a" },
-  { name: "In Progress", category: "in_progress", color: "#eab308" },
-  { name: "In Review", category: "in_review", color: "#22c55e" },
-  { name: "Done", category: "done", color: "#6366f1" },
-  { name: "Canceled", category: "canceled", color: "#a1a1aa" },
-];
+type DefaultStatus = { name: string; category: StatusCategory; color: string };
+
+/**
+ * Every new project's workflows, one per task kind (ST-90). Existing projects got the release and
+ * milestone ones from the migration that added kinds; keep the two in step.
+ */
+export const DEFAULT_WORKFLOWS: Record<TaskKind, DefaultStatus[]> = {
+  task: [
+    { name: "Backlog", category: "backlog", color: "#a1a1aa" },
+    { name: "Todo", category: "todo", color: "#71717a" },
+    { name: "In Progress", category: "in_progress", color: "#eab308" },
+    { name: "In Review", category: "in_review", color: "#22c55e" },
+    { name: "Done", category: "done", color: "#6366f1" },
+    { name: "Canceled", category: "canceled", color: "#a1a1aa" },
+  ],
+  release: [
+    { name: "Planned", category: "todo", color: "#71717a" },
+    { name: "On staging", category: "in_progress", color: "#eab308" },
+    { name: "Release review", category: "in_review", color: "#22c55e" },
+    { name: "Released", category: "done", color: "#6366f1" },
+    { name: "Canceled", category: "canceled", color: "#a1a1aa" },
+  ],
+  milestone: [
+    { name: "Planned", category: "todo", color: "#71717a" },
+    { name: "Active", category: "in_progress", color: "#eab308" },
+    { name: "Ready to close", category: "in_review", color: "#22c55e" },
+    { name: "Done", category: "done", color: "#6366f1" },
+  ],
+};
+
+/** The task workflow of a new project. */
+export const DEFAULT_STATUSES = DEFAULT_WORKFLOWS.task;
 
 type ProjectRow = typeof projects.$inferSelect;
 type StatusRow = typeof statuses.$inferSelect;
@@ -37,7 +61,18 @@ export function toProjectDto(row: ProjectRow): ProjectDto {
 }
 
 export function toStatusDto(row: StatusRow): StatusDto {
-  return { id: row.id, name: row.name, category: row.category, color: row.color, position: row.position };
+  return { id: row.id, kind: row.kind, name: row.name, category: row.category, color: row.color, position: row.position };
+}
+
+/** The project with its workflows; `statuses` stays the task workflow, as before kinds (ST-90). */
+export function toProjectDetailDto(project: ProjectRow, rows: StatusRow[]): ProjectDetailDto {
+  const sorted = [...rows].sort((a, b) => a.position - b.position).map(toStatusDto);
+  const workflows: Record<TaskKind, StatusDto[]> = {
+    task: sorted.filter((s) => s.kind === "task"),
+    release: sorted.filter((s) => s.kind === "release"),
+    milestone: sorted.filter((s) => s.kind === "milestone"),
+  };
+  return { ...toProjectDto(project), statuses: workflows.task, workflows };
 }
 
 export async function createProject(db: Db, ctx: ActorContext, input: unknown): Promise<ProjectDetailDto> {
@@ -55,7 +90,11 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
 
     const rows = await tx
       .insert(statuses)
-      .values(DEFAULT_STATUSES.map((s, position) => ({ ...s, projectId: project.id, position })))
+      .values(
+        TASK_KINDS.flatMap((kind) =>
+          DEFAULT_WORKFLOWS[kind].map((s, position) => ({ ...s, kind, projectId: project.id, position })),
+        ),
+      )
       .returning();
 
     // A project-scoped agent gets access to the project it creates.
@@ -69,7 +108,7 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
     });
 
     await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
-    return { ...toProjectDto(project), statuses: rows.sort((a, b) => a.position - b.position).map(toStatusDto) };
+    return toProjectDetailDto(project, rows);
   });
   // The scope is cached per request; keep it in step once the project exists.
   scope?.add(created.id);
@@ -105,11 +144,11 @@ export async function getProject(db: Db, viewer: Viewer, key: string): Promise<P
     .limit(1);
   if (!project || !inScope(await projectScope(db, viewer), project.id)) throw new DomainError("not_found", `Project ${key} not found`);
   const rows = await db.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
-  return { ...toProjectDto(project), statuses: rows.map(toStatusDto) };
+  return toProjectDetailDto(project, rows);
 }
 
 /** Locks the project row for a change; out-of-scope projects are "not found". */
-async function findProjectForUpdate(tx: Tx, ctx: ActorContext, key: string): Promise<ProjectRow> {
+export async function findProjectForUpdate(tx: Tx, ctx: ActorContext, key: string): Promise<ProjectRow> {
   const [project] = await tx
     .select()
     .from(projects)
@@ -122,9 +161,9 @@ async function findProjectForUpdate(tx: Tx, ctx: ActorContext, key: string): Pro
   return project;
 }
 
-async function withStatuses(tx: Tx, project: ProjectRow): Promise<ProjectDetailDto> {
+export async function withStatuses(tx: Db | Tx, project: ProjectRow): Promise<ProjectDetailDto> {
   const rows = await tx.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
-  return { ...toProjectDto(project), statuses: rows.map(toStatusDto) };
+  return toProjectDetailDto(project, rows);
 }
 
 /**

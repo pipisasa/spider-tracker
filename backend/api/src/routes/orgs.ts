@@ -47,6 +47,9 @@ import {
   createProject,
   createTask,
   deleteTask,
+  createStatus,
+  updateStatus,
+  deleteStatus,
   createDocument,
   deleteDocument,
   editDocument,
@@ -276,10 +279,28 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     c.json(project(c, await archiveProject(db, c.get("actor"), c.req.param("projectKey"), false))),
   );
 
-  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any, ?overdue=true; see taskListFilters.
+  // Workflow editing (ST-90): each answers with the project and all its workflows.
+  app.post("/projects/:projectKey/statuses", async (c) =>
+    c.json(project(c, await createStatus(db, c.get("actor"), c.req.param("projectKey"), await body(c))), 201),
+  );
+
+  app.patch("/projects/:projectKey/statuses/:statusId", async (c) =>
+    c.json(project(c, await updateStatus(db, c.get("actor"), c.req.param("projectKey"), c.req.param("statusId"), await body(c)))),
+  );
+
+  // DELETE …/statuses/<id>?moveTo=<status id>: its tasks move there first.
+  app.delete("/projects/:projectKey/statuses/:statusId", async (c) => {
+    const result = await deleteStatus(db, c.get("actor"), c.req.param("projectKey"), c.req.param("statusId"), {
+      moveTo: c.req.query("moveTo"),
+    });
+    return c.json({ ...result, project: project(c, result.project) });
+  });
+
+  // ?status=&assignee=&tag=&priority= repeat for several values, ?tagMatch=any, ?overdue=true, ?kind=; see taskListFilters.
   app.get("/projects/:projectKey/tasks", async (c) => {
     const query = c.req.queries();
     const filters = {
+      kind: c.req.query("kind"),
       status: query.status,
       assignee: query.assignee,
       tags: query.tag,
