@@ -20,6 +20,7 @@ import {
   ChevronsUpDownIcon,
   FileTextIcon,
   FolderIcon,
+  FolderCogIcon,
   LayoutGridIcon,
   LogInIcon,
   LogOutIcon,
@@ -163,6 +164,17 @@ function OrgLayout() {
             <UsersIcon className="size-4 text-muted-foreground" />
             Members
           </Link>
+          {canManage && (
+            <Link
+              to="/$orgSlug/settings/projects"
+              params={{ orgSlug }}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+              activeProps={{ className: "bg-muted font-medium" }}
+            >
+              <FolderCogIcon className="size-4 text-muted-foreground" />
+              Projects
+            </Link>
+          )}
           {canCreateAgents && (
             <Link
               to="/$orgSlug/settings/agents"
