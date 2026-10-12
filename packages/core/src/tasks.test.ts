@@ -187,5 +187,21 @@ run("projects and tasks", () => {
     await expect(listTasks(db, ctx, "FLT", { status: ["Nope"] })).rejects.toMatchObject({ code: "validation" });
     await expect(listTasks(db, ctx, "FLT", { assignee: ["nobody"] })).rejects.toMatchObject({ code: "validation" });
     await expect(listTasks(db, ctx, "FLT", { priority: [7] })).rejects.toMatchObject({ code: "validation" });
+
+    // tagMatch: all (the default) or any of the tags.
+    expect(await titles({ tags: ["bug", "ui"], tagMatch: "all" })).toEqual(["Both tags", "Bug fixed"]);
+    expect(await titles({ tags: ["bug", "ui"], tagMatch: "any" })).toEqual(["Both tags", "Bug fixed", "Only bug", "Only ui"]);
+    expect(await titles({ tags: ["ui"], tagMatch: "any", priority: [2] })).toEqual(["Only ui"]);
+    await expect(listTasks(db, ctx, "FLT", { tags: ["bug", "nope"], tagMatch: "any" })).rejects.toThrow('Unknown tag "nope"');
+    await expect(listTasks(db, ctx, "FLT", { tagMatch: "some" })).rejects.toMatchObject({ code: "validation" });
+    // "@" and case are ignored for me/none, as for handles.
+    expect(await titles({ assignee: [" @NONE"] })).toEqual(["Both tags", "Bug fixed"]);
+    expect(await titles({ assignee: ["@Me"] })).toEqual(["Only ui"]);
+  });
+
+  test("a missing project is not_found, filtered or not, before the filters are checked", async () => {
+    for (const filters of [{}, { status: ["Done"] }, { tags: ["nope"] }, { priority: [9] }]) {
+      await expect(listTasks(db, ctx, "NOPE", filters)).rejects.toMatchObject({ code: "not_found" });
+    }
   });
 });

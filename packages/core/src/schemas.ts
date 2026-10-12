@@ -84,9 +84,14 @@ export type UpdateTaskInput = z.infer<typeof updateTaskInput>;
 
 const filterValue = z.string().trim().min(1).max(100);
 
+/** How a task list's tag filter combines several tags: the task carries every one, or at least one. */
+export const tagMatchSchema = z.enum(["all", "any"]);
+
+export type TagMatch = z.infer<typeof tagMatchSchema>;
+
 /**
  * Server-side filters of a project's task list (API query, MCP, CLI). Values within `status`,
- * `assignee` and `priority` are OR-ed; a task must carry every one of `tags`; keys are AND-ed.
+ * `assignee` and `priority` are OR-ed; `tags` per `tagMatch` (default every one); keys are AND-ed.
  */
 export const taskListFilters = z.object({
   /** Status ids, names or categories ("In Progress", "in_progress"), case-insensitive. */
@@ -95,6 +100,8 @@ export const taskListFilters = z.object({
   assignee: z.array(filterValue).max(50).optional(),
   /** Tag names, case-insensitive (with or without "#"). */
   tags: z.array(filterValue).max(20).optional(),
+  /** "all" (default): the task carries every tag; "any": at least one. */
+  tagMatch: tagMatchSchema.optional(),
   /** 0–4; numeric strings too, as they arrive in a query string. */
   priority: z
     .array(z.union([prioritySchema, z.enum(["0", "1", "2", "3", "4"]).transform(Number).pipe(prioritySchema)]))
@@ -113,13 +120,20 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
   return { projectKey: match[1].toUpperCase(), number: Number(match[2]) };
 }
 
+/** Words with a meaning in assignee filters ("me" the viewer, "none" unassigned); no actor may take them. */
+export const RESERVED_HANDLES: readonly string[] = ["me", "none"];
+
+/** A handle as typed in a filter or a command: trimmed, without a leading "@", lowercase. */
+export const normalizeHandle = (value: string) => value.trim().replace(/^@/, "").toLowerCase();
+
 const agentName = z.string().trim().min(1, "Required").max(80, "At most 80 characters");
 const agentHandle = z
   .string()
   .trim()
   .toLowerCase()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
-  .max(32);
+  .max(32)
+  .refine((v) => !RESERVED_HANDLES.includes(v), `"me" and "none" are reserved`);
 
 export const createAgentInput = z.object({
   name: agentName,
@@ -270,13 +284,16 @@ export const invitationCodeInput = z.object({
 
 /**
  * Task filters of a project page (ST-15); every key is optional and values within a key are
- * OR-ed, keys are AND-ed. `assignee` takes actor ids plus `me` (the viewer) and `none` (unassigned).
+ * OR-ed, except `tag`, which follows `tagMatch`; keys are AND-ed. `assignee` takes actor ids plus
+ * `me` (the viewer) and `none` (unassigned). Views store `tagMatch` explicitly ("all" when left
+ * out); views saved before it existed have none and are read as "any", the web's match back then.
  */
 export const viewFiltersSchema = z.object({
   status: z.array(z.uuid()).max(50).optional(),
   assignee: z.array(z.union([z.literal("me"), z.literal("none"), z.uuid()])).max(50).optional(),
   priority: z.array(prioritySchema).max(5).optional(),
   tag: z.array(z.uuid()).max(50).optional(),
+  tagMatch: tagMatchSchema.optional(),
   q: z.string().trim().max(200).optional(),
 });
 

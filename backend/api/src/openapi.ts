@@ -657,7 +657,8 @@ const paths = {
       summary: "List a project's tasks in board order, optionally filtered",
       description:
         "Repeat a parameter for several values. Statuses, assignees and priorities match any of their values; " +
-        "a task must carry every `tag`; parameters combine with AND. Unknown statuses, members and tags are 400s.",
+        "a task must carry every `tag` (or any of them with `tagMatch=any`); parameters combine with AND. " +
+        "Missing or out-of-scope projects are 404s; unknown statuses, members and tags are 400s.",
       parameters: [
         {
           name: "status",
@@ -675,7 +676,13 @@ const paths = {
           name: "tag",
           in: "query",
           schema: { type: "array", items: { type: "string" } },
-          description: "Tag name, case-insensitive; the task must have all of them",
+          description: "Tag name, case-insensitive; the task must have all of them (see tagMatch)",
+        },
+        {
+          name: "tagMatch",
+          in: "query",
+          schema: { type: "string", enum: ["all", "any"], default: "all" },
+          description: "all: the task has every `tag`; any: at least one",
         },
         {
           name: "priority",

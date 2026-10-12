@@ -1,3 +1,4 @@
+import { normalizeHandle } from "@repo/core/schemas";
 import { matchStatuses } from "@repo/core/statuses";
 import type { ActorDto, Priority, ProjectDetailDto, StatusCategory, StatusDto, TagDto } from "@repo/core/contracts";
 import { SpiderApiError } from "@repo/sdk";
@@ -76,7 +77,7 @@ export function firstStatus(project: ProjectDetailDto, category: StatusCategory)
 /** Member ids for handles ("alice", "@alice", or "me"), without duplicates. */
 export function resolveAssignees(members: ActorDto[], meId: string, handles: string[]): string[] {
   const ids = handles.map((raw) => {
-    const handle = raw.trim().replace(/^@/, "").toLowerCase();
+    const handle = normalizeHandle(raw);
     if (handle === "me") return meId;
     const member = members.find((m) => m.handle.toLowerCase() === handle);
     if (!member) {
@@ -102,8 +103,9 @@ export interface TaskListFilter {
   statusIds?: string[];
   /** Actor ids, or "none" for unassigned. */
   assignee?: string[];
-  /** The task must carry all of these. */
+  /** The task must carry all of these (or one of them, with `tagMatch: "any"`). */
   tagIds?: string[];
+  tagMatch?: "all" | "any";
   priority?: number[];
 }
 
@@ -117,7 +119,10 @@ export function matchesTaskFilter(
 ): boolean {
   if (filter.statusIds && !filter.statusIds.includes(task.statusId)) return false;
   if (filter.priority && !filter.priority.includes(task.priority)) return false;
-  if (filter.tagIds && !filter.tagIds.every((id) => (task.tagIds ?? []).includes(id))) return false;
+  if (filter.tagIds) {
+    const has = (id: string) => (task.tagIds ?? []).includes(id);
+    if (!(filter.tagMatch === "any" ? filter.tagIds.some(has) : filter.tagIds.every(has))) return false;
+  }
   if (filter.assignee) {
     const unassigned = filter.assignee.includes("none") && task.assigneeIds.length === 0;
     if (!unassigned && !task.assigneeIds.some((id) => filter.assignee?.includes(id))) return false;

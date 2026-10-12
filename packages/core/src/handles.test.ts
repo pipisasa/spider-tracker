@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { handleFrom, slugFrom } from "./handles";
+import { acceptAgentInviteInput, createAgentInput, normalizeHandle, updateAgentInput } from "./schemas";
 
 describe("handleFrom", () => {
   test("uses the local part of an email", () => {
@@ -10,6 +11,25 @@ describe("handleFrom", () => {
   });
   test("falls back when nothing usable is left", () => {
     expect(handleFrom("@@@")).toBe("member");
+  });
+  test("never yields a reserved handle", () => {
+    expect(handleFrom("me@example.com")).toBe("me-1");
+    expect(handleFrom("None")).toBe("none-1");
+  });
+});
+
+describe("reserved handles", () => {
+  test('"me" and "none" are refused wherever an agent picks a handle', () => {
+    for (const handle of ["me", " None "]) {
+      expect(createAgentInput.safeParse({ name: "x", handle }).success).toBe(false);
+      expect(updateAgentInput.safeParse({ handle }).success).toBe(false);
+      expect(acceptAgentInviteInput.safeParse({ code: "x", handle }).success).toBe(false);
+    }
+    expect(createAgentInput.safeParse({ name: "x", handle: "meow" }).success).toBe(true);
+  });
+  test("normalizeHandle drops a leading @ and case", () => {
+    expect(normalizeHandle(" @Alice ")).toBe("alice");
+    expect(normalizeHandle("none")).toBe("none");
   });
 });
 

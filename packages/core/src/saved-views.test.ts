@@ -61,6 +61,12 @@ run("saved views", () => {
     await db.insert(schema.agentProjects).values({ agentId: agent.actorId, projectId: spi.id });
   });
 
+  const projectId = async (key: string) => {
+    const [row] = await db.select().from(schema.projects).where(and(eq(schema.projects.orgId, owner.orgId), eq(schema.projects.key, key)));
+    if (!row) throw new Error("project");
+    return row.id;
+  };
+
   afterAll(async () => {
     await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.id, user.id));
@@ -71,7 +77,7 @@ run("saved views", () => {
     const status = crypto.randomUUID();
     const view = await createSavedView(db, owner, "spi", { name: "Mine", filters: { status: [status], assignee: ["me"] } });
     expect(view).toMatchObject({ name: "Mine", projectKey: "SPI", shared: false, view: "board", ownerActorId: owner.actorId });
-    expect(view.filters).toEqual({ status: [status], assignee: ["me"] });
+    expect(view.filters).toEqual({ status: [status], assignee: ["me"], tagMatch: "all" });
     const renamed = await updateSavedView(db, owner, "SPI", view.id, { name: "Mine 2", view: "list", shared: true });
     expect(renamed).toMatchObject({ name: "Mine 2", view: "list", shared: true });
     await expect(updateSavedView(db, owner, "SPI", view.id, {})).rejects.toMatchObject({ code: "validation" });
@@ -81,6 +87,27 @@ run("saved views", () => {
     expect(await listSavedViews(db, owner, "SPI")).toEqual([]);
     await expect(deleteSavedView(db, owner, "SPI", view.id)).rejects.toMatchObject({ code: "not_found" });
     await expect(updateSavedView(db, owner, "SPI", "not-a-uuid", { name: "x" })).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  test("tagMatch is stored explicitly; views saved before it read as any", async () => {
+    const tag = crypto.randomUUID();
+    const any = await createSavedView(db, owner, "SPI", { name: "Any", filters: { tag: [tag], tagMatch: "any" } });
+    expect(any.filters).toEqual({ tag: [tag], tagMatch: "any" });
+    const all = await createSavedView(db, owner, "SPI", { name: "All", filters: { tag: [tag] } });
+    expect(all.filters.tagMatch).toBe("all");
+    expect((await updateSavedView(db, owner, "SPI", any.id, { filters: { tag: [tag] } })).filters.tagMatch).toBe("all");
+
+    const [legacy, legacyNoTags] = await db
+      .insert(schema.savedViews)
+      .values([
+        { orgId: owner.orgId, projectId: await projectId("SPI"), ownerActorId: owner.actorId, name: "Legacy", filters: { tag: [tag] } },
+        { orgId: owner.orgId, projectId: await projectId("SPI"), ownerActorId: owner.actorId, name: "Legacy plain", filters: { priority: [1] } },
+      ])
+      .returning();
+    const listed = await listSavedViews(db, owner, "SPI");
+    expect(listed.find((v) => v.id === legacy?.id)?.filters).toEqual({ tag: [tag], tagMatch: "any" });
+    expect(listed.find((v) => v.id === legacyNoTags?.id)?.filters).toEqual({ priority: [1], tagMatch: "all" });
+    for (const v of [any, all, legacy, legacyNoTags]) if (v) await deleteSavedView(db, owner, "SPI", v.id);
   });
 
   test("guests can't create; personal views are private, shared ones visible; only owners and admins edit others'", async () => {

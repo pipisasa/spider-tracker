@@ -52,6 +52,9 @@ const priority = z
   .max(4)
   .describe("0 none, 1 urgent, 2 high, 3 medium, 4 low");
 const tagsInput = z.array(z.string()).max(20).describe("Tag names (see list_tags)");
+/** A filter value, or several matched with OR (as repeated API query parameters). */
+const oneOrMany = z.union([z.string(), z.array(z.string()).max(50)]);
+const tagMatchSchema = z.enum(["all", "any"]);
 const assigneesInput = z
   .array(z.string())
   .max(20)
@@ -258,27 +261,28 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
     "list_tasks",
     {
       description:
-        "List tasks in a project, in board order. Filter by status (a status name or a category such as todo, in_progress, done), assignee, tags, priority and title text; filters combine with AND.",
+        "List tasks in a project, in board order. Filter by status (a status id, name or category such as todo, in_progress, done), assignee, tags, priority and title text; status, assignee and priority match any of their values, tags all of them (or any with tagMatch: \"any\"); filters combine with AND.",
       inputSchema: {
         projectKey: z.string().describe('Project key, e.g. "ST"'),
-        status: z.string().optional().describe('Status name ("In Progress") or category ("in_progress")'),
-        assignee: z
-          .string()
+        status: oneOrMany.optional().describe('Status id, name ("In Progress") or category ("in_progress"); an array matches any'),
+        assignee: oneOrMany
           .optional()
-          .describe('"me", "none" (unassigned) or a member handle, deactivated members too'),
-        tags: z.array(z.string()).max(20).optional().describe("Tag names (see list_tags); a task must have all of them"),
+          .describe('"me", "none" (unassigned) or a member handle, deactivated members too; an array matches any'),
+        tags: z.array(z.string()).max(20).optional().describe("Tag names (see list_tags); a task must have all of them unless tagMatch is \"any\""),
+        tagMatch: tagMatchSchema.optional().describe('"all" (default): every tag; "any": at least one'),
         priority: z.array(priority).max(5).optional().describe("Any of these priorities: 0 none, 1 urgent, 2 high, 3 medium, 4 low"),
         query: z.string().optional().describe("Case-insensitive text to find in titles"),
         limit: z.number().int().min(1).max(200).optional().describe("Maximum tasks to return (default 50)"),
       },
     },
-    ({ projectKey, status, assignee, tags, priority: priorities, query, limit }) =>
+    ({ projectKey, status, assignee, tags, tagMatch, priority: priorities, query, limit }) =>
       run(async () => {
         const project = await getProject(db, ctx, projectKey);
         const tasks = await listTasks(db, ctx, project.key, {
-          status: status ? [status] : undefined,
-          assignee: assignee ? [assignee] : undefined,
+          status: status === undefined ? undefined : [status].flat(),
+          assignee: assignee === undefined ? undefined : [assignee].flat(),
           tags,
+          tagMatch,
           priority: priorities,
           q: query,
         });

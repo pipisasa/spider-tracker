@@ -9,7 +9,7 @@ import type {
   TaskDto,
   WhoAmIResponse,
 } from "@repo/core/contracts";
-import { parseTaskKey } from "@repo/core/schemas";
+import { normalizeHandle, parseTaskKey } from "@repo/core/schemas";
 import { MIN_CLI_HEADER } from "@repo/core/version";
 import type { CreateTaskInput, UpdateDocumentInput, UpdateProjectInput, UpdateTaskInput } from "@repo/core/schemas";
 import { SpiderApiError, createClient, type FetchLike } from "@repo/sdk";
@@ -168,6 +168,7 @@ interface TaskListOptions extends JsonOption {
   mine?: boolean;
   assignee?: string[];
   tag?: string[];
+  anyTag?: boolean;
   priority?: string[];
   limit: string;
 }
@@ -1168,6 +1169,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--mine", "only tasks assigned to me (same as --assignee me)")
       .option("--assignee <handle>", 'assigned to any of these: handles (deactivated too), "me" or "none"; repeatable or comma-separated', collect)
       .option("--tag <name>", "carrying all of these tags; repeatable or comma-separated", collect)
+      .option("--any-tag", "with --tag: carrying any of the tags instead of all")
       .option("--priority <0-4>", "any of these priorities (0-4 or a name); repeatable or comma-separated", collect)
       .option("--limit <n>", "at most n tasks", "50"),
   ).action(async (opts: TaskListOptions) => {
@@ -1180,14 +1182,15 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     let assignee: string[] | undefined;
     if (handles.length) {
       // Deactivated actors too, so tasks still assigned to them can be found (ST-65).
-      const none = handles.some((h) => h.trim().toLowerCase() === "none");
-      const others = handles.filter((h) => h.trim().toLowerCase() !== "none");
+      const none = handles.some((h) => normalizeHandle(h) === "none");
+      const others = handles.filter((h) => normalizeHandle(h) !== "none");
       const ids = others.length ? resolveAssignees(await actors(), (await whoami()).actor.id, others) : [];
       assignee = [...ids, ...(none ? ["none"] : [])];
     }
 
     // Resolved here too, so the client can re-apply the filter for older servers (see matchesTaskFilter).
     const tagIds = opts.tag?.length ? resolveTags(await conn().tags(), opts.tag) : undefined;
+    const tagMatch = opts.anyTag ? "any" : undefined;
     const found: TaskDto[] = [];
     const statusNames = new Set<string>();
     let statusKnown = false;
@@ -1201,8 +1204,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         if (status.length === 0) continue;
         statusKnown = true;
       }
-      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, priority });
-      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee, tagIds, priority })));
+      const { items } = await (await sdk()).tasks.list(slug, key, { status, assignee, tags: opts.tag, tagMatch, priority });
+      found.push(...items.filter((t) => matchesTaskFilter(t, { statusIds: status, assignee, tagIds, tagMatch, priority })));
       if (found.length >= limit) break;
     }
     if (opts.status !== undefined && !statusKnown) {
