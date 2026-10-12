@@ -275,6 +275,8 @@ withDb("projects and tasks API", () => {
     expect(await count("priority=2&priority=3")).toBe(0);
     expect(await count("status=done&assignee=me&q=ship")).toBe(1);
     expect(await count("assignee=none")).toBe(0);
+    expect(await count("assignee=mine")).toBe(1);
+    expect(await count("assignee=mine&assignee=none&status=todo")).toBe(0);
     await call(owner, "POST", "/tags", { name: "other" });
     expect(await count("tag=urgent-fix&tag=other")).toBe(0);
     expect(await count("tag=urgent-fix&tag=other&tagMatch=any")).toBe(1);
@@ -441,6 +443,8 @@ withDb("SDK and client-declared source", () => {
     expect((await client.tasks.list(slug, "SPI")).items).toHaveLength(1);
     expect((await client.tasks.list(slug, "SPI", { status: ["done"], assignee: ["me"], priority: [0, 1] })).items).toHaveLength(1);
     expect((await client.tasks.list(slug, "SPI", { priority: [4], q: "SDK" })).items).toHaveLength(0);
+    // An agent's "mine": itself, its owner and the owner's other agents.
+    expect((await client.tasks.list(slug, "SPI", { assignee: ["mine"] })).items).toHaveLength(1);
 
     expect(await client.tasks.delete(slug, created.key)).toBeUndefined();
     const error = await client.tasks.get(slug, created.key).catch((e: unknown) => e);

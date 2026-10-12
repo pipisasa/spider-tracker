@@ -96,7 +96,7 @@ export type TagMatch = z.infer<typeof tagMatchSchema>;
 export const taskListFilters = z.object({
   /** Status ids, names or categories ("In Progress", "in_progress"), case-insensitive. */
   status: z.array(filterValue).max(50).optional(),
-  /** Actor ids, handles (with or without "@", deactivated ones too), "me" or "none". */
+  /** Actor ids, handles (with or without "@", deactivated ones too), "me", "mine" or "none". */
   assignee: z.array(filterValue).max(50).optional(),
   /** Tag names, case-insensitive (with or without "#"). */
   tags: z.array(filterValue).max(20).optional(),
@@ -120,8 +120,11 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
   return { projectKey: match[1].toUpperCase(), number: Number(match[2]) };
 }
 
-/** Words with a meaning in assignee filters ("me" the viewer, "none" unassigned); no actor may take them. */
-export const RESERVED_HANDLES: readonly string[] = ["me", "none"];
+/**
+ * Words with a meaning in assignee filters ("me" the viewer, "mine" the viewer's person and their
+ * agents, "none" unassigned); no actor may take them.
+ */
+export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none"];
 
 /** A handle as typed in a filter or a command: trimmed, without a leading "@", lowercase. */
 export const normalizeHandle = (value: string) => value.trim().replace(/^@/, "").toLowerCase();
@@ -133,7 +136,7 @@ const agentHandle = z
   .toLowerCase()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
   .max(32)
-  .refine((v) => !RESERVED_HANDLES.includes(v), `"me" and "none" are reserved`);
+  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine" and "none" are reserved`);
 
 export const createAgentInput = z.object({
   name: agentName,
@@ -285,12 +288,13 @@ export const invitationCodeInput = z.object({
 /**
  * Task filters of a project page (ST-15); every key is optional and values within a key are
  * OR-ed, except `tag`, which follows `tagMatch`; keys are AND-ed. `assignee` takes actor ids plus
- * `me` (the viewer) and `none` (unassigned). Views store `tagMatch` explicitly ("all" when left
- * out); views saved before it existed have none and are read as "any", the web's match back then.
+ * `me` (the viewer), `mine` (the viewer's person and their agents) and `none` (unassigned).
+ * Views store `tagMatch` explicitly ("all" when left out); views saved before it existed have
+ * none and are read as "any", the web's match back then.
  */
 export const viewFiltersSchema = z.object({
   status: z.array(z.uuid()).max(50).optional(),
-  assignee: z.array(z.union([z.literal("me"), z.literal("none"), z.uuid()])).max(50).optional(),
+  assignee: z.array(z.union([z.literal("me"), z.literal("mine"), z.literal("none"), z.uuid()])).max(50).optional(),
   priority: z.array(prioritySchema).max(5).optional(),
   tag: z.array(z.uuid()).max(50).optional(),
   tagMatch: tagMatchSchema.optional(),

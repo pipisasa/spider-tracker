@@ -440,6 +440,8 @@ withDb("spider CLI against the API", () => {
     for (const [title, tags] of [["Has cli", "cli"], ["Has ops", "ops"], ["Has both", "cli,ops"]] as const) {
       await spider("task", "create", "--project", "SPI", "--title", title, "--tag", tags, "--priority", "3");
     }
+    // The agent's owner: part of "mine", unlike "me".
+    await spider("task", "create", "--project", "SPI", "--title", "For the owner", "--assign", `cli-owner-${stamp}`, "--priority", "3");
     const titles = async (via: typeof spider, ...args: string[]) => {
       const result = await via("task", "list", "--project", "SPI", "--limit", "500", "--json", ...args);
       expect(result.code).toBe(0);
@@ -456,6 +458,8 @@ withDb("spider CLI against the API", () => {
       expect(await titles(via, "--tag", "ops", "--any-tag")).toEqual(["Has both", "Has ops"]);
       expect(await titles(via, "--assignee", "@none", "--priority", "medium", "--status", "todo")).toEqual(["Has both", "Has cli", "Has ops"]);
       expect(await titles(via, "--mine", "--priority", "3")).toEqual([]);
+      expect(await titles(via, "--assignee", "mine", "--priority", "3")).toEqual(["For the owner"]);
+      expect(await titles(via, "--assignee", "@Mine,none", "--priority", "3")).toEqual(["For the owner", "Has both", "Has cli", "Has ops"]);
       expect(await titles(via)).toEqual(everything);
     }
   });

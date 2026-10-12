@@ -54,7 +54,7 @@ import type {
 export interface TaskListQuery {
   /** Status ids, names or categories. */
   status?: string[];
-  /** Actor ids or handles (deactivated ones too), "me" or "none". */
+  /** Actor ids or handles (deactivated ones too), "me", "mine" (the caller's person and their agents) or "none". */
   assignee?: string[];
   /** Tag names, case-insensitive; a task must carry all of them (or any, see `tagMatch`). */
   tags?: string[];

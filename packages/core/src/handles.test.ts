@@ -15,17 +15,19 @@ describe("handleFrom", () => {
   test("never yields a reserved handle", () => {
     expect(handleFrom("me@example.com")).toBe("me-1");
     expect(handleFrom("None")).toBe("none-1");
+    expect(handleFrom("mine@example.com")).toBe("mine-1");
   });
 });
 
 describe("reserved handles", () => {
-  test('"me" and "none" are refused wherever an agent picks a handle', () => {
-    for (const handle of ["me", " None "]) {
+  test('"me", "mine" and "none" are refused wherever an agent picks a handle', () => {
+    for (const handle of ["me", " None ", "MINE"]) {
       expect(createAgentInput.safeParse({ name: "x", handle }).success).toBe(false);
       expect(updateAgentInput.safeParse({ handle }).success).toBe(false);
       expect(acceptAgentInviteInput.safeParse({ code: "x", handle }).success).toBe(false);
     }
     expect(createAgentInput.safeParse({ name: "x", handle: "meow" }).success).toBe(true);
+    expect(createAgentInput.safeParse({ name: "x", handle: "mine-1" }).success).toBe(true);
   });
   test("normalizeHandle drops a leading @ and case", () => {
     expect(normalizeHandle(" @Alice ")).toBe("alice");

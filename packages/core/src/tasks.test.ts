@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { DomainError } from "./errors";
+import { createAgent, deleteAgent } from "./agents";
 import { createOrganization } from "./organizations";
 import { archiveProject, createProject, getProject, listProjects, updateProject } from "./projects";
 import { listTaskActivity } from "./activity-feed";
@@ -15,6 +16,7 @@ const run = url ? describe : describe.skip;
 run("projects and tasks", () => {
   const db = createDb(url ?? "");
   const user = { id: `test-${crypto.randomUUID()}`, name: "Owner", email: "owner@example.com" };
+  const other = { id: `test-${crypto.randomUUID()}`, name: "Other" };
   const slug = `tasks-${Date.now()}`;
   let ctx: ActorContext;
   let statusIds: Record<string, string>;
@@ -29,7 +31,7 @@ run("projects and tasks", () => {
 
   afterAll(async () => {
     await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
-    await db.delete(schema.user).where(eq(schema.user.id, user.id));
+    await db.delete(schema.user).where(inArray(schema.user.id, [user.id, other.id]));
     await db.$client.end();
   });
 
@@ -197,6 +199,44 @@ run("projects and tasks", () => {
     // "@" and case are ignored for me/none, as for handles.
     expect(await titles({ assignee: [" @NONE"] })).toEqual(["Both tags", "Bug fixed"]);
     expect(await titles({ assignee: ["@Me"] })).toEqual(["Only ui"]);
+  });
+
+  test('"mine" is the person and their agents (deleted ones too), seen from the person or one of the agents', async () => {
+    await createProject(db, ctx, { name: "Mine", key: "MIN" });
+    await db.insert(schema.user).values({ ...other, email: `${other.id}@example.com` });
+    const [person] = await db
+      .insert(schema.actors)
+      .values({ orgId: ctx.orgId, type: "human", userId: other.id, name: "Other", handle: `other-${Date.now()}`, role: "member" })
+      .returning();
+    if (!person) throw new Error("insert failed");
+    const otherCtx: ActorContext = { ...ctx, actorId: person.id, role: "member" };
+    const stamp = Date.now();
+    const helper = await createAgent(db, ctx, { name: "Helper", handle: `helper-${stamp}` });
+    const retired = await createAgent(db, ctx, { name: "Retired", handle: `retired-${stamp}` });
+    const theirs = await createAgent(db, otherCtx, { name: "Theirs", handle: `theirs-${stamp}` });
+    const task = (title: string, assigneeIds: string[]) => createTask(db, ctx, "MIN", { title, assigneeIds });
+    await task("Mine", [ctx.actorId]);
+    await task("Helper's", [helper.actor.id]);
+    await task("Retired's", [retired.actor.id]);
+    await task("Theirs", [theirs.actor.id]);
+    await task("Other's", [person.id]);
+    await task("Nobody's", []);
+    await deleteAgent(db, ctx, retired.actor.id);
+
+    const titles = async (viewer: ActorContext, filters: unknown) =>
+      (await listTasks(db, viewer, "MIN", filters)).map((t) => t.title).sort();
+    const mine = ["Helper's", "Mine", "Retired's"];
+    expect(await titles(ctx, { assignee: ["mine"] })).toEqual(mine);
+    expect(await titles(ctx, { assignee: ["@Mine", "none"] })).toEqual([...mine, "Nobody's"].sort());
+    // An agent's "mine" is its owner and the owner's agents, itself included.
+    const helperCtx: ActorContext = { ...ctx, actorId: helper.actor.id, role: "member" };
+    expect(await titles(helperCtx, { assignee: ["mine"] })).toEqual(mine);
+    expect(await titles(helperCtx, { assignee: ["me"] })).toEqual(["Helper's"]);
+    // Another person's agents are not mine; their "mine" is theirs.
+    expect(await titles(otherCtx, { assignee: ["mine"] })).toEqual(["Other's", "Theirs"]);
+    const theirsCtx: ActorContext = { ...ctx, actorId: theirs.actor.id, role: "member" };
+    expect(await titles(theirsCtx, { assignee: ["mine"] })).toEqual(["Other's", "Theirs"]);
+    await expect(listTasks(db, ctx.orgId, "MIN", { assignee: ["mine"] })).rejects.toMatchObject({ code: "validation" });
   });
 
   test("a missing project is not_found, filtered or not, before the filters are checked", async () => {

@@ -267,7 +267,9 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         status: oneOrMany.optional().describe('Status id, name ("In Progress") or category ("in_progress"); an array matches any'),
         assignee: oneOrMany
           .optional()
-          .describe('"me", "none" (unassigned) or a member handle, deactivated members too; an array matches any'),
+          .describe(
+            '"me" (you), "mine" (the person you work for and all their agents, you included), "none" (unassigned) or a member handle, deactivated members too; an array matches any',
+          ),
         tags: z.array(z.string()).max(20).optional().describe("Tag names (see list_tags); a task must have all of them unless tagMatch is \"any\""),
         tagMatch: tagMatchSchema.optional().describe('"all" (default): every tag; "any": at least one'),
         priority: z.array(priority).max(5).optional().describe("Any of these priorities: 0 none, 1 urgent, 2 high, 3 medium, 4 low"),
