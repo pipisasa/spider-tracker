@@ -8,6 +8,8 @@ import { eq } from "drizzle-orm";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { run } from "./cli";
 import type { Store } from "./credentials";
 
@@ -49,12 +51,19 @@ withDb("spider CLI against the API", () => {
   });
 
   const spider = (...argv: string[]) => spiderVia((input, init) => app.request(input, init), argv);
+  /** With a config dir, the CLI uses its saved agents instead of the agent key; other entries add to the key's env. */
+  const spiderAs = (argv: string[], extra: Record<string, string> = {}) =>
+    spiderVia((input, init) => app.request(input, init), argv, extra);
 
-  async function spiderVia(fetch: (input: string, init: RequestInit) => Response | Promise<Response>, argv: string[]) {
+  async function spiderVia(
+    fetch: (input: string, init: RequestInit) => Response | Promise<Response>,
+    argv: string[],
+    runEnv?: Record<string, string>,
+  ) {
     let stdout = "";
     let stderr = "";
     const code = await run(argv, {
-      env: { SPIDER_TOKEN: token, SPIDER_API_URL: env.API_ORIGIN },
+      env: runEnv?.SPIDER_CONFIG_DIR ? runEnv : { SPIDER_TOKEN: token, SPIDER_API_URL: env.API_ORIGIN, ...runEnv },
       fetch,
       stdout: { write: (s: string) => (stdout += s) },
       stderr: { write: (s: string) => (stderr += s) },
@@ -665,6 +674,36 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "diff", id)).code).toBe(2);
   });
 
+  test("docs: a rename updates [[links]]; backlinks of a document or a task; the graph (ST-101)", async () => {
+    stdin = "# Target";
+    const target = (await spider("doc", "create", "--title", "Link target", "--project", "SPI", "--file", "-", "--json")).json();
+    stdin = "See [[Link target|it]] for SPI-1.";
+    const source = (await spider("doc", "create", "--title", "Link source", "--file", "-", "--json")).json();
+    const targetId = target.id as string;
+    const sourceId = source.id as string;
+
+    expect((await spider("doc", "backlinks", targetId)).stdout).toBe(`${sourceId}  org  v1  Link source\n`);
+    const mentions = (await spider("doc", "backlinks", "spi-1", "--json")).json().items as { id: string; url: string }[];
+    expect(mentions.map((d) => [d.id, d.url])).toEqual([[sourceId, `${env.WEB_ORIGIN}/${slug}/docs/${sourceId}`]]);
+
+    expect((await spider("doc", "edit", targetId, "--title", "Link target 2", "--base-version", "1")).stdout).toBe(
+      "Saved Link target 2 as version 2\nUpdated links in Link source\n",
+    );
+    expect((await spider("doc", "view", sourceId, "--json")).json()).toMatchObject({ version: 2, content: "See [[Link target 2|it]] for SPI-1." });
+
+    const graph = (await spider("doc", "graph", "--json")).json() as {
+      links: { from: string; to: unknown }[];
+      tasks: { key: string; url: string }[];
+    };
+    expect(graph.links.filter((l) => l.from === sourceId).map((l) => l.to)).toEqual([
+      { type: "document", id: targetId },
+      { type: "task", key: "SPI-1" },
+    ]);
+    expect(graph.tasks).toContainEqual(expect.objectContaining({ key: "SPI-1", url: `${env.WEB_ORIGIN}/${slug}/tasks/SPI-1` }));
+    expect((await spider("doc", "graph")).stdout).toContain("Link source -> Link target 2\nLink source -> SPI-1");
+    expect((await spider("doc", "backlinks", "00000000-0000-7000-8000-000000000000")).code).toBe(3);
+  });
+
   test("docs: move to the organization and back to a project", async () => {
     stdin = "# Movable";
     const created = (await spider("doc", "create", "--title", "Movable", "--project", "SPI", "--file", "-", "--json")).json();
@@ -730,4 +769,140 @@ withDb("spider CLI against the API", () => {
     expect(doc.json()).toMatchObject({ projectKey: "OPS", title: "Runbook" });
   });
 
+  test("CLI --json and MCP return tasks, documents, comments and projects in the same shape (ST-107)", async () => {
+    const transport = new StreamableHTTPClientTransport(new URL(`${env.API_ORIGIN}/mcp`), {
+      fetch: async (url, init) => app.request(url, init),
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const client = new Client({ name: "parity-test", version: "0.0.0" });
+    await client.connect(transport);
+    const mcp = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      const result = (await client.callTool({ name, arguments: args })) as { content: { text: string }[]; isError?: boolean };
+      expect(result.isError ?? false).toBe(false);
+      return JSON.parse(result.content[0]?.text ?? "null");
+    };
+    const cli = async (...argv: string[]): Promise<unknown> => {
+      const result = await spider(...argv, "--json");
+      expect(result.code).toBe(0);
+      return JSON.parse(result.stdout);
+    };
+    /** The field names, recursively, so values that change between two calls (updatedAt) don't matter. */
+    const shape = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.slice(0, 1).map(shape)
+        : value && typeof value === "object"
+          ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, shape(v)]))
+          : typeof value;
+
+    try {
+      // A task with a sub-task, a link, a document and a comment, so every nested list has something.
+      const child = (await spider("task", "create", "--project", "SPI", "--title", "Parity child", "--parent", "SPI-1", "--tag", "cli", "--json")).json();
+      await spider("link", "SPI-1", "relates", child.key as string);
+      await spider("comment", "SPI-1", "Parity check");
+
+      // Reads are the same, value for value.
+      expect(await mcp("get_task", { key: "SPI-1" })).toEqual(await cli("task", "view", "SPI-1"));
+      expect(await mcp("list_tasks", { projectKey: "SPI", limit: 200 })).toEqual({
+        ...((await cli("task", "list", "--project", "SPI", "--limit", "200")) as object),
+        total: expect.any(Number),
+      });
+      expect(await mcp("list_documents", { project: "SPI" })).toEqual(await cli("doc", "list", "--project", "SPI"));
+      const doc = ((await cli("doc", "list", "--project", "SPI")) as { items: { id: string; version: number }[] }).items.find((d) => d.version > 1);
+      expect(doc).toBeDefined();
+      expect(await mcp("get_document", { id: doc?.id })).toEqual(await cli("doc", "view", doc?.id ?? ""));
+      expect(await mcp("get_document", { id: doc?.id, version: 1 })).toEqual(await cli("doc", "view", doc?.id ?? "", "--rev", "1"));
+      expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(await cli("doc", "diff", doc?.id ?? "", "--from", "1"));
+      expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(await cli("comments", "SPI-1"));
+      // Backlinks and the documents graph (ST-101), with a document that mentions SPI-1.
+      stdin = "Mentions [[SPI-1]]";
+      await cli("doc", "create", "--title", "Parity links", "--project", "SPI", "--file", "-");
+      const backlinks = await cli("doc", "backlinks", "SPI-1");
+      expect(backlinks).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ title: "Parity links" })]) });
+      expect(await mcp("list_backlinks", { task: "SPI-1" })).toEqual(backlinks);
+      expect(await mcp("get_document_graph")).toEqual(await cli("doc", "graph"));
+      expect(await mcp("list_projects")).toEqual(await cli("projects"));
+      // With rules (ST-111), get_project and project view give them as ProjectRulesDto.
+      expect(await cli("project", "update", "SPI", "--rules", doc?.id ?? "")).toMatchObject({ rulesDocumentId: doc?.id });
+      // project view adds task counts per status, which get_project leaves out.
+      const view = (await cli("project", "view", "SPI")) as { statuses: Record<string, unknown>[] };
+      expect(view).toMatchObject({ rules: { projectKey: "SPI", documentId: doc?.id, content: expect.any(String) } });
+      expect(await mcp("get_project", { projectKey: "SPI" })).toEqual({
+        ...view,
+        statuses: view.statuses.map((status) => {
+          const rest = { ...status };
+          delete rest.taskCount;
+          return rest;
+        }),
+      });
+
+      // Writes return the same fields.
+      expect(shape(await mcp("update_task", { key: "SPI-1", priority: 1 }))).toEqual(shape(await cli("task", "update", "SPI-1", "--priority", "2")));
+      expect(shape(await mcp("add_comment", { key: "SPI-1", body: "From MCP" }))).toEqual(shape(await cli("comment", "SPI-1", "From CLI")));
+      expect(shape(await mcp("update_tasks", { keys: ["SPI-1", "SPI-999"], priority: 3 }))).toEqual(
+        shape(await spider("task", "update", "SPI-1", "SPI-999", "--priority", "3", "--json").then((r) => r.json())),
+      );
+      expect(shape(await mcp("create_document", { title: "Parity", project: "SPI" }))).toEqual(
+        shape(await cli("doc", "create", "--title", "Parity CLI", "--project", "SPI")),
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("task update --status Todo --priority 1: works by name, category or number, and says why it fails (ST-107)", async () => {
+    await spider("task", "create", "--project", "SPI", "--title", "Status and priority");
+    const key = ((await spider("task", "list", "--project", "SPI", "--json")).json().items as { key: string; title: string }[]).find(
+      (t) => t.title === "Status and priority",
+    )?.key ?? "";
+    for (const [status, priority] of [["Todo", "1"], ["todo", "urgent"], ["TODO", "1"], ["in_progress", "2"], ["Todo", "1"]] as const) {
+      const updated = await spider("task", "update", key, "--status", status, "--priority", priority, "--json");
+      expect(updated).toMatchObject({ code: 0, stderr: "" });
+      expect(updated.json()).toMatchObject({ key, status: { category: status === "in_progress" ? "in_progress" : "todo" } });
+    }
+    expect((await spider("task", "view", key, "--json")).json()).toMatchObject({ status: { name: "Todo" }, priority: 1 });
+
+    const failure = async (argv: string[], code: number, message: string, extra: Record<string, string> = {}) => {
+      const result = await spiderAs(argv, extra);
+      expect(result.code).toBe(code);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(message);
+    };
+    await failure(["task", "update", key, "--status", "To Do", "--priority", "1"], 2, 'Unknown status "To Do" in SPI. Valid statuses: Backlog, Todo');
+    await failure(["task", "update", key, "--status", "Todo", "--priority", "5"], 2, 'Invalid priority "5"');
+    await failure(["task", "update", "NOPE-49", "--status", "Todo", "--priority", "1"], 3, "Project NOPE not found");
+
+    // The likely cause of the reported failure: the CLI acted as another saved agent (here the
+    // default one, limited to another project) than the MCP session, so the task read as missing.
+    await app.request("/api/auth/sign-in/magic-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: env.WEB_ORIGIN },
+      body: JSON.stringify({ email: ownerEmail, callbackURL: `${env.WEB_ORIGIN}/` }),
+    });
+    const link = new URL(links.get(ownerEmail) ?? "");
+    const cookie = (await app.request(link.pathname + link.search, { redirect: "manual" })).headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    const post = async <T = unknown>(path: string, body: unknown) => {
+      const res = await app.request(path, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      return (await res.json()) as T;
+    };
+    await post(`/v1/orgs/${slug}/projects`, { name: "Other", key: "OTH" });
+    const configDir = mkdtempSync(join(tmpdir(), "spider-config-"));
+    try {
+      const invite = await post<{ invite: { code: string } }>(`/v1/orgs/${slug}/agent-invites`, { projectKeys: ["OTH"] });
+      const accepted = await spiderAs(["accept-invite", invite.invite.code, "--server", "local", "--handle", "oth-bot", "--no-claude"], {
+        SPIDER_CONFIG_DIR: configDir,
+      });
+      expect(accepted.code).toBe(0);
+      await failure(
+        ["task", "update", key, "--status", "Todo", "--priority", "1"],
+        3,
+        `Project SPI not found (acting as local/${slug}/oth-bot, the default agent, which sees only OTH; pass --as <agent> to act as another)`,
+        { SPIDER_CONFIG_DIR: configDir },
+      );
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
 });

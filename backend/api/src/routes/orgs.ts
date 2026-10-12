@@ -41,6 +41,7 @@ import {
   diffDocumentVersions,
   getDocumentVersion,
   listBacklinks,
+  listTaskBacklinks,
   listDocuments,
   listDocumentVersions,
   moveDocument,
@@ -278,7 +279,10 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   });
 
   // Several tasks at once, by keys or a filter; per-task outcomes, 200 even when some fail (ST-106).
-  app.post("/tasks/bulk-update", async (c) => c.json(await updateTasks(db, c.get("actor"), await body(c))));
+  app.post("/tasks/bulk-update", async (c) => {
+    const result = await updateTasks(db, c.get("actor"), await body(c));
+    return c.json({ ...result, results: result.results.map((r) => ({ ...r, task: r.task && task(c, r.task) })) });
+  });
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(task(c, await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c)))),
@@ -306,6 +310,11 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
     c.json(list(await listTaskActivity(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
+  // Documents mentioning the task: [[ST-12]] or a plain ST-12 (ST-101).
+  app.get("/tasks/:taskKey/backlinks", async (c) =>
+    c.json(list((await listTaskBacklinks(db, c.get("actor"), c.req.param("taskKey"))).map((d) => document(c, d)))),
+  );
+
   app.get("/tasks/:taskKey/comments", async (c) => {
     const actor = c.get("actor");
     const taskKey = c.req.param("taskKey");
@@ -328,7 +337,7 @@ export function orgRoutes(db: Db, realtime: Realtime, webOrigin: string) {
   // Registered before /documents/:documentId, which would take "graph" for an id.
   app.get("/documents/graph", async (c) => {
     const graph = await getDocumentGraph(db, c.get("actor"));
-    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)) });
+    return c.json({ ...graph, documents: graph.documents.map((d) => document(c, d)), tasks: graph.tasks.map((t) => task(c, t)), projects: graph.projects.map((p) => project(c, p)) });
   });
 
   app.get("/documents/:documentId/backlinks", async (c) =>

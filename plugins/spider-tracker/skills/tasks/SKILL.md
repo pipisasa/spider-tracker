@@ -74,10 +74,12 @@ Titles and descriptions are visible to everyone in the organization and kept in 
 | `0` | OK | |
 | `1` | Unexpected (network, server error) | Retry once, then report it |
 | `2` | Usage or validation (bad option, unknown status or handle) | Read the message — it lists the valid options — and fix the call |
-| `3` | Not found (task, project) | Check the key with `task list` / `projects` |
+| `3` | Not found (task, project) | Check the key with `task list` / `projects`. If the message says you act as an agent that sees only other projects, pass `--as <your handle>` |
 | `4` | Auth or permission (not signed in, invalid key, role too low) | Check `spider agents`; if there is no saved agent, ask the user to run `spider accept-invite <code>` or `spider login` |
 
-With `--json`, errors go to stderr as `{"error":{"code","message"}}`. MCP tools return errors as tool results (`isError`) with the same messages. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
+With `--json`, errors go to stderr as `{"error":{"code","message"}}`; read stderr, don't discard it. MCP tools return errors as tool results (`isError`) with the same messages.
+
+MCP results and CLI `--json` output have the same shapes: a task has `key`, `title`, `status: { name, category }`, `priority` (0–4), `assignees` (handles), `tags`, `parentKey` and `url`; documents have `projectKey` and `taskKey`; comments have `author` (handle); lists are `{ "items": [...] }`. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
 
 ## Reference
 - `spider --help` and `spider <command> --help` list every CLI command and option.

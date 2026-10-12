@@ -210,6 +210,34 @@ const schemas: Record<string, JsonSchema> = {
     url: webUrl("document"),
   }),
   Document: { allOf: [ref("DocumentSummary"), object({ content: string() })] },
+  UpdatedDocument: {
+    allOf: [
+      ref("Document"),
+      {
+        type: "object",
+        properties: {
+          relinked: {
+            ...object({
+              rewritten: { type: "array", items: object({ id: string({ format: "uuid" }), title: string() }) },
+              skipped: {
+                type: "array",
+                items: object({
+                  id: string({ format: "uuid" }),
+                  title: string(),
+                  reason: string({
+                    enum: ["rules", "too_large"],
+                    description: "rules: a project's rules document you may not change; too_large: the rewrite would pass 1 MB",
+                  }),
+                }),
+              },
+            }),
+            description:
+              "Set when the save renamed the document: the documents whose [[Old title]] links were rewritten (a new version each, by you) and those skipped. Documents you can't see are left as they are",
+          },
+        },
+      },
+    ],
+  },
   DocumentList: listOf("DocumentSummary"),
   DocumentVersionSummary: object({
     version: { type: "integer" },
@@ -266,9 +294,10 @@ const schemas: Record<string, JsonSchema> = {
         title: string(),
         projectKey: string(),
         statusCategory: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+        url: webUrl("task"),
       }),
     },
-    projects: { type: "array", items: object({ key: string(), name: string() }) },
+    projects: { type: "array", items: object({ key: string(), name: string(), url: webUrl("project") }) },
     links: { type: "array", items: ref("DocumentLink") },
   }),
   CreateDocumentInput: fromZod(createDocumentInput),
@@ -893,6 +922,14 @@ const paths = {
       responses: { "200": ok("Activity", "ActivityList"), ...errors },
     },
   },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/backlinks": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "listTaskBacklinks",
+      summary: "Documents mentioning the task ([[KEY-1]] or a plain KEY-1), most recently updated first; not the task's own documents",
+      responses: { "200": ok("Mentioning documents", "DocumentList"), ...errors },
+    },
+  },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/comments": {
     parameters: [orgSlug, taskKey],
     get: {
@@ -957,9 +994,10 @@ const paths = {
     get: { operationId: "getDocument", summary: "A document with its content", responses: { "200": ok("Document", "Document"), ...errors } },
     patch: {
       operationId: "updateDocument",
-      summary: "Save a new version; 409 if the document was saved since baseVersion",
+      summary:
+        "Save a new version; 409 if the document was saved since baseVersion. A rename rewrites [[Old title]] links in the documents linking here that you can edit (see relinked)",
       requestBody: body("UpdateDocumentInput"),
-      responses: { "200": ok("Updated document", "Document"), ...errors },
+      responses: { "200": ok("Updated document", "UpdatedDocument"), ...errors },
     },
     delete: { operationId: "deleteDocument", summary: "Delete a document", responses: { "204": { description: "Deleted" }, ...errors } },
   },

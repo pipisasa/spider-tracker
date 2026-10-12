@@ -20,14 +20,15 @@ export class CliError extends Error {
 
 export const usageError = (message: string) => new CliError(EXIT.usage, message, "validation");
 
-/** Maps an API error to the CLI's exit codes. */
-export function fromApiError(err: SpiderApiError): CliError {
-  if (err.status === 401 || err.status === 403) return new CliError(EXIT.auth, err.message, err.code);
-  if (err.status === 404) return new CliError(EXIT.notFound, err.message, err.code);
+/** Maps an API error to the CLI's exit codes; `hint` is appended to the message. Never an empty message. */
+export function fromApiError(err: SpiderApiError, hint = ""): CliError {
+  const message = `${err.message.trim() || `The server answered ${err.status}${err.code !== "unknown" ? ` (${err.code})` : ""}`}${hint}`;
+  if (err.status === 401 || err.status === 403) return new CliError(EXIT.auth, message, err.code);
+  if (err.status === 404) return new CliError(EXIT.notFound, message, err.code);
   if (err.status === 400 || err.status === 409 || err.status === 422) {
-    return new CliError(EXIT.usage, err.message, err.code);
+    return new CliError(EXIT.usage, message, err.code);
   }
-  return new CliError(EXIT.unexpected, err.message, err.code);
+  return new CliError(EXIT.unexpected, message, err.code);
 }
 
 export const PRIORITY_NAMES = ["none", "urgent", "high", "medium", "low"] as const;
