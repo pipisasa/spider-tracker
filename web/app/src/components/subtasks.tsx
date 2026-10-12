@@ -1,10 +1,11 @@
 import { ActorAvatar, StatusIcon } from "@/components/task-fields";
 import { Input } from "@/components/ui/input";
+import { assigneesOf } from "@/lib/assignees";
 import { keys, subtasksQuery, useCreateTask } from "@/lib/work";
 import type { ActorDto, StatusDto, TaskDto } from "@repo/core/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 /** Sub-tasks of a task, with a one-line form to add one in the same project (ST-9). */
@@ -25,6 +26,7 @@ export function Subtasks({
   const create = useCreateTask(orgSlug, projectKey);
   const qc = useQueryClient();
   const [title, setTitle] = useState("");
+  const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const done = subtasks.filter((t) => {
     const category = statuses.find((s) => s.id === t.statusId)?.category;
     return category === "done" || category === "canceled";
@@ -70,9 +72,7 @@ export function Subtasks({
                   <span className="w-16 shrink-0 text-muted-foreground">{child.key}</span>
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
                   <span className="flex -space-x-1.5">
-                    {child.assigneeIds
-                      .map((id) => members.find((m) => m.id === id))
-                      .filter((m): m is ActorDto => !!m)
+                    {assigneesOf(child.assigneeIds, memberMap)
                       .slice(0, 3)
                       .map((m) => (
                         <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-background" />

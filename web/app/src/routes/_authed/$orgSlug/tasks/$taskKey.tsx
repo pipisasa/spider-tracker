@@ -7,7 +7,8 @@ import { ActorAvatar, AssigneePicker, PrioritySelect, StatusSelect } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { descriptionToSave, remoteChange } from "@/components/editor/description-sync";
-import { membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
+import { actorLabel } from "@/lib/assignees";
+import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
 import type { UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
@@ -43,13 +44,14 @@ function TaskPage() {
   const { data: task } = useSuspenseQuery(taskQuery(orgSlug, taskKey));
   const { data: project } = useSuspenseQuery(projectQuery(orgSlug, projectKeyOf(taskKey)));
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
+  const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const { membership } = Route.useRouteContext();
   const update = useUpdateTask(orgSlug);
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
 
   const save = (input: UpdateTaskInput) => update.mutate({ taskKey: task.key, input });
-  const creator = members.find((m) => m.id === task.creatorId);
+  const creator = actors.find((m) => m.id === task.creatorId);
 
   function deleteTask() {
     remove.mutate(task.key, {
@@ -91,7 +93,7 @@ function TaskPage() {
           task={task}
           projectKey={project.key}
           statuses={project.statuses}
-          members={members}
+          members={actors}
         />
         <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={project.statuses} />
         <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
@@ -108,6 +110,7 @@ function TaskPage() {
         <Field label="Assignees">
           <AssigneePicker
             members={members}
+            actors={actors}
             value={task.assigneeIds}
             onChange={(assigneeIds) => save({ assigneeIds })}
           />
@@ -118,7 +121,7 @@ function TaskPage() {
         <Field label="Created">
           <span className="flex items-center gap-2 text-sm">
             {creator && <ActorAvatar actor={creator} className="size-5" />}
-            {creator?.name ?? "Unknown"} · {dateTimeFormat.format(new Date(task.createdAt))}
+            {creator ? actorLabel(creator) : "Unknown"} · {dateTimeFormat.format(new Date(task.createdAt))}
           </span>
         </Field>
         {task.completedAt && (

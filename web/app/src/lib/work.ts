@@ -45,6 +45,8 @@ const orgPath = (org: string) => `/v1/orgs/${encodeURIComponent(org)}`;
 
 export const keys = {
   members: (org: string) => ["orgs", org, "members"] as const,
+  // Under `members`, so invalidating members refreshes it too.
+  actors: (org: string) => ["orgs", org, "members", "all"] as const,
   agents: (org: string) => ["orgs", org, "agents"] as const,
   agentInvites: (org: string) => ["orgs", org, "agent-invites"] as const,
   invitations: (org: string) => ["orgs", org, "invitations"] as const,
@@ -83,6 +85,16 @@ export const membersQuery = (org: string) =>
     queryKey: keys.members(org),
     queryFn: async () =>
       (await api<ListResponse<ActorDto>>(`${orgPath(org)}/members`)).items,
+    staleTime: 60_000,
+  });
+
+/** Every actor, deactivated ones included: for naming assignees and authors, never for pickers. */
+export const actorsQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.actors(org),
+    queryFn: async () =>
+      (await api<ListResponse<ActorDto>>(`${orgPath(org)}/members?all=true`))
+        .items,
     staleTime: 60_000,
   });
 
