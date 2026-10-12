@@ -1,4 +1,5 @@
 import { DocumentList, NewDocumentDialog } from "@/components/documents";
+import { useAppAction } from "@/lib/app-events";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -40,6 +41,9 @@ function DocumentsPage() {
     documents.some((d) => d.projectKey === p.key),
   );
   const [open, setOpen] = useState(false);
+  useAppAction(["new-document"], () => {
+    if (membership.actor.role !== "guest") setOpen(true);
+  });
   const [filter, setFilter] = useState("all");
   const shown = filterDocumentsByProject(
     documents,

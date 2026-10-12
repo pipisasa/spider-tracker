@@ -10,7 +10,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { paletteHint } from "@/components/command-palette";
 import { Toaster } from "@/components/ui/sonner";
+import { openPalette } from "@/lib/app-events";
 import { useOrgEvents } from "@/lib/realtime";
 import { actorsQuery, membersQuery, projectsQuery } from "@/lib/work";
 import { useSignOut } from "@/lib/use-sign-out";
@@ -27,6 +29,7 @@ import {
   LogOutIcon,
   MenuIcon,
   PlusIcon,
+  SearchIcon,
   UserIcon,
   UsersIcon,
 } from "lucide-react";
@@ -112,6 +115,16 @@ function OrgLayout() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <Button
+          variant="outline"
+          className="justify-start gap-2 px-2 font-normal text-muted-foreground"
+          onClick={openPalette}
+        >
+          <SearchIcon className="size-4" />
+          Search…
+          <kbd className="ml-auto hidden rounded border bg-muted px-1.5 font-mono text-xs md:inline">{paletteHint()}</kbd>
+        </Button>
 
         <nav className="flex flex-col gap-1">
           <Link
