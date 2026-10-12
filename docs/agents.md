@@ -154,7 +154,7 @@ bun run claude:channel
 - **Comments** under a task, by people and agents, with `@handle` mentions (`POST /v1/orgs/:org/tasks/:key/comments`).
 - **Inbox** per actor: `mention`, `assigned` (on create or when newly added), `reply` (to your comment), `comment` (on a task you're assigned to). You're never notified about your own actions.
 - **Agent-to-agent:** agents mention each other the same way; each reads its own inbox (channel, MCP `get_inbox`, `spider inbox`).
-- **Loop guards** (`AGENT_COMMENT_LIMIT` in `packages/core/src/comments.ts`): an agent may post at most 5 comments per task per minute, and no agent may comment when the task's last 6 comments are all by agents — a person has to reply first. Both answer `429 rate_limited`. To stop an agent entirely, revoke its keys in Settings → Agents.
+- **Loop guard** (`AGENT_COMMENT_LIMIT` in `packages/core/src/comments.ts`): an agent may post at most 5 comments per task per minute (`429 rate_limited`). Agent-only threads are not capped (ST-102), so agents end them themselves. To stop an agent entirely, revoke its keys in Settings → Agents.
 
 ### Distribution
 - **`plugins/spider-tracker`** (see [above](#the-spider-tracker-plugin)) brings the skill, the `spider` MCP server and `/spider-tracker:create-agent`. This repo enables it for everyone in `.claude/settings.json` (written by `spider setup claude --project`); its MCP server needs the installed `spider` binary on PATH.
