@@ -861,6 +861,10 @@ function checkLines(check: ReleaseCheckDto): string {
     }
   }
   for (const a of check.skippedApps) lines.push(`Not checked: ${a.name} (${a.repo}); run it in a clone of that repo`);
+  // Without tags (CI and shallow clones often have none) the whole history is checked, with many false left-outs.
+  for (const a of check.apps.filter((app) => app.inRelease && app.since === null)) {
+    lines.push(`Warning: ${a.name} has no earlier tag here, so its whole history was checked. Run git fetch --tags, or pass --since <ref>`);
+  }
   const findings = check.leftOut.length + check.noCommits.length + check.appsNotInRelease.length;
   lines.push(check.ok ? "OK: the release matches the commits" : `${findings} finding${findings === 1 ? "" : "s"}`);
   return lines.join("\n");

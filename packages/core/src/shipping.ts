@@ -1,35 +1,30 @@
 import type { Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
-import type { ActorContext } from "./access";
+import { and, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import type { ActorContext, ProjectScope } from "./access";
 import { recordActivity } from "./activity";
 import type { StatusCategory } from "./contracts";
 import { appsNotInProduction } from "./deployment-records";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { effectiveMilestones, settleMilestones } from "./milestone-membership";
+import { allReleaseTasks, assertSeesWholeRelease } from "./release-scope";
 
 // Shipping (ST-93): what a release's status does to the Done tasks it includes. Done means
 // finished; a task has shipped once its release is Released (category done). Status changes of
 // the tasks themselves are untouched: they are already Done.
+//
+// These changes write to every included task, so a project-scoped actor makes them only when it can
+// see all of them (release-scope.ts). The Spider Tracker bot sees every project. Activity entries
+// on the included tasks hold the release's id only; activity-feed.ts resolves its key and version
+// for each viewer, so a release the viewer can't see isn't named.
 
-const { projects, statuses, tasks } = schema;
+const { projects, tasks } = schema;
 
 interface ReleaseRow {
   id: string;
   key: string;
-  title: string;
 }
-
-/** The release's live tasks with their project keys, oldest key first. */
-const includedTasks = (tx: Tx, releaseId: string) =>
-  tx
-    .select({ id: tasks.id, number: tasks.number, projectKey: projects.key, category: statuses.category, shippedAt: tasks.shippedAt })
-    .from(tasks)
-    .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .innerJoin(statuses, eq(statuses.id, tasks.statusId))
-    .where(and(eq(tasks.releaseId, releaseId), isNull(tasks.deletedAt)))
-    .orderBy(asc(projects.key), asc(tasks.number));
 
 async function announce(tx: Tx, ctx: ActorContext, task: { number: number; projectKey: string }) {
   await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: task.projectKey, taskKey: `${task.projectKey}-${task.number}` });
@@ -42,22 +37,26 @@ async function announce(tx: Tx, ctx: ActorContext, task: { number: number; proje
  *   tasks get `shippedAt` (the release time) and a "task.shipped" activity entry, "shipped in <version>";
  * - out of done: the shipping is undone ("task.unshipped");
  * - into canceled: the included tasks leave the release, free for another one.
+ * Any of these is refused when an included task is outside the actor's `scope`.
  * Returns the release's own `shippedAt` when it changes (undefined when it doesn't).
  */
 export async function applyReleaseTransition(
   tx: Tx,
   ctx: ActorContext,
+  scope: ProjectScope,
   release: ReleaseRow,
   from: StatusCategory,
   to: StatusCategory,
   now: Date,
 ): Promise<Date | null | undefined> {
   if (from === to) return undefined;
-  const version = { release: release.key, version: release.title };
+  if (to !== "done" && from !== "done" && to !== "canceled") return undefined;
+  const included = await allReleaseTasks(tx, release.id);
+  assertSeesWholeRelease(scope, release.key, included, to === "done" ? "release it" : to === "canceled" ? "cancel it" : "move it");
+  const shippedIn = { releaseId: release.id };
   let shippedAt: Date | null | undefined;
 
   if (to === "done") {
-    const included = await includedTasks(tx, release.id);
     const unfinished = included.filter((t) => t.category !== "done");
     if (unfinished.length > 0) {
       throw new DomainError(
@@ -66,7 +65,11 @@ export async function applyReleaseTransition(
       );
     }
     // Released follows deployments (ST-94): allowed once every app is in production, never automatic.
-    const pending = await appsNotInProduction(tx, release.id);
+    const pending = await appsNotInProduction(tx, release.id, scope);
+    const shown = pending.filter((a) => a.visible);
+    if (shown.length < pending.length) {
+      throw new DomainError("forbidden", `Release ${release.key} ships apps in repos you can't see that aren't deployed yet; ask a member to release it`);
+    }
     if (pending.length > 0) {
       const names = pending.map((a) => `${a.name} to ${a.production}`).join(", ");
       const [first] = pending;
@@ -78,7 +81,7 @@ export async function applyReleaseTransition(
     const shipping = included.filter((t) => !t.shippedAt);
     for (const task of shipping) {
       await tx.update(tasks).set({ shippedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
-      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.shipped", changes: version });
+      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.shipped", changes: shippedIn });
       await announce(tx, ctx, task);
     }
     // Shipping their code may complete the tasks' milestones (ST-96).
@@ -99,7 +102,7 @@ export async function applyReleaseTransition(
       .where(and(eq(tasks.releaseId, release.id), isNotNull(tasks.shippedAt), isNull(tasks.deletedAt)))
       .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId });
     for (const task of await withProjectKeys(tx, shipped)) {
-      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.unshipped", changes: version });
+      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.unshipped", changes: shippedIn });
       await announce(tx, ctx, task);
     }
     shippedAt = null;
@@ -129,8 +132,13 @@ async function withProjectKeys<T extends { projectId: string }>(tx: Tx, rows: T[
   return rows.map((r) => ({ ...r, projectKey: keyOf.get(r.projectId) ?? "" }));
 }
 
-/** A deleted release lets go of its tasks (shipped ones keep `shippedAt`). */
-export async function releaseTasksOnDelete(tx: Tx, ctx: ActorContext, releaseId: string) {
+/**
+ * A deleted release lets go of its tasks (shipped ones keep `shippedAt`); refused when one is
+ * outside the actor's `scope`.
+ */
+export async function releaseTasksOnDelete(tx: Tx, ctx: ActorContext, scope: ProjectScope, release: { id: string; key: string }) {
+  assertSeesWholeRelease(scope, release.key, await allReleaseTasks(tx, release.id), "delete it");
+  const releaseId = release.id;
   const now = new Date();
   const freed = await tx
     .update(tasks)

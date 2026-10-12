@@ -30,3 +30,13 @@ test("date edits name the new date, or say it was removed (ST-91)", () => {
   expect(describe({ targetDate: [null, "2020-03-01"] })).toMatch(/^set the target date to .*2020/);
   expect(describe({ startDate: ["2020-01-01", null] })).toBe("removed the start date");
 });
+
+test("shipping and deployments of releases the viewer can't see read without naming them (ST-93, ST-94)", () => {
+  const entry = (action: string, changes: Record<string, unknown>): ActivityDto => ({ ...update(changes), action });
+  const describe = (e: ActivityDto) => describeActivity(e, [], new Map(), tags);
+  expect(describe(entry("task.shipped", { releaseId: "r", release: "ST-1", version: "2026.10.13" }))).toBe("shipped in 2026.10.13");
+  expect(describe(entry("task.shipped", { releaseId: null, release: null, version: null }))).toBe("shipped in a release");
+  expect(describe(entry("release.deployed", { app: "web", environment: "prod", commitSha: "3f2c1ab9" }))).toBe("deployed web to prod at 3f2c1ab");
+  expect(describe(entry("release.deployed", { app: null, repo: null, environment: null, commitSha: null }))).toBe("deployed an app");
+  expect(describe(update({ releaseId: [null, "hidden"] }))).toBe("added it to a release");
+});

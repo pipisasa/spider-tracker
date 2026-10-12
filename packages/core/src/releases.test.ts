@@ -261,10 +261,11 @@ run("releases (ST-93)", () => {
       description: { state: "missing", content: null },
       written: null,
     });
+    // Only the release's own project (ST) goes into its changelog: OPS's task is left out (decision 16).
     expect(read.entries).toEqual([
-      expect.objectContaining({ key: quiet.key, whatChanged: null, handoff: null, apps: ["web"] }),
       expect.objectContaining({ key: board.key, title: "Board columns", whatChanged: "- Release columns", apps: ["web"], handoff: expect.objectContaining({ authorId: owner.actorId }) }),
-    ].sort((a, b) => (a.key < b.key ? -1 : 1)));
+    ]);
+    expect(read.markdown).not.toContain(quiet.key);
     expect(read.markdown).toContain(`### web 2026.10.20\n\n`);
     expect(read.markdown).toContain(`- **${board.key}** Board columns\n  - Release columns`);
 
@@ -346,5 +347,166 @@ run("releases (ST-93)", () => {
     for (const list of [await keys(bare.key), await keys()]) {
       expect(list).toEqual(expect.arrayContaining([inRepo, elsewhere, both, unlinked].map((t) => t?.key)));
     }
+  });
+
+  // Scope review follow-ups (ST-93, ST-95): a project-scoped agent neither changes nor reads other projects' data through a release.
+  const moveAs = async (ctx: ActorContext, key: string, projectKey: string, name: string) =>
+    updateTask(db, ctx, key, { statusId: await statusOf(projectKey, "release", name) });
+  const HIDDEN = "includes tasks in projects you can't see; ask a member";
+
+  test("a project-scoped agent can't release, cancel or delete a release with tasks it can't see, and isn't told which", async () => {
+    const st = await doneTask("ST", "Spider work (mixed)");
+    const ops = await doneTask("OPS", "Ops work (mixed)");
+    const release = await createRelease(db, owner, "OPS", { title: "ops-mixed", tasks: [st.key, ops.key] });
+    for (const [name, action] of [["Released", "release it"], ["Canceled", "cancel it"]] as const) {
+      const attempt = moveAs(opsAgent, release.key, "OPS", name);
+      await expect(attempt).rejects.toThrow(`Release ${release.key} ${HIDDEN} to ${action}`);
+    }
+    await expect(deleteTask(db, opsAgent, release.key)).rejects.toThrow(`${HIDDEN} to delete it`);
+    // Not even an unfinished task is named.
+    await updateTask(db, owner, st.key, { statusId: await statusOf("ST", "task", "In Review") });
+    const error = await moveAs(opsAgent, release.key, "OPS", "Released").catch((e: unknown) => e);
+    expect(error instanceof Error ? error.message : "").not.toContain(st.key);
+    expect((await moveAs(owner, release.key, "OPS", "Released").catch((e: Error) => e.message)) as string).toContain(`${st.key} isn't Done`);
+    await updateTask(db, owner, st.key, { statusId: await statusOf("ST", "task", "Done") });
+    // Nothing changed: still in the release, not shipped, the release still there.
+    for (const key of [st.key, ops.key]) expect(await getTask(db, owner, key)).toMatchObject({ releaseId: release.id, shippedAt: null });
+    expect((await getRelease(db, owner, release.key)).status.name).toBe("Planned");
+    // Moves that don't touch the tasks are its to make; a release of its own tasks is too.
+    expect((await moveAs(opsAgent, release.key, "OPS", "On staging")).statusId).toBe(await statusOf("OPS", "release", "On staging"));
+    const own = await createRelease(db, opsAgent, "OPS", { title: "ops-own", tasks: [(await doneTask("OPS", "Own work")).key] });
+    expect((await moveAs(opsAgent, own.key, "OPS", "Released")).shippedAt).not.toBeNull();
+    await moveAs(opsAgent, own.key, "OPS", "Release review");
+    await moveAs(opsAgent, own.key, "OPS", "Canceled");
+    await deleteTask(db, opsAgent, own.key);
+    // A person can.
+    await moveAs(owner, release.key, "OPS", "Released");
+    expect((await getTask(db, owner, st.key)).shippedAt).not.toBeNull();
+  });
+
+  test("shipping activity names the release only to viewers who can see it; hidden release ids read as hidden", async () => {
+    const hidden = await doneTask("ST", "Hidden release work");
+    const mine = await doneTask("OPS", "Mine, in an ST release");
+    const release = await createRelease(db, owner, "ST", { title: "st-secret", tasks: [hidden.key, mine.key] });
+    await moveRelease(release.key, "Released");
+    // An entry in the older shape (key and version stored).
+    const opsTask = await getTask(db, owner, mine.key);
+    await db.insert(schema.activity).values({
+      orgId: owner.orgId,
+      actorId: owner.actorId,
+      entityType: "task",
+      entityId: opsTask.id,
+      action: "task.unshipped",
+      changes: { release: release.key, version: "st-secret" },
+      source: "ui",
+    });
+
+    const seen = await listTaskActivity(db, owner, mine.key);
+    expect(seen.find((e) => e.action === "task.shipped")?.changes).toEqual({ releaseId: release.id, release: release.key, version: "st-secret" });
+    expect(seen.find((e) => e.action === "task.unshipped")?.changes).toEqual({ releaseId: null, release: release.key, version: "st-secret" });
+    expect(seen.find((e) => Array.isArray(e.changes?.releaseId))?.changes).toEqual({ releaseId: [null, release.id] });
+
+    const scoped = await listTaskActivity(db, opsAgent, mine.key);
+    const none = { releaseId: null, release: null, version: null };
+    expect(scoped.find((e) => e.action === "task.shipped")?.changes).toEqual(none);
+    expect(scoped.find((e) => e.action === "task.unshipped")?.changes).toEqual(none);
+    expect(scoped.find((e) => Array.isArray(e.changes?.releaseId))?.changes).toEqual({ releaseId: [null, "hidden"] });
+    expect(JSON.stringify(scoped)).not.toContain(release.id);
+    expect(JSON.stringify(scoped)).not.toContain("st-secret");
+    expect(JSON.stringify(scoped)).not.toContain(release.key);
+  });
+
+  test("a project-scoped agent sees only the repos, apps and deployments it can see; its link changes keep the hidden ones; the bot still starts the release", async () => {
+    await createRepo(db, owner, { url: "pipisasa/ops", projects: ["OPS"] });
+    await createApp(db, owner, "pipisasa/ops", { name: "runbook", path: ".", versioning: "date", environments: ["staging", "prod"] });
+    const st = await doneTask("ST", "Spider work (links)");
+    const ops = await doneTask("OPS", "Ops work (links)");
+    const release = await createRelease(db, owner, "OPS", {
+      title: "ops-links",
+      repos: ["pipisasa/site"],
+      apps: [
+        { repo: "pipisasa/spider-tracker", app: "web", version: "2026.10.22" },
+        { repo: "pipisasa/ops", app: "runbook", version: "2026.10.22" },
+      ],
+      tasks: [st.key, ops.key],
+    });
+    expect(release.repos.map((r) => r.fullName)).toEqual(["pipisasa/ops", "pipisasa/site", "pipisasa/spider-tracker"]);
+    const seen = await getRelease(db, opsAgent, release.key);
+    expect(seen.repos.map((r) => r.fullName)).toEqual(["pipisasa/ops"]);
+    expect(seen.apps.map((a) => a.name)).toEqual(["runbook"]);
+
+    // It can't deploy (or learn of) the hidden app; its own deploy still moves the mixed release on as the bot.
+    const refused = await recordDeployment(db, opsAgent, release.key, { app: "web", environment: "prod", commitSha: "3f2c1ab" }).catch((e: Error) => e.message);
+    expect(refused).toContain("doesn't ship web");
+    expect(refused).not.toContain("spider-tracker");
+    const deployed = await recordDeployment(db, opsAgent, release.key, { app: "runbook", environment: "staging", commitSha: "3f2c1ab" });
+    expect(deployed.movedFrom?.name).toBe("Planned");
+    expect(deployed.release.status.name).toBe("On staging");
+    await recordDeployment(db, owner, release.key, { app: "web", environment: "staging", commitSha: "4e3d2bc" });
+    expect((await getRelease(db, owner, release.key)).deployments?.map((d) => d.app)).toEqual(["web", "runbook"]);
+    expect((await getRelease(db, opsAgent, release.key)).deployments?.map((d) => d.app)).toEqual(["runbook"]);
+
+    const activity = await listTaskActivity(db, opsAgent, release.key);
+    expect(activity.find((e) => e.changes?.repos !== undefined)?.changes).toEqual({ repos: [[], ["pipisasa/ops"]], apps: [[], ["runbook 2026.10.22"]] });
+    expect(activity.filter((e) => e.action === "release.deployed").map((e) => e.changes)).toEqual([
+      { app: "runbook", repo: "pipisasa/ops", environment: "staging", commitSha: "3f2c1ab" },
+      { app: null, repo: null, environment: null, commitSha: null },
+    ]);
+    expect(JSON.stringify(activity)).not.toContain("spider-tracker");
+    expect(JSON.stringify(activity)).not.toContain("pipisasa/site");
+
+    // Released needs web in prod, which it can't see: refused without naming it (here the hidden task comes first).
+    await expect(moveAs(opsAgent, release.key, "OPS", "Released")).rejects.toThrow(HIDDEN);
+    const appsOnly = await createRelease(db, owner, "OPS", {
+      title: "ops-apps",
+      apps: [{ repo: "pipisasa/spider-tracker", app: "web", version: "2026.10.23" }],
+      tasks: [(await doneTask("OPS", "Ops only")).key],
+    });
+    const message = await moveAs(opsAgent, appsOnly.key, "OPS", "Released").catch((e: Error) => e.message);
+    expect(message).toBe(`Release ${appsOnly.key} ships apps in repos you can't see that aren't deployed yet; ask a member to release it`);
+
+    // Clearing its links removes only the ones it sees.
+    const cleared = await updateRelease(db, opsAgent, release.key, { repos: [], apps: [] });
+    expect([cleared.repos, cleared.apps]).toEqual([[], []]);
+    const kept = await getRelease(db, owner, release.key);
+    expect(kept.repos.map((r) => r.fullName)).toEqual(["pipisasa/site", "pipisasa/spider-tracker"]);
+    expect(kept.apps.map((a) => `${a.name} ${a.version}`)).toEqual(["web 2026.10.22"]);
+    expect((await listTaskActivity(db, opsAgent, release.key)).at(-1)?.changes).toEqual({ repos: [["pipisasa/ops"], []], apps: [["runbook 2026.10.22"], []] });
+    expect((await listTaskActivity(db, owner, release.key)).at(-1)?.changes).toEqual({
+      repos: [["pipisasa/ops", "pipisasa/site", "pipisasa/spider-tracker"], ["pipisasa/site", "pipisasa/spider-tracker"]],
+      apps: [["runbook 2026.10.22", "web 2026.10.22"], ["web 2026.10.22"]],
+    });
+  });
+
+  test("changelog (ST-95) of a mixed release: only the release's own project, the same for every viewer; a scoped agent can't write it", async () => {
+    const st = await createTask(db, owner, "ST", { title: "Secret spider feature", statusId: await statusOf("ST", "task", "Done") });
+    const ops = await createTask(db, owner, "OPS", { title: "Ops runbook update", statusId: await statusOf("OPS", "task", "Done") });
+    await addComment(db, owner, st.key, { body: "**What changed**\n- secret internals" });
+    await addComment(db, owner, ops.key, { body: "**What changed**\n- new runbook steps" });
+    const release = await createRelease(db, owner, "OPS", {
+      title: "ops-notes",
+      apps: [
+        { repo: "pipisasa/spider-tracker", app: "web", version: "2026.10.24" },
+        { repo: "pipisasa/ops", app: "runbook", version: "2026.10.24" },
+      ],
+      tasks: [st.key, ops.key],
+    });
+
+    const expected = `### runbook 2026.10.24\n\n- **${ops.key}** Ops runbook update\n  - new runbook steps`;
+    for (const viewer of [owner, opsAgent]) {
+      const read = await getReleaseChangelog(db, viewer, release.key);
+      // web's repo isn't attached to OPS, so runbook is the one app and groups every entry.
+      expect(read).toMatchObject({ grouped: true, apps: [{ name: "runbook" }], markdown: expected, description: { state: "missing" } });
+      expect(read.entries.map((e) => e.key)).toEqual([ops.key]);
+    }
+
+    await expect(writeReleaseChangelog(db, opsAgent, release.key)).rejects.toThrow(`Release ${release.key} ${HIDDEN} to write its changelog`);
+    expect((await getTask(db, owner, release.key)).description).toBeNull();
+
+    expect(await writeReleaseChangelog(db, owner, release.key)).toMatchObject({ written: "added" });
+    const description = (await getTask(db, opsAgent, release.key)).description ?? "";
+    expect(description).toContain(expected);
+    for (const leak of [st.key, "Secret spider feature", "secret internals", "web 2026.10.24"]) expect(description).not.toContain(leak);
+    expect((await getReleaseChangelog(db, opsAgent, release.key)).description).toMatchObject({ state: "current", content: expected });
   });
 });

@@ -226,6 +226,15 @@ describe("spider release check", () => {
     expect(human.stdout).toContain("Changed, but not in the release:\n  api  2 commits since the start (never tagged): ST-2, ST-4\n");
     expect(human.stdout).toContain("Not checked: site (pipisasa/site)");
     expect(human.stdout).toMatch(/4 findings\n$/);
+    expect(human.stdout).not.toContain("Warning:");
+
+    // Tags not fetched (a CI or shallow clone): the release's apps are checked from the start, with a warning.
+    const tagged = fakeGit().git;
+    const untagged: GitRunner = (args, cwd) => (args[0] === "tag" ? { exitCode: 0, stdout: "", stderr: "" } : tagged(args, cwd));
+    const noTags = await spider(["release", "check", "ST-120"], { git: untagged });
+    expect(noTags.stdout).toContain("Warning: cli has no earlier tag here, so its whole history was checked. Run git fetch --tags, or pass --since <ref>\n");
+    expect(noTags.stdout).toContain("Warning: web has no earlier tag here");
+    expect(noTags.stdout).not.toContain("Warning: api");
 
     const since = await spider(["release", "check", "ST-120", "--since", "cli-v0.1.7", "--json"]);
     expect((JSON.parse(since.stdout) as ReleaseCheckDto).apps[0]).toMatchObject({ name: "api", since: "cli-v0.1.7" });

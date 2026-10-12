@@ -1628,13 +1628,13 @@ const paths = {
     get: {
       operationId: "getReleaseChangelog",
       summary:
-        "The release's changelog, generated from its included tasks (title plus the \"What changed\" part of each handoff note), grouped by app for a one-app release, and how the description's changelog block compares",
+        "The release's changelog, generated from its included tasks of the release's own project (title plus the \"What changed\" part of each handoff note; other projects' tasks are left out), grouped by app for a one-app release, and how the description's changelog block compares",
       responses: { "200": ok("Changelog", "ReleaseChangelog"), ...errors },
     },
     post: {
       operationId: "writeReleaseChangelog",
       summary:
-        "Write the generated changelog into the release's description: replace its changelog block or append one, keeping the rest. taskApps (task key → app names) groups it by app; a block edited by hand is 409 unless force",
+        "Write the generated changelog into the release's description: replace its changelog block or append one, keeping the rest. taskApps (task key → app names) groups it by app; a block edited by hand is 409 unless force. A project-scoped agent gets 403 when the release includes tasks outside its projects",
       requestBody: body("ReleaseChangelogInput"),
       responses: { "200": ok("Written changelog", "ReleaseChangelog"), ...errors },
     },
