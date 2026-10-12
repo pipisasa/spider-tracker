@@ -29,6 +29,12 @@ See [auth.md](./auth.md) for all flows.
 - **Minimum CLI version:** `/v1/*` and `/mcp` responses carry `X-Spider-Min-Cli: <version>` (`MIN_CLI_VERSION` in `@repo/core`), the oldest `spider` CLI the server supports; `GET /health` returns it as `minCliVersion`. Older CLIs warn once per run (on stderr) and suggest `spider update`.
 - **Activity source:** browser sessions record `source = ui`. API-key clients record `api` by default and may declare `X-Spider-Source: cli | mcp | api`; other values are ignored.
 
+### Projects
+- `GET|POST /v1/orgs/:org/projects[?archived=true]` — active projects, oldest first (archived ones too with `archived=true`); `{ key, name, description? }` to create one with the default statuses (owners and admins).
+- `GET|PATCH /v1/orgs/:org/projects/:key` — a project with its statuses and `archivedAt` (archived ones too); `PATCH { name?, description? }` (owners and admins; the key can't change, `description: null` clears it).
+- `POST|DELETE /v1/orgs/:org/projects/:key/archive` — archive (left out of lists, new tasks get `400 "Project ST is archived"`; its tasks stay readable and editable) or restore (owners and admins). Both return the project; repeating one changes nothing.
+- Agents are created as members, so their keys (CLI, MCP) get `403` on these writes unless the agent's role is raised to admin.
+
 ### Comments and inbox
 - `GET|POST /v1/orgs/:org/tasks/:key/comments` — comments, oldest first; `{ body, parentId? }` to add.
 - `GET /v1/orgs/:org/inbox?after=&unread=true&limit=&wait=` — the caller's notifications, oldest first. With `wait` (seconds, max 25) the request is held until an item newer than `after` arrives (checked every second until realtime, ST-13, replaces it).
@@ -81,7 +87,9 @@ Or install the `spider-tracker` Claude Code plugin (`spider setup claude`): it r
 | Tool | What it does |
 |---|---|
 | `whoami` | The agent and organization the key acts as |
-| `list_projects`, `get_project` | Projects; a project's statuses in board order, with categories |
+| `list_projects`, `get_project` | Active projects; a project's description, `archived` flag and statuses in board order, with categories |
+| `create_project`, `update_project` | Owners and admins: key (fixed once created), name, description (null on update clears it) |
+| `archive_project` | Owners and admins: archive a project (out of `list_projects`, no new tasks); `undo: true` restores it |
 | `list_tasks` | Tasks in a project; filters: `status` (name or category), `assignee` (`me` or a handle), `query` (title text), `limit` |
 | `get_task` | One task by key, with status name, assignee handles, tags, parent and sub-tasks |
 | `create_task`, `update_task` | Status by name, priority 0–4, assignees as handles or `me`, `parent` as a task key (null on update makes it top-level); `update_task` replaces the assignee list |
@@ -197,7 +205,11 @@ spider claude [agent] [--no-channel] [-- claude args…]
 spider mcp-headers                  # {"Authorization": "Bearer …"} for Claude Code's headersHelper
 spider whoami                       # also names the saved agent in use
 spider <command> --as <agent>       # any command, as a saved agent
-spider projects
+spider projects [--archived]
+spider project create --key OPS --name "Operations" [--description …]   # owners and admins (also update/archive)
+spider project view <KEY>                      # statuses with task counts, description, archived state
+spider project update <KEY> [--name …] [--description …]   # the key can't change; --description "" clears it
+spider project archive <KEY> [--undo]          # archived: out of `spider projects`, no new tasks
 spider task list [--project ST] [--status "In Progress"] [--mine] [--limit 50]
 spider task view [ST-12]
 spider task create --project ST --title "Fix login" [--description …] [--status Todo] [--priority 0-4] [--assign @alice --assign me]
@@ -220,7 +232,7 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 
 - **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
-- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
+- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `project create|update|archive` → the project with its `statuses`, `project view` → the same with `taskCount` on each status; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
 - **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). `run` never prompts; only the bin passes the `spider claude` picker, and only when stdin and stdout are terminals.
 - **Documents:** `--file -` reads standard input; `.html` files default to `--format html`. `doc edit` fetches the current version and sends it as `baseVersion`, so a concurrent save fails with exit code `2` instead of being overwritten.
 - Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin?, select?, spawn?, self? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
