@@ -9,12 +9,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Toaster } from "@/components/ui/sonner";
-import { authClient } from "@/lib/auth-client";
-import { meQuery } from "@/lib/queries";
 import { useOrgEvents } from "@/lib/realtime";
 import { membersQuery, projectsQuery } from "@/lib/work";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
+import { useSignOut } from "@/lib/use-sign-out";
+import { useQuery } from "@tanstack/react-query";
+import { Link, Outlet, createFileRoute, notFound } from "@tanstack/react-router";
 import {
   BotIcon,
   ChevronsUpDownIcon,
@@ -51,15 +50,8 @@ function OrgLayout() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   useOrgEvents(orgSlug);
   const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
 
-  async function signOut() {
-    await authClient.signOut();
-    queryClient.clear();
-    queryClient.setQueryData(meQuery.queryKey, null);
-    await navigate({ to: "/login" });
-  }
+  const signOut = useSignOut();
 
   return (
     <div className="flex min-h-svh">

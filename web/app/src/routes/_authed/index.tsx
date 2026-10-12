@@ -8,8 +8,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useSignOut } from "@/lib/use-sign-out";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { Building2Icon, ChevronRightIcon, PlusIcon } from "lucide-react";
+import {
+  Building2Icon,
+  ChevronRightIcon,
+  LogOutIcon,
+  PlusIcon,
+} from "lucide-react";
 
 // Entry point after sign-in: the user's organizations, or how to get into one.
 // `?join=CODE` prefills the invitation code (links copied from Members settings); `?join` alone focuses the field.
@@ -32,6 +38,9 @@ function OrganizationsPage() {
   const { me } = Route.useRouteContext();
   const { join } = Route.useSearch();
   const memberships = me.memberships;
+  const signOut = useSignOut();
+  // Batele users without an email have a placeholder address; don't show it.
+  const email = me.user.email.endsWith(".invalid") ? null : me.user.email;
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-xl flex-col gap-6 px-4 py-12">
@@ -108,6 +117,23 @@ function OrganizationsPage() {
           />
         </CardContent>
       </Card>
+
+      <footer className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+        <span className="min-w-0 truncate">
+          Signed in as{" "}
+          <Link
+            to="/account"
+            className="font-medium text-foreground hover:underline"
+          >
+            {me.user.name || email || "your account"}
+          </Link>
+          {email && me.user.name && ` · ${email}`}
+        </span>
+        <Button variant="ghost" size="sm" onClick={signOut}>
+          <LogOutIcon />
+          Sign out
+        </Button>
+      </footer>
     </main>
   );
 }

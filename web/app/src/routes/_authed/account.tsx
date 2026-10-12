@@ -1,9 +1,9 @@
 import { LinkedAccounts } from "@/components/linked-accounts";
 import { Button } from "@/components/ui/button";
-import { authClient } from "@/lib/auth-client";
+import { useSignOut } from "@/lib/use-sign-out";
 import { meQuery } from "@/lib/queries";
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { Link, createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authed/account")({
   validateSearch: (search: Record<string, unknown>): { error?: string } =>
@@ -13,15 +13,9 @@ export const Route = createFileRoute("/_authed/account")({
 
 function AccountPage() {
   const { data: me } = useSuspenseQuery(meQuery);
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const { error: linkError } = Route.useSearch();
 
-  async function signOut() {
-    await authClient.signOut();
-    queryClient.setQueryData(meQuery.queryKey, null);
-    await navigate({ to: "/login" });
-  }
+  const signOut = useSignOut();
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">
