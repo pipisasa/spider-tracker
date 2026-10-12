@@ -9,6 +9,7 @@ import {
 } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
 import StarterKit from "@tiptap/starter-kit";
+import { MarkdownFidelity } from "./fidelity";
 
 /**
  * The document schema shared by the rich editor and the Markdown round-trip test.
@@ -34,5 +35,6 @@ export function markdownExtensions(): AnyExtension[] {
     TableHeader,
     TableCell,
     Markdown.configure({ markedOptions: { gfm: true } }),
+    MarkdownFidelity,
   ];
 }

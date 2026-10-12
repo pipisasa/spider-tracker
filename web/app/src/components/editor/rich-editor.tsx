@@ -10,7 +10,7 @@ import { SlashCommand } from "./slash-command";
 
 /**
  * Notion-style WYSIWYG editor over a Markdown string: loads `value` once and
- * reports every change as Markdown. Remount it (key) to load new content.
+ * reports every change (never the initial load) as Markdown. Remount it (key) to load new content.
  */
 export default function RichEditor({
   value,
@@ -20,6 +20,7 @@ export default function RichEditor({
   autofocus = "end",
   label = "Content",
   className = "min-h-[60vh] pb-24",
+  editable = true,
 }: {
   value: string;
   onChange: (markdown: string) => void;
@@ -28,6 +29,8 @@ export default function RichEditor({
   autofocus?: "end" | false;
   label?: string;
   className?: string;
+  /** False renders the content read-only: no toolbar, slash menu or drag handle. */
+  editable?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const editor = useEditor({
@@ -44,7 +47,8 @@ export default function RichEditor({
     ],
     content: value,
     contentType: "markdown",
-    autofocus,
+    autofocus: editable ? autofocus : false,
+    editable,
     editorProps: {
       attributes: {
         "aria-label": label,
@@ -59,14 +63,15 @@ export default function RichEditor({
   return (
     <div
       ref={container}
-      className={cn("relative flex-1 cursor-text pl-7", className)}
+      className={cn("relative flex-1 pl-7", editable && "cursor-text", className)}
       onClick={(e) => {
-        if (e.target === e.currentTarget) editor.commands.focus("end");
+        if (editable && e.target === e.currentTarget)
+          editor.commands.focus("end");
       }}
     >
       <EditorContent editor={editor} />
-      <EditorBubbleMenu editor={editor} />
-      <DragHandle editor={editor} container={container} />
+      {editable && <EditorBubbleMenu editor={editor} />}
+      {editable && <DragHandle editor={editor} container={container} />}
     </div>
   );
 }
