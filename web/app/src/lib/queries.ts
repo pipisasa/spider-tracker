@@ -1,4 +1,4 @@
-import type { AuthProvidersResponse, MeResponse, MembershipDto } from "@repo/core/contracts";
+import type { AuthProvidersResponse, InvitationPreviewDto, MeResponse, MembershipDto } from "@repo/core/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, api } from "./api";
 
@@ -18,6 +18,14 @@ export const meQuery = queryOptions({
 
 export function createOrganization(input: { name: string; slug: string }) {
   return api<MembershipDto>("/v1/organizations", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function previewInvitation(code: string) {
+  return api<InvitationPreviewDto>("/v1/invitations/preview", { method: "POST", body: JSON.stringify({ code }) });
+}
+
+export function acceptInvitation(code: string) {
+  return api<MembershipDto>("/v1/invitations/accept", { method: "POST", body: JSON.stringify({ code }) });
 }
 
 /** Sign-in methods the API has configured. */

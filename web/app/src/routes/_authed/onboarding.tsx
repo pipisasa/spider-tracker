@@ -7,7 +7,8 @@ import { createOrganization, meQuery } from "@/lib/queries";
 import { slugFrom } from "@repo/core/handles";
 import { createOrganizationInput } from "@repo/core/schemas";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ArrowLeftIcon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 export const Route = createFileRoute("/_authed/onboarding")({
@@ -15,6 +16,7 @@ export const Route = createFileRoute("/_authed/onboarding")({
 });
 
 function OnboardingPage() {
+  const { me } = Route.useRouteContext();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
@@ -46,10 +48,19 @@ function OnboardingPage() {
   }
 
   return (
-    <main className="flex min-h-svh items-center justify-center px-4">
+    <main className="flex min-h-svh flex-col items-center justify-center gap-4 px-4">
+      {me.memberships.length > 0 && (
+        <Link
+          to="/"
+          className="flex w-full max-w-sm items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeftIcon className="size-4" />
+          All organizations
+        </Link>
+      )}
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Create your organization</CardTitle>
+          <CardTitle>Create an organization</CardTitle>
           <CardDescription>Projects, tasks and agents live inside an organization.</CardDescription>
         </CardHeader>
         <CardContent>

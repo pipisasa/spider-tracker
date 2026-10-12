@@ -64,6 +64,13 @@
       "when": 1791581551709,
       "tag": "0008_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791782541027,
+      "tag": "0009_invitations",
+      "breakpoints": true
     }
   ]
 }

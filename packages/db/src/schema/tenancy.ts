@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   check,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -80,4 +81,28 @@ export const apiTokens = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (t) => [index("api_tokens_actor_idx").on(t.actorId)],
+);
+
+// Invitation codes: anyone signed in with a valid code joins the organization with its role.
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Normalised: uppercase, no separators (shown as ABCD-EFGH). */
+    code: text("code").notNull().unique(),
+    role: memberRole("role").notNull().default("member"),
+    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    maxUses: integer("max_uses"),
+    useCount: integer("use_count").notNull().default(0),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("invitations_org_idx").on(t.orgId),
+    check("invitations_role_not_owner", sql`${t.role} <> 'owner'`),
+  ],
 );

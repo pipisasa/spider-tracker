@@ -178,3 +178,17 @@ export const documentListQuery = z.object({
   project: z.string().trim().min(1).optional(),
   task: z.string().trim().min(1).optional(),
 });
+
+export const invitationRoleSchema = z.enum(["admin", "member", "guest"]);
+
+export const createInvitationInput = z.object({
+  role: invitationRoleSchema.default("member"),
+  expiresInDays: z.number().int().min(1, "At least 1 day").max(30, "At most 30 days").default(7),
+  maxUses: z.number().int().min(1, "At least 1").max(1000, "At most 1000").nullish(),
+});
+
+export type CreateInvitationInput = z.input<typeof createInvitationInput>;
+
+export const invitationCodeInput = z.object({
+  code: z.string().trim().min(1, "Enter an invitation code").max(40),
+});

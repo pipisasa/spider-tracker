@@ -60,7 +60,8 @@ Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI
 - Tags, sub-tasks, task relations (blocks / relates / duplicates)
 - Comments and the activity feed on the task page
 - Realtime: LISTEN/NOTIFY → SSE → TanStack Query
-- Members, invitations, roles management
+- [x] Organization list after sign-in, members page, invitation codes (role, expiry, max uses, revoke)
+- Roles management (change roles, deactivate members), email invitations
 - Filters and saved views
 - Keyboard shortcuts and command palette
 - Sign-up allowlist and email delivery for magic links

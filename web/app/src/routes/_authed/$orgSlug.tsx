@@ -15,7 +15,18 @@ import { useOrgEvents } from "@/lib/realtime";
 import { membersQuery, projectsQuery } from "@/lib/work";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
-import { BotIcon, ChevronsUpDownIcon, FileTextIcon, FolderIcon, LogOutIcon, PlusIcon, UserIcon } from "lucide-react";
+import {
+  BotIcon,
+  ChevronsUpDownIcon,
+  FileTextIcon,
+  FolderIcon,
+  LayoutGridIcon,
+  LogInIcon,
+  LogOutIcon,
+  PlusIcon,
+  UserIcon,
+  UsersIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 export const Route = createFileRoute("/_authed/$orgSlug")({
@@ -69,10 +80,23 @@ function OrgLayout() {
                 </Link>
               </DropdownMenuItem>
             ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link to="/">
+                <LayoutGridIcon />
+                All organizations
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link to="/onboarding">
                 <PlusIcon />
                 New organization
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to="/" search={{ join: "" }}>
+                <LogInIcon />
+                Join organization
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -132,9 +156,18 @@ function OrgLayout() {
           {projects.length === 0 && <p className="px-2 text-sm text-muted-foreground">No projects yet.</p>}
         </nav>
 
-        {canManage && (
-          <nav className="flex flex-col gap-1">
-            <span className="px-2 text-xs font-medium text-muted-foreground">Settings</span>
+        <nav className="flex flex-col gap-1">
+          <span className="px-2 text-xs font-medium text-muted-foreground">Settings</span>
+          <Link
+            to="/$orgSlug/settings/members"
+            params={{ orgSlug }}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+            activeProps={{ className: "bg-muted font-medium" }}
+          >
+            <UsersIcon className="size-4 text-muted-foreground" />
+            Members
+          </Link>
+          {canManage && (
             <Link
               to="/$orgSlug/settings/agents"
               params={{ orgSlug }}
@@ -144,8 +177,8 @@ function OrgLayout() {
               <BotIcon className="size-4 text-muted-foreground" />
               Agents
             </Link>
-          </nav>
-        )}
+          )}
+        </nav>
 
         <div className="mt-auto truncate px-2 text-xs text-muted-foreground">{me.user.email}</div>
       </aside>

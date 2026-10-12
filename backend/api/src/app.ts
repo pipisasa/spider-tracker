@@ -1,5 +1,14 @@
 import type { ApiErrorBody, AuthProvidersResponse, MeResponse, WhoAmIResponse } from "@repo/core";
-import { DomainError, authenticateApiKey, createOrganization, listMemberships, revokeCurrentApiKey } from "@repo/core";
+import type { InvitationPreviewDto } from "@repo/core";
+import {
+  DomainError,
+  acceptInvitation,
+  authenticateApiKey,
+  createOrganization,
+  listMemberships,
+  previewInvitation,
+  revokeCurrentApiKey,
+} from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -106,6 +115,23 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
     const input: unknown = await c.req.json().catch(() => null);
     const created = await createOrganization(db, user, input);
     return c.json(toMembership(created), 201);
+  });
+
+  // Joining with an invitation code is for people only; agents are added by an owner.
+  app.post("/v1/invitations/preview", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json(errorBody("forbidden", "Only people can join organizations"), 403);
+    const input: unknown = await c.req.json().catch(() => null);
+    const body: InvitationPreviewDto = await previewInvitation(db, user.id, input);
+    return c.json(body);
+  });
+
+  app.post("/v1/invitations/accept", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json(errorBody("forbidden", "Only people can join organizations"), 403);
+    const input: unknown = await c.req.json().catch(() => null);
+    const joined = await acceptInvitation(db, user, input);
+    return c.json(toMembership(joined), 201);
   });
 
   app.route("/v1/device", deviceApprovalRoutes(db));

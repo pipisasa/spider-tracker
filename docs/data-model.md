@@ -89,6 +89,19 @@ create table actors (
   check ((type = 'human') = (user_id is not null))
 );
 
+create table invitations (                     -- join codes; anyone signed in with one joins with its role
+  id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
+  code text unique not null,                  -- normalised: uppercase, no dashes (shown as ABCD-EFGH)
+  role member_role not null default 'member' check (role <> 'owner'),
+  created_by uuid references actors on delete set null,
+  expires_at timestamptz not null,
+  max_uses int,                               -- null = unlimited
+  use_count int not null default 0,           -- incremented under a row lock when someone joins
+  revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 create table agents (
   actor_id uuid primary key references actors on delete cascade,
   kind text not null check (kind in ('hosted','external')),

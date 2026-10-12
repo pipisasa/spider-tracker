@@ -15,6 +15,9 @@ import {
   markInboxRead,
   createAgent,
   createApiKey,
+  createInvitation,
+  listInvitations,
+  revokeInvitation,
   createProject,
   createTask,
   deleteTask,
@@ -89,6 +92,15 @@ export function orgRoutes(db: Db, realtime: Realtime) {
   app.get("/members", async (c) => {
     const rows = await listMembers(db, c.get("actor").orgId);
     return c.json(list(rows.map(toActorDto)));
+  });
+
+  app.get("/invitations", async (c) => c.json(list(await listInvitations(db, c.get("actor")))));
+
+  app.post("/invitations", async (c) => c.json(await createInvitation(db, c.get("actor"), await body(c)), 201));
+
+  app.delete("/invitations/:invitationId", async (c) => {
+    await revokeInvitation(db, c.get("actor"), c.req.param("invitationId"));
+    return c.body(null, 204);
   });
 
   app.get("/agents", async (c) => {

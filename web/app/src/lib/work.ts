@@ -7,6 +7,7 @@ import type {
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
+  InvitationDto,
   RelationDto,
   TagDto,
   CreatedApiKeyDto,
@@ -18,6 +19,7 @@ import type {
 import type {
   CreateAgentInput,
   CreateDocumentInput,
+  CreateInvitationInput,
   CreateProjectInput,
   CreateTagInput,
   CreateTaskInput,
@@ -39,6 +41,7 @@ const orgPath = (org: string) => `/v1/orgs/${encodeURIComponent(org)}`;
 export const keys = {
   members: (org: string) => ["orgs", org, "members"] as const,
   agents: (org: string) => ["orgs", org, "agents"] as const,
+  invitations: (org: string) => ["orgs", org, "invitations"] as const,
   tags: (org: string) => ["orgs", org, "tags"] as const,
   projects: (org: string) => ["orgs", org, "projects"] as const,
   project: (org: string, key: string) =>
@@ -250,6 +253,37 @@ export function useRevokeApiKey(org: string) {
     mutationFn: (keyId: string) =>
       api<void>(`${orgPath(org)}/api-keys/${keyId}`, { method: "DELETE" }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.agents(org) }),
+  });
+}
+
+export const invitationsQuery = (org: string) =>
+  queryOptions({
+    queryKey: keys.invitations(org),
+    queryFn: async () =>
+      (await api<ListResponse<InvitationDto>>(`${orgPath(org)}/invitations`))
+        .items,
+  });
+
+export function useCreateInvitation(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateInvitationInput) =>
+      api<InvitationDto>(`${orgPath(org)}/invitations`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: keys.invitations(org) }),
+  });
+}
+
+export function useRevokeInvitation(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`${orgPath(org)}/invitations/${id}`, { method: "DELETE" }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: keys.invitations(org) }),
   });
 }
 

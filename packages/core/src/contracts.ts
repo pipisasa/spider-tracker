@@ -227,3 +227,26 @@ export interface DocumentVersionDto extends DocumentVersionSummaryDto {
   documentId: string;
   content: string;
 }
+
+export type InvitationStatus = "active" | "expired" | "revoked" | "used_up";
+
+export interface InvitationDto {
+  id: string;
+  /** Formatted for display, e.g. "ABCD-EFGH"; accepted with or without the dash, in any case. */
+  code: string;
+  role: Exclude<ActorRole, "owner">;
+  status: InvitationStatus;
+  useCount: number;
+  maxUses: number | null;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** What a code would join, shown before accepting. */
+export interface InvitationPreviewDto {
+  organization: OrganizationDto;
+  role: Exclude<ActorRole, "owner">;
+  alreadyMember: boolean;
+}

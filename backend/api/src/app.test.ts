@@ -622,3 +622,94 @@ withDb("sign-up allowlist", () => {
     expect(await call("", "create-user")).toMatchObject({ error: "signup_not_allowed" });
   });
 });
+
+withDb("invitation codes", () => {
+  const stamp = Date.now();
+  const ownerEmail = `inv-owner-${stamp}@example.com`;
+  const joinerEmail = `inv-joiner-${stamp}@example.com`;
+  const slug = `inv-${stamp}`;
+
+  afterAll(async () => {
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    for (const email of [ownerEmail, joinerEmail]) await db.delete(schema.user).where(eq(schema.user.email, email));
+  });
+
+  const send = (credentials: { cookie?: string; token?: string }, method: string, path: string, body?: unknown) =>
+    app.request(path, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(credentials.cookie ? { Cookie: credentials.cookie } : {}),
+        ...(credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  test("create → preview → accept; revoked, expired, already-member and agent keys are refused", async () => {
+    const owner = { cookie: await signIn(ownerEmail) };
+    const joiner = { cookie: await signIn(joinerEmail) };
+    await send(owner, "POST", "/v1/organizations", { name: "Invite Org", slug });
+
+    const created = await send(owner, "POST", `/v1/orgs/${slug}/invitations`, { role: "guest", expiresInDays: 7 });
+    expect(created.status).toBe(201);
+    const invitation = (await created.json()) as { id: string; code: string; role: string; status: string };
+    expect(invitation).toMatchObject({ role: "guest", status: "active" });
+
+    const preview = await send(joiner, "POST", "/v1/invitations/preview", { code: invitation.code.toLowerCase() });
+    expect(await preview.json()).toMatchObject({ organization: { slug }, role: "guest", alreadyMember: false });
+
+    const accepted = await send(joiner, "POST", "/v1/invitations/accept", { code: invitation.code });
+    expect(accepted.status).toBe(201);
+    const membership = (await accepted.json()) as MembershipDto;
+    expect(membership).toMatchObject({ organization: { slug }, actor: { role: "guest", type: "human" } });
+
+    const me = (await (await send(joiner, "GET", "/v1/me")).json()) as MeResponse;
+    expect(me.memberships.map((m) => m.organization.slug)).toEqual([slug]);
+
+    const again = await send(joiner, "POST", "/v1/invitations/accept", { code: invitation.code });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { message: string } }).error.message).toBe(
+      "You're already a member of Invite Org",
+    );
+
+    // Guests can't see or create codes.
+    expect((await send(joiner, "GET", `/v1/orgs/${slug}/invitations`)).status).toBe(403);
+    expect((await send(joiner, "POST", `/v1/orgs/${slug}/invitations`, {})).status).toBe(403);
+
+    expect((await send(owner, "DELETE", `/v1/orgs/${slug}/invitations/${invitation.id}`)).status).toBe(204);
+    const revoked = await send(joiner, "POST", "/v1/invitations/accept", { code: invitation.code });
+    expect(revoked.status).toBe(400);
+    expect(((await revoked.json()) as { error: { message: string } }).error.message).toBe(
+      "Invalid or expired invitation code",
+    );
+
+    const expiring = (await (await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {})).json()) as {
+      id: string;
+      code: string;
+    };
+    await db
+      .update(schema.invitations)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.invitations.id, expiring.id));
+    expect((await send(joiner, "POST", "/v1/invitations/accept", { code: expiring.code })).status).toBe(400);
+
+    const list = (await (await send(owner, "GET", `/v1/orgs/${slug}/invitations`)).json()) as {
+      items: { id: string; status: string }[];
+    };
+    expect(Object.fromEntries(list.items.map((i) => [i.id, i.status]))).toEqual({
+      [invitation.id]: "revoked",
+      [expiring.id]: "expired",
+    });
+
+    // Agent keys can't join organizations.
+    const agent = (await (await send(owner, "POST", `/v1/orgs/${slug}/agents`, { name: "Bot" })).json()) as {
+      actor: { id: string };
+    };
+    const { secret } = (await (
+      await send(owner, "POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "k" })
+    ).json()) as { secret: string };
+    const fresh = (await (await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {})).json()) as { code: string };
+    expect((await send({ token: secret }, "POST", "/v1/invitations/accept", { code: fresh.code })).status).toBe(403);
+    expect((await send({ token: secret }, "POST", "/v1/invitations/preview", { code: fresh.code })).status).toBe(403);
+  });
+});
