@@ -70,7 +70,7 @@ async function linksByTask(db: Db | Tx, taskIds: string[]) {
   const parentRows = await db
     .select({ taskId: tasks.id, number: parent.number, projectKey: projects.key })
     .from(tasks)
-    .innerJoin(parent, eq(tasks.parentId, parent.id))
+    .innerJoin(parent, and(eq(tasks.parentId, parent.id), isNull(parent.deletedAt)))
     .innerJoin(projects, eq(parent.projectId, projects.id))
     .where(inArray(tasks.id, taskIds));
   for (const row of parentRows) {
@@ -399,8 +399,34 @@ export async function deleteTask(db: Db, ctx: ActorContext, taskKey: string): Pr
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
     const { task, projectKey } = await findTask(tx, ctx, taskKey);
-    await tx.update(tasks).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, task.id));
+    const now = new Date();
+    await tx.update(tasks).set({ deletedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
     await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.deleted" });
     await publish(tx, { type: "task.deleted", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
+
+    // Sub-tasks become top-level tasks rather than hanging off a deleted parent (ST-9).
+    const children = await tx
+      .update(tasks)
+      .set({ parentId: null, updatedAt: now })
+      .where(and(eq(tasks.parentId, task.id), isNull(tasks.deletedAt)))
+      .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId });
+    if (children.length === 0) return;
+    const keys = await tx
+      .select({ id: projects.id, key: projects.key })
+      .from(projects)
+      .where(inArray(projects.id, [...new Set(children.map((c) => c.projectId))]));
+    const keyOf = new Map(keys.map((p) => [p.id, p.key]));
+    for (const child of children) {
+      await recordActivity(tx, ctx, {
+        entityType: "task",
+        entityId: child.id,
+        action: "task.updated",
+        changes: { parentId: [task.id, null] },
+      });
+      const childProjectKey = keyOf.get(child.projectId);
+      if (childProjectKey) {
+        await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: childProjectKey, taskKey: `${childProjectKey}-${child.number}` });
+      }
+    }
   });
 }
