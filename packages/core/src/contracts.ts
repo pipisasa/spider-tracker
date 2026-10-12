@@ -240,6 +240,68 @@ export interface GithubStatusDto {
   installations: GithubInstallationDto[];
 }
 
+/**
+ * How a task key was found in git (ST-84), strongest first: a closing keyword ("fixes ST-12"),
+ * the branch name, the PR title, the PR body, a commit message.
+ */
+export type GitLinkVia = "closing" | "branch" | "title" | "body" | "message";
+
+/** A branch whose name carries the task's key. */
+export interface GitBranchDto {
+  /** The repo's "owner/name". */
+  repo: string;
+  name: string;
+  url: string;
+  /** Deleted on GitHub since (after a merge, usually). */
+  deleted: boolean;
+  /** When it was first seen. */
+  linkedAt: string;
+}
+
+/** A commit that mentions the task's key, or was pushed to its branch. */
+export interface GitCommitDto {
+  repo: string;
+  sha: string;
+  /** The first line of the message. */
+  message: string;
+  url: string;
+  /** GitHub login, or the git author name. */
+  author: string | null;
+  committedAt: string | null;
+  via: GitLinkVia;
+}
+
+/** "merged" is final; "closed" is closed without merging. */
+export type PullRequestState = "open" | "closed" | "merged";
+
+/** A pull request linked to the task by its branch, title or body. */
+export interface PullRequestDto {
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  state: PullRequestState;
+  draft: boolean;
+  headBranch: string;
+  baseBranch: string;
+  /** GitHub login of who opened it. */
+  author: string | null;
+  mergedAt: string | null;
+  closedAt: string | null;
+  /** Its last change on GitHub. */
+  updatedAt: string;
+  via: GitLinkVia;
+}
+
+/** `GET /tasks/:key/git`: what is linked to the task in git (ST-84), most recent first. */
+export interface TaskGitDto {
+  taskKey: string;
+  pullRequests: PullRequestDto[];
+  branches: GitBranchDto[];
+  /** The latest 100. */
+  commits: GitCommitDto[];
+}
+
 /** `POST /github/install`: the GitHub page that installs the App; it returns to `/github/setup`. */
 export interface GithubInstallUrlDto {
   url: string;

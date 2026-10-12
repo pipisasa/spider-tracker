@@ -29,6 +29,7 @@ import type {
   SavedViewDto,
   SubtaskDto,
   TaskDto,
+  TaskGitDto,
   UpdatedDocumentDto,
 } from "@repo/core/contracts";
 import type {
@@ -98,6 +99,8 @@ export const keys = {
     ["orgs", org, "tasks", taskKey, "subtasks"] as const,
   relations: (org: string, taskKey: string) =>
     ["orgs", org, "tasks", taskKey, "relations"] as const,
+  git: (org: string, taskKey: string) =>
+    ["orgs", org, "tasks", taskKey, "git"] as const,
   documentLists: (org: string) => ["orgs", org, "documents", "list"] as const,
   documents: (org: string, scope: DocumentScope) =>
     ["orgs", org, "documents", "list", scope] as const,
@@ -626,6 +629,13 @@ export const relationsQuery = (org: string, taskKey: string) =>
           `${orgPath(org)}/tasks/${taskKey}/relations`,
         )
       ).items,
+  });
+
+/** Pull requests, branches and commits linked from GitHub (ST-84); refreshed by `task.git` events. */
+export const taskGitQuery = (org: string, taskKey: string) =>
+  queryOptions({
+    queryKey: keys.git(org, taskKey),
+    queryFn: () => api<TaskGitDto>(`${orgPath(org)}/tasks/${taskKey}/git`),
   });
 
 export function useRelation(org: string, taskKey: string) {

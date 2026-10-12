@@ -12,7 +12,7 @@ organizations ─┬─ actors (human | agent | integration) ── agents (1:1 
                └─ projects ─┬─ statuses, cycles, custom_field_defs (project-scoped)
                             └─ tasks ─┬─ task_assignees → actors
                                       ├─ task_tags, task_relations, sub-tasks (parent_id)
-                                      ├─ comments, documents, git_links → repos
+                                      ├─ comments, documents, git_links → repos, pull_requests
                                       └─ agent_runs ── agent_run_events
 activity (append-only log for everything)
 ```
@@ -35,7 +35,8 @@ activity (append-only log for everything)
 | **GitHub delivery** | A webhook delivery GitHub sent (ST-83), by its `X-GitHub-Delivery` id: what makes each one handled once |
 | **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
-| **Git link** | A branch, commit or pull request linked to a task |
+| **Git link** | A branch, commit or pull request linked to a task, with how its key was found (ST-84) |
+| **Pull request** | A repo's GitHub pull request that links to a task: state, draft, branches, and its `updated_at` on GitHub for the out-of-order guard (ST-84) |
 | **Document** | Markdown or HTML content at organization, project or task level, with versions; one project document can be the project's **rules** for agents (`projects.rules_document_id`, ST-111) |
 | **File** | Metadata for an object stored in Cloudflare R2 (attachments, images, artifacts) |
 | **Comment** | A threaded Markdown comment on a task or (ST-118) a document; a document comment may quote the fragment it is about and its thread can be resolved |
@@ -324,15 +325,43 @@ create table apps (
   unique (repo_id, name)
 );
 
+-- ST-84: a repo's pull requests that link to a task (others aren't kept). An event whose
+-- pull_request.updated_at is older than github_updated_at is stale and changes nothing; merged is final.
+create table pull_requests (
+  id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
+  repo_id uuid not null references repos on delete cascade,
+  number int not null,
+  title text not null,
+  state text not null check (state in ('open','closed','merged')),  -- closed: without merging
+  draft boolean not null default false,
+  head_branch text not null, base_branch text not null,
+  author_login text,                                   -- who opened it
+  merged_at timestamptz, closed_at timestamptz,
+  github_updated_at timestamptz not null,              -- the PR's updated_at on GitHub
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  unique (repo_id, number)
+);
+-- ST-84: branches, commits and PRs linked to tasks from webhooks; only keys of projects attached to
+-- the repo count. URLs are built from the repo's current owner/name.
 create table git_links (
   id uuid primary key default uuidv7(),
+  org_id uuid not null references organizations on delete cascade,
   task_id uuid not null references tasks on delete cascade,
   repo_id uuid not null references repos on delete cascade,
-  kind text not null check (kind in ('branch','commit','pr')),
-  ref text not null, url text, title text, state text,
-  author_login text, metadata jsonb not null default '{}',
-  unique (task_id, repo_id, kind, ref)
+  kind text not null check (kind in ('branch','commit','pull_request')),
+  ref text not null,                                   -- branch name, full commit sha, or PR number
+  pull_request_id uuid references pull_requests on delete cascade,  -- set exactly for kind pull_request
+  via text not null check (via in ('closing','branch','title','body','message')),  -- strongest match
+  title text, author text,                             -- commits: first message line; login or git name
+  occurred_at timestamptz,                             -- commits: committed; branches: first seen
+  deleted_at timestamptz,                              -- branches: deleted on GitHub (the link stays)
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  unique (task_id, repo_id, kind, ref),
+  check ((kind = 'pull_request') = (pull_request_id is not null))
 );
+create index git_links_repo_ref_idx on git_links (repo_id, kind, ref);
+create index git_links_pull_request_idx on git_links (pull_request_id);
 
 -- ── documents ────────────────────────────────────────
 create table documents (

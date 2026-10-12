@@ -94,9 +94,9 @@ run("GitHub webhooks (ST-83)", () => {
     expect(await deliver("ping", { zen: "Design for failure.", hook_id: 1 }, ping)).toBe("ignored");
     expect(await delivery(ping)).toMatchObject({ event: "ping", action: null, installationId: null, orgId: null, result: "ignored" });
 
-    const push = nextDelivery();
-    expect(await deliver("push", { ref: "refs/heads/main", installation: { id: installationId } }, push)).toBe("ignored");
-    expect(await delivery(push)).toMatchObject({ event: "push", installationId, result: "ignored" });
+    const checks = nextDelivery();
+    expect(await deliver("check_run", { action: "completed", installation: { id: installationId } }, checks)).toBe("ignored");
+    expect(await delivery(checks)).toMatchObject({ event: "check_run", action: "completed", installationId, result: "ignored" });
   });
 
   test("events of installations no organization has connected are recorded and ignored", async () => {

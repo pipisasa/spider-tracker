@@ -63,6 +63,7 @@ import {
   removeRelation,
   listTags,
   listTaskActivity,
+  getTaskGit,
   listInbox,
   listTasks,
   markInboxRead,
@@ -1084,6 +1085,16 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           }),
         );
       }),
+  );
+
+  server.registerTool(
+    "get_task_git",
+    {
+      description:
+        "What is linked to a task in git from GitHub: pull requests (state open, closed or merged, draft), branches named after it and commits that mention it, with how each names it (via: closing keyword, branch, title, body or message).",
+      inputSchema: { key: z.string().describe('Task key, e.g. "ST-12"') },
+    },
+    ({ key: taskKey }) => run(async () => getTaskGit(db, ctx, taskKey)),
   );
 
   server.registerTool(

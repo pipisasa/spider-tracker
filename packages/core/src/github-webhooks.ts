@@ -7,6 +7,7 @@ import type { ActorContext } from "./access";
 import { recordActivity } from "./activity";
 import { DomainError } from "./errors";
 import { publish } from "./events";
+import { handleCreate, handleDelete, handlePullRequest, handlePush } from "./git-links";
 import { githubBotContext, grantGithubRepos, releaseGithubRepos, repoAccessChanges, type GithubRepoGrant } from "./github";
 import { repoFullName } from "./remotes";
 
@@ -254,12 +255,16 @@ const handleRepository: GithubEventHandler = async (tx, e) => {
 
 /**
  * Handlers by X-GitHub-Event. Others (ping, and events nothing handles yet) are recorded and
- * ignored. ST-84 adds push, create, delete and pull_request here.
+ * ignored. Branches, commits and pull requests are linked to tasks in git-links.ts (ST-84).
  */
 export const githubEventHandlers: Readonly<Partial<Record<string, GithubEventHandler>>> = {
   installation: handleInstallation,
   installation_repositories: handleInstallationRepositories,
   repository: handleRepository,
+  create: handleCreate,
+  delete: handleDelete,
+  push: handlePush,
+  pull_request: handlePullRequest,
 };
 
 export type GithubWebhookResult = "processed" | "ignored" | "duplicate";

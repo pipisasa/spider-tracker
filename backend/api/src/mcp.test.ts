@@ -144,6 +144,7 @@ withDb("MCP server", () => {
         "delete_status",
         "get_inbox",
         "get_task_activity",
+        "get_task_git",
         "list_comments",
         "list_document_comments",
         "resolve_document_comment",

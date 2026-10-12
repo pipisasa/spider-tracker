@@ -271,6 +271,47 @@ const schemas: Record<string, JsonSchema> = {
     installations: { type: "array", items: ref("GithubInstallation") },
   }),
   GithubInstallUrl: object({ url: string({ format: "uri" }) }),
+  PullRequest: object({
+    repo: string({ examples: ["pipisasa/spider-tracker"] }),
+    number: { type: "integer" },
+    title: string(),
+    url: string({ format: "uri" }),
+    state: string({ enum: ["open", "closed", "merged"], description: '"merged" is final; "closed" is closed without merging' }),
+    draft: { type: "boolean" },
+    headBranch: string(),
+    baseBranch: string(),
+    author: nullable("string", { description: "GitHub login of who opened it" }),
+    mergedAt: nullable("string", { format: "date-time" }),
+    closedAt: nullable("string", { format: "date-time" }),
+    updatedAt: string({ format: "date-time", description: "Its last change on GitHub" }),
+    via: ref("GitLinkVia"),
+  }),
+  GitLinkVia: string({
+    enum: ["closing", "branch", "title", "body", "message"],
+    description: 'How the task key was found, strongest first: a closing keyword ("fixes ST-12"), the branch name, the PR title, the PR body, a commit message',
+  }),
+  GitBranch: object({
+    repo: string(),
+    name: string(),
+    url: string({ format: "uri" }),
+    deleted: { type: "boolean", description: "Deleted on GitHub since" },
+    linkedAt: string({ format: "date-time" }),
+  }),
+  GitCommit: object({
+    repo: string(),
+    sha: string(),
+    message: string({ description: "The first line" }),
+    url: string({ format: "uri" }),
+    author: nullable("string", { description: "GitHub login, or the git author name" }),
+    committedAt: nullable("string", { format: "date-time" }),
+    via: ref("GitLinkVia"),
+  }),
+  TaskGit: object({
+    taskKey: string(),
+    pullRequests: { type: "array", items: ref("PullRequest"), description: "Recently updated first" },
+    branches: { type: "array", items: ref("GitBranch"), description: "Newest first" },
+    commits: { type: "array", items: ref("GitCommit"), description: "The latest 100, newest first" },
+  }),
   CreateRepoInput: fromZod(createRepoInput),
   UpdateRepoInput: fromZod(updateRepoInput),
   AttachRepoInput: fromZod(attachRepoInput),
@@ -656,7 +697,7 @@ const paths = {
     post: {
       operationId: "githubWebhook",
       summary:
-        "The GitHub App's webhook (GitHub calls it; the signature is the credential). X-Hub-Signature-256 is checked over the raw body before parsing, and each X-GitHub-Delivery is handled once. Handles installation, installation_repositories and repository; ping and other events are recorded and ignored",
+        "The GitHub App's webhook (GitHub calls it; the signature is the credential). X-Hub-Signature-256 is checked over the raw body before parsing, and each X-GitHub-Delivery is handled once. Handles installation, installation_repositories and repository, and links branches, commits and pull requests to tasks from create, delete, push and pull_request (a pull_request event older than the stored PR changes nothing); ping and other events are recorded and ignored",
       security: [],
       parameters: [
         { name: "X-GitHub-Event", in: "header", required: true, schema: { type: "string" }, description: 'e.g. "installation"' },
@@ -1141,6 +1182,15 @@ const paths = {
       operationId: "listTaskActivity",
       summary: "A task's history from the activity log, oldest first",
       responses: { "200": ok("Activity", "ActivityList"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/git": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "getTaskGit",
+      summary:
+        "Branches, commits and pull requests linked to the task from GitHub: a branch named after it, commits and PRs that mention it (only in repos attached to its project)",
+      responses: { "200": ok("Git links", "TaskGit"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/backlinks": {

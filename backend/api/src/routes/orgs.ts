@@ -33,6 +33,7 @@ import {
   listSubtasks,
   removeRelation,
   listTaskActivity,
+  getTaskGit,
   listComments,
   listInbox,
   markInboxRead,
@@ -400,6 +401,9 @@ export function orgRoutes(
   app.get("/tasks/:taskKey/activity", async (c) =>
     c.json(list(await listTaskActivity(db, c.get("actor"), c.req.param("taskKey")))),
   );
+
+  // Branches, commits and pull requests linked to the task from GitHub (ST-84).
+  app.get("/tasks/:taskKey/git", async (c) => c.json(await getTaskGit(db, c.get("actor"), c.req.param("taskKey"))));
 
   // Documents mentioning the task: [[ST-12]] or a plain ST-12 (ST-101).
   app.get("/tasks/:taskKey/backlinks", async (c) =>
