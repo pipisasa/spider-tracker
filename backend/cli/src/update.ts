@@ -147,7 +147,8 @@ export const noticeLine = (latest: string) =>
   `A new spider is available: ${CLI_VERSION} → ${latest}. Run: spider update\n`;
 
 /** Commands that never show the passive notice (machine output, long-running or the updater itself). */
-const QUIET_COMMANDS = new Set(["mcp-headers", "channel", "update", "claude"]);
+// uninstall deletes the config folder the update cache lives in.
+const QUIET_COMMANDS = new Set(["mcp-headers", "channel", "update", "claude", "uninstall"]);
 const GLOBAL_WITH_VALUE = new Set(["--as", "--server"]);
 
 /** The top-level command in argv, skipping global options. */

@@ -69,5 +69,7 @@ If you are an AI coding assistant (e.g. Claude Code) and the user asked you to s
 5. **Tell the user how to start the agent:** \`spider claude <handle>\`. People can mention it in the tracker as \`@<handle>\`.
 
 Never print, copy or store the API key that the CLI saves; it stays in the CLI's credentials file.
+
+To remove everything later (keys, plugins, files and the binary): \`spider uninstall\`.
 `;
 }

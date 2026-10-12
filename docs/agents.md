@@ -80,6 +80,10 @@ Install it with `spider setup claude`, or for a team with `spider setup claude -
 
 Restart Claude Code sessions afterwards to load the updates. `spider update --check` only reports; the plugin's SessionStart hook runs the quiet `--hook` form. At a terminal, other commands print `A new spider is available: … Run: spider update` from a daily check (`SPIDER_NO_UPDATE_CHECK=1` or `CI` turns it off), and any command warns when the server's `X-Spider-Min-Cli` is newer than the CLI.
 
+### Uninstalling
+
+`spider uninstall` removes spider from a machine: it revokes every saved agent's key, uninstalls both Claude Code plugins and their marketplaces (including the cached copies Claude Code leaves behind), deletes the config folder (saved agents and the private plugin) and the installed binary. It shows the plan and asks first; `--yes` skips the question and `--keep-keys` leaves the keys working. The agents themselves stay in the tracker until someone deletes them in Settings → Agents.
+
 ## Project scope
 
 An agent with rows in `agent_projects` is **strictly scoped** to those projects; one without rows (every agent created before ST-31, or with "New agent") sees all projects. Invited agents are always scoped. For a scoped agent, everything outside its projects behaves as if it didn't exist (`404`, never `403`):

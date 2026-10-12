@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
 import { styleText } from "node:util";
-import { Separator, select as inquirerSelect } from "@inquirer/prompts";
+import { Separator, confirm as inquirerConfirm, select as inquirerSelect } from "@inquirer/prompts";
 import { run, type Choice } from "./cli";
 import { isCompiled, replaceBinary } from "./self-update";
 
@@ -40,6 +40,15 @@ async function select(question: string, choices: Choice[]): Promise<string | nul
     return null;
   } finally {
     process.stdin.off("keypress", onKey);
+  }
+}
+
+/** Yes/no on stderr; Ctrl-C or Esc counts as no. */
+async function confirm(question: string): Promise<boolean> {
+  try {
+    return await inquirerConfirm({ message: question, default: false }, { output: process.stderr });
+  } catch {
+    return false;
   }
 }
 
@@ -82,5 +91,7 @@ process.exitCode = await run(process.argv.slice(2), {
   spawn: spawnInherit,
   runClaude,
   isInteractive: !!process.stderr.isTTY,
+  confirm: interactive ? confirm : undefined,
+  binaryPath: isCompiled() ? process.execPath : undefined,
   selfUpdate: isCompiled() ? (version) => replaceBinary(version, (input, init) => fetch(input, init)) : undefined,
 });

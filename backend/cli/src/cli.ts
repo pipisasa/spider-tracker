@@ -43,6 +43,7 @@ import {
 } from "./claude-setup";
 import { currentBranch, taskKeyFromBranch } from "./git";
 import { isCompiled } from "./self-update";
+import { describePlan, runUninstall, uninstallPlan } from "./uninstall";
 import { checkForUpdates } from "./update-check";
 import {
   hookNote,
@@ -109,6 +110,10 @@ export interface RunOptions {
   isInteractive?: boolean;
   /** Replaces this compiled binary with release `version`; omitted when running from source. */
   selfUpdate?: (version: string) => Promise<unknown>;
+  /** Asks a person yes/no (only at an interactive terminal); `spider uninstall` without --yes. */
+  confirm?: (question: string) => Promise<boolean>;
+  /** The installed spider binary `spider uninstall` deletes; omitted when running from source. */
+  binaryPath?: string;
 }
 
 export interface Choice {
@@ -805,6 +810,44 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       { scope: "user", claude: installed, marketplace: source, plugin: SHARED_PLUGIN_ID, agentsPlugin: installed && root ? PLUGIN_ID : null },
       () => (installed ? `Installed ${SHARED_PLUGIN_ID} (from ${source}) and ${PLUGIN_ID} for your user. Restart Claude Code to load them.` : ""),
     );
+  });
+
+  withJson(
+    program
+      .command("uninstall")
+      .description("remove spider from this machine: revoke saved keys, uninstall its Claude Code plugins, delete its files")
+      .option("-y, --yes", "don't ask for confirmation")
+      .option("--keep-keys", "forget saved agents without revoking their keys"),
+  ).action(async (opts: JsonOption & { yes?: boolean; keepKeys?: boolean }) => {
+    const store = await readStore(options.env);
+    const plan = await uninstallPlan(options.env, store, { keepKeys: !!opts.keepKeys, binary: options.binaryPath });
+    if (!opts.yes) {
+      if (!options.confirm || opts.json) {
+        throw usageError(`${describePlan(plan)}\nRe-run with --yes to go ahead.`);
+      }
+      stderr.write(`${describePlan(plan)}\n`);
+      if (!(await options.confirm("Uninstall spider?"))) {
+        stderr.write("Nothing removed.\n");
+        return;
+      }
+    }
+    const removed = await runUninstall(plan, {
+      revoke: (entry) => revoke(entry),
+      runClaude: options.runClaude,
+    });
+    output(opts, removed, () =>
+      [
+        ...removed.revoked.map((ref) => `Revoked the key of ${ref}`),
+        ...removed.revokeFailed.map(({ agent, error }) => `Couldn't revoke ${agent} (${error}); revoke it in the web app (Settings → Agents)`),
+        ...removed.plugins.filter((p) => p.removed).map((p) => `Uninstalled ${p.id}`),
+        ...removed.marketplaces.filter((m) => m.removed).map((m) => `Removed marketplace ${m.name}`),
+        ...(removed.claudeMissing ? ["Claude Code isn't installed; no plugins to remove"] : []),
+        ...removed.deleted.map((path) => `Deleted ${path}`),
+        plan.binary ? "spider is uninstalled." : "Done. spider itself runs from source, so it stays.",
+        "The agents themselves stay in the tracker; delete them in Settings → Agents.",
+      ].join("\n"),
+    );
+    if (removed.revokeFailed.length) result.exitCode = EXIT.unexpected;
   });
 
   withJson(

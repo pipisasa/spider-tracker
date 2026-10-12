@@ -161,6 +161,10 @@ The organization is the key's (from `whoami`).
 
 **Passive notice:** when stderr is a terminal, after any command except `--json` runs, `mcp-headers`, `channel` and `update` (and before `spider claude` starts Claude Code), the CLI prints `A new spider is available: <current> → <latest>. Run: spider update` from the cache. A stale cache is refreshed in the background while the command runs; the CLI waits at most 300 ms more for it after the command. `SPIDER_NO_UPDATE_CHECK=1` or `CI` turns this off.
 
+### Uninstalling
+
+`spider uninstall [--yes] [--keep-keys] [--json]` removes everything the CLI put on the machine, in this order: revokes every saved agent's key on its server (`DELETE /v1/api-keys/current`; `--keep-keys` only forgets them), runs `claude plugin uninstall … --scope user` for `spider-tracker@spider-tracker` and `spider-agents@spider-local` and `claude plugin marketplace remove` for `spider-tracker` and `spider-local`, deletes the copies Claude Code leaves in `~/.claude/plugins/cache/{spider-tracker,spider-local}` and any other agent file with `spider-agent:` (older `~/.claude/agents` setups), then the config folder and, for a compiled install, the binary itself. Without `--yes` it shows the plan and asks (at a terminal) or exits 2 (otherwise). A key that can't be revoked is reported (exit 1) and everything else still goes. The agents stay in the tracker; delete them in Settings → Agents. It never touches other plugins or agent files.
+
 ### Starting Claude Code as an agent
 `spider claude [agent] [--no-channel] [-- claude args…]` picks the agent (the argument, `--as`, a picker grouped server → organization when run at a terminal with several agents saved, else `SPIDER_AGENT` or the default) and runs:
 
