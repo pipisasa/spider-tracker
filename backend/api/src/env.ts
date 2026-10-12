@@ -17,7 +17,14 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   /** Sender of outgoing email; the domain must be verified in Resend. */
   MAIL_FROM: z.string().default("Spider Tracker <noreply@batele.plus>"),
+  /**
+   * The proxy in front of the API whose client-IP header rate limits trust (ST-45):
+   * "none" (socket address), "cloudflare" (CF-Connecting-IP) or "railway" (right-most X-Forwarded-For).
+   */
+  TRUSTED_PROXY: z.enum(["none", "cloudflare", "railway"]).default("none"),
 });
+
+export type TrustedProxy = z.infer<typeof envSchema>["TRUSTED_PROXY"];
 
 export type Env = z.infer<typeof envSchema>;
 

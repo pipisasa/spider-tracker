@@ -19,7 +19,8 @@
     "SPIDER_NO_UPDATE_CHECK",
     "SIGNUP_ALLOWLIST",
     "RESEND_API_KEY",
-    "MAIL_FROM"
+    "MAIL_FROM",
+    "TRUSTED_PROXY"
   ],
   "tasks": {
     "build": {

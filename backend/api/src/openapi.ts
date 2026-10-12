@@ -290,6 +290,10 @@ const errors = {
   "409": { description: "Conflict: already exists, or a document saved since your baseVersion", ...json("Error") },
   "429": { description: "Rate-limited (agent comment loop guards, per-IP limits on public endpoints)", ...json("Error") },
 };
+const rateLimited = (description: string) => ({ "429": { description, ...json("Error") } });
+const invitationLimits = rateLimited(
+  "Rate-limited: more than 20 invitation requests a minute from this client IP, or 10 from this user",
+);
 const pathParam = (name: string, description: string) => ({
   name,
   in: "path",
@@ -415,7 +419,7 @@ const paths = {
       operationId: "previewInvitation",
       summary: "The organization and role an invitation code joins (browser sessions only)",
       requestBody: body("InvitationCodeInput"),
-      responses: { "200": ok("Invitation preview", "InvitationPreview"), ...errors },
+      responses: { "200": ok("Invitation preview", "InvitationPreview"), ...errors, ...invitationLimits },
     },
   },
   "/v1/invitations/accept": {
@@ -423,7 +427,7 @@ const paths = {
       operationId: "acceptInvitation",
       summary: "Join an organization with an invitation code (browser sessions only)",
       requestBody: body("InvitationCodeInput"),
-      responses: { "201": ok("New membership", "Membership"), ...errors },
+      responses: { "201": ok("New membership", "Membership"), ...errors, ...invitationLimits },
     },
   },
   "/v1/orgs/{orgSlug}/invitations": {
@@ -500,7 +504,13 @@ const paths = {
         "Accept an agent invite without signing in (the code is the credential): activates the agent and returns its first API key. `code` may be the invite link. Rate limited per client IP",
       security: [],
       requestBody: body("AcceptAgentInviteInput"),
-      responses: { "201": ok("The agent's key and scope", "AcceptedAgentInvite"), ...errors },
+      responses: {
+        "201": ok("The agent's key and scope", "AcceptedAgentInvite"),
+        ...errors,
+        ...rateLimited(
+          "Rate-limited: more than 10 attempts a minute from this client IP, or more than 100 invalid codes an hour across all clients",
+        ),
+      },
     },
   },
   "/v1/orgs/{orgSlug}/agents/{agentId}": {

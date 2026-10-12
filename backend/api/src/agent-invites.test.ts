@@ -23,6 +23,7 @@ const env = loadEnv({
   API_ORIGIN: "http://localhost:4000",
   WEB_ORIGIN: "http://localhost:5173",
   BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret-123",
+  TRUSTED_PROXY: "railway",
 });
 
 const db = createDb(env.DATABASE_URL);

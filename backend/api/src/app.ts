@@ -14,7 +14,7 @@ import {
 } from "@repo/core";
 import type { Db } from "@repo/db";
 import { sql } from "drizzle-orm";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { apiDocsRoutes } from "./api-docs";
@@ -44,6 +44,9 @@ function errorBody(code: string, message: string): ApiErrorBody {
 export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   const app = new Hono<AppEnv>();
   const realtime = createRealtime(db);
+  const ipOf = (c: Context<AppEnv>) => clientIp(c.req.raw, env.TRUSTED_PROXY, c.env);
+  const tooMany = (c: Context<AppEnv>) =>
+    c.json(errorBody("rate_limited", "Too many attempts. Try again in a minute"), 429);
 
   app.use(
     "*",
@@ -83,9 +86,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   // Each device code is a database row; rate limited per client IP.
   const deviceCodeRequests = createRateLimiter({ limit: 10, windowMs: 60_000 });
   app.post("/device/code", async (c, next) => {
-    if (!deviceCodeRequests.attempt(clientIp(c.req.raw.headers))) {
-      return c.json(errorBody("rate_limited", "Too many attempts. Try again in a minute"), 429);
-    }
+    if (!deviceCodeRequests.attempt(ipOf(c))) return tooMany(c);
     await next();
   });
   app.route("/device", deviceRoutes(db, env));
@@ -96,17 +97,35 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   app.route("/mcp", mcpRoutes(db, realtime));
 
   // Agent invites are accepted without a session: the code is the credential (ST-31).
-  // Registered before the /v1 auth middleware; rate limited per client IP.
+  // Registered before the /v1 auth middleware; rate limited per client IP, and failed codes from
+  // all IPs together are capped so distributed guessing stays bounded.
   const inviteAttempts = createRateLimiter({ limit: 10, windowMs: 60_000 });
+  const failedInviteCodes = createRateLimiter({ limit: 100, windowMs: 60 * 60_000 });
   app.post("/v1/agent-invites/accept", async (c) => {
-    if (!inviteAttempts.attempt(clientIp(c.req.raw.headers))) {
-      return c.json(errorBody("rate_limited", "Too many attempts. Try again in a minute"), 429);
+    if (!inviteAttempts.attempt(ipOf(c))) return tooMany(c);
+    if (failedInviteCodes.exhausted("all")) {
+      return c.json(errorBody("rate_limited", "Too many invalid invite codes. Try again later"), 429);
     }
     const input: unknown = await c.req.json().catch(() => null);
     const source = c.req.header("X-Spider-Source")?.trim().toLowerCase();
-    const accepted = await acceptAgentInvite(db, input, source === "cli" || source === "mcp" ? source : "api");
+    const accepted = await acceptAgentInvite(db, input, source === "cli" || source === "mcp" ? source : "api").catch(
+      (err: unknown) => {
+        if (err instanceof DomainError && (err.code === "validation" || err.code === "not_found")) {
+          failedInviteCodes.attempt("all");
+        }
+        throw err;
+      },
+    );
     const body: AcceptedAgentInviteDto = { ...accepted, actor: toActorDto(accepted.actor) };
     return c.json(body, 201);
+  });
+
+  // Joining with an invitation code: per client IP before sign-in is checked, per user below.
+  const invitationIpAttempts = createRateLimiter({ limit: 20, windowMs: 60_000 });
+  const invitationUserAttempts = createRateLimiter({ limit: 10, windowMs: 60_000 });
+  app.use("/v1/invitations/*", async (c, next) => {
+    if (!invitationIpAttempts.attempt(ipOf(c))) return tooMany(c);
+    await next();
   });
 
   // Everything under /v1 requires a browser session or an agent API key (Bearer spt_…).
@@ -158,6 +177,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   app.post("/v1/invitations/preview", async (c) => {
     const user = c.get("user");
     if (!user) return c.json(errorBody("forbidden", "Only people can join organizations"), 403);
+    if (!invitationUserAttempts.attempt(user.id)) return tooMany(c);
     const input: unknown = await c.req.json().catch(() => null);
     const body: InvitationPreviewDto = await previewInvitation(db, user.id, input);
     return c.json(body);
@@ -166,6 +186,7 @@ export function createApp({ db, auth, env }: { db: Db; auth: Auth; env: Env }) {
   app.post("/v1/invitations/accept", async (c) => {
     const user = c.get("user");
     if (!user) return c.json(errorBody("forbidden", "Only people can join organizations"), 403);
+    if (!invitationUserAttempts.attempt(user.id)) return tooMany(c);
     const input: unknown = await c.req.json().catch(() => null);
     const joined = await acceptInvitation(db, user, input);
     return c.json(toMembership(joined), 201);
