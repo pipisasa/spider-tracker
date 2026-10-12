@@ -225,7 +225,8 @@ spider task list [--project ST] [--status "In Progress"] [--mine] [--assignee @a
 spider task view [ST-12]
 spider task create --project ST --title "Fix login" [--description …] [--status Todo] [--priority 0-4] [--assign @alice --assign me]
 spider task update [ST-12] [--title …] [--description …] [--status …] [--priority …] [--assign …]
-spider task start [ST-12]   # assign me + the project's first in-progress status
+spider task start [ST-12] [--no-branch]   # assign me + the project's first in-progress status + the task's git branch
+spider start [ST-12] [--no-branch]        # the same
 spider task done [ST-12]    # the project's first done status
 spider tags
 spider task create … [--tag bug --tag agent]   # also on update (replaces; --tag "" clears)
@@ -243,16 +244,17 @@ spider channel              # Claude Code channel over stdio (see agents.md)
 ```
 
 - **Task key from git:** an omitted key is taken from the current branch name (`st-12-fix`, `feat/ST-12` → `ST-12`).
+- **`start` and git:** after starting the task, `spider start` switches to the branch `st-12-short-title` (`branchNameFor` in `@repo/core/git`; see [git-integration.md](./git-integration.md#branch-names)), creating it from `HEAD` if it doesn't exist. It leaves git alone outside a repository, with `--no-branch`, or when the current branch already contains the key. Uncommitted changes print a warning on stderr and come along; a failed switch is a warning too, never a failure. `--json` adds `branch`: the branch now checked out, or null when git was skipped or failed.
 - **`task list` filters** run on the server: `--assignee` (handles, deactivated ones too, `me`, `mine` or `none`; `--mine` is `--assignee me`, while `--assignee mine` adds the owner and their agents) and `--priority` (numbers or names) match any of their values, `--tag` requires all the tags (any of them with `--any-tag`); all are repeatable or comma-separated. The CLI re-applies the filters to the response, so a server from before ST-50 that ignores them still yields only matching tasks. For that re-check `mine` becomes ids: the caller's person and their agents, deleted ones included, from the actors' `ownerId` (`members?all=true`; ST-78); a server from before ST-76 rejects `mine` as an unknown member.
 - **Statuses** match by name, then by category (`in_progress`), case-insensitively. **Assignees** are handles (with or without `@`) or `me`; `--assign` is repeatable or comma-separated and replaces the list on `update`. **Priority:** `0`–`4` or `none`, `urgent`, `high`, `medium`, `low`. `--description ""` clears it.
-- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `project create|update|archive` → the project with its `statuses`, `project view` → the same with `taskCount` on each status; `task list` → `{ items: Task[] }`; other task commands → `Task`, where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
+- **Output:** one compact line per task by default. `--json` (every command) prints one line of JSON: `whoami` → `{ actor, organization, agent }` (`agent`: the saved agent's `server/org/handle`, or null for `SPIDER_TOKEN`); `agents` → `{ default, items }`; `projects` → `{ items: Project[] }`; `project create|update|archive` → the project with its `statuses`, `project view` → the same with `taskCount` on each status; `task list` → `{ items: Task[] }`; other task commands → `Task` (`start` adds `branch`), where `Task` is the API task plus `status: { id, name, category }` and `assignees` (handles).
 - **Errors** go to stderr (`spider: …`, or `{ "error": { "code", "message" } }` with `--json`). **Exit codes:** `0` ok, `1` unexpected, `2` usage/validation, `3` not found, `4` auth/permission (not signed in, denied or expired login). `run` never prompts; only the bin passes the `spider claude` picker, and only when stdin and stdout are terminals.
 - **Documents:** `--file -` reads standard input; `.html` files default to `--format html`. `doc edit` needs `--base-version <n>`, the version the edit is based on (printed by `doc view` and `doc list`): if someone saved a newer version, it fails with exit code `2` (`conflict`) instead of overwriting it. `--force` instead saves on top of whatever is current.
-- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin?, select?, spawn?, self? })`; `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
+- Code: `src/cli.ts` exports `run(argv, { env, fetch?, stdout, stderr, cwd?, openUrl?, sleep?, stdin?, select?, spawn?, git?, self? })`; `git` runs git commands (default: the real `git`; tests inject a fake); `src/index.ts` is the bin. Tests call `run` against the Hono app through `fetch`.
 
 ### Planned
 - Keys in the OS keychain instead of a file, per-repo defaults in `.spider.json`
-- `spider pr`, `spider start` creating and checking out the branch
+- `spider pr`
 - `spider agent list|run|logs`, `spider doc pull|push` (sync with local files), `--field` filters
 - Filtering by tag group (e.g. "any tag in group Area") once tag groups exist
 - Distribution through npm and standalone binaries for Homebrew and curl installs

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run, type RunOptions } from "./cli";
 import type { Store } from "./credentials";
+import type { GitRunner } from "./git";
 import { CLI_VERSION } from "./version";
 
 const project = {
@@ -200,6 +201,103 @@ function savedAgents() {
   const env = { HOME: home, SPIDER_CONFIG_DIR: configDir };
   return { home, env, cleanup: () => rmSync(home, { recursive: true, force: true }) };
 }
+
+/** A fake git repository: records commands and answers the ones `spider start` runs. */
+function fakeGit({ repo = true, branch = "main", branches = ["main"], dirty = false, failSwitch = false } = {}) {
+  const state = { branch, branches: new Set(branches) };
+  const calls: string[] = [];
+  const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
+  const fail = (stderr = "") => ({ exitCode: 128, stdout: "", stderr });
+  const git: GitRunner = (args, cwd) => {
+    expect(cwd).toBe("/work");
+    calls.push(args.join(" "));
+    if (!repo) return fail("fatal: not a git repository");
+    const [command, ...rest] = args;
+    if (command === "rev-parse" && rest[0] === "--is-inside-work-tree") return ok("true\n");
+    if (command === "rev-parse") return state.branches.has(rest.at(-1)?.replace("refs/heads/", "") ?? "") ? ok() : fail();
+    if (command === "branch") return ok(`${state.branch}\n`);
+    if (command === "status") return ok(dirty ? " M src/index.ts\n" : "");
+    if (command === "switch") {
+      if (failSwitch) return fail("error: Your local changes would be overwritten by checkout");
+      const name = rest.at(-1) ?? "";
+      if (rest[0] === "-c") state.branches.add(name);
+      state.branch = name;
+      return ok();
+    }
+    return fail(`unexpected git ${args.join(" ")}`);
+  };
+  return { git, calls, state };
+}
+
+describe("spider start", () => {
+  const startApi = () => {
+    const statuses = [...project.statuses, { id: "s2", name: "Doing", category: "in_progress", color: null, position: 2 }];
+    return fakeApi({
+      "GET /v1/orgs/acme/projects/ST": () => Response.json({ ...project, statuses }),
+      "PATCH /v1/orgs/acme/tasks/ST-1": () => Response.json({ ...task, statusId: "s2", assigneeIds: ["agent"] }),
+    }).fetch;
+  };
+  const start = (argv: string[], git: GitRunner) => cli(argv, { fetch: startApi(), git, cwd: "/work" });
+
+  test("on main it creates and switches to st-1-<title>", async () => {
+    const { git, calls, state } = fakeGit();
+    const result = await start(["task", "start", "ST-1"], git);
+    expect(result.code).toBe(0);
+    expect(state.branch).toBe("st-1-write-the-cli");
+    expect(calls).toContain("switch -c st-1-write-the-cli");
+    expect(result.stdout).toContain("Created and switched to branch st-1-write-the-cli");
+    expect(result.stderr).toBe("");
+  });
+
+  test("an existing branch is switched to, not created; --json has the branch", async () => {
+    const { git, calls } = fakeGit({ branches: ["main", "st-1-write-the-cli"] });
+    const result = await start(["start", "ST-1", "--json"], git);
+    expect(result.code).toBe(0);
+    expect(calls).toContain("switch st-1-write-the-cli");
+    expect(JSON.parse(result.stdout)).toMatchObject({ key: "ST-1", status: { category: "in_progress" }, branch: "st-1-write-the-cli" });
+  });
+
+  test("already on a branch with the key: no switch, the key comes from the branch", async () => {
+    const { git, calls } = fakeGit({ branch: "feat/st-1-cli", branches: ["main", "feat/st-1-cli"] });
+    const result = await start(["start", "--json"], git);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ key: "ST-1", branch: "feat/st-1-cli" });
+    expect(calls.some((c) => c.startsWith("switch"))).toBe(false);
+  });
+
+  test("--no-branch leaves git alone", async () => {
+    const { git, calls } = fakeGit();
+    const result = await start(["task", "start", "ST-1", "--no-branch", "--json"], git);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ key: "ST-1", branch: null });
+    expect(calls).toEqual([]);
+  });
+
+  test("outside a repository the branch is skipped", async () => {
+    const { git, calls } = fakeGit({ repo: false });
+    const result = await start(["start", "ST-1", "--json"], git);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ branch: null });
+    expect(calls).toEqual(["rev-parse --is-inside-work-tree"]);
+  });
+
+  test("a dirty working tree warns but still switches", async () => {
+    const { git, state } = fakeGit({ dirty: true });
+    const result = await start(["start", "ST-1"], git);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("uncommitted changes");
+    expect(state.branch).toBe("st-1-write-the-cli");
+  });
+
+  test("a failed switch warns; the task is still started", async () => {
+    const { git, state } = fakeGit({ branches: ["main", "st-1-write-the-cli"], failSwitch: true });
+    const result = await start(["start", "ST-1", "--json"], git);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("couldn't switch to branch st-1-write-the-cli: error: Your local changes");
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: { category: "in_progress" }, branch: null });
+    expect(state.branch).toBe("main");
+  });
+});
 
 describe("saved agents", () => {
   test("which key: --as > SPIDER_TOKEN > SPIDER_AGENT > default", async () => {

@@ -11,10 +11,11 @@ import { actorLabel } from "@/lib/assignees";
 import { useWorkingNow } from "@/lib/use-presence";
 import { actorsQuery, membersQuery, projectQuery, taskQuery, useDeleteTask, useUpdateTask } from "@/lib/work";
 import type { TaskDto } from "@repo/core/contracts";
+import { branchNameFor } from "@repo/core/git";
 import type { UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -70,6 +71,16 @@ function TaskPage() {
     });
   }
 
+  async function copyBranchName() {
+    const branch = branchNameFor(task.key, task.title);
+    try {
+      await navigator.clipboard.writeText(branch);
+      toast.success(`Copied ${branch}`);
+    } catch {
+      toast.error("Couldn't copy the branch name");
+    }
+  }
+
   const fields = (
     <>
         <Field label="Status">
@@ -101,9 +112,13 @@ function TaskPage() {
             <span className="text-sm">{dateTimeFormat.format(new Date(task.completedAt))}</span>
           </Field>
         )}
+        <Button variant="ghost" className="mt-auto justify-start" onClick={copyBranchName}>
+          <GitBranchIcon />
+          Copy branch name
+        </Button>
         <Button
           variant="ghost"
-          className="mt-auto justify-start text-destructive hover:text-destructive"
+          className="justify-start text-destructive hover:text-destructive"
           onClick={deleteTask}
           disabled={remove.isPending}
         >

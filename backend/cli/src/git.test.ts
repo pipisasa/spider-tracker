@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { currentBranch, taskKeyFromBranch } from "./git";
+import { createOrSwitchBranch, currentBranch, isDirty, remoteRepo, repoFromRemoteUrl, taskKeyFromBranch, type GitRunner } from "./git";
 
 describe("taskKeyFromBranch", () => {
   test.each([
@@ -30,5 +30,58 @@ describe("currentBranch", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/** Answers git commands from a table ("args joined by spaces" → stdout; missing → exit 1) and records them. */
+function fakeGit(answers: Record<string, string>) {
+  const calls: string[] = [];
+  const git: GitRunner = (args) => {
+    const command = args.join(" ");
+    calls.push(command);
+    const stdout = answers[command];
+    return stdout === undefined ? { exitCode: 1, stdout: "", stderr: "fatal" } : { exitCode: 0, stdout, stderr: "" };
+  };
+  return { git, calls };
+}
+
+describe("remoteRepo", () => {
+  test.each([
+    ["https://github.com/pipisasa/spider-tracker.git", "pipisasa/spider-tracker"],
+    ["https://github.com/pipisasa/spider-tracker", "pipisasa/spider-tracker"],
+    ["https://token@github.com/pipisasa/spider-tracker.git", "pipisasa/spider-tracker"],
+    ["git@github.com:pipisasa/spider-tracker.git", "pipisasa/spider-tracker"],
+    ["ssh://git@github.com/pipisasa/spider-tracker.git", "pipisasa/spider-tracker"],
+    ["ssh://git@github.com:22/pipisasa/spider.tracker", "pipisasa/spider.tracker"],
+  ])("%s → %s", (url, repo) => {
+    expect(repoFromRemoteUrl(url)).toBe(repo);
+  });
+
+  test.each(["", "/srv/git/repo.git", "https://gitlab.com/group/sub/repo.git"])("%s has no owner/name", (url) => {
+    expect(repoFromRemoteUrl(url)).toBeNull();
+  });
+
+  test("reads origin, or null without one", () => {
+    expect(remoteRepo("/work", fakeGit({ "remote get-url origin": "git@github.com:o/r.git\n" }).git)).toBe("o/r");
+    expect(remoteRepo("/work", fakeGit({}).git)).toBeNull();
+  });
+});
+
+describe("branches", () => {
+  test("createOrSwitchBranch creates a missing branch and switches to an existing one", () => {
+    const missing = fakeGit({ "switch -c st-1-x": "" });
+    expect(createOrSwitchBranch("/work", "st-1-x", missing.git)).toEqual({ created: true });
+    expect(missing.calls).toEqual(["rev-parse --verify --quiet refs/heads/st-1-x", "switch -c st-1-x"]);
+
+    const existing = fakeGit({ "rev-parse --verify --quiet refs/heads/st-1-x": "abc\n", "switch st-1-x": "" });
+    expect(createOrSwitchBranch("/work", "st-1-x", existing.git)).toEqual({ created: false });
+    expect(existing.calls.at(-1)).toBe("switch st-1-x");
+
+    expect(() => createOrSwitchBranch("/work", "st-1-x", fakeGit({}).git)).toThrow("fatal");
+  });
+
+  test("isDirty looks at tracked changes", () => {
+    expect(isDirty("/work", fakeGit({ "status --porcelain --untracked-files=no": " M a.ts\n" }).git)).toBe(true);
+    expect(isDirty("/work", fakeGit({ "status --porcelain --untracked-files=no": "" }).git)).toBe(false);
   });
 });

@@ -43,7 +43,8 @@ import {
   writeProjectSettings,
   type RunClaude,
 } from "./claude-setup";
-import { currentBranch, taskKeyFromBranch } from "./git";
+import { branchNameFor, taskKeysIn } from "@repo/core/git";
+import { createOrSwitchBranch, currentBranch, isDirty, isRepo, runGit, taskKeyFromBranch, type GitRunner } from "./git";
 import { isCompiled } from "./self-update";
 import { describePlan, runUninstall, uninstallPlan } from "./uninstall";
 import { checkForUpdates } from "./update-check";
@@ -105,6 +106,8 @@ export interface RunOptions {
   select?: (question: string, choices: Choice[]) => Promise<string | null>;
   /** Runs a program with inherited stdio and resolves to its exit code (`spider claude`). */
   spawn?: (argv: string[], options: { env: Record<string, string | undefined> }) => Promise<number>;
+  /** Runs `git <args>` in a directory (branch lookups, `spider start`); defaults to the real git. */
+  git?: GitRunner;
   /** The command that runs this CLI, for the MCP config `spider claude` writes; defaults to the running one. */
   self?: string[];
   /** Runs `claude <args>` capturing its output (plugin setup); undefined result when Claude Code is missing. */
@@ -329,13 +332,13 @@ type Api = ReturnType<typeof connect>;
 const projectKeyOf = (taskKey: string) => parseTaskKey(taskKey)?.projectKey ?? taskKey.split("-")[0] ?? taskKey;
 
 /** The task key given, or the one in the current branch name. */
-function taskKey(given: string | undefined, cwd: string): string {
+function taskKey(given: string | undefined, cwd: string, git: GitRunner): string {
   if (given) {
     const parsed = parseTaskKey(given.trim());
     if (!parsed) throw usageError(`Invalid task key "${given}". Expected something like ST-12`);
     return `${parsed.projectKey}-${parsed.number}`;
   }
-  const branch = currentBranch(cwd);
+  const branch = currentBranch(cwd, git);
   const key = branch ? taskKeyFromBranch(branch) : null;
   if (!key) {
     throw usageError(
@@ -445,6 +448,7 @@ function reportLines(report: UpdateReport): string {
 /** Builds the command tree for one run; actions write to the run's streams. */
 function buildProgram(options: RunOptions, cwd: string, argv: string[], json = false) {
   const { stdout, stderr } = options;
+  const git = options.git ?? runGit;
   let api: Api | undefined;
   /** Set by commands that run another program (`spider claude`) to its exit code. */
   const result: { exitCode?: number } = {};
@@ -500,7 +504,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     if (opts.tag !== undefined) input.tagIds = resolveTags(await conn().tags(), opts.tag);
     if (opts.parent !== undefined) {
       const { sdk, org } = conn();
-      input.parentId = opts.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(opts.parent, cwd))).id;
+      input.parentId = opts.parent.trim() === "" ? null : (await (await sdk()).tasks.get(await org(), taskKey(opts.parent, cwd, git))).id;
     }
     return input;
   };
@@ -1064,8 +1068,8 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         .argument("<task>", "the other task, e.g. ST-15"),
     ).action(async (key: string, rawKind: string, other: string, opts: JsonOption) => {
       const kind = parseRelationKind(rawKind);
-      const self = taskKey(key, cwd);
-      const target = taskKey(other, cwd);
+      const self = taskKey(key, cwd, git);
+      const target = taskKey(other, cwd, git);
       const { sdk, org } = conn();
       const client = await sdk();
       if (name === "link") await client.tasks.relations.add(await org(), self, { kind, task: target });
@@ -1232,7 +1236,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     async (key: string | undefined, opts: JsonOption) => {
       const { sdk, org, describe } = conn();
       const client = await sdk();
-      const resolved = taskKey(key, cwd);
+      const resolved = taskKey(key, cwd, git);
       const [found, subtasks, relations] = await Promise.all([
         client.tasks.get(await org(), resolved).then(describe),
         // Servers from before sub-tasks (ST-9) and relations (ST-10) have no such routes.
@@ -1276,32 +1280,62 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .argument("[key]")
       .option("--title <text>", "title"),
   ).action(async (key: string | undefined, opts: TaskFields) => {
-    const resolved = taskKey(key, cwd);
+    const resolved = taskKey(key, cwd, git);
     const input = await taskInput(projectKeyOf(resolved), opts);
     if (Object.keys(input).length === 0) throw usageError("Nothing to update. Pass --title, --status, --assign, …");
     await update(resolved, input, opts);
   });
 
-  withJson(
-    task
-      .command("start")
-      .description("assign me and move to the first in-progress status")
-      .argument("[key]"),
-  ).action(async (key: string | undefined, opts: JsonOption) => {
-    const resolved = taskKey(key, cwd);
-    const { sdk, org, whoami, project } = conn();
+  /**
+   * Checks out the task's branch (`st-12-short-title`) for `spider start`: kept when the current branch already
+   * names the task; skipped outside a repository. Returns the branch worked on, or null.
+   */
+  const checkoutTaskBranch = (key: string, title: string): { branch: string | null; note?: string } => {
+    if (!isRepo(cwd, git)) return { branch: null };
+    const current = currentBranch(cwd, git);
+    if (current && taskKeysIn(current).includes(key)) return { branch: current };
+    const name = branchNameFor(key, title);
+    if (isDirty(cwd, git)) stderr.write("Warning: the working tree has uncommitted changes; they move to the new branch.\n");
+    try {
+      const { created } = createOrSwitchBranch(cwd, name, git);
+      return { branch: name, note: `${created ? "Created and switched to" : "Switched to"} branch ${name}` };
+    } catch (err) {
+      stderr.write(`Warning: couldn't switch to branch ${name}: ${err instanceof Error ? err.message : String(err)}\n`);
+      return { branch: null };
+    }
+  };
+
+  type StartOptions = JsonOption & { branch: boolean };
+  const startTask = async (key: string | undefined, opts: StartOptions) => {
+    const resolved = taskKey(key, cwd, git);
+    const { sdk, org, whoami, project, describe } = conn();
+    const client = await sdk();
     const [current, detail, who] = await Promise.all([
-      (await sdk()).tasks.get(await org(), resolved),
+      client.tasks.get(await org(), resolved),
       project(projectKeyOf(resolved)),
       whoami(),
     ]);
     const assigneeIds = [...new Set([...current.assigneeIds, who.actor.id])];
-    await update(resolved, { statusId: firstStatus(detail, "in_progress").id, assigneeIds }, opts);
-  });
+    const started = await describe(
+      await client.tasks.update(await org(), resolved, { statusId: firstStatus(detail, "in_progress").id, assigneeIds }),
+    );
+    const { branch, note } = opts.branch ? checkoutTaskBranch(resolved, started.title) : { branch: null };
+    output(opts, { ...started, branch }, () => [taskLines([started]), ...(note ? [note] : [])].join("\n"));
+  };
+  const startCommand = (cmd: Command) =>
+    withJson(
+      cmd
+        .description("assign me, move to the first in-progress status and switch to the task's git branch")
+        .argument("[key]")
+        .option("--no-branch", "don't create or switch git branches"),
+    ).action(startTask);
+
+  startCommand(task.command("start"));
+  startCommand(program.command("start"));
 
   withJson(task.command("done").description("move to the first done status").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
-      const resolved = taskKey(key, cwd);
+      const resolved = taskKey(key, cwd, git);
       const detail = await conn().project(projectKeyOf(resolved));
       await update(resolved, { statusId: firstStatus(detail, "done").id }, opts);
     },
@@ -1317,7 +1351,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const explicitKey = first !== undefined && rest.length > 0 && parseTaskKey(first) ? first : undefined;
     const body = (explicitKey ? rest : args).join(" ").trim();
     if (!body) throw usageError("Nothing to say. Usage: spider comment [ST-12] \"text\"");
-    const key = taskKey(explicitKey, cwd);
+    const key = taskKey(explicitKey, cwd, git);
     const { sdk, org } = conn();
     const comment = await (await sdk()).comments.create(await org(), key, { body });
     output(opts, comment, () => `Commented on ${comment.taskKey}`);
@@ -1325,7 +1359,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
 
   withJson(program.command("comments").description("show a task's comments").argument("[key]")).action(
     async (key: string | undefined, opts: JsonOption) => {
-      const resolved = taskKey(key, cwd);
+      const resolved = taskKey(key, cwd, git);
       const { sdk, org, actors } = conn();
       const [{ items }, rows] = await Promise.all([(await sdk()).comments.list(await org(), resolved), actors()]);
       const handle = (id: string) => handleOf(rows, id);
@@ -1385,7 +1419,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       .option("--task <key>", "only this task"),
   ).action(async (opts: JsonOption & { project?: string; task?: string }) => {
     const { sdk, org } = conn();
-    const task = opts.task === undefined ? undefined : taskKey(opts.task, cwd);
+    const task = opts.task === undefined ? undefined : taskKey(opts.task, cwd, git);
     const { items } = await (await sdk()).documents.list(await org(), { project: opts.project?.toUpperCase(), task });
     output(opts, { items }, () => (items.length ? documentLines(items) : "No documents"));
   });
@@ -1435,7 +1469,7 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
       format,
       content,
       project: opts.project,
-      task: opts.task === undefined ? undefined : taskKey(opts.task, cwd),
+      task: opts.task === undefined ? undefined : taskKey(opts.task, cwd, git),
     });
     output(opts, created, () => documentLines([created]));
   });

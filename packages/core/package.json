@@ -8,6 +8,7 @@
     "./schemas": "./src/schemas.ts",
     "./contracts": "./src/contracts.ts",
     "./handles": "./src/handles.ts",
+    "./git": "./src/git.ts",
     "./statuses": "./src/statuses.ts",
     "./events": "./src/events.ts",
     "./version": "./src/version.ts"
