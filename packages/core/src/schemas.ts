@@ -258,6 +258,34 @@ export const updateDocumentInput = z.object({
 
 export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
 
+/**
+ * One partial edit of a document's content (ST-116): replace a fragment (`old` must occur
+ * exactly once, or pass `all`), `append` to the end, or replace a Markdown `section`'s body
+ * (the text under the heading up to the next heading of the same or a higher level).
+ */
+export const documentEditSchema = z.union(
+  [
+    z.strictObject({ old: z.string(), new: z.string(), all: z.boolean().optional() }),
+    z.strictObject({ append: z.string() }),
+    z.strictObject({ section: z.string(), content: z.string() }),
+  ],
+  { error: "Each edit is { old, new, all? }, { append } or { section, content }" },
+);
+
+export type DocumentEdit = z.infer<typeof documentEditSchema>;
+
+/**
+ * Partial edits, applied in order and saved as one new version. With `baseVersion` they fail
+ * on a newer save; without it they apply to the current version (atomically, under a lock),
+ * failing when a fragment or section isn't there.
+ */
+export const editDocumentInput = z.object({
+  baseVersion: z.number().int().positive().optional(),
+  edits: z.array(documentEditSchema).min(1, "At least one edit").max(100, "At most 100 edits"),
+});
+
+export type EditDocumentInput = z.infer<typeof editDocumentInput>;
+
 /** `project` is the target project key, or null to make the document organization-wide. */
 export const moveDocumentInput = z.object({
   project: z.string().trim().min(1).nullable(),

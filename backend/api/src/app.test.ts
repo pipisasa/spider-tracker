@@ -487,6 +487,29 @@ withDb("SDK and client-declared source", () => {
     expect(await client.documents.get(slug, doc.id).catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
+  test("POST /documents/:id/edit applies partial edits as new versions (ST-116)", async () => {
+    const client = sdk();
+    const doc = await client.documents.create(slug, { title: "Partial", content: "# P\n\nIntro.\n\n## Decisions\n\nOld.\n" });
+    const replaced = await client.documents.edit(slug, doc.id, { edits: [{ old: "Intro.", new: "Hello." }] });
+    expect(replaced).toMatchObject({ version: 2, content: "# P\n\nHello.\n\n## Decisions\n\nOld.\n" });
+    const sectioned = await client.documents.edit(slug, doc.id, {
+      baseVersion: 2,
+      edits: [{ section: "## Decisions", content: "New." }, { append: "End." }],
+    });
+    expect(sectioned).toMatchObject({ version: 3, content: "# P\n\nHello.\n\n## Decisions\n\nNew.\nEnd." });
+
+    const missing = await client.documents.edit(slug, doc.id, { edits: [{ old: "Intro.", new: "x" }] }).catch((e: unknown) => e);
+    expect(missing).toMatchObject({ status: 409, code: "conflict" });
+    const ambiguous = await client.documents
+      .edit(slug, doc.id, { edits: [{ old: "e", new: "E" }] })
+      .catch((e: unknown) => e);
+    expect(ambiguous).toMatchObject({ status: 400, code: "validation" });
+    const stale = await client.documents.edit(slug, doc.id, { baseVersion: 1, edits: [{ append: "x" }] }).catch((e: unknown) => e);
+    expect(stale).toMatchObject({ status: 409, code: "conflict" });
+    expect((await client.documents.versions.list(slug, doc.id)).items.map((v) => v.version)).toEqual([3, 2, 1]);
+    await client.documents.delete(slug, doc.id);
+  });
+
   test("POST /documents/:id/move makes a document organization-wide and back, keeping its versions", async () => {
     const client = sdk();
     const doc = await client.documents.create(slug, { title: "Movable", project: "SPI", content: "v1" });
