@@ -23,13 +23,25 @@ export const projectKeySchema = z
   .toUpperCase()
   .regex(/^[A-Z][A-Z0-9]{1,9}$/, "2–10 letters or digits, starting with a letter");
 
+const projectName = z.string().trim().min(1, "Required").max(80, "At most 80 characters");
+
 export const createProjectInput = z.object({
-  name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
+  name: projectName,
   key: projectKeySchema,
   description: z.string().trim().max(2000).optional(),
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectInput>;
+
+/** The key can't change: it is part of every task key. */
+export const updateProjectInput = z
+  .object({
+    name: projectName.optional(),
+    description: z.string().trim().max(2000).nullable().optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+
+export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
 
 export const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
 

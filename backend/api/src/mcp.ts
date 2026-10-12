@@ -6,12 +6,14 @@ import { matchStatuses } from "@repo/core/statuses";
 import {
   DomainError,
   addComment,
+  archiveProject,
   authenticateApiKey,
   createDocument,
   getDocument,
   getDocumentVersion,
   listDocuments,
   updateDocument,
+  createProject,
   createTask,
   getProject,
   getTask,
@@ -28,6 +30,7 @@ import {
   listInbox,
   listTasks,
   markInboxRead,
+  updateProject,
   updateTask,
 } from "@repo/core";
 import type { Db, schema } from "@repo/db";
@@ -150,6 +153,14 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
       : {}),
   });
 
+  const describeProject = (project: ProjectDetailDto) => ({
+    key: project.key,
+    name: project.name,
+    description: project.description,
+    archived: project.archivedAt !== null,
+    statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
+  });
+
   const server = new McpServer({ name: "spider-tracker", version: "0.1.0" });
 
   server.registerTool(
@@ -183,13 +194,57 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime) {
         const project = await getProject(db, ctx, projectKey);
         const documents = await listDocuments(db, ctx, { project: project.key });
         return {
-          key: project.key,
-          name: project.name,
-          description: project.description,
-          statuses: project.statuses.map((s) => ({ name: s.name, category: s.category })),
+          ...describeProject(project),
           documents: documents.map((d) => ({ id: d.id, title: d.title, task: d.taskKey })),
         };
       }),
+  );
+
+  const projectName = z.string().describe("Up to 80 characters");
+  const projectDescription = z.string().describe("Markdown, up to 2000 characters");
+
+  server.registerTool(
+    "create_project",
+    {
+      description:
+        "Create a project with the default statuses (Backlog, Todo, In Progress, In Review, Done, Canceled). Owners and admins only.",
+      inputSchema: {
+        key: z
+          .string()
+          .describe('Project key, 2–10 letters or digits starting with a letter, e.g. "ST"; prefixes every task key'),
+        name: projectName,
+        description: projectDescription.optional(),
+      },
+    },
+    ({ key: projectKey, name, description }) =>
+      run(async () => describeProject(await createProject(db, ctx, { key: projectKey, name, description }))),
+  );
+
+  server.registerTool(
+    "update_project",
+    {
+      description: "Change a project's name or description (the key can't change). Owners and admins only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        name: projectName.optional(),
+        description: projectDescription.nullable().optional().describe("Markdown; null clears it"),
+      },
+    },
+    ({ projectKey, name, description }) =>
+      run(async () => describeProject(await updateProject(db, ctx, projectKey, { name, description }))),
+  );
+
+  server.registerTool(
+    "archive_project",
+    {
+      description:
+        "Archive a project: it leaves list_projects and takes no new tasks; its tasks stay readable. undo: true restores it. Owners and admins only.",
+      inputSchema: {
+        projectKey: z.string().describe('Project key, e.g. "ST"'),
+        undo: z.boolean().optional().describe("Restore an archived project"),
+      },
+    },
+    ({ projectKey, undo }) => run(async () => describeProject(await archiveProject(db, ctx, projectKey, !undo))),
   );
 
   server.registerTool(

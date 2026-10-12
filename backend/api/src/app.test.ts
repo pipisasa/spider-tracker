@@ -224,6 +224,30 @@ withDb("projects and tasks API", () => {
     expect((await call(outsider, "GET", "/projects")).status).toBe(404);
     expect((await call(outsider, "POST", "/projects", { name: "x", key: "XX" })).status).toBe(404);
   });
+
+  test("update, archive and restore a project", async () => {
+    const updated = await call(owner, "PATCH", "/projects/spi", { name: "Spider Tracker", description: "The tracker" });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      key: "SPI",
+      name: "Spider Tracker",
+      description: "The tracker",
+      archivedAt: null,
+    });
+    expect((await call(owner, "PATCH", "/projects/SPI", {})).status).toBe(400);
+
+    const archived = await call(owner, "POST", "/projects/SPI/archive");
+    expect(((await archived.json()) as { archivedAt: string | null }).archivedAt).not.toBeNull();
+    const keys = async (path: string) =>
+      ((await (await call(owner, "GET", path)).json()) as { items: { key: string }[] }).items.map((p) => p.key);
+    expect(await keys("/projects")).toEqual([]);
+    expect(await keys("/projects?archived=true")).toEqual(["SPI"]);
+    expect((await call(owner, "POST", "/projects/SPI/tasks", { title: "Too late" })).status).toBe(400);
+
+    const restored = await call(owner, "DELETE", "/projects/SPI/archive");
+    expect(await restored.json()).toMatchObject({ key: "SPI", archivedAt: null });
+    expect(await keys("/projects")).toEqual(["SPI"]);
+  });
 });
 
 withDb("agent API keys", () => {
