@@ -5,6 +5,8 @@ import {
   createApiKeyInput,
   createCommentInput,
   createTagInput,
+  createOrganizationInput,
+  deviceCodeInput,
   relationInput,
   createProjectInput,
   createTaskInput,
@@ -229,6 +231,53 @@ const schemas: Record<string, JsonSchema> = {
   CreateProjectInput: fromZod(createProjectInput),
   CreateTaskInput: fromZod(createTaskInput),
   UpdateTaskInput: fromZod(updateTaskInput),
+  CreateOrganizationInput: fromZod(createOrganizationInput),
+  AuthProviders: object({ providers: { type: "array", items: string({ enum: ["magic-link", "github", "batele-id"] }) } }),
+  Activity: object({
+    id: { type: "integer", description: "Increasing; entries come oldest first" },
+    action: string({ examples: ["task.created", "task.updated", "comment.created"] }),
+    changes: {
+      type: ["object", "null"],
+      additionalProperties: true,
+      description: "For task.updated: field → [before, after] (statusId, assigneeIds, tagIds, parentId, title, priority, …)",
+    },
+    source: string({ enum: ["ui", "api", "mcp", "cli", "git", "agent_run"] }),
+    actorId: string({ format: "uuid" }),
+    createdAt: string({ format: "date-time" }),
+  }),
+  ActivityList: listOf("Activity"),
+  DeviceCodeInput: fromZod(deviceCodeInput),
+  DeviceTokenInput: {
+    type: "object",
+    properties: { grant_type: string({ const: "urn:ietf:params:oauth:grant-type:device_code" }), device_code: string() },
+    required: ["device_code"],
+  },
+  DeviceCode: object({
+    device_code: string(),
+    user_code: string({ examples: ["WDJB-MJHT"] }),
+    verification_uri: string({ format: "uri" }),
+    verification_uri_complete: string({ format: "uri" }),
+    expires_in: { type: "integer" },
+    interval: { type: "integer" },
+  }),
+  DeviceToken: object({
+    access_token: string({ description: "The device agent's API key (spt_…), returned once" }),
+    token_type: string({ enum: ["Bearer"] }),
+    actor: ref("Actor"),
+    organization: ref("Organization"),
+  }),
+  DeviceTokenError: object({
+    error: string({
+      enum: ["invalid_request", "authorization_pending", "slow_down", "expired_token", "access_denied", "invalid_grant"],
+    }),
+  }),
+  DeviceRequest: object({
+    userCode: string(),
+    clientName: string(),
+    status: string({ enum: ["pending", "approved", "denied", "consumed"] }),
+    expiresAt: string({ format: "date-time" }),
+  }),
+  DeviceApproveInput: object({ orgSlug: string() }),
 };
 
 const json = (schema: string) => ({ content: { "application/json": { schema: ref(schema) } } });
@@ -239,7 +288,7 @@ const errors = {
   "403": { description: "Not allowed", ...json("Error") },
   "404": { description: "Not found (also for organizations you are not a member of)", ...json("Error") },
   "409": { description: "Conflict: already exists, or a document saved since your baseVersion", ...json("Error") },
-  "429": { description: "Rate-limited (agent comment loop guards)", ...json("Error") },
+  "429": { description: "Rate-limited (agent comment loop guards, per-IP limits on public endpoints)", ...json("Error") },
 };
 const pathParam = (name: string, description: string) => ({
   name,
@@ -251,9 +300,94 @@ const pathParam = (name: string, description: string) => ({
 const orgSlug = pathParam("orgSlug", "Organization slug");
 const projectKey = pathParam("projectKey", 'Project key, e.g. "SPI"');
 const taskKey = pathParam("taskKey", 'Task key, e.g. "SPI-12"');
+const userCode = pathParam("userCode", 'Code shown by spider login, e.g. "WDJB-MJHT"');
 const body = (schema: string) => ({ required: true, ...json(schema) });
+/** RFC 8628 endpoints accept JSON or form-encoded bodies. */
+const jsonOrForm = (schema: string) => ({
+  "application/json": { schema: ref(schema) },
+  "application/x-www-form-urlencoded": { schema: ref(schema) },
+});
 
 const paths = {
+  "/health": {
+    get: { operationId: "health", summary: "Liveness, with the oldest supported CLI version", security: [], responses: { "200": { description: "OK" } } },
+  },
+  "/health/ready": {
+    get: { operationId: "ready", summary: "Readiness: the database answers", security: [], responses: { "200": { description: "OK" } } },
+  },
+  "/auth/providers": {
+    get: {
+      operationId: "authProviders",
+      summary: "Sign-in methods enabled on this server",
+      security: [],
+      responses: { "200": ok("Enabled providers", "AuthProviders") },
+    },
+  },
+  "/device/code": {
+    post: {
+      operationId: "startDeviceAuthorization",
+      summary: "Start a spider login (RFC 8628 device authorization). Rate limited per client IP",
+      security: [],
+      requestBody: { required: false, content: jsonOrForm("DeviceCodeInput") },
+      responses: { "200": ok("Device and user codes", "DeviceCode"), "429": errors["429"] },
+    },
+  },
+  "/device/token": {
+    post: {
+      operationId: "pollDeviceToken",
+      summary: "Poll until the login is approved; then returns the device agent's API key",
+      security: [],
+      requestBody: { required: true, content: jsonOrForm("DeviceTokenInput") },
+      responses: {
+        "200": ok("The device agent's key", "DeviceToken"),
+        "400": { description: "Pending, slowed down, denied, expired or invalid (RFC 8628 error)", ...json("DeviceTokenError") },
+      },
+    },
+  },
+  "/v1/device/{userCode}": {
+    parameters: [userCode],
+    get: {
+      operationId: "getDeviceRequest",
+      summary: "A pending device login, for the approval page (browser sessions only)",
+      responses: { "200": ok("Device request", "DeviceRequest"), ...errors },
+    },
+  },
+  "/v1/device/{userCode}/approve": {
+    parameters: [userCode],
+    post: {
+      operationId: "approveDevice",
+      summary: "Approve a device login for one of your organizations (owners, admins and members; browser sessions only)",
+      requestBody: body("DeviceApproveInput"),
+      responses: { "204": { description: "Approved" }, ...errors },
+    },
+  },
+  "/v1/device/{userCode}/deny": {
+    parameters: [userCode],
+    post: {
+      operationId: "denyDevice",
+      summary: "Deny a device login (browser sessions only)",
+      responses: { "204": { description: "Denied" }, ...errors },
+    },
+  },
+  "/v1/organizations": {
+    post: {
+      operationId: "createOrganization",
+      summary: "Create an organization; you become its owner (browser sessions only)",
+      requestBody: body("CreateOrganizationInput"),
+      responses: { "201": ok("New membership", "Membership"), ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/events": {
+    parameters: [orgSlug],
+    get: {
+      operationId: "streamEvents",
+      summary: "Server-sent change events (ids and keys only; refetch through the normal routes)",
+      responses: {
+        "200": { description: "SSE stream of ready, ping and change events", content: { "text/event-stream": { schema: string() } } },
+        ...errors,
+      },
+    },
+  },
   "/v1/whoami": {
     get: {
       operationId: "whoami",
@@ -476,6 +610,14 @@ const paths = {
         { name: "task", in: "query", required: true, schema: { type: "string" }, description: "The other task's key" },
       ],
       responses: { "204": { description: "Removed" }, ...errors },
+    },
+  },
+  "/v1/orgs/{orgSlug}/tasks/{taskKey}/activity": {
+    parameters: [orgSlug, taskKey],
+    get: {
+      operationId: "listTaskActivity",
+      summary: "A task's history from the activity log, oldest first",
+      responses: { "200": ok("Activity", "ActivityList"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/comments": {

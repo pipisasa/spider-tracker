@@ -68,13 +68,32 @@ describe("public routes", () => {
     expect(doc.components.securitySchemes.bearerAuth).toMatchObject({ type: "http", scheme: "bearer" });
     expect(doc.components.schemas.CreateTaskInput?.required).toEqual(["title"]);
 
-    // Every documented operation is a real route.
+    // Every documented operation is a real route, and every route is documented.
     const routes = new Set(app.routes.map((r) => `${r.method} ${r.path}`));
-    for (const [path, item] of Object.entries(doc.paths)) {
-      for (const method of Object.keys(item).filter((k) => k !== "parameters")) {
-        expect(routes).toContain(`${method.toUpperCase()} ${path.replace(/\{(\w+)\}/g, ":$1")}`);
-      }
-    }
+    const documented = new Set(
+      Object.entries(doc.paths).flatMap(([path, item]) =>
+        Object.keys(item)
+          .filter((k) => k !== "parameters")
+          .map((method) => `${method.toUpperCase()} ${path.replace(/\{(\w+)\}/g, ":$1")}`),
+      ),
+    );
+    for (const operation of documented) expect(routes).toContain(operation);
+    // Infrastructure that has its own protocol or spec.
+    const undocumented = new Set([
+      "GET /openapi.json",
+      "GET /swagger",
+      "GET /scalar",
+      "GET /api/auth/*",
+      "POST /api/auth/*",
+      "GET /mcp",
+      "POST /mcp",
+      "DELETE /mcp",
+    ]);
+    const missing = app.routes
+      .filter((r) => r.method !== "ALL") // middleware registered with app.use
+      .map((r) => `${r.method} ${r.path}`)
+      .filter((route) => !documented.has(route) && !undocumented.has(route));
+    expect([...new Set(missing)]).toEqual([]);
   });
 
   test.each([
@@ -233,6 +252,17 @@ withDb("projects and tasks API", () => {
 
     const tasks = (await (await call(owner, "GET", "/projects/SPI/tasks")).json()) as { items: unknown[] };
     expect(tasks.items).toHaveLength(1);
+
+    const history = await call(owner, "GET", "/tasks/SPI-1/activity");
+    expect(history.status).toBe(200);
+    const { items: activity } = (await history.json()) as {
+      items: { id: number; action: string; source: string; changes: Record<string, unknown> | null }[];
+    };
+    expect(activity.map((a) => a.action)).toEqual(["task.created", "task.updated"]);
+    expect(activity[1]?.changes?.statusId).toEqual([expect.any(String), done]);
+    expect(activity[0]?.source).toBe("ui");
+    expect((activity[0]?.id ?? 0) < (activity[1]?.id ?? 0)).toBe(true);
+    expect((await call(outsider, "GET", "/tasks/SPI-1/activity")).status).toBe(404);
 
     expect((await call(owner, "DELETE", "/tasks/SPI-1")).status).toBe(204);
     expect((await call(owner, "GET", "/tasks/SPI-1")).status).toBe(404);

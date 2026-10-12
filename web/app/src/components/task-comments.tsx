@@ -3,7 +3,7 @@ import { RELATION_LABELS } from "@/components/relations";
 import { ActorAvatar } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/mention-textarea";
-import { activityQuery, commentsQuery, useAddComment } from "@/lib/work";
+import { activityQuery, commentsQuery, tagsQuery, useAddComment } from "@/lib/work";
 import type {
   ActivityDto,
   ActorDto,
@@ -25,10 +25,11 @@ const timeFormat = new Intl.DateTimeFormat(undefined, {
 const PRIORITY_LABELS = ["no priority", "urgent", "high", "medium", "low"];
 
 /** One line describing an activity entry, e.g. "changed status Todo → In Progress". */
-function describeActivity(
+export function describeActivity(
   entry: ActivityDto,
   statuses: StatusDto[],
   members: Map<string, ActorDto>,
+  tags: Map<string, string> = new Map(),
 ): string | null {
   const statusName = (id: unknown) =>
     statuses.find((s) => s.id === id)?.name ?? "unknown";
@@ -59,9 +60,31 @@ function describeActivity(
     else if (field === "description") parts.push("edited the description");
     else if (field === "parentId")
       parts.push(to ? "set a parent task" : "removed the parent task");
+    else if (field === "tagIds") parts.push(describeTagChange(from, to, tags));
     else parts.push(`changed ${field}`);
   }
   return parts.join(", ") || null;
+}
+
+/** "added tag bug", "added tags bug, ui and removed 1 deleted tag". */
+function describeTagChange(from: unknown, to: unknown, tags: Map<string, string>): string {
+  const before = Array.isArray(from) ? from.map(String) : [];
+  const after = Array.isArray(to) ? to.map(String) : [];
+  const phrase = (verb: string, ids: string[]) => {
+    if (ids.length === 0) return null;
+    const names = ids.flatMap((id) => tags.get(id) ?? []);
+    const gone = ids.length - names.length;
+    const parts = [
+      names.length > 0 ? `${names.length > 1 ? "tags" : "tag"} ${names.join(", ")}` : null,
+      gone > 0 ? `${gone} deleted ${gone > 1 ? "tags" : "tag"}` : null,
+    ].filter((part) => part !== null);
+    return `${verb} ${parts.join(" and ")}`;
+  };
+  const bits = [
+    phrase("added", after.filter((id) => !before.includes(id))),
+    phrase("removed", before.filter((id) => !after.includes(id))),
+  ].filter((bit) => bit !== null);
+  return bits.length > 0 ? bits.join(", ") : "changed tags";
 }
 
 type TimelineItem =
@@ -179,6 +202,8 @@ export function TaskComments({
 }) {
   const { data: comments = [] } = useQuery(commentsQuery(orgSlug, taskKey));
   const { data: activity = [] } = useQuery(activityQuery(orgSlug, taskKey));
+  const { data: tagList = [] } = useQuery(tagsQuery(orgSlug));
+  const tagNames = useMemo(() => new Map(tagList.map((t) => [t.id, t.name])), [tagList]);
   const add = useAddComment(orgSlug, taskKey);
   // The comment being replied to; its thread shows the reply box.
   const [replyTo, setReplyTo] = useState<CommentDto | null>(null);
@@ -234,7 +259,7 @@ export function TaskComments({
       <ul className="flex flex-col gap-4">
         {timeline.map((item) => {
           if ("activity" in item) {
-            const text = describeActivity(item.activity, statuses, byId);
+            const text = describeActivity(item.activity, statuses, byId, tagNames);
             if (!text) return null;
             const actor = byId.get(item.activity.actorId);
             return (
