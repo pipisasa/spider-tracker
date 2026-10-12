@@ -20,12 +20,13 @@ import {
 import {
   archivedProjectsQuery,
   documentsQuery,
-  membersQuery,
+  actorsQuery,
   projectsQuery,
   useCreateDocument,
   useMoveDocument,
   type DocumentScope,
 } from "@/lib/work";
+import { nameOf } from "@/lib/assignees";
 import type { DocumentFormat, DocumentSummaryDto } from "@repo/core/contracts";
 import { createDocumentInput } from "@repo/core/schemas";
 import { useQuery } from "@tanstack/react-query";
@@ -70,7 +71,7 @@ export function DocumentList({
   showScope?: boolean;
   empty?: string;
 }) {
-  const { data: members = [] } = useQuery(membersQuery(orgSlug));
+  const { data: members = [] } = useQuery(actorsQuery(orgSlug));
   if (documents.length === 0)
     return <p className="text-sm text-muted-foreground">{empty}</p>;
   return (
@@ -98,7 +99,7 @@ export function DocumentList({
                 v{d.version}
               </span>
               <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-                {author ? `${author.name} · ` : ""}
+                {author ? `${nameOf(author, "")} · ` : ""}
                 {formatDateTime(d.updatedAt)}
               </span>
             </Link>

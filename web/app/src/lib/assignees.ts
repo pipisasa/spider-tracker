@@ -3,6 +3,13 @@ import type { ActorDto } from "@repo/core/contracts";
 /** An actor's display name, marked when deactivated. */
 export const actorLabel = (actor: ActorDto) => (actor.deactivated ? `${actor.name} (deactivated)` : actor.name);
 
+/** A person's name for display; "(deactivated)" when they left, `fallback` when not loaded. */
+export const nameOf = (actor: ActorDto | undefined, fallback: string) => (actor ? actorLabel(actor) : fallback);
+
+/** "@handle" for activity text, marked when deactivated. */
+export const mentionOf = (actor: ActorDto | undefined) =>
+  actor ? `@${actor.handle}${actor.deactivated ? " (deactivated)" : ""}` : "@unknown";
+
 /** A task's assignees in order; unknown ids (not loaded yet) are skipped. */
 export function assigneesOf(ids: string[], actors: Map<string, ActorDto>): ActorDto[] {
   return ids.map((id) => actors.get(id)).filter((a): a is ActorDto => !!a);

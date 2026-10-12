@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ActorDto } from "@repo/core/contracts";
-import { actorLabel, assigneeOptions, assigneesOf, toggleAssignee } from "./assignees";
+import { actorLabel, assigneeOptions, mentionOf, nameOf, assigneesOf, toggleAssignee } from "./assignees";
 
 const actor = (id: string, deactivated = false): ActorDto => ({
   id,
@@ -41,5 +41,18 @@ describe("assignees", () => {
     expect(toggleAssignee(["gone", "alice"], gone)).toEqual(["alice"]);
     expect(toggleAssignee(["alice"], gone)).toEqual(["alice"]);
     expect(toggleAssignee(["alice"], bob)).toEqual(["alice", "bob"]);
+  });
+});
+
+describe("display names", () => {
+  test("nameOf marks deactivated actors and falls back when unknown", () => {
+    expect(nameOf(alice, "Unknown")).toBe("alice");
+    expect(nameOf(gone, "Unknown")).toBe("gone (deactivated)");
+    expect(nameOf(undefined, "Unknown")).toBe("Unknown");
+  });
+  test("mentionOf", () => {
+    expect(mentionOf(alice)).toBe("@alice");
+    expect(mentionOf(gone)).toBe("@gone (deactivated)");
+    expect(mentionOf(undefined)).toBe("@unknown");
   });
 });

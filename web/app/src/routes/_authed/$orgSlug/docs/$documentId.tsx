@@ -16,11 +16,12 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
+import { nameOf } from "@/lib/assignees";
 import {
   documentQuery,
   documentVersionQuery,
   documentVersionsQuery,
-  membersQuery,
+  actorsQuery,
   projectsQuery,
   useDeleteDocument,
   useUpdateDocument,
@@ -262,7 +263,7 @@ function VersionHistory({
   const { data: versions = [] } = useQuery(
     documentVersionsQuery(orgSlug, doc.id),
   );
-  const { data: members = [] } = useQuery(membersQuery(orgSlug));
+  const { data: members = [] } = useQuery(actorsQuery(orgSlug));
   return (
     <>
       <h2 className="text-sm font-medium text-muted-foreground">
@@ -289,7 +290,7 @@ function VersionHistory({
                   )}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {author?.name ?? "Unknown"} · {formatDateTime(v.createdAt)}
+                  {nameOf(author, "Unknown")} · {formatDateTime(v.createdAt)}
                 </span>
               </button>
             </li>

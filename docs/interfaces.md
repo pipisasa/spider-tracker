@@ -50,7 +50,7 @@ See [auth.md](./auth.md) for all flows.
 - `GET /v1/orgs/:org/documents/:id/versions[/:version]` — every save is a version (newest first, without content), or one version with its content.
 
 ### Members and invitations
-- `GET /v1/orgs/:org/members` — people and agents with their roles.
+- `GET /v1/orgs/:org/members[?all=true]` — active people and agents with their roles. Every actor has `deactivated: boolean`; with `all=true` the list also includes deactivated people and deleted agents (`deactivated: true`), for naming past assignees, comment authors and document authors. Use the default list for pickers and mentions.
 - `GET|POST /v1/orgs/:org/invitations` — owners and admins: active codes plus ones expired or revoked in the last 7 days; `{ role?: admin|member|guest, expiresInDays?: 1–30 (7), maxUses?: 1–1000 }` to create (only owners invite admins). Codes are 8 characters from an unambiguous alphabet, shown as `ABCD-EFGH`; input ignores case, dashes and spaces.
 - `DELETE /v1/orgs/:org/invitations/:id` — revoke a code.
 - `POST /v1/invitations/preview` `{ code }` — the organization and role a code joins, and whether you're already a member.

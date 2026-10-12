@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Toaster } from "@/components/ui/sonner";
 import { useOrgEvents } from "@/lib/realtime";
-import { membersQuery, projectsQuery } from "@/lib/work";
+import { actorsQuery, membersQuery, projectsQuery } from "@/lib/work";
 import { useSignOut } from "@/lib/use-sign-out";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, createFileRoute, notFound } from "@tanstack/react-router";
@@ -40,6 +40,7 @@ export const Route = createFileRoute("/_authed/$orgSlug")({
     await Promise.all([
       context.queryClient.ensureQueryData(projectsQuery(params.orgSlug)),
       context.queryClient.prefetchQuery(membersQuery(params.orgSlug)),
+      context.queryClient.prefetchQuery(actorsQuery(params.orgSlug)),
     ]);
   },
   component: OrgLayout,
