@@ -73,13 +73,14 @@ function ProjectPage() {
             </Link>
           </Button>
           {view === "docs" ? (
-            membership.actor.role !== "guest" && (
+            membership.actor.role !== "guest" &&
+            !archived && (
               <Button size="sm" className="ml-2" onClick={() => setNewDocumentOpen(true)}>
                 <PlusIcon />
                 New document
               </Button>
             )
-          ) : archived ? (
+          ) : membership.actor.role === "guest" ? null : archived ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 {/* A disabled button swallows pointer events, so the span carries the tooltip. */}
@@ -93,12 +94,10 @@ function ProjectPage() {
               <TooltipContent>This project is archived. Restore it to create tasks.</TooltipContent>
             </Tooltip>
           ) : (
-            membership.actor.role !== "guest" && (
-              <Button size="sm" className="ml-2" onClick={() => openNewTask()}>
-                <PlusIcon />
-                New task
-              </Button>
-            )
+            <Button size="sm" className="ml-2" onClick={() => openNewTask()}>
+              <PlusIcon />
+              New task
+            </Button>
           )}
           {canManage && (
             <Button variant="ghost" size="icon" aria-label="Project settings" onClick={() => setSettingsOpen(true)}>
@@ -132,7 +131,7 @@ function ProjectPage() {
           tasks={tasks}
           members={actors}
           tags={tags}
-          onAdd={membership.actor.role !== "guest" ? openNewTask : undefined}
+          onAdd={!archived && membership.actor.role !== "guest" ? openNewTask : undefined}
         />
       ) : (
         <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={actors} tags={tags} />

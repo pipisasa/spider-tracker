@@ -66,6 +66,11 @@ export function ProjectSettingsDialog({
       return;
     }
     setError(null);
+    const unchanged = parsed.data.name === project.name && (parsed.data.description ?? null) === (project.description ?? null);
+    if (unchanged) {
+      onOpenChange(false);
+      return;
+    }
     update.mutate(parsed.data, { onSuccess: () => onOpenChange(false) });
   }
 
@@ -94,6 +99,7 @@ export function ProjectSettingsDialog({
               <Textarea
                 id="project-description"
                 rows={6}
+                maxLength={2000}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
@@ -101,16 +107,28 @@ export function ProjectSettingsDialog({
             {error && <p className="text-sm text-destructive">{error}</p>}
             <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 p-3">
               <p className="text-sm text-muted-foreground">
-                Archive this project to retire it.
+                {project.archivedAt ? "This project is archived." : "Archive this project to retire it."}
               </p>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmArchive(true)}
-              >
-                Archive
-              </Button>
+              {project.archivedAt ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={archive.isPending}
+                  onClick={() => archive.mutate({ key: project.key, archive: false }, { onSuccess: () => onOpenChange(false) })}
+                >
+                  Restore
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setConfirmArchive(true)}
+                >
+                  Archive
+                </Button>
+              )}
             </div>
             <DialogFooter>
               <Button
@@ -140,6 +158,7 @@ export function ProjectSettingsDialog({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
               onClick={() =>
                 archive.mutate(
                   { key: project.key, archive: true },
