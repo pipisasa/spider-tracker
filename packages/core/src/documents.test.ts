@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { acceptAgentInvite, createAgentInvite } from "./agent-invites";
 import { createAgent } from "./agents";
@@ -189,7 +189,8 @@ run("documents", () => {
           eq(schema.activity.entityType, "document"),
           eq(schema.activity.entityId, doc.id),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(activity.map((a) => a.action)).toEqual([
       "document.created",
       "document.updated",
@@ -452,7 +453,8 @@ run("documents", () => {
     const entries = await db
       .select()
       .from(schema.activity)
-      .where(and(eq(schema.activity.entityId, doc.id), eq(schema.activity.action, "document.moved")));
+      .where(and(eq(schema.activity.entityId, doc.id), eq(schema.activity.action, "document.moved")))
+      .orderBy(asc(schema.activity.id));
     expect(entries.map((e) => e.changes)).toEqual([
       { title: "Plan", project: ["SPI", "OTH"] },
       { title: "Plan", project: ["OTH", null] },
