@@ -28,6 +28,30 @@ bun run deploy:web      # build with .env.production, then upload to the spider-
 
 `VITE_API_URL` is baked into the bundle at build time: `https://tracker-api.batele.plus`. Vite's production mode reads `web/app/.env.production`, which overrides the local `.env`.
 
+### Agent invite pages (Pages Function)
+
+`web/app/functions/agent-invite/[code].ts` is a Cloudflare Pages Function. `wrangler pages deploy` picks up the `functions/` directory of the directory it runs in, so `deploy:web` (which runs in `web/app`) bundles and uploads it with the static files; no extra step. It serves `/agent-invite/<CODE>` as server-rendered HTML (no JavaScript, so tools like Claude Code's WebFetch can read it) and as Markdown for `/agent-invite/<CODE>.md` or an `Accept` header preferring `text/markdown`/`text/plain`. It only checks the code's shape (bad shape → 404) and never calls the API, so opening a link never redeems or validates the code. The text comes from `web/app/src/lib/agent-invite-instructions.ts`, shared with the SPA route used under Vite in development. The function is type-checked with its own `web/app/functions/tsconfig.json` (`@cloudflare/workers-types`) as part of `check-types` and `build`.
+
+Test it locally (Vite doesn't run Pages Functions):
+
+```bash
+bun run --cwd web/app preview:pages   # build, then bunx wrangler@4 pages dev dist --port 8788
+curl -s localhost:8788/agent-invite/ABCD-EFGH.md
+```
+
+### CLI install script and releases
+
+`web/app/public/install.sh` is served at `https://tracker.batele.plus/install.sh` (`public/_headers` gives it a `text/x-shellscript` content type). It downloads `spider-<darwin|linux>-<arm64|x64>` from the latest GitHub release of `pipisasa/spider-tracker` (or the tag in `SPIDER_VERSION`) into `${SPIDER_INSTALL_DIR:-$HOME/.local/bin}`.
+
+Releases are **manual**. Bump `version` in `backend/cli/package.json`, then:
+
+```bash
+bun run release:cli --dry-run   # build the four binaries into dist/release only
+bun run release:cli             # build, then gh release create cli-v<version> --latest
+```
+
+It needs `gh auth login` and a **public** repository (the install script downloads without credentials), and it refuses to run if the `cli-v<version>` tag already exists. Releasing the CLI is independent of the deploy order below; deploy the API and web app first if the new CLI relies on new endpoints.
+
 ### Custom domain
 
 Both halves are needed:

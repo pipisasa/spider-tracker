@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { claudeCodePrompt, inviteLink as inviteLinkFor } from "@/lib/agent-invite-instructions";
 import { apiUrl } from "@/lib/api";
 import {
   agentInvitesQuery,
@@ -464,7 +465,7 @@ function CreatedKeyDialog({
   );
 }
 
-const inviteLink = (code: string) => `${window.location.origin}/agent-invite/${code}`;
+const inviteLink = (code: string) => inviteLinkFor(window.location.origin, code);
 
 function CopyLine({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
@@ -485,6 +486,23 @@ function CopyLine({ label, value }: { label: string; value: string }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+function CopyPromptButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <Button onClick={copy}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+      Copy prompt for Claude Code
+    </Button>
   );
 }
 
@@ -523,14 +541,14 @@ const EXPIRY_DAYS = [1, 7, 30] as const;
 function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: boolean; onClose: () => void }) {
   const { data: projects } = useSuspenseQuery(projectsQuery(orgSlug));
   const [selected, setSelected] = useState<string[]>([]);
-  const [days, setDays] = useState<number>(7);
+  const [days, setDays] = useState<number>(1);
   const [created, setCreated] = useState<CreatedAgentInviteDto | null>(null);
   const create = useCreateAgentInvite(orgSlug);
 
   useEffect(() => {
     if (!open) return;
     setSelected([]);
-    setDays(7);
+    setDays(1);
     setCreated(null);
   }, [open]);
 
@@ -561,6 +579,10 @@ function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: 
                 the agent will see only {created.invite.projects.map((p) => p.key).join(", ")}.
               </DialogDescription>
             </DialogHeader>
+            <CopyPromptButton value={claudeCodePrompt(inviteLink(code))} />
+            <p className="text-xs text-muted-foreground">
+              Paste this into Claude Code on the machine where the agent will run.
+            </p>
             <CopyLine label="Code" value={code} />
             <CopyLine label="Link" value={inviteLink(code)} />
             <CopyLine label="CLI" value={`spider accept-invite ${code}`} />
