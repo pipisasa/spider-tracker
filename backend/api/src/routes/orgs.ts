@@ -43,6 +43,8 @@ import {
   listMembers,
   listProjects,
   listTasks,
+  activeAgentsInProject,
+  PRESENCE_WINDOW_MS,
   resolveMembership,
   revokeApiKey,
   updateProject,
@@ -205,7 +207,22 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     c.json(await createTask(db, c.get("actor"), c.req.param("projectKey"), await body(c)), 201),
   );
 
-  app.get("/tasks/:taskKey", async (c) => c.json(await getTask(db, c.get("actor"), c.req.param("taskKey"))));
+  // Agents working on the project's tasks right now: recent activity plus recent reads.
+  app.get("/projects/:projectKey/presence", async (c) => {
+    const actor = c.get("actor");
+    const projectKey = c.req.param("projectKey");
+    const since = new Date(Date.now() - PRESENCE_WINDOW_MS);
+    const written = await activeAgentsInProject(db, actor, projectKey, since);
+    return c.json(list(realtime.presence.merge(actor.orgId, projectKey, written, since)));
+  });
+
+  // An agent reading a task counts as working on it (not recorded in the activity log).
+  app.get("/tasks/:taskKey", async (c) => {
+    const actor = c.get("actor");
+    const task = await getTask(db, actor, c.req.param("taskKey"));
+    if (c.get("apiKey")) await realtime.presence.touch(actor, task.key);
+    return c.json(task);
+  });
 
   app.patch("/tasks/:taskKey", async (c) =>
     c.json(await updateTask(db, c.get("actor"), c.req.param("taskKey"), await body(c))),
@@ -233,9 +250,13 @@ export function orgRoutes(db: Db, realtime: Realtime) {
     c.json(list(await listTaskActivity(db, c.get("actor"), c.req.param("taskKey")))),
   );
 
-  app.get("/tasks/:taskKey/comments", async (c) =>
-    c.json(list(await listComments(db, c.get("actor"), c.req.param("taskKey")))),
-  );
+  app.get("/tasks/:taskKey/comments", async (c) => {
+    const actor = c.get("actor");
+    const taskKey = c.req.param("taskKey");
+    const comments = await listComments(db, actor, taskKey);
+    if (c.get("apiKey")) await realtime.presence.touch(actor, taskKey);
+    return c.json(list(comments));
+  });
 
   app.post("/tasks/:taskKey/comments", async (c) =>
     c.json(await addComment(db, c.get("actor"), c.req.param("taskKey"), await body(c)), 201),

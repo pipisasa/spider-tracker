@@ -1,6 +1,7 @@
 import type {
   AcceptedAgentInviteDto,
   ActivityDto,
+  PresenceDto,
   ActorDto,
   AgentDto,
   ApiErrorBody,
@@ -243,6 +244,9 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
     tasks: {
       list: (orgSlug: string, projectKey: string) =>
         request<ListResponse<TaskDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks`),
+      /** Agents working on the project's tasks right now (acted on or read a task in the last 10 minutes). */
+      presence: (orgSlug: string, projectKey: string) =>
+        request<ListResponse<PresenceDto>>("GET", `${org(orgSlug)}/projects/${seg(projectKey)}/presence`),
       get: (orgSlug: string, taskKey: string) => request<TaskDto>("GET", `${org(orgSlug)}/tasks/${seg(taskKey)}`),
       create: (orgSlug: string, projectKey: string, input: CreateTaskInput) =>
         request<TaskDto>("POST", `${org(orgSlug)}/projects/${seg(projectKey)}/tasks`, input),

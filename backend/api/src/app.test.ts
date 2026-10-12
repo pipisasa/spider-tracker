@@ -466,6 +466,52 @@ withDb("SDK and client-declared source", () => {
   });
 });
 
+withDb("agent presence (ST-67)", () => {
+  const stamp = Date.now();
+  const ownerEmail = `presence-owner-${stamp}@example.com`;
+  const slug = `presence-${stamp}`;
+
+  afterAll(async () => {
+    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db.delete(schema.user).where(eq(schema.user.email, ownerEmail));
+  });
+
+  test("an agent reading a task is working on it; a person reading it is not", async () => {
+    const owner = await signIn(ownerEmail);
+    const send = (method: string, path: string, body?: unknown, headers: Record<string, string> = { Cookie: owner }) =>
+      app.request(path, {
+        method,
+        headers: { "Content-Type": "application/json", ...headers },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    await send("POST", "/v1/organizations", { name: "Presence Org", slug });
+    await send("POST", `/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
+    const agent = (await (await send("POST", `/v1/orgs/${slug}/agents`, { name: "Watcher" })).json()) as { actor: { id: string } };
+    const key = (await (await send("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "k" })).json()) as { secret: string };
+    const bearer = { Authorization: `Bearer ${key.secret}` };
+    await send("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, { title: "Look at me" });
+
+    const presence = async (headers?: Record<string, string>) =>
+      ((await (await send("GET", `/v1/orgs/${slug}/projects/SPI/presence`, undefined, headers)).json()) as {
+        items: { taskKey: string; actorId: string; lastSeenAt: string }[];
+      }).items;
+
+    expect(await presence()).toEqual([]);
+    expect((await send("GET", `/v1/orgs/${slug}/tasks/SPI-1`)).status).toBe(200);
+    expect(await presence()).toEqual([]);
+
+    expect((await send("GET", `/v1/orgs/${slug}/tasks/SPI-1`, undefined, bearer)).status).toBe(200);
+    const active = await presence();
+    expect(active).toMatchObject([{ taskKey: "SPI-1", actorId: agent.actor.id }]);
+    expect(Date.now() - Date.parse(active[0]?.lastSeenAt ?? "")).toBeLessThan(10_000);
+    // Visible to agents too, through the SDK.
+    const client = createClient({ baseUrl: env.API_ORIGIN, token: key.secret, fetch: (input, init) => app.request(input, init) });
+    expect((await client.tasks.presence(slug, "SPI")).items).toHaveLength(1);
+
+    expect((await send("GET", `/v1/orgs/${slug}/projects/NOPE/presence`)).status).toBe(404);
+  });
+});
+
 withDb("device login (spider login)", () => {
   const stamp = Date.now();
   const email = `device-${stamp}@example.com`;

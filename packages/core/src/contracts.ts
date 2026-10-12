@@ -89,6 +89,14 @@ export interface TaskDto {
   subtasks: { done: number; total: number } | null;
 }
 
+/** An agent working on a task right now (ST-67): it acted on or read the task within the last 10 minutes. */
+export interface PresenceDto {
+  taskKey: string;
+  actorId: string;
+  /** ISO time of the agent's latest action or read. */
+  lastSeenAt: string;
+}
+
 /** A sub-task with its own status, which may belong to another project than the parent's. */
 export interface SubtaskDto extends TaskDto {
   status: Pick<StatusDto, "id" | "name" | "category" | "color">;
