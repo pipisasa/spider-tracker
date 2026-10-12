@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { filterDocumentsByProject, ORG_FILTER } from "@/lib/document-filter";
-import { documentsQuery, projectsQuery } from "@/lib/work";
+import { archivedProjectsQuery, documentsQuery, projectsQuery } from "@/lib/work";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
@@ -25,7 +25,20 @@ function DocumentsPage() {
   const { orgSlug } = Route.useParams();
   const { membership } = Route.useRouteContext();
   const { data: documents } = useSuspenseQuery(documentsQuery(orgSlug));
-  const { data: projects = [] } = useQuery(projectsQuery(orgSlug));
+  const { data: projects = [], isSuccess } = useQuery(projectsQuery(orgSlug));
+  // Documents can stay in archived projects; those projects stay filterable.
+  const hasArchivedDocs =
+    isSuccess &&
+    documents.some(
+      (d) => d.projectKey && !projects.some((p) => p.key === d.projectKey),
+    );
+  const { data: archived = [] } = useQuery({
+    ...archivedProjectsQuery(orgSlug),
+    enabled: hasArchivedDocs,
+  });
+  const archivedWithDocs = archived.filter((p) =>
+    documents.some((d) => d.projectKey === p.key),
+  );
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("all");
   const shown = filterDocumentsByProject(
@@ -47,6 +60,11 @@ function DocumentsPage() {
             {projects.map((p) => (
               <SelectItem key={p.key} value={p.key}>
                 {p.name} ({p.key})
+              </SelectItem>
+            ))}
+            {archivedWithDocs.map((p) => (
+              <SelectItem key={p.key} value={p.key}>
+                {p.name} ({p.key}, archived)
               </SelectItem>
             ))}
           </SelectContent>
