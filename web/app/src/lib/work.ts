@@ -5,6 +5,7 @@ import type {
   AgentInviteDto,
   CommentDto,
   CreatedAgentInviteDto,
+  DocumentDiffDto,
   DocumentDto,
   DocumentGraphDto,
   DocumentSummaryDto,
@@ -93,6 +94,8 @@ export const keys = {
     ["orgs", org, "documents", id, "versions"] as const,
   documentVersion: (org: string, id: string, version: number) =>
     ["orgs", org, "documents", id, "versions", version] as const,
+  documentDiff: (org: string, id: string, from: number, to: number) =>
+    ["orgs", org, "documents", id, "diff", from, to] as const,
 };
 
 /** Which documents to list: a task's, a project's (with its tasks'), or all. */
@@ -626,6 +629,23 @@ export const documentVersionsQuery = (org: string, id: string) =>
           `${orgPath(org)}/documents/${id}/versions`,
         )
       ).items,
+  });
+
+/** A line diff of two saved versions (ST-117). */
+export const documentDiffQuery = (
+  org: string,
+  id: string,
+  from: number,
+  to: number,
+) =>
+  queryOptions({
+    queryKey: keys.documentDiff(org, id, from, to),
+    queryFn: () =>
+      api<DocumentDiffDto>(
+        `${orgPath(org)}/documents/${id}/diff?from=${from}&to=${to}`,
+      ),
+    // Saved versions never change, so neither does their diff.
+    staleTime: Infinity,
   });
 
 export const documentVersionQuery = (

@@ -211,6 +211,31 @@ const schemas: Record<string, JsonSchema> = {
     allOf: [ref("DocumentVersionSummary"), object({ documentId: string({ format: "uuid" }), content: string() })],
   },
   DocumentVersionList: listOf("DocumentVersionSummary"),
+  DiffLine: object({
+    kind: string({ enum: ["context", "added", "removed"] }),
+    text: string(),
+    oldLine: nullable("integer", { description: "1-based line in the older version; null for added lines" }),
+    newLine: nullable("integer", { description: "1-based line in the newer version; null for removed lines" }),
+  }),
+  DiffHunk: object({
+    oldStart: { type: "integer" },
+    oldLines: { type: "integer" },
+    newStart: { type: "integer" },
+    newLines: { type: "integer" },
+    lines: { type: "array", items: ref("DiffLine") },
+  }),
+  DocumentDiff: object({
+    documentId: string({ format: "uuid" }),
+    from: ref("DocumentVersionSummary"),
+    to: ref("DocumentVersionSummary"),
+    added: { type: "integer", description: "Lines added" },
+    removed: { type: "integer", description: "Lines removed" },
+    hunks: {
+      type: "array",
+      items: ref("DiffHunk"),
+      description: "Changes with 3 lines of context, as in a unified diff; empty when the contents match",
+    },
+  }),
   DocumentLink: object({
     from: string({ format: "uuid", description: "The linking document" }),
     to: {
@@ -964,6 +989,18 @@ const paths = {
   "/v1/orgs/{orgSlug}/documents/{documentId}/versions/{version}": {
     parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("version", "Version number")],
     get: { operationId: "getDocumentVersion", summary: "One saved version with its content", responses: { "200": ok("Version", "DocumentVersion"), ...errors } },
+  },
+  "/v1/orgs/{orgSlug}/documents/{documentId}/diff": {
+    parameters: [orgSlug, pathParam("documentId", "Document id")],
+    get: {
+      operationId: "diffDocumentVersions",
+      summary: "A line diff of two saved versions; without to, against the current one. 404 for a missing version",
+      parameters: [
+        { name: "from", in: "query", required: true, schema: { type: "integer", minimum: 1 }, description: "The older version" },
+        { name: "to", in: "query", schema: { type: "integer", minimum: 1 }, description: "The newer version; defaults to the current one" },
+      ],
+      responses: { "200": ok("Diff", "DocumentDiff"), ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/inbox": {
     parameters: [orgSlug],

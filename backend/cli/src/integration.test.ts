@@ -618,6 +618,30 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "view", id, "--json")).json()).toMatchObject({ version: 4, title: "Plan" });
   });
 
+  test("docs: diff two versions, or a version against the current one (ST-117)", async () => {
+    stdin = "# Diff\n\none\ntwo\n";
+    const created = (await spider("doc", "create", "--title", "Diff", "--project", "SPI", "--file", "-", "--json")).json();
+    const id = created.id as string;
+    await spider("doc", "edit", id, "--old", "two", "--new", "2");
+    await spider("doc", "edit", id, "--append", "--text", "three");
+
+    expect((await spider("doc", "diff", id, "--from", "1", "--to", "2")).stdout).toBe(
+      "--- Diff (v1)\n+++ Diff (v2)\n@@ -1,4 +1,4 @@\n # Diff\n \n one\n-two\n+2\n",
+    );
+    const json = (await spider("doc", "diff", id, "--from", "1", "--json")).json();
+    expect(json).toMatchObject({ from: { version: 1 }, to: { version: 3 }, added: 2, removed: 1 });
+    expect((json.hunks as { lines: { kind: string; text: string; oldLine: number | null; newLine: number | null }[] }[])[0]?.lines.filter((l) => l.kind !== "context")).toEqual([
+      { kind: "removed", text: "two", oldLine: 4, newLine: null },
+      { kind: "added", text: "2", oldLine: null, newLine: 4 },
+      { kind: "added", text: "three", oldLine: null, newLine: 5 },
+    ]);
+    expect((await spider("doc", "diff", id, "--from", "3")).stdout).toBe("No changes in content between version 3 and 3\n");
+
+    expect((await spider("doc", "diff", id, "--from", "9")).code).toBe(3);
+    expect((await spider("doc", "diff", id, "--from", "x")).code).toBe(2);
+    expect((await spider("doc", "diff", id)).code).toBe(2);
+  });
+
   test("docs: move to the organization and back to a project", async () => {
     stdin = "# Movable";
     const created = (await spider("doc", "create", "--title", "Movable", "--project", "SPI", "--file", "-", "--json")).json();

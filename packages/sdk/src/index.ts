@@ -10,6 +10,7 @@ import type {
   AgentInviteDto,
   CreatedAgentInviteDto,
   CreatedApiKeyDto,
+  DocumentDiffDto,
   DocumentDto,
   DocumentGraphDto,
   DocumentSummaryDto,
@@ -44,6 +45,7 @@ import type {
   RelationInput,
   UpdateAgentInput,
   UpdateDocumentInput,
+  DocumentDiffQuery,
   EditDocumentInput,
   MoveDocumentInput,
   UpdateProjectInput,
@@ -283,6 +285,12 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
           request<ListResponse<DocumentVersionSummaryDto>>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions`),
         get: (orgSlug: string, id: string, version: number) =>
           request<DocumentVersionDto>("GET", `${org(orgSlug)}/documents/${seg(id)}/versions/${version}`),
+      },
+      /** A line diff of two saved versions; without `to`, against the current one. 404 for a missing version. */
+      diff: (orgSlug: string, id: string, { from, to }: DocumentDiffQuery) => {
+        const params = new URLSearchParams({ from: String(from) });
+        if (to !== undefined) params.set("to", String(to));
+        return request<DocumentDiffDto>("GET", `${org(orgSlug)}/documents/${seg(id)}/diff?${params}`);
       },
     },
 

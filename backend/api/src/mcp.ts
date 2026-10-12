@@ -10,7 +10,9 @@ import {
   archiveProject,
   authenticateApiKey,
   createDocument,
+  diffDocumentVersions,
   editDocument,
+  formatUnifiedDiff,
   getDocument,
   getDocumentVersion,
   listDocuments,
@@ -595,6 +597,38 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
           savedAt: old.createdAt,
           url: urls.document(document.id),
           content: old.content,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "diff_document",
+    {
+      description:
+        "What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit `to` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+        from: z.number().int().positive().describe("The older version number"),
+        to: z.number().int().positive().optional().describe("The newer version number; omit for the current version"),
+      },
+    },
+    ({ id, from, to }) =>
+      run(async () => {
+        const diff = await diffDocumentVersions(db, ctx, id, { from, to });
+        const side = async (v: typeof diff.from) => ({
+          version: v.version,
+          title: v.title,
+          format: v.format,
+          savedBy: v.authorId ? await handleOf(v.authorId) : null,
+          savedAt: v.createdAt,
+        });
+        return {
+          id: diff.documentId,
+          from: await side(diff.from),
+          to: await side(diff.to),
+          added: diff.added,
+          removed: diff.removed,
+          diff: formatUnifiedDiff(diff.hunks, `v${diff.from.version}`, `v${diff.to.version}`),
         };
       }),
   );
