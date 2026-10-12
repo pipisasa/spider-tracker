@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { AcceptedAgentInviteDto, ActorContext } from "@repo/core";
 import {
   createAgentInvite,
+  createDocument,
   createOrganization,
   createProject,
   createTask,
@@ -150,6 +151,20 @@ withDb("agent invites over HTTP", () => {
       .catch((e: unknown) => e);
     expect(update).toMatchObject({ status: 404 });
     expect((await sdk.tasks.get(slug, "ST-1")).title).toBe("Visible");
+  });
+
+  test("GET /tasks/:key/backlinks lists only the documents the agent can see (ST-101)", async () => {
+    const sdk = createClient({
+      baseUrl: env.API_ORIGIN,
+      token: accepted.token,
+      fetch: (input, init) => app.request(input, init),
+    });
+    const inScope = await createDocument(db, owner, { project: "ST", title: "ST notes", content: "See ST-1." });
+    const orgWide = await createDocument(db, owner, { title: "Org notes", content: "[[st-1]]" });
+    await createDocument(db, owner, { project: "XY", title: "XY notes", content: "ST-1 too." });
+    const ids = (await sdk.tasks.backlinks(slug, "ST-1")).items.map((d) => d.id);
+    expect(ids.sort()).toEqual([inScope.id, orgWide.id].sort());
+    expect(await sdk.tasks.backlinks(slug, "XY-1").catch((e: unknown) => e)).toMatchObject({ status: 404 });
   });
 
   test("MCP tools respect the scope", async () => {

@@ -26,7 +26,7 @@ import type {
 } from "./contracts";
 import { diffHunks, diffLines } from "./diff";
 import { applyDocumentEdits } from "./document-edits";
-import { DomainError } from "./errors";
+import { DomainError, isLockConflict } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
 import {
@@ -349,19 +349,65 @@ export async function updateDocument(
   assertCanWrite(ctx);
   const data = parseInput(updateDocumentInput, input);
 
-  return db.transaction(async (tx) => {
-    const { document: current, scope } = await findDocument(tx, ctx, id, true);
-    assertBaseVersion(current, data.baseVersion);
-    const saved = await saveGuarded(tx, ctx, current, () =>
-      saveVersion(tx, ctx, current, scope, {
-        title: data.title ?? current.title,
-        format: data.format ?? current.format,
-        content: data.content ?? current.content,
-      }),
-    );
-    if (saved.title === current.title) return saved;
-    return { ...saved, relinked: await relinkRenamed(tx, ctx, current, saved.title) };
-  });
+  try {
+    return await db.transaction(async (tx) => {
+      if (data.title !== undefined) await lockRenameRows(tx, ctx, id, data.title);
+      const { document: current, scope } = await findDocument(tx, ctx, id, true);
+      assertBaseVersion(current, data.baseVersion);
+      const saved = await saveGuarded(tx, ctx, current, () =>
+        saveVersion(tx, ctx, current, scope, {
+          title: data.title ?? current.title,
+          format: data.format ?? current.format,
+          content: data.content ?? current.content,
+        }),
+      );
+      if (saved.title === current.title) return saved;
+      return { ...saved, relinked: await relinkRenamed(tx, ctx, current, saved.title) };
+    });
+  } catch (err) {
+    // What the ordered lock below can't foresee (a link written after it read them).
+    if (isLockConflict(err)) {
+      throw new DomainError("conflict", "The document was changed by another save at the same time. Reload it and try again");
+    }
+    throw err;
+  }
+}
+
+/** The documents other than `renamedId` with a `[[title]]` link (any project), by id. */
+function linkingSources(tx: Tx, renamedId: string, title: string) {
+  return tx
+    .selectDistinct({ id: documentLinks.documentId })
+    .from(documentLinks)
+    .where(
+      and(
+        eq(documentLinks.kind, "document"),
+        sql`lower(${documentLinks.target}) = ${normalizeTitle(title)}`,
+        sql`${documentLinks.documentId} <> ${renamedId}`,
+      ),
+    )
+    .orderBy(asc(documentLinks.documentId));
+}
+
+/**
+ * Before a save that may rename document `id`, locks it and the documents linking to its current
+ * title in one statement, in id order. Two renames whose linking documents overlap (A links B, B
+ * links A) then queue up instead of deadlocking, as they would locking their own row first.
+ */
+async function lockRenameRows(tx: Tx, ctx: ActorContext, id: string, newTitle: string) {
+  if (!isUuid(id)) return;
+  const [row] = await tx
+    .select({ title: documents.title })
+    .from(documents)
+    .where(and(eq(documents.orgId, ctx.orgId), eq(documents.id, id)))
+    .limit(1);
+  if (!row || normalizeTitle(row.title) === normalizeTitle(newTitle)) return;
+  const sources = await linkingSources(tx, id, row.title);
+  await tx
+    .select({ id: documents.id })
+    .from(documents)
+    .where(and(eq(documents.orgId, ctx.orgId), inArray(documents.id, [id, ...sources.map((s) => s.id)])))
+    .orderBy(asc(documents.id))
+    .for("update");
 }
 
 /**
@@ -383,17 +429,7 @@ async function relinkRenamed(
   const oldTitle = renamed.title;
   if (normalizeTitle(oldTitle) === normalizeTitle(newTitle)) return result;
 
-  const sources = await tx
-    .selectDistinct({ id: documentLinks.documentId })
-    .from(documentLinks)
-    .where(
-      and(
-        eq(documentLinks.kind, "document"),
-        sql`lower(${documentLinks.target}) = ${normalizeTitle(oldTitle)}`,
-        sql`${documentLinks.documentId} <> ${renamed.id}`,
-      ),
-    )
-    .orderBy(asc(documentLinks.documentId));
+  const sources = await linkingSources(tx, renamed.id, oldTitle);
   if (!sources.length) return result;
 
   // Which document a title opens depends on every live document of the organization, not on
@@ -406,7 +442,11 @@ async function relinkRenamed(
     projectKey: r.projectKey,
     updatedAt: r.document.updatedAt.toISOString(),
   }));
-  const before = after.map((d) => (d.id === renamed.id ? { ...d, title: oldTitle } : d));
+  // As it was before the save: the renamed document's old title and its old `updatedAt`, which
+  // decides between documents of the same title and rank.
+  const before = after.map((d) =>
+    d.id === renamed.id ? { ...d, title: oldTitle, updatedAt: renamed.updatedAt.toISOString() } : d,
+  );
   // A title another document has too could open that one, now or after its next save.
   const titleIsFree =
     isLinkableTitle(newTitle) &&
@@ -417,10 +457,19 @@ async function relinkRenamed(
 
   for (const { id } of sources) {
     const source = byId.get(id);
-    if (!source || !inScope(scope, source.projectId)) continue;
+    // What findDocument lets the renamer see: organization-wide documents, and their projects'.
+    if (!source || (source.projectId !== null && !inScope(scope, source.projectId))) continue;
     if (resolveTitle(before, oldTitle, source.projectKey)?.id !== renamed.id) continue;
 
-    const { document: current, scope: at } = await findDocument(tx, ctx, id, true);
+    let locked: Awaited<ReturnType<typeof findDocument>>;
+    try {
+      locked = await findDocument(tx, ctx, id, true);
+    } catch (err) {
+      // Deleted or moved out of sight since the read above: nothing to rewrite.
+      if (err instanceof DomainError && err.code === "not_found") continue;
+      throw err;
+    }
+    const { document: current, scope: at } = locked;
     const rulesOf = await rulesProjectOf(tx, id);
     if (rulesOf) {
       canChangeRules ??= await assertCanManageProjects(tx, ctx, "change rules").then(
