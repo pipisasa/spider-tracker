@@ -24,6 +24,8 @@ export interface SavedAgent {
   /** How the key was obtained. */
   source: "invite" | "login";
   createdAt: string;
+  /** The Claude Code permission mode `spider claude` starts it in; unset: the spider default. */
+  permissionMode?: string;
 }
 
 export interface SavedOrg {
@@ -206,6 +208,7 @@ const savedAgentSchema = z.looseObject({
     .nullable(),
   source: z.enum(["invite", "login"]),
   createdAt: z.string(),
+  permissionMode: z.string().optional(),
 });
 
 const storeSchema = z.looseObject({
@@ -387,7 +390,9 @@ export function putAgent(
   });
   const savedOrg = (saved.orgs[org.slug] ??= { name: org.name, agents: {} });
   savedOrg.name = org.name;
-  savedOrg.agents[agent.actor.handle] = agent;
+  // A new key for the same agent keeps its local settings.
+  const permissionMode = agent.permissionMode ?? savedOrg.agents[agent.actor.handle]?.permissionMode;
+  savedOrg.agents[agent.actor.handle] = permissionMode ? { ...agent, permissionMode } : agent;
   return refOf({ server: serverKey, org: org.slug, agent: agent.actor.handle });
 }
 
