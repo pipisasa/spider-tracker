@@ -7,7 +7,7 @@ import { quoteOccursIn, skeleton, skeletonIndex } from "./anchors";
 import { AGENT_COMMENT_LIMIT } from "./comments";
 import { addDocumentComment, listDocumentComments, resolveDocumentComment } from "./document-comments";
 import { createDocument, deleteDocument, editDocument } from "./documents";
-import { listInbox } from "./inbox";
+import { listInbox, markInboxRead } from "./inbox";
 import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { INBOX_KINDS } from "./schemas";
@@ -162,5 +162,15 @@ run("document comments", () => {
     await deleteDocument(db, owner, doc.id);
     await expect(listDocumentComments(db, owner, doc.id)).rejects.toMatchObject({ code: "not_found" });
     expect((await listInbox(db, owner, ALL_KINDS)).some((i) => i.document?.id === doc.id)).toBe(false);
+  });
+
+  test("marking read up to an id leaves document items alone unless their kinds are named (ST-128)", async () => {
+    const unread = async () => (await listInbox(db, beta, { ...ALL_KINDS, unread: true })).map((i) => i.kind);
+    expect(await unread()).toEqual(["document_mention", "document_reply"]);
+    // Clients from before ST-118 never fetch document items, so their `upTo` must not mark them.
+    expect(await markInboxRead(db, beta, { upTo: Number.MAX_SAFE_INTEGER })).toBe(0);
+    expect(await unread()).toEqual(["document_mention", "document_reply"]);
+    expect(await markInboxRead(db, beta, { upTo: Number.MAX_SAFE_INTEGER, ...ALL_KINDS })).toBe(2);
+    expect(await unread()).toEqual([]);
   });
 });

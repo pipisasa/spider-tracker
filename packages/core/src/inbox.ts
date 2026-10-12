@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { aliasedTable, and, asc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { aliasedTable, and, asc, eq, gt, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { projectScope, type ActorContext } from "./access";
 import type { DocumentInboxKind, InboxItemDto, InboxKind, TaskInboxKind } from "./contracts";
 import { publish } from "./events";
@@ -98,6 +98,9 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
           and(isNotNull(inboxItems.taskId), isNull(tasks.deletedAt)),
           and(isNull(inboxItems.taskId), isNotNull(documents.id), isNull(documents.deletedAt)),
         ),
+        // A `rules` item only while its document is still the project's rules (ST-128): not after
+        // the rules were replaced or cleared, or the document moved away or was deleted.
+        or(ne(inboxItems.kind, "rules"), eq(projects.rulesDocumentId, inboxItems.documentId)),
         // Organization-wide documents are visible to every member, scoped agents included.
         scope
           ? or(inArray(projects.id, [...scope]), and(isNull(inboxItems.taskId), isNull(documents.projectId)))
@@ -124,9 +127,12 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
   }));
 }
 
-/** Marks the actor's items read, by id or everything up to a cursor. Returns how many changed. */
+/**
+ * Marks the actor's items read, by id or everything of the given kinds (default: the task kinds)
+ * up to a cursor. Returns how many changed.
+ */
 export async function markInboxRead(db: Db, ctx: ActorContext, input: unknown): Promise<number> {
-  const { ids, upTo } = parseInput(markInboxReadInput, input);
+  const { ids, upTo, kinds } = parseInput(markInboxReadInput, input);
   const rows = await db
     .update(inboxItems)
     .set({ readAt: new Date() })
@@ -135,7 +141,8 @@ export async function markInboxRead(db: Db, ctx: ActorContext, input: unknown): 
         eq(inboxItems.recipientId, ctx.actorId),
         isNull(inboxItems.readAt),
         ids ? inArray(inboxItems.id, ids) : undefined,
-        upTo !== undefined ? lte(inboxItems.id, upTo) : undefined,
+        // Only the kinds the client listed: older clients never fetch `rules` and `document_*` items.
+        upTo !== undefined ? and(lte(inboxItems.id, upTo), inArray(inboxItems.kind, kinds)) : undefined,
       ),
     )
     .returning({ id: inboxItems.id });

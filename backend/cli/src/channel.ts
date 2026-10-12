@@ -148,7 +148,7 @@ export function createChannel(options: ChannelOptions) {
       });
     }
     const last = items.at(-1);
-    if (last) await client.inbox.markRead(org, { upTo: last.id });
+    if (last) await client.inbox.markRead(org, { upTo: last.id, kinds: [...INBOX_KINDS] });
   }
 
   /** Delivers unread items, then waits for new ones until `signal` aborts. */

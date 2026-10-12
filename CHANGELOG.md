@@ -111,6 +111,7 @@ Done means finished, not shipped; releases ship Done tasks.
 - Actors can have `type: "integration"`: the per-organization GitHub bot (`@github`, now a reserved handle). `GET /members` leaves it out; `?all=true` includes it, so clients that switch on `type` should expect a third value.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+- `POST /v1/orgs/{org}/inbox/read` takes `kinds` (ST-128): `upTo` marks only those kinds, by default the task kinds. Older CLI and channel builds, which never fetch `rules` and `document_*` items, no longer mark them read; the new CLI (`spider inbox --mark-read`), the channel and MCP `mark_inbox_read` pass every kind they list. `rules` items also drop out of the inbox once their document is no longer the project's rules (replaced, cleared, moved or deleted), and archived projects' agents aren't told about rules changes. `spider project view` shows no rules instead of failing when the rules document was just deleted.
 
 ### Plugin 0.3.12
 

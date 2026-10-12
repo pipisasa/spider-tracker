@@ -406,10 +406,28 @@ withDb("spider CLI against the API", () => {
     expect(pushed[1]?.meta).toMatchObject({ kind: "rules", project: "SPI", document_id: rulesDoc.id });
     expect(pushed[1]?.meta).not.toHaveProperty("task");
     expect(pushed[1]?.content).toContain('changed the rules of project SPI: "Rules"');
+    // The channel marks the rules item read too (ST-128: `upTo` covers only the kinds named).
+    let unread: unknown[] = [];
+    for (let i = 0; i < 50; i++) {
+      unread = (await spider("inbox", "--json")).json().items as unknown[];
+      if (unread.length === 0) break;
+      await Bun.sleep(100);
+    }
+    expect(unread).toEqual([]);
 
     const view = await spider("project", "view", "SPI");
     expect(view.stdout).toContain(`Rules for agents: Rules (${rulesDoc.id}, v1)`);
     expect(view.stdout).toContain("Done means merged.");
+    // A rules document that can't be read (deleted meanwhile) shows as no rules (ST-128).
+    const rulesGone = await spiderVia(
+      (input, init) =>
+        (init.method ?? "GET") === "GET" && new URL(input).pathname.endsWith(`/documents/${rulesDoc.id}`)
+          ? Response.json({ error: { code: "not_found", message: "Document not found" } }, { status: 404 })
+          : app.request(input, init),
+      ["project", "view", "SPI", "--json"],
+    );
+    expect(rulesGone.code).toBe(0);
+    expect(rulesGone.json()).toMatchObject({ key: "SPI", rulesDocumentId: rulesDoc.id, rules: null });
     // An owner's agent may clear them.
     expect((await spider("project", "update", "SPI", "--rules", "", "--json")).json()).toMatchObject({ rulesDocumentId: null });
     // Status automation from pull requests (ST-85).
@@ -445,7 +463,16 @@ withDb("spider CLI against the API", () => {
     stop.abort();
     await pumping;
     await session.close();
-  });
+
+    // `spider inbox --mark-read` marks the document items it listed too (ST-128).
+    const later = (await (await asOwner("POST", "/documents", { title: "Later", project: "SPI", content: "Plan" })).json()) as { id: string };
+    expect((await asOwner("POST", `/documents/${later.id}/comments`, { body: "@cli-bot one more?" })).status).toBe(201);
+    const listed = (await spider("inbox", "--json", "--mark-read")).json().items as { kind: string }[];
+    expect(listed.map((i) => i.kind)).toContain("document_mention");
+    expect((await spider("inbox", "--json")).json()).toEqual({ items: [] });
+    expect((await asOwner("DELETE", `/documents/${later.id}`, {})).status).toBeLessThan(300);
+    // Stopping the channel waits out its long poll, so this test runs close to the default 5 s.
+  }, 15_000);
   test("tags: list, set on create and update, unknown names fail with the list", async () => {
     // Agents (members) can create tags through the API; the CLI only reads and assigns them.
     const res = await app.request(`/v1/orgs/${slug}/tags`, {

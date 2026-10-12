@@ -402,7 +402,8 @@ export function createClient({ baseUrl, token, source, fetch: transport }: Clien
         const qs = params.size ? `?${params}` : "";
         return request<ListResponse<InboxItemDto>>("GET", `${org(orgSlug)}/inbox${qs}`);
       },
-      markRead: (orgSlug: string, input: { ids?: number[]; upTo?: number }) =>
+      /** `upTo` marks only `kinds` (default: the task kinds); pass the kinds you listed. */
+      markRead: (orgSlug: string, input: { ids?: number[]; upTo?: number; kinds?: InboxKind[] }) =>
         request<{ updated: number }>("POST", `${org(orgSlug)}/inbox/read`, input),
     },
 
