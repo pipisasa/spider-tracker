@@ -1,5 +1,6 @@
 import { TagChips } from "@/components/tags";
 import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
+import { assigneesOf } from "@/lib/assignees";
 import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -54,9 +55,7 @@ export function TaskList({
                   <span className="min-w-0 flex-1 truncate">{task.title}</span>
                   <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
                   <span className="flex -space-x-1.5">
-                    {task.assigneeIds
-                      .map((id) => memberMap.get(id))
-                      .filter((m): m is ActorDto => !!m)
+                    {assigneesOf(task.assigneeIds, memberMap)
                       .slice(0, 3)
                       .map((m) => (
                         <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-background" />

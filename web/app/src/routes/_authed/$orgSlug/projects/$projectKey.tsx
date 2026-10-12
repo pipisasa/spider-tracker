@@ -5,7 +5,7 @@ import { TaskList } from "@/components/task-list";
 import { ProjectSettingsDialog } from "@/components/project-settings";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { documentsQuery, membersQuery, projectQuery, tagsQuery, tasksQuery, useArchiveProject } from "@/lib/work";
+import { actorsQuery, documentsQuery, membersQuery, projectQuery, tagsQuery, tasksQuery, useArchiveProject } from "@/lib/work";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { FileTextIcon, KanbanIcon, ListIcon, PlusIcon, SettingsIcon } from "lucide-react";
@@ -32,6 +32,8 @@ function ProjectPage() {
   const { data: project } = useSuspenseQuery(projectQuery(orgSlug, projectKey));
   const { data: tasks } = useSuspenseQuery(tasksQuery(orgSlug, projectKey));
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
+  // Deactivated assignees too, so cards and rows still show them.
+  const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const { data: tags = [] } = useQuery(tagsQuery(orgSlug));
   const [newTaskStatus, setNewTaskStatus] = useState<string | undefined>();
   const [newTaskOpen, setNewTaskOpen] = useState(false);
@@ -128,12 +130,12 @@ function ProjectPage() {
           orgSlug={orgSlug}
           statuses={project.statuses}
           tasks={tasks}
-          members={members}
+          members={actors}
           tags={tags}
           onAdd={membership.actor.role !== "guest" ? openNewTask : undefined}
         />
       ) : (
-        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={members} tags={tags} />
+        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={tasks} members={actors} tags={tags} />
       )}
       <NewTaskDialog
         orgSlug={orgSlug}

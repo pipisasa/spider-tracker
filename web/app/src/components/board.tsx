@@ -1,6 +1,7 @@
 import { TagChips } from "@/components/tags";
 import { ActorAvatar, PriorityIcon, StatusIcon } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
+import { assigneesOf } from "@/lib/assignees";
 import { useUpdateTask } from "@/lib/work";
 import {
   DndContext,
@@ -42,7 +43,7 @@ function TaskCard({
   dragging?: boolean;
 }) {
   const sub = progress?.get(task.id);
-  const assignees = task.assigneeIds.map((id) => members.get(id)).filter((m): m is ActorDto => !!m);
+  const assignees = assigneesOf(task.assigneeIds, members);
   return (
     <div
       className={`flex flex-col gap-2 rounded-lg border bg-card p-3 text-sm shadow-xs ${dragging ? "shadow-lg ring-2 ring-ring/40" : ""}`}

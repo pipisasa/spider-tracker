@@ -55,6 +55,7 @@ const schemas: Record<string, JsonSchema> = {
     handle: string(),
     avatarUrl: nullable("string"),
     role: string({ enum: ["owner", "admin", "member", "guest"] }),
+    deactivated: { type: "boolean" },
   }),
   Membership: object({ organization: ref("Organization"), actor: ref("Actor") }),
   Me: object({
@@ -419,6 +420,14 @@ const paths = {
     get: {
       operationId: "listMembers",
       summary: "List people and agents in the organization",
+      parameters: [
+        {
+          name: "all",
+          in: "query",
+          schema: { type: "boolean" },
+          description: "Include deactivated people and deleted agents (e.g. to name tasks' former assignees)",
+        },
+      ],
       responses: { "200": ok("Members", "ActorList"), ...errors },
     },
   },

@@ -890,5 +890,10 @@ withDb("members manage their own agents", () => {
     expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(401);
     const members = (await (await send(alice, "GET", `/v1/orgs/${slug}/members`)).json()) as { items: { id: string }[] };
     expect(members.items.map((m) => m.id)).not.toContain(agent.actor.id);
+    const all = (await (await send(alice, "GET", `/v1/orgs/${slug}/members?all=true`)).json()) as {
+      items: { id: string; handle: string; deactivated: boolean }[];
+    };
+    expect(all.items.find((m) => m.id === agent.actor.id)).toMatchObject({ handle: "renamed", deactivated: true });
+    expect(all.items.filter((m) => !m.deactivated)).toHaveLength(members.items.length);
   });
 });

@@ -44,6 +44,7 @@ const member = (id: string, handle: string): ActorDto => ({
   handle,
   avatarUrl: null,
   role: "member",
+  deactivated: false,
 });
 
 describe("status resolution", () => {

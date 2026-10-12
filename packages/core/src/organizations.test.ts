@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
+import { createAgent, deleteAgent } from "./agents";
 import { DomainError } from "./errors";
-import { createOrganization, listMemberships } from "./organizations";
+import { createOrganization, listMembers, listMemberships } from "./organizations";
 
 // Integration test: needs a migrated database in TEST_DATABASE_URL.
 const url = process.env.TEST_DATABASE_URL;
@@ -30,6 +31,20 @@ run("organizations", () => {
 
     const memberships = await listMemberships(db, user.id);
     expect(memberships.map((m) => m.organization.id)).toContain(organization.id);
+  });
+
+  test("listMembers includes deactivated actors only when asked", async () => {
+    const [org] = await db.select().from(schema.organizations).where(eqSlug(slug));
+    const [owner] = await db.select().from(schema.actors).where(eq(schema.actors.userId, user.id));
+    if (!org || !owner) throw new Error("organization not created");
+    const ctx = { orgId: org.id, actorId: owner.id, role: owner.role, source: "ui" } as const;
+    const { actor: gone } = await createAgent(db, ctx, { name: "Gone" });
+    await deleteAgent(db, ctx, gone.id);
+
+    expect((await listMembers(db, org.id)).map((m) => m.id)).not.toContain(gone.id);
+    const all = await listMembers(db, org.id, { includeDeactivated: true });
+    expect(all.find((m) => m.id === gone.id)?.deactivatedAt).toBeInstanceOf(Date);
+    expect(all.find((m) => m.id === owner.id)?.deactivatedAt).toBeNull();
   });
 
   test("rejects a taken slug", async () => {

@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { actorLabel, assigneeOptions, toggleAssignee } from "@/lib/assignees";
+import { cn } from "@/lib/utils";
 import type { ActorDto, Priority, StatusCategory, StatusDto } from "@repo/core/contracts";
 import {
   BotIcon,
@@ -73,7 +75,7 @@ export function ActorAvatar({ actor, className }: { actor: ActorDto; className?:
     .map((part) => part[0]?.toUpperCase())
     .join("");
   return (
-    <Avatar className={className ?? "size-6"} title={actor.name}>
+    <Avatar className={cn(className ?? "size-6", actor.deactivated && "opacity-50 grayscale")} title={actorLabel(actor)}>
       {actor.avatarUrl && <AvatarImage src={actor.avatarUrl} alt="" />}
       <AvatarFallback className="text-[10px]">
         {actor.type === "agent" ? <BotIcon className="size-3" /> : initials || "?"}
@@ -126,17 +128,20 @@ export function PrioritySelect({ value, onChange }: { value: Priority; onChange:
   );
 }
 
+/** Assigns active members; deactivated assignees (from `actors`) are shown and can only be removed. */
 export function AssigneePicker({
   members,
+  actors = [],
   value,
   onChange,
 }: {
   members: ActorDto[];
+  actors?: ActorDto[];
   value: string[];
   onChange: (actorIds: string[]) => void;
 }) {
-  const selected = members.filter((m) => value.includes(m.id));
-  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
+  const { selected, options } = assigneeOptions(members, actors, value);
+  const toggle = (actor: ActorDto) => onChange(toggleAssignee(value, actor));
 
   return (
     <Popover>
@@ -154,7 +159,14 @@ export function AssigneePicker({
                   <ActorAvatar key={m.id} actor={m} className="size-5 ring-2 ring-background" />
                 ))}
               </span>
-              <span className="truncate">{selected.map((m) => m.name).join(", ")}</span>
+              <span className="truncate">
+                {selected.map((m, i) => (
+                  <span key={m.id} className={m.deactivated ? "text-muted-foreground" : undefined} title={actorLabel(m)}>
+                    {i > 0 && ", "}
+                    {m.name}
+                  </span>
+                ))}
+              </span>
             </>
           )}
         </Button>
@@ -165,10 +177,16 @@ export function AssigneePicker({
           <CommandList>
             <CommandEmpty>No members found.</CommandEmpty>
             <CommandGroup>
-              {members.map((m) => (
-                <CommandItem key={m.id} value={`${m.name} ${m.handle}`} onSelect={() => toggle(m.id)}>
+              {options.map((m) => (
+                <CommandItem
+                  key={m.id}
+                  value={`${m.name} ${m.handle}`}
+                  onSelect={() => toggle(m)}
+                  className={m.deactivated ? "text-muted-foreground" : undefined}
+                  title={m.deactivated ? `${actorLabel(m)}: can be removed, not assigned again` : undefined}
+                >
                   <ActorAvatar actor={m} className="size-5" />
-                  <span className="truncate">{m.name}</span>
+                  <span className="truncate">{actorLabel(m)}</span>
                   {value.includes(m.id) && <CheckIcon className="ml-auto size-4" />}
                 </CommandItem>
               ))}
