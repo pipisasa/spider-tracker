@@ -84,8 +84,11 @@ import {
   listReleases,
   removeFromRelease,
   updateRelease,
+  getReleaseChangelog,
+  writeReleaseChangelog,
   type ReleaseDto,
   webUrls,
+  withChangelogUrls,
   withDocumentUrl,
   withProjectUrl,
   withTaskUrl,
@@ -368,6 +371,16 @@ export function orgRoutes(
 
   app.delete("/releases/:taskKey/tasks/:includedKey", async (c) =>
     c.json(release(c, await removeFromRelease(db, c.get("actor"), c.req.param("taskKey"), { tasks: [c.req.param("includedKey")] }))),
+  );
+
+  // Changelog (ST-95): generated from the included tasks' handoff notes; POST writes it into the
+  // release's description ({ taskApps?, force? }), never overwriting a hand-edited block unless forced.
+  app.get("/releases/:taskKey/changelog", async (c) =>
+    c.json(withChangelogUrls(c.get("urls"), await getReleaseChangelog(db, c.get("actor"), c.req.param("taskKey")))),
+  );
+
+  app.post("/releases/:taskKey/changelog", async (c) =>
+    c.json(withChangelogUrls(c.get("urls"), await writeReleaseChangelog(db, c.get("actor"), c.req.param("taskKey"), (await body(c)) ?? {}))),
   );
 
   app.get("/release-candidates", async (c) =>

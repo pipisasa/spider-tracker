@@ -36,3 +36,10 @@ export const withDocumentUrl = <T extends { id: string }>(urls: WebUrls, documen
   ...document,
   url: urls.document(document.id),
 });
+
+/** A release changelog (ST-95) with the web pages of its release and entries. */
+export const withChangelogUrls = <T extends { release: { key: string }; entries: { key: string }[] }>(urls: WebUrls, changelog: T): T => ({
+  ...changelog,
+  release: withTaskUrl(urls, changelog.release),
+  entries: changelog.entries.map((e) => withTaskUrl(urls, e)),
+});

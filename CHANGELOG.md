@@ -42,6 +42,12 @@ Done means finished, not shipped; releases ship Done tasks.
 - **Web:** the board shows release columns after the task columns (one per release status, a "Release columns" switch, on by default) with release cards (version, apps, task keys); Done cards show their shipping state; dragging a Done task onto a release card adds it. A Releases view per project: releases in flight, then the shipped ones as the changelog, filterable by app. A release's page shows its apps, versions and tasks (add, remove); a Done task's page shows its shipping and a "No code to ship" switch.
 - Database migration `0024_releases`: `tasks.release_id`, `shipped_at`, `no_code`, and the `release_repos` and `release_apps` tables.
 
+### Release changelog and git check (ST-95)
+
+- **API:** new `GET /v1/orgs/{org}/releases/{key}/changelog` (`ReleaseChangelogDto`: each included task's title plus the "What changed" section of its handoff note, by app for a one-app release, as `entries` and `markdown`, and how the description's changelog block compares: `missing`, `current`, `outdated` or `edited`) and `POST …/changelog { taskApps?, force? }`, which writes it into the release's description between `<!-- spider:changelog -->` markers, keeping the rest; a block edited by hand is `409` unless `force`. SDK: `releases.changelog`, `releases.writeChangelog`.
+- **MCP:** new `get_release_changelog` (`key`, `write`, `force`), the same JSON as `spider release changelog --no-git --json`.
+- **CLI:** new `spider release changelog ST-NN [--write [--force]] [--no-git]` (grouped by app from local git), `spider release check ST-NN [--ref] [--since]` (commits since each app's previous tag vs the release: candidates left out, included tasks with no commits, apps changed but not in the release; exit 1 on findings) and `spider release notes ST-NN [--app cli] [--append [file]]` (one app's notes with its tag, or the release's section added to `CHANGELOG.md` after Unreleased, once). `bun run release:cli --release ST-NN` uses the cli section as the GitHub release notes.
+
 ### Start and target dates (ST-91)
 
 - **API:** tasks carry `startDate` and `targetDate` (`YYYY-MM-DD` or `null`); create, update and bulk update take them (start ≤ target). `GET …/projects/:key/tasks?overdue=true` lists open tasks past their target date (today = the server's UTC date). SDK: the same fields and `tasks.list(…, { overdue: true })`.
@@ -84,6 +90,10 @@ Done means finished, not shipped; releases ship Done tasks.
 - Actors can have `type: "integration"`: the per-organization GitHub bot (`@github`, now a reserved handle). `GET /members` leaves it out; `?all=true` includes it, so clients that switch on `type` should expect a third value.
 - `POST /v1/orgs/{org}/tasks/bulk-update`: tasks in `results` carry `url`, like other task responses (ST-107).
 - `GET /v1/orgs/{org}/documents/graph`: `projects` carry `url` too (ST-107).
+
+### Plugin 0.3.10
+
+- The `tasks` skill asks for a **What changed** section in handoff comments (the release changelog uses it) and shows the release owner's `spider release check`, `changelog --write` and `notes` steps (ST-95).
 
 ### Plugin 0.3.9
 

@@ -17,7 +17,9 @@
     "./anchors": "./src/anchors.ts",
     "./urls": "./src/urls.ts",
     "./views": "./src/views.ts",
-    "./board": "./src/board.ts"
+    "./board": "./src/board.ts",
+    "./release-notes": "./src/release-notes.ts",
+    "./release-check": "./src/release-check.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

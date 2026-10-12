@@ -132,6 +132,7 @@ withDb("MCP server", () => {
         "add_to_release",
         "remove_from_release",
         "list_release_candidates",
+        "get_release_changelog",
         "assign_to_me",
         "create_document",
         "diff_document",
@@ -806,6 +807,25 @@ withDb("MCP server", () => {
     expect((await call(client, "update_release", { key: release.key, apps: [{ repo: "pipisasa/spider-tracker", app: "api", version: "2026.10.14" }] })).json()).toMatchObject({
       apps: [{ version: "2026.10.14" }],
     });
+
+    // Changelog (ST-95): the handoff's What changed under the one app; write saves it, a hand edit is kept.
+    await call(client, "add_comment", { key: a.key, body: "**What changed**\n- Faster webhooks\n\n**Verified**\n- tests" });
+    const changelog = (await call(client, "get_release_changelog", { key: release.key })).json() as { markdown: string };
+    expect(changelog).toMatchObject({
+      release: { key: release.key, url: expect.stringContaining(`/tasks/${release.key}`) },
+      grouped: true,
+      entries: [{ key: a.key, whatChanged: "- Faster webhooks", apps: ["api"], url: expect.stringContaining(`/tasks/${a.key}`) }],
+      description: { state: "missing" },
+      written: null,
+    });
+    expect(changelog.markdown).toBe(`### api 2026.10.14\n\n- **${a.key}** Release A\n  - Faster webhooks`);
+    expect((await call(client, "get_release_changelog", { key: release.key, write: true })).json()).toMatchObject({ written: "added" });
+    const description = ((await call(client, "get_task", { key: release.key })).json() as { description: string }).description;
+    await call(client, "update_task", { key: release.key, description: description.replace("Faster", "Much faster") });
+    const refused = await call(client, "get_release_changelog", { key: release.key, write: true });
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.text).toContain("edited by hand");
+    expect((await call(client, "get_release_changelog", { key: release.key, write: true, force: true })).json()).toMatchObject({ written: "replaced" });
 
     expect((await call(client, "update_task", { key: release.key, status: "Released" })).json()).toMatchObject({ status: { name: "Released" } });
     expect((await call(client, "get_task", { key: a.key })).json()).toMatchObject({

@@ -78,6 +78,9 @@ import {
   listReleases,
   removeFromRelease,
   updateRelease,
+  getReleaseChangelog,
+  writeReleaseChangelog,
+  withChangelogUrls,
   releaseView,
   actorHandle,
   commentView,
@@ -651,6 +654,23 @@ function createMcpServer(db: Db, key: Key, realtime: Realtime, webOrigin: string
         const tasks = await listReleaseCandidates(db, ctx, { project: projectKey, release });
         return { items: await Promise.all(tasks.map(async (t) => describeTask(t, await projectOfTask(t.key)))) };
       }),
+  );
+
+  server.registerTool(
+    "get_release_changelog",
+    {
+      description:
+        "Get a release's changelog, generated from its included tasks: each task's title plus the \"What changed\" section of its handoff note (the latest comment with one by an assignee, else by anyone), with a section per app for a one-app release. description.state says whether the release's description has it: missing, current, outdated (generated earlier) or edited (by hand). write: true saves it into the description (replacing the changelog block, keeping the rest); an edited block is refused unless force: true. Grouping a multi-app release by app needs local git: spider release changelog ST-NN --write.",
+      inputSchema: {
+        key: releaseKeyInput,
+        write: z.boolean().optional().describe("Save it into the release's description"),
+        force: z.boolean().optional().describe("With write: replace a changelog block edited by hand (the edits are lost)"),
+      },
+    },
+    ({ key: releaseKey, write, force }) =>
+      run(async () =>
+        withChangelogUrls(urls, write ? await writeReleaseChangelog(db, ctx, releaseKey, { force }) : await getReleaseChangelog(db, ctx, releaseKey)),
+      ),
   );
 
   server.registerTool(
