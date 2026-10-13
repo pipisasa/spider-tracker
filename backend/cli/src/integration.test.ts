@@ -1821,6 +1821,16 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "diff", id, "--from", "3")).stdout).toBe(
       "No changes in content between version 3 and 3\n",
     );
+    // The append left no final newline: said under the diff (ST-129).
+    expect(json).toMatchObject({
+      trailingNewlineChanged: true,
+      lineEndingsChanged: false,
+    });
+    expect(
+      (await spider("doc", "diff", id, "--from", "2", "--to", "3")).stdout,
+    ).toEndWith(
+      "+three\n\\ The newline at the end differs between version 2 and 3\n",
+    );
 
     expect((await spider("doc", "diff", id, "--from", "9")).code).toBe(3);
     expect((await spider("doc", "diff", id, "--from", "x")).code).toBe(2);

@@ -36,7 +36,7 @@ import type {
   RelinkedDocumentsDto,
   UpdatedDocumentDto,
 } from "./contracts";
-import { diffHunks, diffLines } from "./diff";
+import { diffHunks, diffLines, textChanges } from "./diff";
 import { applyDocumentEdits } from "./document-edits";
 import { DomainError, isLockConflict } from "./errors";
 import { publish } from "./events";
@@ -895,6 +895,7 @@ export async function diffDocumentVersions(
     added: lines.filter((l) => l.kind === "added").length,
     removed: lines.filter((l) => l.kind === "removed").length,
     hunks: diffHunks(lines),
+    ...textChanges(a.content, b.content),
   };
 }
 

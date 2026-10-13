@@ -998,7 +998,17 @@ const schemas: Record<string, JsonSchema> = {
       type: "array",
       items: ref("DiffHunk"),
       description:
-        "Changes with 3 lines of context, as in a unified diff; empty when the contents match",
+        "Changes with 3 lines of context, as in a unified diff; empty when the contents match. Lines compare without their CRLF or LF ending",
+    },
+    trailingNewlineChanged: {
+      type: "boolean",
+      description:
+        "One version ends with a newline and the other doesn't (not shown in hunks)",
+    },
+    lineEndingsChanged: {
+      type: "boolean",
+      description:
+        "One version has CRLF line endings and the other LF (not shown in hunks)",
     },
   }),
   DocumentLink: object({
