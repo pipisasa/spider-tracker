@@ -513,7 +513,7 @@ function OldVersion({
     update.mutate(
       {
         baseVersion: doc.version,
-        title: old.title,
+        ...(old.title !== doc.title ? { title: old.title } : {}),
         format: old.format,
         content: old.content,
       },
@@ -704,6 +704,7 @@ function DocumentEditor({
   wikiLinks: WikiLinkHost;
 }) {
   const [baseVersion] = useState(doc.version);
+  const [baseTitle] = useState(doc.title);
   const [title, setTitle] = useState(doc.title);
   const [format, setFormat] = useState<DocumentFormat>(doc.format);
   const [content, setContent] = useState(doc.content);
@@ -729,7 +730,13 @@ function DocumentEditor({
       return;
     }
     update.mutate(
-      { baseVersion, title, format, content },
+      {
+        baseVersion,
+        // Only a new title: sending it unchanged costs the server a rename check.
+        ...(title !== baseTitle ? { title } : {}),
+        format,
+        content,
+      },
       {
         onSuccess: (saved) => {
           if (saved.version !== baseVersion)

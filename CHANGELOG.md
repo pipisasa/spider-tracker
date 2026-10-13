@@ -91,6 +91,7 @@ Done means finished, not shipped; releases ship Done tasks.
 ### Documents: review follow-ups
 
 - **Partial edits (ST-123):** `POST …/documents/{id}/edit` (MCP `edit_document`, SDK `documents.edit`) returns the document with `changed` (false when the edits changed nothing), so `spider doc edit --old/--append/--section` no longer reads the document first to say "No changes". Each edit text is capped at 1 MB, and MCP `edit_document` now takes at most 100 edits, like the API. A section edit keeps a CRLF document's line endings, and a new section body with a heading of the section's level or higher (which would split the section) is refused with `400 validation`.
+- **Links by id (ST-127):** backlinks count `[[DOC:<ID>]]` links stored in any case as links by id (rows from before targets were lower-cased no longer fall back to the title). A project-scoped agent's rename no longer locks linking documents outside its projects. Web: an unlabelled `[[doc:<id>]]` in the editor shows the document's title as soon as the documents list loads (not only on hover), and saves send `title` only when it changed.
 
 ### Opening pull requests (ST-87)
 

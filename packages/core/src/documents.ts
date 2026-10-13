@@ -43,6 +43,7 @@ import { publish } from "./events";
 import { isUuid } from "./ids";
 import {
   documentIdLink,
+  documentIdTarget,
   isLinkableTitle,
   normalizeTitle,
   outgoingLinksIn,
@@ -472,6 +473,8 @@ async function lockRenameRows(
     .limit(1);
   if (!row || normalizeTitle(row.title) === normalizeTitle(newTitle)) return;
   const sources = await linkingSources(tx, id, row.title);
+  // Only rows the actor may write: relinkRenamed skips the others, so a scoped agent never
+  // holds locks on documents outside its projects.
   await tx
     .select({ id: documents.id })
     .from(documents)
@@ -479,6 +482,7 @@ async function lockRenameRows(
       and(
         eq(documents.orgId, ctx.orgId),
         inArray(documents.id, [id, ...sources.map((s) => s.id)]),
+        visibleIn(await projectScope(tx, ctx)),
       ),
     )
     .orderBy(asc(documents.id))
@@ -920,11 +924,13 @@ export async function listBacklinks(
         sql`lower(${documentLinks.target}) in (${normalizeTitle(document.title)}, ${byId})`,
       ),
     );
+  // `doc:` targets match in any case (`[[DOC:<ID>]]`), like the SQL above.
+  const isById = (target: string) => documentIdTarget(target) === document.id;
   const byIdLinks = new Set(
-    rows.filter((r) => r.target === byId).map((r) => r.documentId),
+    rows.filter((r) => isById(r.target)).map((r) => r.documentId),
   );
   const byTitleLinks = new Set(
-    rows.filter((r) => r.target !== byId).map((r) => r.documentId),
+    rows.filter((r) => !isById(r.target)).map((r) => r.documentId),
   );
   return visible.filter(
     (source) =>

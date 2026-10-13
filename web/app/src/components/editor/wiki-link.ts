@@ -1,4 +1,4 @@
-import { InputRule, mergeAttributes, Node } from "@tiptap/core";
+import { type Editor, InputRule, mergeAttributes, Node } from "@tiptap/core";
 
 /** What the page hosting an editor tells wiki links (ST-100); absent, links render but don't open. */
 export interface WikiLinkHost {
@@ -36,6 +36,18 @@ const attrsOf = (target: string, label: string | undefined) => ({
 
 export function wikiLinkMarkdown(target: string, label: string | null): string {
   return `[[${target}${label ? `|${label}` : ""}]]`;
+}
+
+// Each editor's link node views, so they can be redrawn when the host's data changes.
+const nodeViews = new WeakMap<Editor, Set<() => void>>();
+
+/**
+ * Redraws every wiki link of `editor` from the current host: call it when the host's data
+ * changes, e.g. when the documents list loads after the editor opened and a `[[doc:<id>]]`
+ * should show the document's title instead of its id.
+ */
+export function refreshWikiLinks(editor: Editor) {
+  for (const refresh of nodeViews.get(editor) ?? []) refresh();
 }
 
 /** An Obsidian-style `[[link]]` to a document or a task, kept as such in Markdown. */
@@ -99,7 +111,7 @@ export const WikiLink = Node.create<WikiLinkOptions>({
       dom.dataset.wikiLink = "";
       const label = node.attrs.label as string | null;
       dom.textContent = label ?? target;
-      // Re-resolved on hover and click: the documents list may load after the editor opens.
+      // Re-resolved on hover and click, and by refreshWikiLinks when the host's data changes.
       const refresh = () => {
         const host = this.options.host();
         if (!label) dom.textContent = host?.label?.(target) ?? target;
@@ -114,6 +126,9 @@ export const WikiLink = Node.create<WikiLinkOptions>({
         return href;
       };
       refresh();
+      let views = nodeViews.get(editor);
+      if (!views) nodeViews.set(editor, (views = new Set()));
+      views.add(refresh);
       dom.addEventListener("mouseenter", refresh);
       dom.addEventListener("click", (event) => {
         event.preventDefault();
@@ -123,7 +138,7 @@ export const WikiLink = Node.create<WikiLinkOptions>({
         else if (href && (event.metaKey || event.ctrlKey))
           window.open(href, "_blank", "noopener");
       });
-      return { dom };
+      return { dom, destroy: () => views.delete(refresh) };
     };
   },
 

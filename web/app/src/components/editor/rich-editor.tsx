@@ -1,14 +1,14 @@
 import { Placeholder } from "@tiptap/extensions";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { cn } from "@/lib/utils";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { markdownChanged } from "./markdown-change";
 import { EditorBubbleMenu } from "./bubble-menu";
 import { DragHandle } from "./drag-handle";
 import "./editor.css";
 import { markdownExtensions } from "./extensions";
 import { SlashCommand } from "./slash-command";
-import type { WikiLinkHost } from "./wiki-link";
+import { refreshWikiLinks, type WikiLinkHost } from "./wiki-link";
 import { WikiLinkSuggestion } from "./wiki-link-suggestion";
 
 /**
@@ -79,6 +79,11 @@ export default function RichEditor({
     },
     onBlur: () => onBlur?.(),
   });
+
+  // A new host (e.g. the documents list loaded) redraws the links: titles for `[[doc:<id>]]`, missing marks.
+  useEffect(() => {
+    refreshWikiLinks(editor);
+  }, [editor, wikiLinks]);
 
   return (
     <div
