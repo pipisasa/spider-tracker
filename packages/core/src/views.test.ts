@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { formatUnifiedDiff } from "./diff";
 import type { DocumentDiffDto, DocumentVersionDto, TaskDto } from "./contracts";
-import { actorHandle, commentView, documentDiffView, documentVersionView, projectRulesView, relationView, taskView } from "./views";
+import {
+  actorHandle,
+  commentView,
+  documentDiffView,
+  documentVersionView,
+  projectRulesView,
+  relationView,
+  taskView,
+} from "./views";
 
 const task: TaskDto = {
   id: "t",
@@ -50,7 +58,12 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
       assignees: ["alice", "gone (deactivated)", "a3"],
       tags: ["infra", "g9"],
     });
-    expect(taskView({ ...task, statusId: "elsewhere" }, { statuses: [], actors, tags: [] }).status).toBeNull();
+    expect(
+      taskView(
+        { ...task, statusId: "elsewhere" },
+        { statuses: [], actors, tags: [] },
+      ).status,
+    ).toBeNull();
   });
 
   test("tasks from servers before tags get an empty tag list, and before kinds the kind task", () => {
@@ -63,12 +76,44 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
 
   test("comments, relations and old document versions", () => {
     expect(actorHandle(actors, "nobody")).toBe("nobody");
-    const comment = { id: "c", taskKey: "ST-1", parentId: null, authorId: "a1", body: "Hi", createdAt: "x", editedAt: null };
-    expect(commentView(comment, actors)).toEqual({ ...comment, author: "alice" });
-    expect(relationView({ kind: "blocks", task: { key: "ST-2", title: "Next" } })).toEqual({ kind: "blocks", task: "ST-2", title: "Next" });
+    const comment = {
+      id: "c",
+      taskKey: "ST-1",
+      parentId: null,
+      authorId: "a1",
+      body: "Hi",
+      createdAt: "x",
+      editedAt: null,
+    };
+    expect(commentView(comment, actors)).toEqual({
+      ...comment,
+      author: "alice",
+    });
+    expect(
+      relationView({ kind: "blocks", task: { key: "ST-2", title: "Next" } }),
+    ).toEqual({ kind: "blocks", task: "ST-2", title: "Next" });
 
-    const old: DocumentVersionDto = { documentId: "d", version: 1, title: "Spec", format: "md", authorId: null, createdAt: "x", content: "# v1" };
-    expect(documentVersionView({ id: "d", projectKey: "ST", taskKey: null, version: 3, url: "https://web/d" }, old)).toEqual({
+    const old: DocumentVersionDto = {
+      documentId: "d",
+      version: 1,
+      title: "Spec",
+      format: "md",
+      authorId: null,
+      createdAt: "x",
+      content: "# v1",
+    };
+    expect(
+      documentVersionView(
+        {
+          id: "d",
+          projectKey: "ST",
+          taskKey: null,
+          version: 3,
+          url: "https://web/d",
+        },
+        old,
+      ),
+    ).toEqual({
       ...old,
       id: "d",
       projectKey: "ST",
@@ -79,7 +124,13 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
   });
 
   test("document diffs get their unified text; rules come from the project and its document", () => {
-    const side = (version: number) => ({ version, title: "Spec", format: "md" as const, authorId: null, createdAt: "x" });
+    const side = (version: number) => ({
+      version,
+      title: "Spec",
+      format: "md" as const,
+      authorId: null,
+      createdAt: "x",
+    });
     const dto: DocumentDiffDto = {
       documentId: "d",
       from: side(1),
@@ -99,11 +150,24 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
         },
       ],
     };
-    expect(documentDiffView(dto)).toEqual({ ...dto, diff: formatUnifiedDiff(dto.hunks, "v1", "v2") });
-    expect(documentDiffView(dto).diff).toStartWith("--- v1\n+++ v2\n@@ -1 +1 @@\n-old\n+new");
+    expect(documentDiffView(dto)).toEqual({
+      ...dto,
+      diff: formatUnifiedDiff(dto.hunks, "v1", "v2"),
+    });
+    expect(documentDiffView(dto).diff).toStartWith(
+      "--- v1\n+++ v2\n@@ -1 +1 @@\n-old\n+new",
+    );
     expect(documentDiffView({ ...dto, hunks: [] }).diff).toBe("");
 
-    const document = { id: "d", title: "Rules", format: "md" as const, version: 3, updatedAt: "y", content: "Be kind", url: "https://web/d" };
+    const document = {
+      id: "d",
+      title: "Rules",
+      format: "md" as const,
+      version: 3,
+      updatedAt: "y",
+      content: "Be kind",
+      url: "https://web/d",
+    };
     expect(projectRulesView({ key: "ST", name: "Spider" }, document)).toEqual({
       projectKey: "ST",
       projectName: "Spider",

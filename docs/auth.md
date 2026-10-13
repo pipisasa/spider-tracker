@@ -10,15 +10,15 @@ Spider Tracker is its own **OAuth 2.1 / OpenID Connect (OIDC) provider**: MCP cl
 
 ## Flows
 
-| Who | Flow | Result |
-|---|---|---|
-| **People in the web app** | GitHub / Google sign-in (authorization code + PKCE), plus email magic link | Secure session cookie |
-| **CLI** (`spider login`) | Device flow (RFC 8628): the CLI shows a code, the person approves it at `/device` | An API key for a per-device agent member owned by the person, in `~/.config/spider-tracker/credentials.json` (0600). Implemented in-house (`device_codes` table), see [interfaces.md](./interfaces.md#login-device-flow-rfc-8628) |
-| **MCP clients** (Claude Code, Claude.ai, Cursor…) | OAuth 2.1 + PKCE with automatic client registration, as the MCP spec requires | Token limited to the MCP endpoint |
-| **Hosted agents** (our worker) | No OAuth: the worker issues a short-lived token per run, scoped to the run's task and permissions | Token that expires when the run ends |
-| **External agents, CI** | API keys | Long-lived, revocable key |
-| **Third-party apps** (later) | Authorization code + PKCE with a consent screen ("Sign in with Spider Tracker") | Scoped tokens + ID token |
-| **GitHub** | Separate from login: the GitHub App installation, plus each user linking their GitHub account | Commits and pull requests attributed to the right person |
+| Who                                               | Flow                                                                                              | Result                                                                                                                                                                                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **People in the web app**                         | GitHub / Google sign-in (authorization code + PKCE), plus email magic link                        | Secure session cookie                                                                                                                                                                                                             |
+| **CLI** (`spider login`)                          | Device flow (RFC 8628): the CLI shows a code, the person approves it at `/device`                 | An API key for a per-device agent member owned by the person, in `~/.config/spider-tracker/credentials.json` (0600). Implemented in-house (`device_codes` table), see [interfaces.md](./interfaces.md#login-device-flow-rfc-8628) |
+| **MCP clients** (Claude Code, Claude.ai, Cursor…) | OAuth 2.1 + PKCE with automatic client registration, as the MCP spec requires                     | Token limited to the MCP endpoint                                                                                                                                                                                                 |
+| **Hosted agents** (our worker)                    | No OAuth: the worker issues a short-lived token per run, scoped to the run's task and permissions | Token that expires when the run ends                                                                                                                                                                                              |
+| **External agents, CI**                           | API keys                                                                                          | Long-lived, revocable key                                                                                                                                                                                                         |
+| **Third-party apps** (later)                      | Authorization code + PKCE with a consent screen ("Sign in with Spider Tracker")                   | Scoped tokens + ID token                                                                                                                                                                                                          |
+| **GitHub**                                        | Separate from login: the GitHub App installation, plus each user linking their GitHub account     | Commits and pull requests attributed to the right person                                                                                                                                                                          |
 
 ## Who can sign up
 
@@ -34,13 +34,13 @@ Spider Tracker is its own **OAuth 2.1 / OpenID Connect (OIDC) provider**: MCP cl
 
 ## Better Auth plugins
 
-| Need | Plugin |
-|---|---|
-| GitHub / Google sign-in | Built-in social providers |
-| Email login | Magic link, emailed with Resend (`RESEND_API_KEY`, `MAIL_FROM`; console in development) |
-| OAuth / OIDC provider (MCP clients, third-party apps) | OAuth/OIDC provider plugin + JWT plugin (signing keys at `/jwks`) |
-| CLI login | Device authorization plugin |
-| `id.batele.plus` login (later) | Generic OAuth plugin, pointed at its discovery URL |
+| Need                                                  | Plugin                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| GitHub / Google sign-in                               | Built-in social providers                                                               |
+| Email login                                           | Magic link, emailed with Resend (`RESEND_API_KEY`, `MAIL_FROM`; console in development) |
+| OAuth / OIDC provider (MCP clients, third-party apps) | OAuth/OIDC provider plugin + JWT plugin (signing keys at `/jwks`)                       |
+| CLI login                                             | Device authorization plugin                                                             |
+| `id.batele.plus` login (later)                        | Generic OAuth plugin, pointed at its discovery URL                                      |
 
 Plugin names have changed between Better Auth versions; check current docs when implementing.
 
@@ -89,13 +89,13 @@ and the row-level security policies compare `org_id` to `current_setting('app.or
 
 Batele ID is available as a sign-in option ("Continue with Batele ID").
 
-| Thing | Value |
-|---|---|
-| Plugin | Better Auth generic OAuth, provider ID `batele-id` (registered as a regular social provider) |
-| Issuer / discovery | `https://api-v2.batele.plus/auth/.well-known/openid-configuration` (endpoints live on the API host, not `id.batele.plus`) |
-| Client | `BATELE_ID_CLIENT_ID` (public PKCE client, no secret: `tokenEndpointAuth: none`) |
-| Redirect URIs to register | `https://tracker-api.batele.plus/api/auth/callback/batele-id`, `http://localhost:4000/api/auth/callback/batele-id` |
-| Profile | `/oidc/userinfo` (`sub`, `name`, `email?`, `picture?`), see `backend/api/src/batele-id.ts` |
+| Thing                     | Value                                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Plugin                    | Better Auth generic OAuth, provider ID `batele-id` (registered as a regular social provider)                              |
+| Issuer / discovery        | `https://api-v2.batele.plus/auth/.well-known/openid-configuration` (endpoints live on the API host, not `id.batele.plus`) |
+| Client                    | `BATELE_ID_CLIENT_ID` (public PKCE client, no secret: `tokenEndpointAuth: none`)                                          |
+| Redirect URIs to register | `https://tracker-api.batele.plus/api/auth/callback/batele-id`, `http://localhost:4000/api/auth/callback/batele-id`        |
+| Profile                   | `/oidc/userinfo` (`sub`, `name`, `email?`, `picture?`), see `backend/api/src/batele-id.ts`                                |
 
 - **Users without email:** Batele users can sign in by phone, but Better Auth needs an email. They get a placeholder `<sub>@users.batele-id.invalid`, which can never receive mail or match a real address.
 - **Account linking:** automatic merging at sign-in is disabled (`disableImplicitLinking`), because Batele emails aren't verified. Users link Batele ID or GitHub explicitly from the home page while signed in (`linkSocial`); Batele ID and GitHub are listed as trusted providers so that explicit linking is allowed, and the linked account's email must match the user's.

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { branchNameFor, closingKeysIn, taskKeyFromBranch, taskKeysIn } from "./git";
+import {
+  branchNameFor,
+  closingKeysIn,
+  taskKeyFromBranch,
+  taskKeysIn,
+} from "./git";
 
 describe("taskKeyFromBranch", () => {
   test.each([
@@ -15,9 +20,12 @@ describe("taskKeyFromBranch", () => {
     expect(taskKeyFromBranch(branch)).toBe(key);
   });
 
-  test.each(["main", "feature/login", "st-", "12-st", "st-12345678901"])("%s has no key", (branch) => {
-    expect(taskKeyFromBranch(branch)).toBeNull();
-  });
+  test.each(["main", "feature/login", "st-", "12-st", "st-12345678901"])(
+    "%s has no key",
+    (branch) => {
+      expect(taskKeyFromBranch(branch)).toBeNull();
+    },
+  );
 });
 
 describe("taskKeysIn", () => {
@@ -28,7 +36,8 @@ describe("taskKeysIn", () => {
   });
 
   test("a commit message with several keys: unique, upper-cased, in order", () => {
-    const message = "feat(web): board columns (st-3, ST-12)\n\nFollows ST-3; see also SPI-7 and spi-7.";
+    const message =
+      "feat(web): board columns (st-3, ST-12)\n\nFollows ST-3; see also SPI-7 and spi-7.";
     expect(taskKeysIn(message)).toEqual(["ST-3", "ST-12", "SPI-7"]);
   });
 
@@ -41,7 +50,10 @@ describe("taskKeysIn", () => {
   });
 
   test("matching is syntactic: UTF-8 and SHA-256 look like keys (unknown projects are filtered later)", () => {
-    expect(taskKeysIn("UTF-8 text hashed with SHA-256")).toEqual(["UTF-8", "SHA-256"]);
+    expect(taskKeysIn("UTF-8 text hashed with SHA-256")).toEqual([
+      "UTF-8",
+      "SHA-256",
+    ]);
   });
 });
 
@@ -75,7 +87,11 @@ describe("branchNameFor", () => {
     ["SPI-3", "[ST-12] fix", "spi-3-st-12-fix"],
     ["ST-12", "Починить вход", "st-12"],
     ["ST-12", "", "st-12"],
-    ["ST-12", "A very long title that goes on and on past forty characters", "st-12-a-very-long-title-that-goes-on-and-on-pa"],
+    [
+      "ST-12",
+      "A very long title that goes on and on past forty characters",
+      "st-12-a-very-long-title-that-goes-on-and-on-pa",
+    ],
   ])("%s %s → %s", (key, title, branch) => {
     expect(branchNameFor(key, title)).toBe(branch);
   });

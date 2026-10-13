@@ -10,12 +10,28 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { actorLabel, assigneeOptions, toggleAssignee } from "@/lib/assignees";
 import { actorAvatarSrc } from "@/lib/generated-avatar";
 import { cn } from "@/lib/utils";
-import type { ActorDto, Priority, StatusCategory, StatusDto, TaskDto } from "@repo/core/contracts";
+import type {
+  ActorDto,
+  Priority,
+  StatusCategory,
+  StatusDto,
+  TaskDto,
+} from "@repo/core/contracts";
 import { isOverdue } from "@repo/core/schemas";
 import { useEffect, useState } from "react";
 import {
@@ -47,12 +63,28 @@ const categoryIcons: Record<StatusCategory, LucideIcon> = {
   canceled: CircleXIcon,
 };
 
-export function StatusIcon({ status, className }: { status: Pick<StatusDto, "category" | "color">; className?: string }) {
+export function StatusIcon({
+  status,
+  className,
+}: {
+  status: Pick<StatusDto, "category" | "color">;
+  className?: string;
+}) {
   const Icon = categoryIcons[status.category];
-  return <Icon className={className ?? "size-4"} style={{ color: status.color ?? undefined }} aria-hidden />;
+  return (
+    <Icon
+      className={className ?? "size-4"}
+      style={{ color: status.color ?? undefined }}
+      aria-hidden
+    />
+  );
 }
 
-export const PRIORITIES: { value: Priority; label: string; icon: LucideIcon }[] = [
+export const PRIORITIES: {
+  value: Priority;
+  label: string;
+  icon: LucideIcon;
+}[] = [
   { value: 0, label: "No priority", icon: EqualIcon },
   { value: 1, label: "Urgent", icon: SirenIcon },
   { value: 2, label: "High", icon: SignalHighIcon },
@@ -60,7 +92,13 @@ export const PRIORITIES: { value: Priority; label: string; icon: LucideIcon }[] 
   { value: 4, label: "Low", icon: SignalLowIcon },
 ];
 
-export function PriorityIcon({ priority, className }: { priority: Priority; className?: string }) {
+export function PriorityIcon({
+  priority,
+  className,
+}: {
+  priority: Priority;
+  className?: string;
+}) {
   const entry = PRIORITIES.find((p) => p.value === priority) ?? PRIORITIES[0];
   if (!entry) return null;
   const Icon = entry.icon;
@@ -90,10 +128,20 @@ export function ActorAvatar({
     .map((part) => part[0]?.toUpperCase())
     .join("");
   return (
-    <Avatar className={cn(className ?? "size-6", actor.deactivated && "opacity-50 grayscale")} title={title === false ? undefined : (title ?? actorLabel(actor))}>
+    <Avatar
+      className={cn(
+        className ?? "size-6",
+        actor.deactivated && "opacity-50 grayscale",
+      )}
+      title={title === false ? undefined : (title ?? actorLabel(actor))}
+    >
       <AvatarImage src={actorAvatarSrc(actor)} alt="" />
       <AvatarFallback className="text-[10px]">
-        {actor.type === "human" ? initials || "?" : <BotIcon className="size-3" />}
+        {actor.type === "human" ? (
+          initials || "?"
+        ) : (
+          <BotIcon className="size-3" />
+        )}
       </AvatarFallback>
     </Avatar>
   );
@@ -125,9 +173,18 @@ export function StatusSelect({
   );
 }
 
-export function PrioritySelect({ value, onChange }: { value: Priority; onChange: (priority: Priority) => void }) {
+export function PrioritySelect({
+  value,
+  onChange,
+}: {
+  value: Priority;
+  onChange: (priority: Priority) => void;
+}) {
   return (
-    <Select value={String(value)} onValueChange={(v) => onChange(Number(v) as Priority)}>
+    <Select
+      value={String(value)}
+      onValueChange={(v) => onChange(Number(v) as Priority)}
+    >
       <SelectTrigger className="w-full" aria-label="Priority">
         <SelectValue />
       </SelectTrigger>
@@ -144,13 +201,24 @@ export function PrioritySelect({ value, onChange }: { value: Priority; onChange:
 }
 
 // Task dates are plain "YYYY-MM-DD" (ST-91): read as UTC midnight so no time zone shifts the day.
-const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-const dayYearFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const dayFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const dayYearFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
 
 /** "Oct 31", or "Oct 31, 2027" outside the current year. */
 export function formatDay(date: string, now: Date = new Date()): string {
   const day = new Date(`${date}T00:00:00Z`);
-  return (day.getUTCFullYear() === now.getUTCFullYear() ? dayFormat : dayYearFormat).format(day);
+  return (
+    day.getUTCFullYear() === now.getUTCFullYear() ? dayFormat : dayYearFormat
+  ).format(day);
 }
 
 /** A task's target date for list rows and cards; red when overdue. Nothing when there is none. */
@@ -167,7 +235,11 @@ export function TargetDate({
   const overdue = isOverdue(task, category);
   return (
     <span
-      className={cn("flex shrink-0 items-center gap-1 text-xs", overdue ? "text-destructive" : "text-muted-foreground", className)}
+      className={cn(
+        "flex shrink-0 items-center gap-1 text-xs",
+        overdue ? "text-destructive" : "text-muted-foreground",
+        className,
+      )}
       title={`${overdue ? "Overdue · target" : "Target"} ${task.targetDate}`}
     >
       <CalendarIcon className="size-3.5" aria-hidden />
@@ -245,7 +317,11 @@ export function AssigneePicker({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="w-full justify-start gap-2 font-normal" aria-label="Assignees">
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2 font-normal"
+          aria-label="Assignees"
+        >
           {selected.length === 0 ? (
             <>
               <UserPlusIcon className="size-4 text-muted-foreground" />
@@ -257,11 +333,19 @@ export function AssigneePicker({
                 actors={selected}
                 interactive={false}
                 isWorking={(a) => working.includes(a.id)}
-                highlight={(a) => (working.includes(a.id) ? "ring-emerald-500" : undefined)}
+                highlight={(a) =>
+                  working.includes(a.id) ? "ring-emerald-500" : undefined
+                }
               />
               <span className="truncate">
                 {selected.map((m, i) => (
-                  <span key={m.id} className={m.deactivated ? "text-muted-foreground" : undefined} title={actorLabel(m)}>
+                  <span
+                    key={m.id}
+                    className={
+                      m.deactivated ? "text-muted-foreground" : undefined
+                    }
+                    title={actorLabel(m)}
+                  >
                     {i > 0 && ", "}
                     {m.name}
                   </span>
@@ -282,12 +366,20 @@ export function AssigneePicker({
                   key={m.id}
                   value={`${m.name} ${m.handle}`}
                   onSelect={() => toggle(m)}
-                  className={m.deactivated ? "text-muted-foreground" : undefined}
-                  title={m.deactivated ? `${actorLabel(m)}: can be removed, not assigned again` : undefined}
+                  className={
+                    m.deactivated ? "text-muted-foreground" : undefined
+                  }
+                  title={
+                    m.deactivated
+                      ? `${actorLabel(m)}: can be removed, not assigned again`
+                      : undefined
+                  }
                 >
                   <ActorAvatar actor={m} className="size-5" />
                   <span className="truncate">{actorLabel(m)}</span>
-                  {value.includes(m.id) && <CheckIcon className="ml-auto size-4" />}
+                  {value.includes(m.id) && (
+                    <CheckIcon className="ml-auto size-4" />
+                  )}
                 </CommandItem>
               ))}
             </CommandGroup>

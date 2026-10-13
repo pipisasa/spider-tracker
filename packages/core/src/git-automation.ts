@@ -2,7 +2,12 @@ import type { Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { StatusCategory } from "./contracts";
-import { AUTOMATING_VIA, decideTransition, gitAutomationOf, pullRequestEvent } from "./git-automation-rules";
+import {
+  AUTOMATING_VIA,
+  decideTransition,
+  gitAutomationOf,
+  pullRequestEvent,
+} from "./git-automation-rules";
 import type { PullRequestAutomation } from "./git-links";
 import { applyTaskUpdate } from "./tasks";
 
@@ -34,24 +39,50 @@ const { gitLinks, projects, pullRequests, statuses, tasks } = schema;
  * Moves the tasks a saved pull request event links to (by closing keyword, branch or title), in
  * the delivery's transaction; `ctx` is the @github bot. Says whether a task changed.
  */
-export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { action, pullRequest, tasks: linked, origin }) => {
+export const automatePullRequest: PullRequestAutomation = async (
+  tx,
+  ctx,
+  { action, pullRequest, tasks: linked, origin },
+) => {
   if (!origin.trusted) return false;
   const event = pullRequestEvent(action, pullRequest, origin.defaultBranch);
   if (!event) return false;
-  const ids = [...new Set(linked.filter((l) => AUTOMATING_VIA.includes(l.via)).map((l) => l.task.id))];
+  const ids = [
+    ...new Set(
+      linked
+        .filter((l) => AUTOMATING_VIA.includes(l.via))
+        .map((l) => l.task.id),
+    ),
+  ];
   if (ids.length === 0) return false;
 
   const rows = await tx
-    .select({ task: tasks, projectKey: projects.key, gitAutomation: projects.gitAutomation, category: statuses.category })
+    .select({
+      task: tasks,
+      projectKey: projects.key,
+      gitAutomation: projects.gitAutomation,
+      category: statuses.category,
+    })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
-    .where(and(inArray(tasks.id, ids), eq(tasks.kind, "task"), isNull(tasks.deletedAt), isNull(projects.archivedAt)))
+    .where(
+      and(
+        inArray(tasks.id, ids),
+        eq(tasks.kind, "task"),
+        isNull(tasks.deletedAt),
+        isNull(projects.archivedAt),
+      ),
+    )
     .for("update", { of: tasks });
   if (rows.length === 0) return false;
 
   const others = await tx
-    .select({ taskId: gitLinks.taskId, state: pullRequests.state, draft: pullRequests.draft })
+    .select({
+      taskId: gitLinks.taskId,
+      state: pullRequests.state,
+      draft: pullRequests.draft,
+    })
     .from(gitLinks)
     .innerJoin(pullRequests, eq(pullRequests.id, gitLinks.pullRequestId))
     .where(
@@ -66,7 +97,9 @@ export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { acti
       ),
     );
 
-  const activity = { pullRequest: { number: pullRequest.number, event, sender: origin.sender } };
+  const activity = {
+    pullRequest: { number: pullRequest.number, event, sender: origin.sender },
+  };
   let changed = false;
   for (const row of rows) {
     const target = decideTransition({
@@ -78,18 +111,34 @@ export const automatePullRequest: PullRequestAutomation = async (tx, ctx, { acti
     if (!target) continue;
     const status = await firstStatus(tx, row.task.projectId, target);
     if (!status) continue;
-    const outcome = await applyTaskUpdate(tx, ctx, { task: row.task, projectKey: row.projectKey }, { statusId: status.id }, { activity });
+    const outcome = await applyTaskUpdate(
+      tx,
+      ctx,
+      { task: row.task, projectKey: row.projectKey },
+      { statusId: status.id },
+      { activity },
+    );
     changed ||= outcome.changed;
   }
   return changed;
 };
 
 /** The first status of a category in a project's task workflow, in board order. */
-async function firstStatus(tx: Tx, projectId: string, category: StatusCategory): Promise<{ id: string } | undefined> {
+async function firstStatus(
+  tx: Tx,
+  projectId: string,
+  category: StatusCategory,
+): Promise<{ id: string } | undefined> {
   const [row] = await tx
     .select({ id: statuses.id })
     .from(statuses)
-    .where(and(eq(statuses.projectId, projectId), eq(statuses.kind, "task"), eq(statuses.category, category)))
+    .where(
+      and(
+        eq(statuses.projectId, projectId),
+        eq(statuses.kind, "task"),
+        eq(statuses.category, category),
+      ),
+    )
     .orderBy(asc(statuses.position))
     .limit(1);
   return row;

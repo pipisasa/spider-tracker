@@ -14,12 +14,17 @@ const NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const GITHUB_HOSTS = new Set(["github.com", "www.github.com"]);
 
 /** Where a remote points: its host (null for a bare "owner/name") and path. */
-function splitRemote(input: string): { host: string | null; path: string } | null {
+function splitRemote(
+  input: string,
+): { host: string | null; path: string } | null {
   // URLs: https://, http://, ssh://, git://, git+ssh://
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) {
     try {
       const url = new URL(input);
-      return { host: url.hostname.toLowerCase(), path: decodeURIComponent(url.pathname) };
+      return {
+        host: url.hostname.toLowerCase(),
+        path: decodeURIComponent(url.pathname),
+      };
     } catch {
       return null;
     }
@@ -29,7 +34,8 @@ function splitRemote(input: string): { host: string | null; path: string } | nul
   if (scp?.[1] && scp[2]) return { host: scp[1].toLowerCase(), path: scp[2] };
   // "github.com/owner/name" without a scheme.
   const [first, ...rest] = input.split("/");
-  if (first && rest.length >= 2 && first.includes(".")) return { host: first.toLowerCase(), path: rest.join("/") };
+  if (first && rest.length >= 2 && first.includes("."))
+    return { host: first.toLowerCase(), path: rest.join("/") };
   return { host: null, path: input };
 }
 
@@ -42,7 +48,8 @@ export function parseRepoRemote(input: string): RepoRemote | null {
   const trimmed = input.trim();
   if (!trimmed || /\s/.test(trimmed)) return null;
   const remote = splitRemote(trimmed);
-  if (!remote || (remote.host !== null && !GITHUB_HOSTS.has(remote.host))) return null;
+  if (!remote || (remote.host !== null && !GITHUB_HOSTS.has(remote.host)))
+    return null;
   const parts = remote.path
     .replace(/^\/+/, "")
     .replace(/\/+$/, "")
@@ -50,9 +57,11 @@ export function parseRepoRemote(input: string): RepoRemote | null {
     .split("/");
   if (parts.length !== 2) return null;
   const [owner, name] = parts as [string, string];
-  if (!OWNER.test(owner) || !NAME.test(name) || name === "." || name === "..") return null;
+  if (!OWNER.test(owner) || !NAME.test(name) || name === "." || name === "..")
+    return null;
   return { owner, name };
 }
 
 /** "owner/name". */
-export const repoFullName = (remote: RepoRemote) => `${remote.owner}/${remote.name}`;
+export const repoFullName = (remote: RepoRemote) =>
+  `${remote.owner}/${remote.name}`;

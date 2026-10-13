@@ -4,7 +4,12 @@ import { eq, inArray } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createAgent } from "./agents";
 import { saveGithubInstallation } from "./github";
-import { commitKeys, getTaskGit, nextPullRequestState, pullRequestKeys } from "./git-links";
+import {
+  commitKeys,
+  getTaskGit,
+  nextPullRequestState,
+  pullRequestKeys,
+} from "./git-links";
 import { handleGithubWebhook } from "./github-webhooks";
 import { createOrganization } from "./organizations";
 import { createProject, getProject } from "./projects";
@@ -18,24 +23,69 @@ describe("task keys in pull requests and commits (ST-84)", () => {
       body: "Closes ST-2. See ST-4 and ST-1; UTF-8 everywhere.",
       headBranch: "st-1-ship-it",
     });
-    expect(Object.fromEntries(keys)).toEqual({ "ST-1": "branch", "ST-2": "closing", "ST-3": "closing", "ST-4": "body", "UTF-8": "body" });
-    expect(Object.fromEntries(pullRequestKeys({ title: "Docs for ST-5", body: null, headBranch: "main" }))).toEqual({ "ST-5": "title" });
+    expect(Object.fromEntries(keys)).toEqual({
+      "ST-1": "branch",
+      "ST-2": "closing",
+      "ST-3": "closing",
+      "ST-4": "body",
+      "UTF-8": "body",
+    });
+    expect(
+      Object.fromEntries(
+        pullRequestKeys({
+          title: "Docs for ST-5",
+          body: null,
+          headBranch: "main",
+        }),
+      ),
+    ).toEqual({ "ST-5": "title" });
   });
 
   test("a commit's keys: closing keywords, the branch's key, mentions", () => {
-    expect(Object.fromEntries(commitKeys("Fix ST-2\n\nrefs st-3", "ST-1"))).toEqual({ "ST-2": "closing", "ST-1": "branch", "ST-3": "message" });
-    expect(Object.fromEntries(commitKeys("resolves ST-1", "ST-1"))).toEqual({ "ST-1": "closing" });
+    expect(
+      Object.fromEntries(commitKeys("Fix ST-2\n\nrefs st-3", "ST-1")),
+    ).toEqual({ "ST-2": "closing", "ST-1": "branch", "ST-3": "message" });
+    expect(Object.fromEntries(commitKeys("resolves ST-1", "ST-1"))).toEqual({
+      "ST-1": "closing",
+    });
     expect(Object.fromEntries(commitKeys("WIP", null))).toEqual({});
   });
 
   test("the out-of-order guard: stale events change nothing, merged is final, ties never go back", () => {
     const at = (s: string) => new Date(`2026-10-12T10:00:${s}Z`);
-    expect(nextPullRequestState(null, { state: "open", updatedAt: at("00") })).toBe("open");
-    expect(nextPullRequestState({ state: "closed", githubUpdatedAt: at("10") }, { state: "open", updatedAt: at("05") })).toBeNull();
-    expect(nextPullRequestState({ state: "closed", githubUpdatedAt: at("10") }, { state: "open", updatedAt: at("20") })).toBe("open");
-    expect(nextPullRequestState({ state: "merged", githubUpdatedAt: at("10") }, { state: "open", updatedAt: at("20") })).toBe("merged");
-    expect(nextPullRequestState({ state: "closed", githubUpdatedAt: at("10") }, { state: "open", updatedAt: at("10") })).toBe("closed");
-    expect(nextPullRequestState({ state: "open", githubUpdatedAt: at("10") }, { state: "merged", updatedAt: at("10") })).toBe("merged");
+    expect(
+      nextPullRequestState(null, { state: "open", updatedAt: at("00") }),
+    ).toBe("open");
+    expect(
+      nextPullRequestState(
+        { state: "closed", githubUpdatedAt: at("10") },
+        { state: "open", updatedAt: at("05") },
+      ),
+    ).toBeNull();
+    expect(
+      nextPullRequestState(
+        { state: "closed", githubUpdatedAt: at("10") },
+        { state: "open", updatedAt: at("20") },
+      ),
+    ).toBe("open");
+    expect(
+      nextPullRequestState(
+        { state: "merged", githubUpdatedAt: at("10") },
+        { state: "open", updatedAt: at("20") },
+      ),
+    ).toBe("merged");
+    expect(
+      nextPullRequestState(
+        { state: "closed", githubUpdatedAt: at("10") },
+        { state: "open", updatedAt: at("10") },
+      ),
+    ).toBe("closed");
+    expect(
+      nextPullRequestState(
+        { state: "open", githubUpdatedAt: at("10") },
+        { state: "merged", updatedAt: at("10") },
+      ),
+    ).toBe("merged");
   });
 });
 
@@ -56,11 +106,22 @@ run("git links from GitHub webhooks (ST-84)", () => {
   const deliver = (event: string, payload: Record<string, unknown>) => {
     const deliveryId = `${stamp}-links-${++n}`;
     deliveries.push(deliveryId);
-    return handleGithubWebhook(db, { deliveryId, event, payload: { installation: { id: installationId }, ...payload } });
+    return handleGithubWebhook(db, {
+      deliveryId,
+      event,
+      payload: { installation: { id: installationId }, ...payload },
+    });
   };
-  const repository = (name = "web", login = "acme") => ({ name, owner: { login } });
+  const repository = (name = "web", login = "acme") => ({
+    name,
+    owner: { login },
+  });
   const sha = (c: string) => c.repeat(40);
-  const commit = (id: string, message: string, timestamp = "2026-10-12T10:00:00+02:00") => ({
+  const commit = (
+    id: string,
+    message: string,
+    timestamp = "2026-10-12T10:00:00+02:00",
+  ) => ({
     id,
     message,
     timestamp,
@@ -81,22 +142,41 @@ run("git links from GitHub webhooks (ST-84)", () => {
     user: { login: "ann" },
     ...fields,
   });
-  const git = (key: string, viewer: ActorContext = owner) => getTaskGit(db, viewer, key);
+  const git = (key: string, viewer: ActorContext = owner) =>
+    getTaskGit(db, viewer, key);
 
   beforeAll(async () => {
-    await db.insert(schema.user).values({ id: userId, name: "Owner", email: `${userId}@example.com` });
-    const created = await createOrganization(db, { id: userId, name: "Owner", email: "owner@example.com" }, { name: "Links", slug });
-    owner = { orgId: created.organization.id, actorId: created.actor.id, role: "owner", source: "ui" };
+    await db
+      .insert(schema.user)
+      .values({ id: userId, name: "Owner", email: `${userId}@example.com` });
+    const created = await createOrganization(
+      db,
+      { id: userId, name: "Owner", email: "owner@example.com" },
+      { name: "Links", slug },
+    );
+    owner = {
+      orgId: created.organization.id,
+      actorId: created.actor.id,
+      role: "owner",
+      source: "ui",
+    };
     await createProject(db, owner, { name: "Spider", key: "ST" });
     // OPS is not attached to acme/web: its keys there link nothing.
     await createProject(db, owner, { name: "Ops", key: "OPS" });
-    for (const title of ["Ship it", "Second", "Third", "Gone"]) await createTask(db, owner, "ST", { title });
+    for (const title of ["Ship it", "Second", "Third", "Gone"])
+      await createTask(db, owner, "ST", { title });
     await createTask(db, owner, "OPS", { title: "Ops task" });
     await deleteTask(db, owner, "ST-4");
     await createRepo(db, owner, { url: "acme/web", projects: ["ST"] });
     await createRepo(db, owner, { url: "acme/other" });
     await saveGithubInstallation(db, owner, {
-      installation: { id: installationId, account: "acme", accountType: "Organization", repositorySelection: "selected", suspended: false },
+      installation: {
+        id: installationId,
+        account: "acme",
+        accountType: "Organization",
+        repositorySelection: "selected",
+        suspended: false,
+      },
       repositories: [
         { owner: "acme", name: "web", defaultBranch: "main" },
         { owner: "acme", name: "other", defaultBranch: "main" },
@@ -105,22 +185,54 @@ run("git links from GitHub webhooks (ST-84)", () => {
   });
 
   afterAll(async () => {
-    await db.delete(schema.githubDeliveries).where(inArray(schema.githubDeliveries.id, deliveries));
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db
+      .delete(schema.githubDeliveries)
+      .where(inArray(schema.githubDeliveries.id, deliveries));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.id, userId));
     await db.$client.end();
   });
 
   test("create links a branch named after a task of an attached project; others are ignored", async () => {
-    expect(await deliver("create", { ref: "st-1-ship-it", ref_type: "branch", repository: repository() })).toBe("processed");
+    expect(
+      await deliver("create", {
+        ref: "st-1-ship-it",
+        ref_type: "branch",
+        repository: repository(),
+      }),
+    ).toBe("processed");
     // Again: nothing new.
-    expect(await deliver("create", { ref: "st-1-ship-it", ref_type: "branch", repository: repository() })).toBe("ignored");
+    expect(
+      await deliver("create", {
+        ref: "st-1-ship-it",
+        ref_type: "branch",
+        repository: repository(),
+      }),
+    ).toBe("ignored");
     for (const ignored of [
       { ref: "ops-1-thing", ref_type: "branch", repository: repository() },
-      { ref: "st-1-elsewhere", ref_type: "branch", repository: repository("other") },
-      { ref: "st-1-unknown", ref_type: "branch", repository: repository("unknown") },
-      { ref: "st-4-deleted-task", ref_type: "branch", repository: repository() },
-      { ref: "st-99-no-such-task", ref_type: "branch", repository: repository() },
+      {
+        ref: "st-1-elsewhere",
+        ref_type: "branch",
+        repository: repository("other"),
+      },
+      {
+        ref: "st-1-unknown",
+        ref_type: "branch",
+        repository: repository("unknown"),
+      },
+      {
+        ref: "st-4-deleted-task",
+        ref_type: "branch",
+        repository: repository(),
+      },
+      {
+        ref: "st-99-no-such-task",
+        ref_type: "branch",
+        repository: repository(),
+      },
       { ref: "utf-8-fix", ref_type: "branch", repository: repository() },
       { ref: "st-1", ref_type: "tag", repository: repository() },
     ]) {
@@ -145,49 +257,111 @@ run("git links from GitHub webhooks (ST-84)", () => {
       repository: repository(),
       commits: [
         commit(sha("a"), "WIP", "2026-10-12T10:00:00+02:00"),
-        commit(sha("b"), "Mention ST-2 and UTF-8\n\nbody", "2026-10-12T11:00:00+02:00"),
+        commit(
+          sha("b"),
+          "Mention ST-2 and UTF-8\n\nbody",
+          "2026-10-12T11:00:00+02:00",
+        ),
         commit(sha("c"), "Wire up OPS-1", "2026-10-12T12:00:00+02:00"),
       ],
     });
     expect(result).toBe("processed");
-    expect((await git("ST-1")).commits.map((c) => [c.sha.slice(0, 1), c.message, c.via, c.author])).toEqual([
+    expect(
+      (await git("ST-1")).commits.map((c) => [
+        c.sha.slice(0, 1),
+        c.message,
+        c.via,
+        c.author,
+      ]),
+    ).toEqual([
       ["c", "Wire up OPS-1", "branch", "ann"],
       ["b", "Mention ST-2 and UTF-8", "branch", "ann"],
       ["a", "WIP", "branch", "ann"],
     ]);
     const second = (await git("ST-2")).commits;
     expect(second.map((c) => [c.sha, c.via, c.url, c.committedAt])).toEqual([
-      [sha("b"), "message", `https://github.com/acme/web/commit/${sha("b")}`, "2026-10-12T09:00:00.000Z"],
+      [
+        sha("b"),
+        "message",
+        `https://github.com/acme/web/commit/${sha("b")}`,
+        "2026-10-12T09:00:00.000Z",
+      ],
     ]);
     expect((await git("OPS-1")).commits).toEqual([]);
 
     // The same commit on main (after a merge), now with a closing keyword: ST-2's link gets stronger.
     expect(
-      await deliver("push", { ref: "refs/heads/main", repository: repository(), commits: [commit(sha("b"), "Fixes ST-2")] }),
+      await deliver("push", {
+        ref: "refs/heads/main",
+        repository: repository(),
+        commits: [commit(sha("b"), "Fixes ST-2")],
+      }),
     ).toBe("processed");
     expect((await git("ST-2")).commits.map((c) => c.via)).toEqual(["closing"]);
     // A weaker match never downgrades it, and a repeat changes nothing.
-    expect(await deliver("push", { ref: "refs/heads/main", repository: repository(), commits: [commit(sha("b"), "ST-2")] })).toBe("ignored");
+    expect(
+      await deliver("push", {
+        ref: "refs/heads/main",
+        repository: repository(),
+        commits: [commit(sha("b"), "ST-2")],
+      }),
+    ).toBe("ignored");
     expect((await git("ST-2")).commits.map((c) => c.via)).toEqual(["closing"]);
     // Tags are ignored.
-    expect(await deliver("push", { ref: "refs/tags/v1", repository: repository(), commits: [commit(sha("d"), "ST-3")] })).toBe("ignored");
+    expect(
+      await deliver("push", {
+        ref: "refs/tags/v1",
+        repository: repository(),
+        commits: [commit(sha("d"), "ST-3")],
+      }),
+    ).toBe("ignored");
   });
 
   test("a deleted branch stays linked, marked deleted; created again it is live again", async () => {
-    expect(await deliver("delete", { ref: "st-1-ship-it", ref_type: "branch", repository: repository() })).toBe("processed");
+    expect(
+      await deliver("delete", {
+        ref: "st-1-ship-it",
+        ref_type: "branch",
+        repository: repository(),
+      }),
+    ).toBe("processed");
     expect((await git("ST-1")).branches.map((b) => b.deleted)).toEqual([true]);
-    expect(await deliver("delete", { ref: "st-1-ship-it", ref_type: "branch", repository: repository() })).toBe("ignored");
+    expect(
+      await deliver("delete", {
+        ref: "st-1-ship-it",
+        ref_type: "branch",
+        repository: repository(),
+      }),
+    ).toBe("ignored");
     // A push of the branch brings it back; a push that deletes it marks it again.
-    expect(await deliver("push", { ref: "refs/heads/st-1-ship-it", repository: repository(), commits: [] })).toBe("processed");
+    expect(
+      await deliver("push", {
+        ref: "refs/heads/st-1-ship-it",
+        repository: repository(),
+        commits: [],
+      }),
+    ).toBe("processed");
     expect((await git("ST-1")).branches.map((b) => b.deleted)).toEqual([false]);
-    expect(await deliver("push", { ref: "refs/heads/st-1-ship-it", deleted: true, repository: repository(), commits: [] })).toBe("processed");
+    expect(
+      await deliver("push", {
+        ref: "refs/heads/st-1-ship-it",
+        deleted: true,
+        repository: repository(),
+        commits: [],
+      }),
+    ).toBe("processed");
     expect((await git("ST-1")).branches.map((b) => b.deleted)).toEqual([true]);
   });
 
   test("pull_request links by branch, closing keywords, title and body; stale events change nothing", async () => {
-    expect(await deliver("pull_request", { action: "opened", number: 7, pull_request: pullRequest(), repository: repository() })).toBe(
-      "processed",
-    );
+    expect(
+      await deliver("pull_request", {
+        action: "opened",
+        number: 7,
+        pull_request: pullRequest(),
+        repository: repository(),
+      }),
+    ).toBe("processed");
     const [opened] = (await git("ST-1")).pullRequests;
     expect(opened).toEqual({
       repo: "acme/web",
@@ -204,7 +378,9 @@ run("git links from GitHub webhooks (ST-84)", () => {
       updatedAt: "2026-10-12T10:00:00.000Z",
       via: "branch",
     });
-    expect((await git("ST-2")).pullRequests.map((p) => [p.number, p.via])).toEqual([[7, "closing"]]);
+    expect(
+      (await git("ST-2")).pullRequests.map((p) => [p.number, p.via]),
+    ).toEqual([[7, "closing"]]);
     expect((await git("OPS-1")).pullRequests).toEqual([]);
 
     // Ready for review, then merged.
@@ -212,7 +388,10 @@ run("git links from GitHub webhooks (ST-84)", () => {
       await deliver("pull_request", {
         action: "ready_for_review",
         number: 7,
-        pull_request: pullRequest({ draft: false, updated_at: "2026-10-12T11:00:00Z" }),
+        pull_request: pullRequest({
+          draft: false,
+          updated_at: "2026-10-12T11:00:00Z",
+        }),
         repository: repository(),
       }),
     ).toBe("processed");
@@ -224,32 +403,54 @@ run("git links from GitHub webhooks (ST-84)", () => {
       closed_at: "2026-10-12T12:00:00Z",
       updated_at: "2026-10-12T12:00:00Z",
     });
-    expect(await deliver("pull_request", { action: "closed", number: 7, pull_request: merged, repository: repository() })).toBe("processed");
+    expect(
+      await deliver("pull_request", {
+        action: "closed",
+        number: 7,
+        pull_request: merged,
+        repository: repository(),
+      }),
+    ).toBe("processed");
 
     // A stale event (an older updated_at), arriving late: ignored, the merge stands.
     expect(
       await deliver("pull_request", {
         action: "converted_to_draft",
         number: 7,
-        pull_request: pullRequest({ title: "Stale title", draft: true, updated_at: "2026-10-12T10:30:00Z" }),
+        pull_request: pullRequest({
+          title: "Stale title",
+          draft: true,
+          updated_at: "2026-10-12T10:30:00Z",
+        }),
         repository: repository(),
       }),
     ).toBe("ignored");
-    expect((await git("ST-1")).pullRequests.map((p) => [p.state, p.draft, p.title, p.mergedAt])).toEqual([
-      ["merged", false, "ST-1: Ship it", "2026-10-12T12:00:00.000Z"],
-    ]);
+    expect(
+      (await git("ST-1")).pullRequests.map((p) => [
+        p.state,
+        p.draft,
+        p.title,
+        p.mergedAt,
+      ]),
+    ).toEqual([["merged", false, "ST-1: Ship it", "2026-10-12T12:00:00.000Z"]]);
 
     // A later edit drops ST-2 from the body: its link goes; merged stays merged.
     expect(
       await deliver("pull_request", {
         action: "edited",
         number: 7,
-        pull_request: { ...merged, body: "No more keys", updated_at: "2026-10-12T13:00:00Z" },
+        pull_request: {
+          ...merged,
+          body: "No more keys",
+          updated_at: "2026-10-12T13:00:00Z",
+        },
         repository: repository(),
       }),
     ).toBe("processed");
     expect((await git("ST-2")).pullRequests).toEqual([]);
-    expect((await git("ST-1")).pullRequests.map((p) => [p.state, p.updatedAt])).toEqual([["merged", "2026-10-12T13:00:00.000Z"]]);
+    expect(
+      (await git("ST-1")).pullRequests.map((p) => [p.state, p.updatedAt]),
+    ).toEqual([["merged", "2026-10-12T13:00:00.000Z"]]);
   });
 
   test("a PR that names no task here isn't kept; closed without merging is closed", async () => {
@@ -257,11 +458,19 @@ run("git links from GitHub webhooks (ST-84)", () => {
       await deliver("pull_request", {
         action: "opened",
         number: 8,
-        pull_request: pullRequest({ number: 8, title: "Chore", body: null, head: { ref: "chore" } }),
+        pull_request: pullRequest({
+          number: 8,
+          title: "Chore",
+          body: null,
+          head: { ref: "chore" },
+        }),
         repository: repository(),
       }),
     ).toBe("ignored");
-    const [stored] = await db.select().from(schema.pullRequests).where(eq(schema.pullRequests.number, 8));
+    const [stored] = await db
+      .select()
+      .from(schema.pullRequests)
+      .where(eq(schema.pullRequests.number, 8));
     expect(stored).toBeUndefined();
 
     const closed = pullRequest({
@@ -274,10 +483,22 @@ run("git links from GitHub webhooks (ST-84)", () => {
       closed_at: "2026-10-12T14:00:00Z",
       updated_at: "2026-10-12T14:00:00Z",
     });
-    expect(await deliver("pull_request", { action: "closed", number: 9, pull_request: closed, repository: repository() })).toBe("processed");
-    expect((await git("ST-3")).pullRequests.map((p) => [p.number, p.state, p.via, p.closedAt])).toEqual([
-      [9, "closed", "title", "2026-10-12T14:00:00.000Z"],
-    ]);
+    expect(
+      await deliver("pull_request", {
+        action: "closed",
+        number: 9,
+        pull_request: closed,
+        repository: repository(),
+      }),
+    ).toBe("processed");
+    expect(
+      (await git("ST-3")).pullRequests.map((p) => [
+        p.number,
+        p.state,
+        p.via,
+        p.closedAt,
+      ]),
+    ).toEqual([[9, "closed", "title", "2026-10-12T14:00:00.000Z"]]);
   });
 
   test("first events of a new PR arriving together save it once", async () => {
@@ -286,33 +507,74 @@ run("git links from GitHub webhooks (ST-84)", () => {
         deliver("pull_request", {
           action,
           number: 10,
-          pull_request: pullRequest({ number: 10, title: "ST-3 in parallel", head: { ref: "parallel" }, body: null }),
+          pull_request: pullRequest({
+            number: 10,
+            title: "ST-3 in parallel",
+            head: { ref: "parallel" },
+            body: null,
+          }),
           repository: repository(),
         }),
       ),
     );
     expect(results).toEqual(["processed", "processed", "processed"]);
-    expect((await git("ST-3")).pullRequests.map((p) => p.number)).toEqual([9, 10]);
+    expect((await git("ST-3")).pullRequests.map((p) => p.number)).toEqual([
+      9, 10,
+    ]);
   });
 
   test("a payload that doesn't match is refused", async () => {
-    await expect(deliver("pull_request", { action: "opened", number: 1, pull_request: { number: 1 }, repository: repository() })).rejects.toMatchObject({
+    await expect(
+      deliver("pull_request", {
+        action: "opened",
+        number: 1,
+        pull_request: { number: 1 },
+        repository: repository(),
+      }),
+    ).rejects.toMatchObject({
       code: "validation",
     });
-    await expect(deliver("push", { ref: "refs/heads/x", repository: repository(), commits: [{ id: "nope", message: "x" }] })).rejects.toMatchObject({
+    await expect(
+      deliver("push", {
+        ref: "refs/heads/x",
+        repository: repository(),
+        commits: [{ id: "nope", message: "x" }],
+      }),
+    ).rejects.toMatchObject({
       code: "validation",
     });
   });
 
   test("reading: unknown tasks and tasks outside an agent's projects are not found", async () => {
-    expect(await git("ST-3")).toMatchObject({ taskKey: "ST-3", branches: [], commits: [] });
+    expect(await git("ST-3")).toMatchObject({
+      taskKey: "ST-3",
+      branches: [],
+      commits: [],
+    });
     await expect(git("ST-99")).rejects.toMatchObject({ code: "not_found" });
     const { actor } = await createAgent(db, owner, { name: "Ops agent" });
-    await db.update(schema.agents).set({ scoped: true }).where(eq(schema.agents.actorId, actor.id));
+    await db
+      .update(schema.agents)
+      .set({ scoped: true })
+      .where(eq(schema.agents.actorId, actor.id));
     const ops = await getProject(db, owner.orgId, "OPS");
-    await db.insert(schema.agentProjects).values({ agentId: actor.id, projectId: ops.id });
-    const opsAgent: ActorContext = { orgId: owner.orgId, actorId: actor.id, role: "member", source: "mcp" };
-    await expect(git("ST-1", opsAgent)).rejects.toMatchObject({ code: "not_found" });
-    expect(await git("OPS-1", opsAgent)).toEqual({ taskKey: "OPS-1", pullRequests: [], branches: [], commits: [] });
+    await db
+      .insert(schema.agentProjects)
+      .values({ agentId: actor.id, projectId: ops.id });
+    const opsAgent: ActorContext = {
+      orgId: owner.orgId,
+      actorId: actor.id,
+      role: "member",
+      source: "mcp",
+    };
+    await expect(git("ST-1", opsAgent)).rejects.toMatchObject({
+      code: "not_found",
+    });
+    expect(await git("OPS-1", opsAgent)).toEqual({
+      taskKey: "OPS-1",
+      pullRequests: [],
+      branches: [],
+      commits: [],
+    });
   });
 });

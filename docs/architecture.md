@@ -4,21 +4,21 @@
 
 ## Tech stack
 
-| Concern | Choice |
-|---|---|
-| Language | TypeScript everywhere |
-| Runtime & package manager | Bun |
-| Monorepo | Turborepo + Bun workspaces |
-| Frontend | Vite + React single-page app, TanStack Router, TanStack Query, Tailwind, shadcn/ui |
-| API | Hono, with Zod schemas from `@repo/core` (validation and types; the OpenAPI spec is generated from them with `z.toJSONSchema`) |
-| Database | Postgres on Railway, with row-level security per organization (driven by per-transaction settings, see [auth.md](./auth.md#database-access-rules)) |
-| ORM / migrations | Drizzle |
-| Job queue | pg-boss or Graphile Worker (Postgres-backed, no Redis) |
-| Realtime | Postgres LISTEN/NOTIFY → `backend/api` → Server-Sent Events (SSE) to the browser |
-| File storage | Cloudflare R2 (S3-compatible API), with presigned upload/download URLs |
-| Auth | Better Auth inside `backend/api`; Spider Tracker is its own OAuth 2.1 / OIDC provider (see [auth.md](./auth.md)) |
-| Agents | Claude Agent SDK for hosted agents; MCP for external ones |
-| GitHub | GitHub App + Octokit |
+| Concern                   | Choice                                                                                                                                             |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language                  | TypeScript everywhere                                                                                                                              |
+| Runtime & package manager | Bun                                                                                                                                                |
+| Monorepo                  | Turborepo + Bun workspaces                                                                                                                         |
+| Frontend                  | Vite + React single-page app, TanStack Router, TanStack Query, Tailwind, shadcn/ui                                                                 |
+| API                       | Hono, with Zod schemas from `@repo/core` (validation and types; the OpenAPI spec is generated from them with `z.toJSONSchema`)                     |
+| Database                  | Postgres on Railway, with row-level security per organization (driven by per-transaction settings, see [auth.md](./auth.md#database-access-rules)) |
+| ORM / migrations          | Drizzle                                                                                                                                            |
+| Job queue                 | pg-boss or Graphile Worker (Postgres-backed, no Redis)                                                                                             |
+| Realtime                  | Postgres LISTEN/NOTIFY → `backend/api` → Server-Sent Events (SSE) to the browser                                                                   |
+| File storage              | Cloudflare R2 (S3-compatible API), with presigned upload/download URLs                                                                             |
+| Auth                      | Better Auth inside `backend/api`; Spider Tracker is its own OAuth 2.1 / OIDC provider (see [auth.md](./auth.md))                                   |
+| Agents                    | Claude Agent SDK for hosted agents; MCP for external ones                                                                                          |
+| GitHub                    | GitHub App + Octokit                                                                                                                               |
 
 ## Monorepo layout
 
@@ -81,9 +81,9 @@ Payloads carry only ids and keys (Postgres limits them to 8 kB); clients fetch t
 
 ## Domains and cookies
 
-| Host | Serves |
-|---|---|
-| `tracker.batele.plus` | SPA (Cloudflare Pages) |
+| Host                      | Serves                  |
+| ------------------------- | ----------------------- |
+| `tracker.batele.plus`     | SPA (Cloudflare Pages)  |
 | `tracker-api.batele.plus` | `backend/api` (Railway) |
 
 Both hosts belong to the same site (`batele.plus`), so the browser treats Better Auth's cookies as first-party.
@@ -95,13 +95,13 @@ Both hosts belong to the same site (`batele.plus`), so the browser treats Better
 
 While the project is private, both hosts sit behind **Cloudflare Access** (Zero Trust). Nothing is reachable without passing an access check first. Details: [decisions.md](./decisions.md#10-private-access-through-cloudflare-access).
 
-| Caller | How it gets through |
-|---|---|
-| People (browser) | Access login (allowed emails or GitHub), then Better Auth as usual |
-| CLI, external agents, CI | Access **service token** sent as headers (`CF-Access-Client-Id`, `CF-Access-Client-Secret`) alongside the API key or OAuth token |
-| MCP clients | Same service-token headers (e.g. `claude mcp add --transport http … --header …`). Clients that can't send custom headers (e.g. Claude.ai connectors) can't connect while private. |
-| GitHub webhooks | **Bypass** rule for `/webhooks/github` only; requests are verified with the webhook signature |
-| CORS preflight | Access setting "bypass OPTIONS requests to origin" turned on for `tracker-api` |
+| Caller                   | How it gets through                                                                                                                                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| People (browser)         | Access login (allowed emails or GitHub), then Better Auth as usual                                                                                                                |
+| CLI, external agents, CI | Access **service token** sent as headers (`CF-Access-Client-Id`, `CF-Access-Client-Secret`) alongside the API key or OAuth token                                                  |
+| MCP clients              | Same service-token headers (e.g. `claude mcp add --transport http … --header …`). Clients that can't send custom headers (e.g. Claude.ai connectors) can't connect while private. |
+| GitHub webhooks          | **Bypass** rule for `/webhooks/github` only; requests are verified with the webhook signature                                                                                     |
+| CORS preflight           | Access setting "bypass OPTIONS requests to origin" turned on for `tracker-api`                                                                                                    |
 
 Railway's public URL for the API (`*.up.railway.app`) is disabled, so traffic can only arrive through Cloudflare. Postgres and the worker use Railway's private network only.
 
@@ -109,10 +109,10 @@ Railway's public URL for the API (`*.up.railway.app`) is disabled, so traffic ca
 
 ## Hosting
 
-| Part | Where |
-|---|---|
-| `web/app` | Cloudflare Pages |
-| `backend/api`, `backend/worker` | Railway |
-| Postgres 18 (needed for `uuidv7()`) | Railway |
-| File storage | Cloudflare R2 |
-| Agent code sandboxes | To be decided (Docker, E2B, Daytona…) |
+| Part                                | Where                                 |
+| ----------------------------------- | ------------------------------------- |
+| `web/app`                           | Cloudflare Pages                      |
+| `backend/api`, `backend/worker`     | Railway                               |
+| Postgres 18 (needed for `uuidv7()`) | Railway                               |
+| File storage                        | Cloudflare R2                         |
+| Agent code sandboxes                | To be decided (Docker, E2B, Daytona…) |

@@ -20,20 +20,38 @@ interface BotSpec {
 }
 
 /** The organization's bot with one of `spec.handles`, created on first use. */
-export async function ensureBot(tx: Tx, orgId: string, spec: BotSpec): Promise<string> {
+export async function ensureBot(
+  tx: Tx,
+  orgId: string,
+  spec: BotSpec,
+): Promise<string> {
   const find = async () => {
     const rows = await tx
       .select({ id: actors.id, handle: actors.handle })
       .from(actors)
-      .where(and(eq(actors.orgId, orgId), eq(actors.type, "integration"), inArray(actors.handle, spec.handles)));
-    return spec.handles.map((h) => rows.find((r) => r.handle === h)).find((r) => r !== undefined)?.id;
+      .where(
+        and(
+          eq(actors.orgId, orgId),
+          eq(actors.type, "integration"),
+          inArray(actors.handle, spec.handles),
+        ),
+      );
+    return spec.handles
+      .map((h) => rows.find((r) => r.handle === h))
+      .find((r) => r !== undefined)?.id;
   };
   const existing = await find();
   if (existing) return existing;
   for (const handle of spec.handles) {
     const [row] = await tx
       .insert(actors)
-      .values({ orgId, type: "integration", name: spec.name, handle, role: "member" })
+      .values({
+        orgId,
+        type: "integration",
+        name: spec.name,
+        handle,
+        role: "member",
+      })
       .onConflictDoNothing()
       .returning({ id: actors.id });
     if (row) return row.id;
@@ -41,14 +59,24 @@ export async function ensureBot(tx: Tx, orgId: string, spec: BotSpec): Promise<s
     const raced = await find();
     if (raced) return raced;
   }
-  throw new DomainError("conflict", `The handles ${spec.handles.map((h) => `@${h}`).join(" and ")} are taken; rename one to ${spec.purpose}`);
+  throw new DomainError(
+    "conflict",
+    `The handles ${spec.handles.map((h) => `@${h}`).join(" and ")} are taken; rename one to ${spec.purpose}`,
+  );
 }
 
 /** The Spider Tracker bot's handles: "spider", or "spider-bot" when an older actor has "spider". */
 export const SYSTEM_BOT_HANDLES = ["spider", "spider-bot"];
 
 /** Context for changes the tracker makes by itself: its bot, with activity source "system". */
-export async function systemContext(tx: Tx, orgId: string): Promise<ActorContext> {
-  const actorId = await ensureBot(tx, orgId, { name: "Spider Tracker", handles: SYSTEM_BOT_HANDLES, purpose: "let the tracker act" });
+export async function systemContext(
+  tx: Tx,
+  orgId: string,
+): Promise<ActorContext> {
+  const actorId = await ensureBot(tx, orgId, {
+    name: "Spider Tracker",
+    handles: SYSTEM_BOT_HANDLES,
+    purpose: "let the tracker act",
+  });
   return { orgId, actorId, role: "member", source: "system" };
 }

@@ -19,14 +19,20 @@ export const AGENT_COMMENT_LIMIT = { perMinute: 5 };
 /** Handles mentioned as @handle (not inside emails such as a@b.com). */
 export function parseMentions(body: string): string[] {
   const handles = new Set<string>();
-  for (const match of body.matchAll(/(?<![\w@.])@([a-z0-9]+(?:-[a-z0-9]+)*)/gi)) {
+  for (const match of body.matchAll(
+    /(?<![\w@.])@([a-z0-9]+(?:-[a-z0-9]+)*)/gi,
+  )) {
     if (match[1]) handles.add(match[1].toLowerCase());
   }
   return [...handles];
 }
 
 /** Active members of the organization named by `handles` (integration bots never get mentions). */
-export async function mentionedActors(tx: Tx, ctx: ActorContext, handles: string[]): Promise<{ id: string }[]> {
+export async function mentionedActors(
+  tx: Tx,
+  ctx: ActorContext,
+  handles: string[],
+): Promise<{ id: string }[]> {
   if (handles.length === 0) return [];
   return tx
     .select({ id: actors.id })
@@ -42,19 +48,40 @@ export async function mentionedActors(tx: Tx, ctx: ActorContext, handles: string
 }
 
 /** The agent loop guard: an agent posts at most AGENT_COMMENT_LIMIT comments per minute on one task or document. */
-export async function assertCommentRate(tx: Tx, ctx: ActorContext, subject: SQL, what: "task" | "document") {
-  const [author] = await tx.select({ type: actors.type }).from(actors).where(eq(actors.id, ctx.actorId)).limit(1);
+export async function assertCommentRate(
+  tx: Tx,
+  ctx: ActorContext,
+  subject: SQL,
+  what: "task" | "document",
+) {
+  const [author] = await tx
+    .select({ type: actors.type })
+    .from(actors)
+    .where(eq(actors.id, ctx.actorId))
+    .limit(1);
   if (author?.type !== "agent") return;
   const recent = await tx
     .select({ id: comments.id })
     .from(comments)
-    .where(and(subject, eq(comments.authorId, ctx.actorId), gt(comments.createdAt, new Date(Date.now() - 60_000))));
+    .where(
+      and(
+        subject,
+        eq(comments.authorId, ctx.actorId),
+        gt(comments.createdAt, new Date(Date.now() - 60_000)),
+      ),
+    );
   if (recent.length >= AGENT_COMMENT_LIMIT.perMinute) {
-    throw new DomainError("rate_limited", `Too many comments on this ${what} in the last minute. Slow down`);
+    throw new DomainError(
+      "rate_limited",
+      `Too many comments on this ${what} in the last minute. Slow down`,
+    );
   }
 }
 
-function toCommentDto(row: typeof comments.$inferSelect, taskKey: string): CommentDto {
+function toCommentDto(
+  row: typeof comments.$inferSelect,
+  taskKey: string,
+): CommentDto {
   return {
     id: row.id,
     taskKey,
@@ -66,7 +93,11 @@ function toCommentDto(row: typeof comments.$inferSelect, taskKey: string): Comme
   };
 }
 
-export async function listComments(db: Db, viewer: Viewer, taskKey: string): Promise<CommentDto[]> {
+export async function listComments(
+  db: Db,
+  viewer: Viewer,
+  taskKey: string,
+): Promise<CommentDto[]> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
   const rows = await db
     .select()
@@ -80,17 +111,29 @@ export async function listComments(db: Db, viewer: Viewer, taskKey: string): Pro
  * Adds a comment and notifies: mentioned members ("mention"), the parent comment's
  * author ("reply") and the task's assignees ("comment").
  */
-export async function addComment(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<CommentDto> {
+export async function addComment(
+  db: Db,
+  ctx: ActorContext,
+  taskKey: string,
+  input: unknown,
+): Promise<CommentDto> {
   assertCanWrite(ctx);
   const data = parseInput(createCommentInput, input);
-  return db.transaction(async (tx) => postComment(tx, ctx, await findTask(tx, ctx, taskKey), data));
+  return db.transaction(async (tx) =>
+    postComment(tx, ctx, await findTask(tx, ctx, taskKey), data),
+  );
 }
 
 /**
  * The body of addComment for a task found in `tx` (core only; callers check write access and parse
  * the input): the agent rate limit, the insert, notifications, activity and the event.
  */
-export async function postComment(tx: Tx, ctx: ActorContext, { task, projectKey }: FoundTask, data: CreateCommentInput): Promise<CommentDto> {
+export async function postComment(
+  tx: Tx,
+  ctx: ActorContext,
+  { task, projectKey }: FoundTask,
+  data: CreateCommentInput,
+): Promise<CommentDto> {
   await assertCommentRate(tx, ctx, eq(comments.taskId, task.id), "task");
 
   let parentAuthor: string | undefined;
@@ -98,15 +141,31 @@ export async function postComment(tx: Tx, ctx: ActorContext, { task, projectKey 
     const [parent] = await tx
       .select({ authorId: comments.authorId })
       .from(comments)
-      .where(and(eq(comments.id, data.parentId), eq(comments.taskId, task.id), isNull(comments.deletedAt)))
+      .where(
+        and(
+          eq(comments.id, data.parentId),
+          eq(comments.taskId, task.id),
+          isNull(comments.deletedAt),
+        ),
+      )
       .limit(1);
-    if (!parent) throw new DomainError("validation", "Parent comment not found on this task");
+    if (!parent)
+      throw new DomainError(
+        "validation",
+        "Parent comment not found on this task",
+      );
     parentAuthor = parent.authorId;
   }
 
   const [comment] = await tx
     .insert(comments)
-    .values({ orgId: ctx.orgId, taskId: task.id, parentId: data.parentId ?? null, authorId: ctx.actorId, body: data.body })
+    .values({
+      orgId: ctx.orgId,
+      taskId: task.id,
+      parentId: data.parentId ?? null,
+      authorId: ctx.actorId,
+      body: data.body,
+    })
     .returning();
   if (!comment) throw new Error("Failed to add comment");
 
@@ -118,10 +177,30 @@ export async function postComment(tx: Tx, ctx: ActorContext, { task, projectKey 
     .where(eq(taskAssignees.taskId, task.id));
 
   // Order matters: the first entry per recipient wins, so a mention beats a plain comment.
-  const entries: { recipientId: string; kind: TaskInboxKind; commentId: string }[] = [
-    ...mentioned.map((m) => ({ recipientId: m.id, kind: "mention" as const, commentId: comment.id })),
-    ...(parentAuthor ? [{ recipientId: parentAuthor, kind: "reply" as const, commentId: comment.id }] : []),
-    ...assignees.map((a) => ({ recipientId: a.id, kind: "comment" as const, commentId: comment.id })),
+  const entries: {
+    recipientId: string;
+    kind: TaskInboxKind;
+    commentId: string;
+  }[] = [
+    ...mentioned.map((m) => ({
+      recipientId: m.id,
+      kind: "mention" as const,
+      commentId: comment.id,
+    })),
+    ...(parentAuthor
+      ? [
+          {
+            recipientId: parentAuthor,
+            kind: "reply" as const,
+            commentId: comment.id,
+          },
+        ]
+      : []),
+    ...assignees.map((a) => ({
+      recipientId: a.id,
+      kind: "comment" as const,
+      commentId: comment.id,
+    })),
   ];
   await notify(tx, ctx, task.id, entries);
   await recordActivity(tx, ctx, {
@@ -131,6 +210,10 @@ export async function postComment(tx: Tx, ctx: ActorContext, { task, projectKey 
     changes: { commentId: comment.id, mentions: handles },
   });
 
-  await publish(tx, { type: "comment.created", orgId: ctx.orgId, taskKey: `${projectKey}-${task.number}` });
+  await publish(tx, {
+    type: "comment.created",
+    orgId: ctx.orgId,
+    taskKey: `${projectKey}-${task.number}`,
+  });
   return toCommentDto(comment, `${projectKey}-${task.number}`);
 }

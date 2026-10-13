@@ -294,7 +294,9 @@ export function MoveDocumentDialog({
   const { data: projects = [], isSuccess } = useQuery(projectsQuery(orgSlug));
   // Only active projects are listed; a document in an archived one still shows where it is.
   const archivedKey =
-    isSuccess && doc.projectKey && !projects.some((p) => p.key === doc.projectKey)
+    isSuccess &&
+    doc.projectKey &&
+    !projects.some((p) => p.key === doc.projectKey)
       ? doc.projectKey
       : null;
   const { data: archived = [] } = useQuery({
@@ -330,7 +332,8 @@ export function MoveDocumentDialog({
             <DialogTitle>Move document</DialogTitle>
             <DialogDescription>
               Keeps the document&apos;s versions and history.
-              {doc.taskKey && ` It will no longer be attached to ${doc.taskKey}.`}
+              {doc.taskKey &&
+                ` It will no longer be attached to ${doc.taskKey}.`}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">

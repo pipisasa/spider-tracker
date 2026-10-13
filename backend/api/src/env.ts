@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 /** Unset when missing or empty (`.env.example` leaves them empty). */
-const optional = z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().trim().optional());
+const optional = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().trim().optional(),
+);
 
 /** The GitHub App (ST-82): all or none. Separate from GITHUB_CLIENT_ID/SECRET, which are for sign-in. */
 const GITHUB_APP_VARS = [
@@ -14,7 +17,9 @@ const GITHUB_APP_VARS = [
 ] as const;
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.url(),
   API_ORIGIN: z.url(),
@@ -48,36 +53,62 @@ export type TrustedProxy = z.infer<typeof envSchema>["TRUSTED_PROXY"];
 
 export type Env = z.infer<typeof envSchema>;
 
-export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
+export function loadEnv(
+  source: Record<string, string | undefined> = process.env,
+): Env {
   const parsed = envSchema.safeParse(source);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+    const issues = parsed.error.issues
+      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
+      .join("\n");
     throw new Error(`Invalid environment:\n${issues}`);
   }
-  const githubSet = GITHUB_APP_VARS.filter((name) => parsed.data[name] !== undefined);
+  const githubSet = GITHUB_APP_VARS.filter(
+    (name) => parsed.data[name] !== undefined,
+  );
   if (githubSet.length > 0 && githubSet.length < GITHUB_APP_VARS.length) {
     const missing = GITHUB_APP_VARS.filter((name) => !githubSet.includes(name));
-    throw new Error(`Invalid environment:\n  ${missing.join(", ")}: Required with the other GITHUB_APP_* variables (set all or none)`);
+    throw new Error(
+      `Invalid environment:\n  ${missing.join(", ")}: Required with the other GITHUB_APP_* variables (set all or none)`,
+    );
   }
-  if (parsed.data.GITHUB_APP_ID !== undefined && !/^\d+$/.test(parsed.data.GITHUB_APP_ID)) {
-    throw new Error("Invalid environment:\n  GITHUB_APP_ID: The App ID is a number");
+  if (
+    parsed.data.GITHUB_APP_ID !== undefined &&
+    !/^\d+$/.test(parsed.data.GITHUB_APP_ID)
+  ) {
+    throw new Error(
+      "Invalid environment:\n  GITHUB_APP_ID: The App ID is a number",
+    );
   }
-  if (parsed.data.GITHUB_APP_PRIVATE_KEY !== undefined && !decodePrivateKey(parsed.data.GITHUB_APP_PRIVATE_KEY)) {
-    throw new Error("Invalid environment:\n  GITHUB_APP_PRIVATE_KEY: Expected a PEM private key or its base64 encoding");
+  if (
+    parsed.data.GITHUB_APP_PRIVATE_KEY !== undefined &&
+    !decodePrivateKey(parsed.data.GITHUB_APP_PRIVATE_KEY)
+  ) {
+    throw new Error(
+      "Invalid environment:\n  GITHUB_APP_PRIVATE_KEY: Expected a PEM private key or its base64 encoding",
+    );
   }
   // Behind a proxy the socket address is the proxy's, so "none" would put every client in one bucket.
   if (parsed.data.NODE_ENV === "production" && !source.TRUSTED_PROXY) {
-    throw new Error("Invalid environment:\n  TRUSTED_PROXY: Required in production (none, cloudflare or railway)");
+    throw new Error(
+      "Invalid environment:\n  TRUSTED_PROXY: Required in production (none, cloudflare or railway)",
+    );
   }
   return parsed.data;
 }
 
 /** A PEM key as given, or decoded from base64; null when it is neither. */
 function decodePrivateKey(value: string): string | null {
-  const pem = value.includes("-----BEGIN") ? value : Buffer.from(value, "base64").toString("utf8");
+  const pem = value.includes("-----BEGIN")
+    ? value
+    : Buffer.from(value, "base64").toString("utf8");
   // Railway and shells may turn newlines into "\n".
   const normalized = pem.replace(/\\n/g, "\n").trim();
-  return /^-----BEGIN [A-Z ]*PRIVATE KEY-----\n[\s\S]+\n-----END [A-Z ]*PRIVATE KEY-----$/.test(normalized) ? `${normalized}\n` : null;
+  return /^-----BEGIN [A-Z ]*PRIVATE KEY-----\n[\s\S]+\n-----END [A-Z ]*PRIVATE KEY-----$/.test(
+    normalized,
+  )
+    ? `${normalized}\n`
+    : null;
 }
 
 export interface GithubAppConfig {
@@ -92,8 +123,14 @@ export interface GithubAppConfig {
 
 /** The GitHub App's settings, or null when the GITHUB_APP_* variables aren't set (the feature is off). */
 export function githubAppConfig(env: Env): GithubAppConfig | null {
-  const { GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_WEBHOOK_SECRET, GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET } =
-    env;
+  const {
+    GITHUB_APP_ID,
+    GITHUB_APP_SLUG,
+    GITHUB_APP_PRIVATE_KEY,
+    GITHUB_APP_WEBHOOK_SECRET,
+    GITHUB_APP_CLIENT_ID,
+    GITHUB_APP_CLIENT_SECRET,
+  } = env;
   if (
     !GITHUB_APP_ID ||
     !GITHUB_APP_SLUG ||

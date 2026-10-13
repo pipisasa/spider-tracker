@@ -7,8 +7,11 @@ describe("markdownChanged", () => {
     expect(markdownChanged("- a", "- a\n\n")).toBe(false);
     expect(markdownChanged("- a\n", "- a")).toBe(false);
   });
-  test("empty document stays empty", () => expect(markdownChanged("", "\n")).toBe(false));
+  test("empty document stays empty", () =>
+    expect(markdownChanged("", "\n")).toBe(false));
   test("real edit", () => expect(markdownChanged("- a", "- ab")).toBe(true));
-  test("edit in leading whitespace counts", () => expect(markdownChanged("a", " a")).toBe(true));
-  test("clearing the document counts", () => expect(markdownChanged("a", "")).toBe(true));
+  test("edit in leading whitespace counts", () =>
+    expect(markdownChanged("a", " a")).toBe(true));
+  test("clearing the document counts", () =>
+    expect(markdownChanged("a", "")).toBe(true));
 });

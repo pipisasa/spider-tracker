@@ -29,7 +29,9 @@ function loadFilters(): GraphFilters {
   try {
     const raw = localStorage.getItem(FILTERS_KEY);
     if (!raw) return DEFAULT_FILTERS;
-    const saved = JSON.parse(raw) as Partial<Record<keyof GraphFilters, unknown>>;
+    const saved = JSON.parse(raw) as Partial<
+      Record<keyof GraphFilters, unknown>
+    >;
     const pick = (key: keyof GraphFilters) =>
       typeof saved[key] === "boolean" ? saved[key] : DEFAULT_FILTERS[key];
     return {
@@ -64,7 +66,10 @@ function GraphPage() {
   const navigate = useNavigate();
   const [filters, setFilters] = useState(loadFilters);
   const [search, setSearch] = useState("");
-  const graph = useMemo(() => buildDocumentGraph(data, filters), [data, filters]);
+  const graph = useMemo(
+    () => buildDocumentGraph(data, filters),
+    [data, filters],
+  );
 
   function toggle(key: keyof GraphFilters) {
     const next = { ...filters, [key]: !filters[key] };
@@ -76,16 +81,25 @@ function GraphPage() {
     const [, ...rest] = node.id.split(":");
     const ref = rest.join(":");
     if (node.kind === "document")
-      void navigate({ to: "/$orgSlug/docs/$documentId", params: { orgSlug, documentId: ref } });
+      void navigate({
+        to: "/$orgSlug/docs/$documentId",
+        params: { orgSlug, documentId: ref },
+      });
     else if (node.kind === "task")
-      void navigate({ to: "/$orgSlug/tasks/$taskKey", params: { orgSlug, taskKey: ref } });
+      void navigate({
+        to: "/$orgSlug/tasks/$taskKey",
+        params: { orgSlug, taskKey: ref },
+      });
     else if (node.kind === "project")
       void navigate({
         to: "/$orgSlug/projects/$projectKey",
         params: { orgSlug, projectKey: ref },
         search: { view: "docs" },
       });
-    else toast.info(`No document is titled “${node.label}” yet. Open a link to it to create one.`);
+    else
+      toast.info(
+        `No document is titled “${node.label}” yet. Open a link to it to create one.`,
+      );
   }
 
   const links = graph.edges.filter((e) => e.kind === "link").length;
@@ -94,7 +108,11 @@ function GraphPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-2 border-b px-4 py-3 md:px-6">
         <nav className="flex items-center gap-1 text-sm">
-          <Link to="/$orgSlug/docs" params={{ orgSlug }} className="text-muted-foreground hover:text-foreground">
+          <Link
+            to="/$orgSlug/docs"
+            params={{ orgSlug }}
+            className="text-muted-foreground hover:text-foreground"
+          >
             Documents
           </Link>
           <ChevronRightIcon className="size-4 text-muted-foreground" />
@@ -129,7 +147,8 @@ function GraphPage() {
       </header>
       {data.documents.length === 0 ? (
         <p className="p-6 text-sm text-muted-foreground">
-          No documents yet. Link documents to each other with [[Title]] and to tasks with [[ST-12]].
+          No documents yet. Link documents to each other with [[Title]] and to
+          tasks with [[ST-12]].
         </p>
       ) : (
         <div className="relative min-h-[420px] flex-1">
@@ -157,12 +176,16 @@ function Legend() {
         <span className="size-2.5 rounded-[3px] bg-muted-foreground" /> Task
       </span>
       <span className="flex items-center gap-1.5">
-        <span className="size-3 rounded-full border-2 border-muted-foreground" /> Project
+        <span className="size-3 rounded-full border-2 border-muted-foreground" />{" "}
+        Project
       </span>
       <span className="flex items-center gap-1.5">
-        <span className="size-2.5 rounded-full border border-dashed border-muted-foreground" /> Unresolved
+        <span className="size-2.5 rounded-full border border-dashed border-muted-foreground" />{" "}
+        Unresolved
       </span>
-      <span className="hidden sm:inline">Colour = project · drag, scroll to zoom, click to open</span>
+      <span className="hidden sm:inline">
+        Colour = project · drag, scroll to zoom, click to open
+      </span>
     </div>
   );
 }

@@ -1,11 +1,31 @@
 import { TagPicker } from "@/components/tags";
-import { AssigneePicker, PrioritySelect, StatusSelect } from "@/components/task-fields";
+import {
+  AssigneePicker,
+  PrioritySelect,
+  StatusSelect,
+} from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useCreateTask } from "@/lib/work";
-import type { ActorDto, Priority, ProjectDetailDto } from "@repo/core/contracts";
-import { lazy, Suspense, useState, type FormEvent, type KeyboardEvent } from "react";
+import type {
+  ActorDto,
+  Priority,
+  ProjectDetailDto,
+} from "@repo/core/contracts";
+import {
+  lazy,
+  Suspense,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { toast } from "sonner";
 
 const RichEditor = lazy(() => import("@/components/editor/rich-editor"));
@@ -25,10 +45,13 @@ export function NewTaskDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const fallbackStatus = project.statuses.find((s) => s.category === "todo") ?? project.statuses[0];
+  const fallbackStatus =
+    project.statuses.find((s) => s.category === "todo") ?? project.statuses[0];
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [statusId, setStatusId] = useState(defaultStatusId ?? fallbackStatus?.id ?? "");
+  const [statusId, setStatusId] = useState(
+    defaultStatusId ?? fallbackStatus?.id ?? "",
+  );
   const [priority, setPriority] = useState<Priority>(0);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -53,7 +76,14 @@ export function NewTaskDialog({
     event.preventDefault();
     if (!title.trim()) return;
     create.mutate(
-      { title, description: description || undefined, statusId, priority, assigneeIds, tagIds },
+      {
+        title,
+        description: description || undefined,
+        statusId,
+        priority,
+        assigneeIds,
+        tagIds,
+      },
       {
         onSuccess: (task) => {
           toast.success(`Created ${task.key}`);
@@ -80,7 +110,8 @@ export function NewTaskDialog({
         className="sm:max-w-xl"
         onEscapeKeyDown={(event) => {
           // Esc inside the / menu closes the menu only, not the dialog.
-          if (document.querySelector("[data-slash-menu]")) event.preventDefault();
+          if (document.querySelector("[data-slash-menu]"))
+            event.preventDefault();
         }}
       >
         <form
@@ -111,9 +142,17 @@ export function NewTaskDialog({
               />
             </Suspense>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <StatusSelect statuses={project.statuses} value={statusId} onChange={setStatusId} />
+              <StatusSelect
+                statuses={project.statuses}
+                value={statusId}
+                onChange={setStatusId}
+              />
               <PrioritySelect value={priority} onChange={setPriority} />
-              <AssigneePicker members={members} value={assigneeIds} onChange={setAssigneeIds} />
+              <AssigneePicker
+                members={members}
+                value={assigneeIds}
+                onChange={setAssigneeIds}
+              />
             </div>
             <TagPicker orgSlug={orgSlug} value={tagIds} onChange={setTagIds} />
           </div>

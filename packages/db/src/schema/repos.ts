@@ -1,5 +1,16 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, index, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  check,
+  index,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { githubInstallations } from "./github";
 import { actors, organizations } from "./tenancy";
 import { projects, tasks } from "./work";
@@ -11,7 +22,9 @@ import { projects, tasks } from "./work";
 export const repos = pgTable(
   "repos",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -21,15 +34,25 @@ export const repos = pgTable(
     defaultBranch: text("default_branch").notNull().default("main"),
     // The GitHub App installation that grants access to the repo (ST-82); null when added by URL
     // only, or once the installation loses the repo or is disconnected.
-    githubInstallationId: bigint("github_installation_id", { mode: "number" }).references(() => githubInstallations.id, {
+    githubInstallationId: bigint("github_installation_id", {
+      mode: "number",
+    }).references(() => githubInstallations.id, {
       onDelete: "set null",
     }),
-    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   // GitHub names are case-insensitive: one row per remote and organization.
   (t) => [
-    uniqueIndex("repos_org_remote_key").on(t.orgId, sql`lower(${t.owner})`, sql`lower(${t.name})`),
+    uniqueIndex("repos_org_remote_key").on(
+      t.orgId,
+      sql`lower(${t.owner})`,
+      sql`lower(${t.name})`,
+    ),
     index("repos_github_installation_idx").on(t.githubInstallationId),
   ],
 );
@@ -43,15 +66,22 @@ export const projectRepos = pgTable(
     repoId: uuid("repo_id")
       .notNull()
       .references(() => repos.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.repoId] }), index("project_repos_repo_idx").on(t.repoId)],
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.repoId] }),
+    index("project_repos_repo_idx").on(t.repoId),
+  ],
 );
 
 export const apps = pgTable(
   "apps",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     repoId: uuid("repo_id")
       .notNull()
       .references(() => repos.id, { onDelete: "cascade" }),
@@ -60,18 +90,25 @@ export const apps = pgTable(
     // Where the app lives in the repo, e.g. "web/app" ("." for the whole repo).
     path: text("path").notNull(),
     // Shared packages it depends on, e.g. ["packages/core"]: commits there touch the app too.
-    sharedPaths: text("shared_paths").array().notNull().default(sql`'{}'::text[]`),
+    sharedPaths: text("shared_paths")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     versioning: text("versioning", { enum: ["date", "semver"] }).notNull(),
     // Deploy order, e.g. ["staging", "prod"]; empty when a release is the only "deploy" (a CLI).
-    environments: text("environments").array().notNull().default(sql`'{}'::text[]`),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    environments: text("environments")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     unique("apps_repo_name_key").on(t.repoId, t.name),
     check("apps_versioning_check", sql`${t.versioning} in ('date', 'semver')`),
   ],
 );
-
 
 // What a release (a task of kind "release", ST-93) ships: the repos it links, and a version per app.
 // A repo may be attached to other projects than the release's, as long as its creator can reach it.
@@ -85,7 +122,10 @@ export const releaseRepos = pgTable(
       .notNull()
       .references(() => repos.id, { onDelete: "cascade" }),
   },
-  (t) => [primaryKey({ columns: [t.releaseId, t.repoId] }), index("release_repos_repo_idx").on(t.repoId)],
+  (t) => [
+    primaryKey({ columns: [t.releaseId, t.repoId] }),
+    index("release_repos_repo_idx").on(t.repoId),
+  ],
 );
 
 export const releaseApps = pgTable(
@@ -100,7 +140,10 @@ export const releaseApps = pgTable(
     // In the app's versioning: "2026.10.13" (date) or "0.1.8" (semver).
     version: text("version").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.releaseId, t.appId] }), index("release_apps_app_idx").on(t.appId)],
+  (t) => [
+    primaryKey({ columns: [t.releaseId, t.appId] }),
+    index("release_apps_app_idx").on(t.appId),
+  ],
 );
 
 // Deployments (ST-94): one row per deploy of a release's app to one of the app's environments,
@@ -109,7 +152,9 @@ export const releaseApps = pgTable(
 export const deployments = pgTable(
   "deployments",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -124,13 +169,22 @@ export const deployments = pgTable(
     // The full (or abbreviated) commit SHA that was deployed, lower-case.
     commitSha: text("commit_sha").notNull(),
     // Who deployed it; null once that actor is gone.
-    actorId: uuid("actor_id").references(() => actors.id, { onDelete: "set null" }),
+    actorId: uuid("actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
     // Where it was recorded from: cli, mcp, api, ui (as activity sources).
     source: text("source").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    index("deployments_release_idx").on(t.releaseId, t.appId, t.environment, t.createdAt),
+    index("deployments_release_idx").on(
+      t.releaseId,
+      t.appId,
+      t.environment,
+      t.createdAt,
+    ),
     index("deployments_app_idx").on(t.appId),
   ],
 );

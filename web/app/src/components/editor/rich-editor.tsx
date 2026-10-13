@@ -83,7 +83,11 @@ export default function RichEditor({
   return (
     <div
       ref={container}
-      className={cn("relative flex-1 pl-7", editable && "cursor-text", className)}
+      className={cn(
+        "relative flex-1 pl-7",
+        editable && "cursor-text",
+        className,
+      )}
       onClick={(e) => {
         if (editable && e.target === e.currentTarget)
           editor.commands.focus("end");

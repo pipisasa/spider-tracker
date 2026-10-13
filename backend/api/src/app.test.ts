@@ -1,5 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { MIN_CLI_VERSION, type MeResponse, type MembershipDto, type RecordDeploymentResponse } from "@repo/core";
+import {
+  MIN_CLI_VERSION,
+  type MeResponse,
+  type MembershipDto,
+  type RecordDeploymentResponse,
+} from "@repo/core";
 import { createDb, schema } from "@repo/db";
 import { SpiderApiError, createClient } from "@repo/sdk";
 import { asc, eq } from "drizzle-orm";
@@ -34,7 +39,10 @@ describe("public routes", () => {
   test("GET /health", async () => {
     const res = await app.request("/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: "ok", minCliVersion: MIN_CLI_VERSION });
+    expect(await res.json()).toEqual({
+      status: "ok",
+      minCliVersion: MIN_CLI_VERSION,
+    });
   });
 
   test("/v1 responses carry the oldest supported CLI version, errors included", async () => {
@@ -50,10 +58,20 @@ describe("public routes", () => {
   });
 
   test("Batele ID is listed when its client ID is set", async () => {
-    const withBatele = loadEnv({ ...env, PORT: String(env.PORT), BATELE_ID_CLIENT_ID: "oc_test" });
-    const appWithBatele = createApp({ db, auth: createAuth(db, withBatele, mailer), env: withBatele });
+    const withBatele = loadEnv({
+      ...env,
+      PORT: String(env.PORT),
+      BATELE_ID_CLIENT_ID: "oc_test",
+    });
+    const appWithBatele = createApp({
+      db,
+      auth: createAuth(db, withBatele, mailer),
+      env: withBatele,
+    });
     const res = await appWithBatele.request("/auth/providers");
-    expect(await res.json()).toEqual({ providers: ["magic-link", "batele-id"] });
+    expect(await res.json()).toEqual({
+      providers: ["magic-link", "batele-id"],
+    });
   });
 
   test("GET /openapi.json describes the public API", async () => {
@@ -62,12 +80,19 @@ describe("public routes", () => {
     const doc = (await res.json()) as {
       openapi: string;
       paths: Record<string, Record<string, unknown>>;
-      components: { securitySchemes: Record<string, unknown>; schemas: Record<string, { required?: string[] }> };
+      components: {
+        securitySchemes: Record<string, unknown>;
+        schemas: Record<string, { required?: string[] }>;
+      };
     };
     expect(doc.openapi).toStartWith("3.1");
-    expect(doc.components.securitySchemes.bearerAuth).toMatchObject({ type: "http", scheme: "bearer" });
+    expect(doc.components.securitySchemes.bearerAuth).toMatchObject({
+      type: "http",
+      scheme: "bearer",
+    });
     expect(doc.components.schemas.CreateTaskInput?.required).toEqual(["title"]);
-    for (const name of ["Project", "Task", "DocumentSummary"]) expect(doc.components.schemas[name]?.required).toContain("url");
+    for (const name of ["Project", "Task", "DocumentSummary"])
+      expect(doc.components.schemas[name]?.required).toContain("url");
 
     // Every documented operation is a real route, and every route is documented.
     const routes = new Set(app.routes.map((r) => `${r.method} ${r.path}`));
@@ -75,7 +100,10 @@ describe("public routes", () => {
       Object.entries(doc.paths).flatMap(([path, item]) =>
         Object.keys(item)
           .filter((k) => k !== "parameters")
-          .map((method) => `${method.toUpperCase()} ${path.replace(/\{(\w+)\}/g, ":$1")}`),
+          .map(
+            (method) =>
+              `${method.toUpperCase()} ${path.replace(/\{(\w+)\}/g, ":$1")}`,
+          ),
       ),
     );
     for (const operation of documented) expect(routes).toContain(operation);
@@ -100,19 +128,23 @@ describe("public routes", () => {
   test.each([
     ["/swagger", "swagger-ui-dist@", "SwaggerUIBundle"],
     ["/scalar", "@scalar/api-reference@", "Scalar.createApiReference"],
-  ])("GET %s serves an API reference page for /openapi.json", async (path, asset, bootstrap) => {
-    const res = await app.request(path);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toStartWith("text/html");
-    const html = await res.text();
-    expect(html).toContain('"/openapi.json"');
-    expect(html).toContain(`https://cdn.jsdelivr.net/npm/${asset}`);
-    expect(html).toContain(bootstrap);
-    // Every CDN asset is pinned and integrity-checked.
-    const external = html.match(/(?:src|href)="https:[^"]+"[^>]*/g) ?? [];
-    expect(external.length).toBeGreaterThan(0);
-    for (const tag of external) expect(tag).toMatch(/@\d+\.\d+\.\d+\/.*integrity="sha384-/);
-  });
+  ])(
+    "GET %s serves an API reference page for /openapi.json",
+    async (path, asset, bootstrap) => {
+      const res = await app.request(path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toStartWith("text/html");
+      const html = await res.text();
+      expect(html).toContain('"/openapi.json"');
+      expect(html).toContain(`https://cdn.jsdelivr.net/npm/${asset}`);
+      expect(html).toContain(bootstrap);
+      // Every CDN asset is pinned and integrity-checked.
+      const external = html.match(/(?:src|href)="https:[^"]+"[^>]*/g) ?? [];
+      expect(external.length).toBeGreaterThan(0);
+      for (const tag of external)
+        expect(tag).toMatch(/@\d+\.\d+\.\d+\/.*integrity="sha384-/);
+    },
+  );
 
   test("/v1 requires a session", async () => {
     const res = await app.request("/v1/me");
@@ -122,7 +154,10 @@ describe("public routes", () => {
   test("CORS allows only the web origin, with credentials", async () => {
     const res = await app.request("/v1/me", {
       method: "OPTIONS",
-      headers: { Origin: env.WEB_ORIGIN, "Access-Control-Request-Method": "GET" },
+      headers: {
+        Origin: env.WEB_ORIGIN,
+        "Access-Control-Request-Method": "GET",
+      },
     });
     expect(res.headers.get("access-control-allow-origin")).toBe(env.WEB_ORIGIN);
     expect(res.headers.get("access-control-allow-credentials")).toBe("true");
@@ -136,7 +171,9 @@ withDb("magic link sign-in → organization", () => {
   const slug = `e2e-${Date.now()}`;
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
@@ -151,7 +188,9 @@ withDb("magic link sign-in → organization", () => {
     const link = sentLinks.get(email);
     expect(link).toBeDefined();
     const verifyUrl = new URL(link ?? "");
-    const verify = await app.request(verifyUrl.pathname + verifyUrl.search, { redirect: "manual" });
+    const verify = await app.request(verifyUrl.pathname + verifyUrl.search, {
+      redirect: "manual",
+    });
     expect(verify.status).toBe(302);
     expect(verify.headers.get("location")).toStartWith(env.WEB_ORIGIN);
 
@@ -183,7 +222,9 @@ withDb("magic link sign-in → organization", () => {
     });
     expect(duplicate.status).toBe(409);
 
-    const after = (await (await app.request("/v1/me", { headers: { Cookie: cookie } })).json()) as MeResponse;
+    const after = (await (
+      await app.request("/v1/me", { headers: { Cookie: cookie } })
+    ).json()) as MeResponse;
     expect(after.memberships.map((m) => m.organization.slug)).toEqual([slug]);
   });
 });
@@ -195,7 +236,9 @@ async function signIn(email: string): Promise<string> {
     body: JSON.stringify({ email, callbackURL: `${env.WEB_ORIGIN}/` }),
   });
   const link = new URL(sentLinks.get(email) ?? "");
-  const verify = await app.request(link.pathname + link.search, { redirect: "manual" });
+  const verify = await app.request(link.pathname + link.search, {
+    redirect: "manual",
+  });
   return verify.headers
     .getSetCookie()
     .map((c) => c.split(";")[0])
@@ -218,8 +261,11 @@ withDb("projects and tasks API", () => {
     });
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
-    for (const email of [ownerEmail, outsiderEmail]) await db.delete(schema.user).where(eq(schema.user.email, email));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
+    for (const email of [ownerEmail, outsiderEmail])
+      await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
   test("project → tasks → move → delete", async () => {
@@ -231,42 +277,78 @@ withDb("projects and tasks API", () => {
       body: JSON.stringify({ name: "API Org", slug }),
     });
 
-    const project = await call(owner, "POST", "/projects", { name: "Spider", key: "SPI" });
+    const project = await call(owner, "POST", "/projects", {
+      name: "Spider",
+      key: "SPI",
+    });
     expect(project.status).toBe(201);
-    const { statuses } = (await project.json()) as { statuses: { id: string; category: string }[] };
+    const { statuses } = (await project.json()) as {
+      statuses: { id: string; category: string }[];
+    };
     const done = statuses.find((s) => s.category === "done")?.id;
 
-    const members = (await (await call(owner, "GET", "/members")).json()) as { items: { id: string }[] };
+    const members = (await (await call(owner, "GET", "/members")).json()) as {
+      items: { id: string }[];
+    };
     const created = await call(owner, "POST", "/projects/SPI/tasks", {
       title: "Ship it",
       assigneeIds: [members.items[0]?.id],
     });
     expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({ key: "SPI-1", title: "Ship it" });
+    expect(await created.json()).toMatchObject({
+      key: "SPI-1",
+      title: "Ship it",
+    });
 
-    const invalid = await call(owner, "POST", "/projects/SPI/tasks", { title: "" });
+    const invalid = await call(owner, "POST", "/projects/SPI/tasks", {
+      title: "",
+    });
     expect(invalid.status).toBe(400);
 
-    const moved = await call(owner, "PATCH", "/tasks/SPI-1", { statusId: done });
+    const moved = await call(owner, "PATCH", "/tasks/SPI-1", {
+      statusId: done,
+    });
     expect(moved.status).toBe(200);
-    expect(((await moved.json()) as { completedAt: string | null }).completedAt).not.toBeNull();
+    expect(
+      ((await moved.json()) as { completedAt: string | null }).completedAt,
+    ).not.toBeNull();
 
-    const tasks = (await (await call(owner, "GET", "/projects/SPI/tasks")).json()) as { items: unknown[] };
+    const tasks = (await (
+      await call(owner, "GET", "/projects/SPI/tasks")
+    ).json()) as { items: unknown[] };
     expect(tasks.items).toHaveLength(1);
 
     const history = await call(owner, "GET", "/tasks/SPI-1/activity");
     expect(history.status).toBe(200);
     const { items: activity } = (await history.json()) as {
-      items: { id: number; action: string; source: string; changes: Record<string, unknown> | null }[];
+      items: {
+        id: number;
+        action: string;
+        source: string;
+        changes: Record<string, unknown> | null;
+      }[];
     };
-    expect(activity.map((a) => a.action)).toEqual(["task.created", "task.updated"]);
+    expect(activity.map((a) => a.action)).toEqual([
+      "task.created",
+      "task.updated",
+    ]);
     expect(activity[1]?.changes?.statusId).toEqual([expect.any(String), done]);
     expect(activity[0]?.source).toBe("ui");
     expect((activity[0]?.id ?? 0) < (activity[1]?.id ?? 0)).toBe(true);
-    expect((await call(outsider, "GET", "/tasks/SPI-1/activity")).status).toBe(404);
+    expect((await call(outsider, "GET", "/tasks/SPI-1/activity")).status).toBe(
+      404,
+    );
 
-    const tag = (await (await call(owner, "POST", "/tags", { name: "Urgent-fix", color: "#ef4444" })).json()) as { id: string };
-    await call(owner, "PATCH", "/tasks/SPI-1", { tagIds: [tag.id], priority: 1 });
+    const tag = (await (
+      await call(owner, "POST", "/tags", {
+        name: "Urgent-fix",
+        color: "#ef4444",
+      })
+    ).json()) as { id: string };
+    await call(owner, "PATCH", "/tasks/SPI-1", {
+      tagIds: [tag.id],
+      priority: 1,
+    });
     const count = async (query: string) => {
       const res = await call(owner, "GET", `/projects/SPI/tasks?${query}`);
       expect(res.status).toBe(200);
@@ -282,22 +364,56 @@ withDb("projects and tasks API", () => {
     expect(await count("tag=urgent-fix&tag=other")).toBe(0);
     expect(await count("tag=urgent-fix&tag=other&tagMatch=any")).toBe(1);
     expect(await count("tag=urgent-fix&tag=other&tagMatch=all")).toBe(0);
-    expect((await call(owner, "GET", "/projects/SPI/tasks?tagMatch=some")).status).toBe(400);
-    expect((await call(owner, "GET", "/projects/NOPE/tasks?priority=9")).status).toBe(404);
-    expect((await call(owner, "GET", "/projects/SPI/tasks?tag=nope")).status).toBe(400);
-    expect((await call(owner, "GET", "/projects/SPI/tasks?priority=9")).status).toBe(400);
+    expect(
+      (await call(owner, "GET", "/projects/SPI/tasks?tagMatch=some")).status,
+    ).toBe(400);
+    expect(
+      (await call(owner, "GET", "/projects/NOPE/tasks?priority=9")).status,
+    ).toBe(404);
+    expect(
+      (await call(owner, "GET", "/projects/SPI/tasks?tag=nope")).status,
+    ).toBe(400);
+    expect(
+      (await call(owner, "GET", "/projects/SPI/tasks?priority=9")).status,
+    ).toBe(400);
 
     // Dates (ST-91): set, validated, cleared; ?overdue=true finds open tasks past their target.
-    const dated = await call(owner, "POST", "/projects/SPI/tasks", { title: "Late", startDate: "2020-01-01", targetDate: "2020-01-31" });
+    const dated = await call(owner, "POST", "/projects/SPI/tasks", {
+      title: "Late",
+      startDate: "2020-01-01",
+      targetDate: "2020-01-31",
+    });
     expect(dated.status).toBe(201);
-    expect(await dated.json()).toMatchObject({ key: "SPI-2", startDate: "2020-01-01", targetDate: "2020-01-31" });
-    expect((await call(owner, "POST", "/projects/SPI/tasks", { title: "Bad", targetDate: "31.01.2020" })).status).toBe(400);
-    expect((await call(owner, "PATCH", "/tasks/SPI-2", { startDate: "2020-02-01" })).status).toBe(400);
+    expect(await dated.json()).toMatchObject({
+      key: "SPI-2",
+      startDate: "2020-01-01",
+      targetDate: "2020-01-31",
+    });
+    expect(
+      (
+        await call(owner, "POST", "/projects/SPI/tasks", {
+          title: "Bad",
+          targetDate: "31.01.2020",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await call(owner, "PATCH", "/tasks/SPI-2", { startDate: "2020-02-01" }))
+        .status,
+    ).toBe(400);
     expect(await count("overdue=true")).toBe(1);
     expect(await count("overdue=false")).toBe(2);
-    expect((await call(owner, "GET", "/projects/SPI/tasks?overdue=maybe")).status).toBe(400);
-    const undated = await call(owner, "PATCH", "/tasks/SPI-2", { startDate: null, targetDate: null });
-    expect(await undated.json()).toMatchObject({ startDate: null, targetDate: null });
+    expect(
+      (await call(owner, "GET", "/projects/SPI/tasks?overdue=maybe")).status,
+    ).toBe(400);
+    const undated = await call(owner, "PATCH", "/tasks/SPI-2", {
+      startDate: null,
+      targetDate: null,
+    });
+    expect(await undated.json()).toMatchObject({
+      startDate: null,
+      targetDate: null,
+    });
     expect(await count("overdue=true")).toBe(0);
     expect((await call(owner, "DELETE", "/tasks/SPI-2")).status).toBe(204);
 
@@ -307,7 +423,10 @@ withDb("projects and tasks API", () => {
 
   test("non-members get 404 for the whole organization", async () => {
     expect((await call(outsider, "GET", "/projects")).status).toBe(404);
-    expect((await call(outsider, "POST", "/projects", { name: "x", key: "XX" })).status).toBe(404);
+    expect(
+      (await call(outsider, "POST", "/projects", { name: "x", key: "XX" }))
+        .status,
+    ).toBe(404);
   });
 
   test("malformed ids are a 404, not a 500", async () => {
@@ -326,15 +445,55 @@ withDb("projects and tasks API", () => {
       keys.push(((await res.json()) as { key: string }).key);
     }
     const [a, b] = keys;
-    expect((await call(owner, "POST", `/tasks/${a}/relations`, { kind: "blocks", task: b })).status).toBe(201);
-    expect((await call(owner, "POST", `/tasks/${b}/relations`, { kind: "blocked_by", task: a })).status).toBe(409);
-    expect((await call(owner, "POST", `/tasks/${b}/relations`, { kind: "blocks", task: a })).status).toBe(400);
-    expect((await call(owner, "DELETE", `/tasks/${a}/relations?kind=blocks&task=${b}`)).status).toBe(204);
-    expect((await call(owner, "DELETE", `/tasks/${a}/relations?kind=blocks&task=${b}`)).status).toBe(404);
+    expect(
+      (
+        await call(owner, "POST", `/tasks/${a}/relations`, {
+          kind: "blocks",
+          task: b,
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await call(owner, "POST", `/tasks/${b}/relations`, {
+          kind: "blocked_by",
+          task: a,
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await call(owner, "POST", `/tasks/${b}/relations`, {
+          kind: "blocks",
+          task: a,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await call(
+          owner,
+          "DELETE",
+          `/tasks/${a}/relations?kind=blocks&task=${b}`,
+        )
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await call(
+          owner,
+          "DELETE",
+          `/tasks/${a}/relations?kind=blocks&task=${b}`,
+        )
+      ).status,
+    ).toBe(404);
   });
 
   test("update, archive and restore a project", async () => {
-    const updated = await call(owner, "PATCH", "/projects/spi", { name: "Spider Tracker", description: "The tracker" });
+    const updated = await call(owner, "PATCH", "/projects/spi", {
+      name: "Spider Tracker",
+      description: "The tracker",
+    });
     expect(updated.status).toBe(200);
     expect(await updated.json()).toMatchObject({
       key: "SPI",
@@ -345,15 +504,27 @@ withDb("projects and tasks API", () => {
     expect((await call(owner, "PATCH", "/projects/SPI", {})).status).toBe(400);
 
     const archived = await call(owner, "POST", "/projects/SPI/archive");
-    expect(((await archived.json()) as { archivedAt: string | null }).archivedAt).not.toBeNull();
+    expect(
+      ((await archived.json()) as { archivedAt: string | null }).archivedAt,
+    ).not.toBeNull();
     const keys = async (path: string) =>
-      ((await (await call(owner, "GET", path)).json()) as { items: { key: string }[] }).items.map((p) => p.key);
+      (
+        (await (await call(owner, "GET", path)).json()) as {
+          items: { key: string }[];
+        }
+      ).items.map((p) => p.key);
     expect(await keys("/projects")).toEqual([]);
     expect(await keys("/projects?archived=true")).toEqual(["SPI"]);
-    expect((await call(owner, "POST", "/projects/SPI/tasks", { title: "Too late" })).status).toBe(400);
+    expect(
+      (await call(owner, "POST", "/projects/SPI/tasks", { title: "Too late" }))
+        .status,
+    ).toBe(400);
 
     const restored = await call(owner, "DELETE", "/projects/SPI/archive");
-    expect(await restored.json()).toMatchObject({ key: "SPI", archivedAt: null });
+    expect(await restored.json()).toMatchObject({
+      key: "SPI",
+      archivedAt: null,
+    });
     expect(await keys("/projects")).toEqual(["SPI"]);
   });
 });
@@ -365,7 +536,10 @@ withDb("agent API keys", () => {
   const otherSlug = `keys-other-${stamp}`;
 
   afterAll(async () => {
-    for (const s of [slug, otherSlug]) await db.delete(schema.organizations).where(eq(schema.organizations.slug, s));
+    for (const s of [slug, otherSlug])
+      await db
+        .delete(schema.organizations)
+        .where(eq(schema.organizations.slug, s));
     await db.delete(schema.user).where(eq(schema.user.email, ownerEmail));
   });
 
@@ -377,42 +551,92 @@ withDb("agent API keys", () => {
         headers: { Cookie: owner, "Content-Type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-    for (const s of [slug, otherSlug]) await asOwner("POST", "/v1/organizations", { name: s, slug: s });
-    await asOwner("POST", `/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
+    for (const s of [slug, otherSlug])
+      await asOwner("POST", "/v1/organizations", { name: s, slug: s });
+    await asOwner("POST", `/v1/orgs/${slug}/projects`, {
+      name: "Spider",
+      key: "SPI",
+    });
 
-    const agentRes = await asOwner("POST", `/v1/orgs/${slug}/agents`, { name: "Claude Code" });
+    const agentRes = await asOwner("POST", `/v1/orgs/${slug}/agents`, {
+      name: "Claude Code",
+    });
     expect(agentRes.status).toBe(201);
-    const agent = (await agentRes.json()) as { actor: { id: string; type: string } };
+    const agent = (await agentRes.json()) as {
+      actor: { id: string; type: string };
+    };
     expect(agent.actor.type).toBe("agent");
 
-    const keyRes = await asOwner("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "test" });
+    const keyRes = await asOwner(
+      "POST",
+      `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`,
+      { name: "test" },
+    );
     expect(keyRes.status).toBe(201);
-    const { secret, key } = (await keyRes.json()) as { secret: string; key: { id: string } };
+    const { secret, key } = (await keyRes.json()) as {
+      secret: string;
+      key: { id: string };
+    };
 
-    const asAgent = (method: string, path: string, body?: unknown, token = secret) =>
+    const asAgent = (
+      method: string,
+      path: string,
+      body?: unknown,
+      token = secret,
+    ) =>
       app.request(path, {
         method,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
 
-    const who = (await (await asAgent("GET", "/v1/whoami")).json()) as { actor: { id: string } };
+    const who = (await (await asAgent("GET", "/v1/whoami")).json()) as {
+      actor: { id: string };
+    };
     expect(who.actor.id).toBe(agent.actor.id);
 
-    const task = await asAgent("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, { title: "From an agent" });
+    const task = await asAgent("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, {
+      title: "From an agent",
+    });
     expect(task.status).toBe(201);
-    expect(((await task.json()) as { creatorId: string }).creatorId).toBe(agent.actor.id);
-    const log = await db.select().from(schema.activity).where(eq(schema.activity.actorId, agent.actor.id));
+    expect(((await task.json()) as { creatorId: string }).creatorId).toBe(
+      agent.actor.id,
+    );
+    const log = await db
+      .select()
+      .from(schema.activity)
+      .where(eq(schema.activity.actorId, agent.actor.id));
     expect(log.map((e) => e.source)).toEqual(["api"]);
 
-    expect((await asAgent("GET", `/v1/orgs/${otherSlug}/projects`)).status).toBe(404);
-    expect((await asAgent("POST", `/v1/orgs/${slug}/agents`, { name: "Sneaky" })).status).toBe(403);
+    expect(
+      (await asAgent("GET", `/v1/orgs/${otherSlug}/projects`)).status,
+    ).toBe(404);
+    expect(
+      (await asAgent("POST", `/v1/orgs/${slug}/agents`, { name: "Sneaky" }))
+        .status,
+    ).toBe(403);
     expect((await asAgent("GET", "/v1/me")).status).toBe(403);
-    expect((await asAgent("POST", "/v1/organizations", { name: "x", slug: `x-${stamp}` })).status).toBe(403);
-    expect((await asAgent("GET", "/v1/whoami", undefined, "spt_wrong")).status).toBe(401);
+    expect(
+      (
+        await asAgent("POST", "/v1/organizations", {
+          name: "x",
+          slug: `x-${stamp}`,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await asAgent("GET", "/v1/whoami", undefined, "spt_wrong")).status,
+    ).toBe(401);
 
-    expect((await asOwner("DELETE", `/v1/orgs/${slug}/api-keys/${key.id}`)).status).toBe(204);
-    expect((await asAgent("GET", `/v1/orgs/${slug}/projects`)).status).toBe(401);
+    expect(
+      (await asOwner("DELETE", `/v1/orgs/${slug}/api-keys/${key.id}`)).status,
+    ).toBe(204);
+    expect((await asAgent("GET", `/v1/orgs/${slug}/projects`)).status).toBe(
+      401,
+    );
   });
 });
 
@@ -424,13 +648,22 @@ withDb("SDK and client-declared source", () => {
   let agentId = "";
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.email, ownerEmail));
   });
 
   // Drives the SDK straight into the Hono app, no network involved.
-  const sdk = (options: { token?: string; source?: "api" | "cli" | "mcp" } = {}) =>
-    createClient({ baseUrl: env.API_ORIGIN, token: secret, ...options, fetch: (input, init) => app.request(input, init) });
+  const sdk = (
+    options: { token?: string; source?: "api" | "cli" | "mcp" } = {},
+  ) =>
+    createClient({
+      baseUrl: env.API_ORIGIN,
+      token: secret,
+      ...options,
+      fetch: (input, init) => app.request(input, init),
+    });
 
   test("owner sets up an agent with a key", async () => {
     const owner = await signIn(ownerEmail);
@@ -442,11 +675,15 @@ withDb("SDK and client-declared source", () => {
       });
     await asOwner("/v1/organizations", { name: "SDK Org", slug });
     await asOwner(`/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
-    const agent = (await (await asOwner(`/v1/orgs/${slug}/agents`, { name: "SDK Bot" })).json()) as {
+    const agent = (await (
+      await asOwner(`/v1/orgs/${slug}/agents`, { name: "SDK Bot" })
+    ).json()) as {
       actor: { id: string };
     };
     agentId = agent.actor.id;
-    const key = (await (await asOwner(`/v1/orgs/${slug}/agents/${agentId}/keys`, { name: "sdk" })).json()) as {
+    const key = (await (
+      await asOwner(`/v1/orgs/${slug}/agents/${agentId}/keys`, { name: "sdk" })
+    ).json()) as {
       secret: string;
     };
     secret = key.secret;
@@ -467,31 +704,73 @@ withDb("SDK and client-declared source", () => {
     const members = await client.members.list(slug);
     expect(members.items.map((m) => m.id)).toContain(agentId);
 
-    const created = await client.tasks.create(slug, "SPI", { title: "Via SDK", assigneeIds: [agentId] });
-    expect(created).toMatchObject({ key: "SPI-1", title: "Via SDK", creatorId: agentId, assigneeIds: [agentId] });
+    const created = await client.tasks.create(slug, "SPI", {
+      title: "Via SDK",
+      assigneeIds: [agentId],
+    });
+    expect(created).toMatchObject({
+      key: "SPI-1",
+      title: "Via SDK",
+      creatorId: agentId,
+      assigneeIds: [agentId],
+    });
     // Web page addresses (ST-115), following the web app's routes.
     const web = `${env.WEB_ORIGIN}/${slug}`;
     expect(created.url).toBe(`${web}/tasks/SPI-1`);
     expect(project.url).toBe(`${web}/projects/SPI`);
     expect(projects.items[0]?.url).toBe(`${web}/projects/SPI`);
-    expect((await client.tasks.list(slug, "SPI")).items[0]?.url).toBe(`${web}/tasks/SPI-1`);
+    expect((await client.tasks.list(slug, "SPI")).items[0]?.url).toBe(
+      `${web}/tasks/SPI-1`,
+    );
 
-    const updated = await client.tasks.update(slug, created.key, { title: "Via SDK, done", statusId: done?.id });
+    const updated = await client.tasks.update(slug, created.key, {
+      title: "Via SDK, done",
+      statusId: done?.id,
+    });
     expect(updated.completedAt).not.toBeNull();
-    expect((await client.tasks.get(slug, created.key)).title).toBe("Via SDK, done");
+    expect((await client.tasks.get(slug, created.key)).title).toBe(
+      "Via SDK, done",
+    );
     expect((await client.tasks.list(slug, "SPI")).items).toHaveLength(1);
-    expect((await client.tasks.list(slug, "SPI", { status: ["done"], assignee: ["me"], priority: [0, 1] })).items).toHaveLength(1);
-    expect((await client.tasks.list(slug, "SPI", { priority: [4], q: "SDK" })).items).toHaveLength(0);
+    expect(
+      (
+        await client.tasks.list(slug, "SPI", {
+          status: ["done"],
+          assignee: ["me"],
+          priority: [0, 1],
+        })
+      ).items,
+    ).toHaveLength(1);
+    expect(
+      (await client.tasks.list(slug, "SPI", { priority: [4], q: "SDK" })).items,
+    ).toHaveLength(0);
     // An agent's "mine": itself, its owner and the owner's other agents.
-    expect((await client.tasks.list(slug, "SPI", { assignee: ["mine"] })).items).toHaveLength(1);
+    expect(
+      (await client.tasks.list(slug, "SPI", { assignee: ["mine"] })).items,
+    ).toHaveLength(1);
     // Dates and the overdue filter (ST-91); the task is done, so it isn't overdue.
-    expect(await client.tasks.update(slug, created.key, { targetDate: "2020-01-01" })).toMatchObject({ targetDate: "2020-01-01" });
-    expect((await client.tasks.list(slug, "SPI", { overdue: true })).items).toHaveLength(0);
-    await client.tasks.bulkUpdate(slug, { keys: [created.key], set: { status: "todo" } });
-    expect((await client.tasks.list(slug, "SPI", { overdue: true })).items.map((t) => t.key)).toEqual([created.key]);
+    expect(
+      await client.tasks.update(slug, created.key, {
+        targetDate: "2020-01-01",
+      }),
+    ).toMatchObject({ targetDate: "2020-01-01" });
+    expect(
+      (await client.tasks.list(slug, "SPI", { overdue: true })).items,
+    ).toHaveLength(0);
+    await client.tasks.bulkUpdate(slug, {
+      keys: [created.key],
+      set: { status: "todo" },
+    });
+    expect(
+      (await client.tasks.list(slug, "SPI", { overdue: true })).items.map(
+        (t) => t.key,
+      ),
+    ).toEqual([created.key]);
 
     expect(await client.tasks.delete(slug, created.key)).toBeUndefined();
-    const error = await client.tasks.get(slug, created.key).catch((e: unknown) => e);
+    const error = await client.tasks
+      .get(slug, created.key)
+      .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SpiderApiError);
     expect(error).toMatchObject({ status: 404, code: "not_found" });
   });
@@ -499,87 +778,221 @@ withDb("SDK and client-declared source", () => {
   test("workflows through the SDK: kinds, add, rename, reorder and delete statuses (ST-90)", async () => {
     const client = sdk();
     // New projects get all three default workflows.
-    const fresh = await client.projects.create(slug, { name: "Workflows", key: "WFL" });
-    expect(fresh.workflows.task.map((s) => s.name)).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"]);
-    expect(fresh.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Release review", "Released", "Canceled"]);
-    expect(fresh.workflows.milestone.map((s) => s.name)).toEqual(["Planned", "Active", "Ready to close", "Done"]);
+    const fresh = await client.projects.create(slug, {
+      name: "Workflows",
+      key: "WFL",
+    });
+    expect(fresh.workflows.task.map((s) => s.name)).toEqual([
+      "Backlog",
+      "Todo",
+      "In Progress",
+      "In Review",
+      "Done",
+      "Canceled",
+    ]);
+    expect(fresh.workflows.release.map((s) => s.name)).toEqual([
+      "Planned",
+      "On staging",
+      "Release review",
+      "Released",
+      "Canceled",
+    ]);
+    expect(fresh.workflows.milestone.map((s) => s.name)).toEqual([
+      "Planned",
+      "Active",
+      "Ready to close",
+      "Done",
+    ]);
     expect(fresh.statuses).toEqual(fresh.workflows.task);
     expect(fresh.url).toBe(`${env.WEB_ORIGIN}/${slug}/projects/WFL`);
 
     const task = await client.tasks.create(slug, "WFL", { title: "Plain" });
-    const release = await client.tasks.create(slug, "WFL", { title: "v1", kind: "release" });
+    const release = await client.tasks.create(slug, "WFL", {
+      title: "v1",
+      kind: "release",
+    });
     expect([task.kind, release.kind]).toEqual(["task", "release"]);
     expect(release.statusId).toBe(fresh.workflows.release[0]!.id);
-    expect((await client.tasks.list(slug, "WFL", { kind: "release" })).items.map((t) => t.key)).toEqual([release.key]);
-    const wrong = await client.tasks.update(slug, task.key, { statusId: fresh.workflows.release[1]?.id }).catch((e: unknown) => e);
+    expect(
+      (await client.tasks.list(slug, "WFL", { kind: "release" })).items.map(
+        (t) => t.key,
+      ),
+    ).toEqual([release.key]);
+    const wrong = await client.tasks
+      .update(slug, task.key, { statusId: fresh.workflows.release[1]?.id })
+      .catch((e: unknown) => e);
     expect(wrong).toMatchObject({ status: 400, code: "validation" });
 
-    let project = await client.projects.statuses.create(slug, "WFL", { kind: "release", name: "Smoke test", category: "in_review", position: 2 });
-    expect(project.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Smoke test", "Release review", "Released", "Canceled"]);
+    let project = await client.projects.statuses.create(slug, "WFL", {
+      kind: "release",
+      name: "Smoke test",
+      category: "in_review",
+      position: 2,
+    });
+    expect(project.workflows.release.map((s) => s.name)).toEqual([
+      "Planned",
+      "On staging",
+      "Smoke test",
+      "Release review",
+      "Released",
+      "Canceled",
+    ]);
     const smoke = project.workflows.release[2]!;
-    project = await client.projects.statuses.update(slug, "WFL", smoke.id, { name: "Staging checks", color: "#123456", position: 1 });
-    expect(project.workflows.release[1]).toMatchObject({ id: smoke.id, name: "Staging checks", color: "#123456", position: 1 });
-    const clash = await client.projects.statuses.update(slug, "WFL", smoke.id, { name: "planned" }).catch((e: unknown) => e);
+    project = await client.projects.statuses.update(slug, "WFL", smoke.id, {
+      name: "Staging checks",
+      color: "#123456",
+      position: 1,
+    });
+    expect(project.workflows.release[1]).toMatchObject({
+      id: smoke.id,
+      name: "Staging checks",
+      color: "#123456",
+      position: 1,
+    });
+    const clash = await client.projects.statuses
+      .update(slug, "WFL", smoke.id, { name: "planned" })
+      .catch((e: unknown) => e);
     expect(clash).toMatchObject({ status: 409, code: "conflict" });
 
     // Deleting moves the tasks first; the last done status can't go.
     await client.tasks.update(slug, release.key, { statusId: smoke.id });
     const planned = project.workflows.release[0]!;
-    const deleted = await client.projects.statuses.delete(slug, "WFL", smoke.id, { moveTo: planned.id });
+    const deleted = await client.projects.statuses.delete(
+      slug,
+      "WFL",
+      smoke.id,
+      { moveTo: planned.id },
+    );
     expect(deleted.movedTasks).toBe(1);
     expect(deleted.project.url).toBe(`${env.WEB_ORIGIN}/${slug}/projects/WFL`);
-    expect((await client.tasks.get(slug, release.key)).statusId).toBe(planned.id);
-    const released = project.workflows.release.find((s) => s.category === "done")!;
-    const last = await client.projects.statuses.delete(slug, "WFL", released.id, { moveTo: planned.id }).catch((e: unknown) => e);
+    expect((await client.tasks.get(slug, release.key)).statusId).toBe(
+      planned.id,
+    );
+    const released = project.workflows.release.find(
+      (s) => s.category === "done",
+    )!;
+    const last = await client.projects.statuses
+      .delete(slug, "WFL", released.id, { moveTo: planned.id })
+      .catch((e: unknown) => e);
     expect(last).toMatchObject({ status: 400, code: "validation" });
-    const noTarget = await app.request(`/v1/orgs/${slug}/projects/WFL/statuses/${planned.id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${secret}` },
-    });
+    const noTarget = await app.request(
+      `/v1/orgs/${slug}/projects/WFL/statuses/${planned.id}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+    );
     expect(noTarget.status).toBe(400);
   });
 
   test("milestones through the SDK: create, roadmap, get, tasks join with milestoneId; 400 across projects (ST-96)", async () => {
     const client = sdk();
     await client.projects.create(slug, { name: "Roadmap", key: "RMP" });
-    const later = await client.milestones.create(slug, "RMP", { title: "Later", targetDate: "2027-01-01" });
-    const sooner = await client.milestones.create(slug, "RMP", { title: "Sooner", targetDate: "2026-11-01" });
-    expect(sooner).toMatchObject({ kind: "milestone", status: { name: "Planned" }, progress: { total: 0 }, url: `${env.WEB_ORIGIN}/${slug}/tasks/${sooner.key}` });
-    const task = await client.tasks.create(slug, "RMP", { title: "On the way", milestoneId: sooner.id });
+    const later = await client.milestones.create(slug, "RMP", {
+      title: "Later",
+      targetDate: "2027-01-01",
+    });
+    const sooner = await client.milestones.create(slug, "RMP", {
+      title: "Sooner",
+      targetDate: "2026-11-01",
+    });
+    expect(sooner).toMatchObject({
+      kind: "milestone",
+      status: { name: "Planned" },
+      progress: { total: 0 },
+      url: `${env.WEB_ORIGIN}/${slug}/tasks/${sooner.key}`,
+    });
+    const task = await client.tasks.create(slug, "RMP", {
+      title: "On the way",
+      milestoneId: sooner.id,
+    });
     expect(task.milestone).toMatchObject({ key: sooner.key, inherited: false });
     const roadmap = await client.milestones.list(slug, "RMP");
     expect(roadmap.items.map((m) => m.key)).toEqual([sooner.key, later.key]);
-    expect(roadmap.items[0]?.tasks).toEqual([expect.objectContaining({ key: task.key, url: `${env.WEB_ORIGIN}/${slug}/tasks/${task.key}` })]);
-    expect((await client.milestones.list(slug, "RMP", { status: ["done"] })).items).toEqual([]);
-    expect(await client.milestones.get(slug, sooner.key)).toEqual(roadmap.items[0]!);
-    const moved = await client.tasks.update(slug, task.key, { milestoneId: later.id });
+    expect(roadmap.items[0]?.tasks).toEqual([
+      expect.objectContaining({
+        key: task.key,
+        url: `${env.WEB_ORIGIN}/${slug}/tasks/${task.key}`,
+      }),
+    ]);
+    expect(
+      (await client.milestones.list(slug, "RMP", { status: ["done"] })).items,
+    ).toEqual([]);
+    expect(await client.milestones.get(slug, sooner.key)).toEqual(
+      roadmap.items[0]!,
+    );
+    const moved = await client.tasks.update(slug, task.key, {
+      milestoneId: later.id,
+    });
     expect(moved.milestoneId).toBe(later.id);
     const spi = await client.tasks.create(slug, "SPI", { title: "Elsewhere" });
-    const refused = await client.tasks.update(slug, spi.key, { milestoneId: later.id }).catch((e: unknown) => e);
+    const refused = await client.tasks
+      .update(slug, spi.key, { milestoneId: later.id })
+      .catch((e: unknown) => e);
     expect(refused).toMatchObject({ status: 400, code: "validation" });
-    expect(await client.milestones.get(slug, task.key).catch((e: unknown) => e)).toMatchObject({ status: 400 });
+    expect(
+      await client.milestones.get(slug, task.key).catch((e: unknown) => e),
+    ).toMatchObject({ status: 400 });
   });
 
   test("bulk updates through the SDK: keys or a filter, per-task outcomes, dry run, 400 on bad input (ST-106)", async () => {
     const client = sdk();
-    const parent = await client.tasks.create(slug, "SPI", { title: "Bulk parent" });
+    const parent = await client.tasks.create(slug, "SPI", {
+      title: "Bulk parent",
+    });
     const kids = [];
-    for (const title of ["Bulk kid 1", "Bulk kid 2"]) kids.push(await client.tasks.create(slug, "SPI", { title, parentId: parent.id }));
+    for (const title of ["Bulk kid 1", "Bulk kid 2"])
+      kids.push(
+        await client.tasks.create(slug, "SPI", { title, parentId: parent.id }),
+      );
     const keys = kids.map((t) => t.key);
 
-    const byKeys = await client.tasks.bulkUpdate(slug, { keys: [...keys, "SPI-999"], set: { status: "in_review", priority: 2 } });
+    const byKeys = await client.tasks.bulkUpdate(slug, {
+      keys: [...keys, "SPI-999"],
+      set: { status: "in_review", priority: 2 },
+    });
     expect(byKeys.summary).toEqual({ changed: 2, unchanged: 0, failed: 1 });
-    expect(byKeys.results.map((r) => r.outcome)).toEqual(["changed", "changed", "error"]);
-    expect(byKeys.results[2]).toMatchObject({ key: "SPI-999", task: null, error: { code: "not_found" } });
-    expect((await client.tasks.list(slug, "SPI", { parent: parent.key, status: ["in_review"] })).items).toHaveLength(2);
+    expect(byKeys.results.map((r) => r.outcome)).toEqual([
+      "changed",
+      "changed",
+      "error",
+    ]);
+    expect(byKeys.results[2]).toMatchObject({
+      key: "SPI-999",
+      task: null,
+      error: { code: "not_found" },
+    });
+    expect(
+      (
+        await client.tasks.list(slug, "SPI", {
+          parent: parent.key,
+          status: ["in_review"],
+        })
+      ).items,
+    ).toHaveLength(2);
 
-    const filter = { project: "SPI", parent: parent.key, status: ["in_review"] };
-    const preview = await client.tasks.bulkUpdate(slug, { filter, set: { status: "Backlog" }, dryRun: true });
+    const filter = {
+      project: "SPI",
+      parent: parent.key,
+      status: ["in_review"],
+    };
+    const preview = await client.tasks.bulkUpdate(slug, {
+      filter,
+      set: { status: "Backlog" },
+      dryRun: true,
+    });
     expect(preview).toMatchObject({ dryRun: true, summary: { changed: 2 } });
-    expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(0);
-    const applied = await client.tasks.bulkUpdate(slug, { filter, set: { status: "Backlog" } });
+    expect(
+      (await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items,
+    ).toHaveLength(0);
+    const applied = await client.tasks.bulkUpdate(slug, {
+      filter,
+      set: { status: "Backlog" },
+    });
     expect(applied.results.map((r) => r.key)).toEqual(keys);
-    expect((await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items).toHaveLength(2);
+    expect(
+      (await client.tasks.list(slug, "SPI", { status: ["backlog"] })).items,
+    ).toHaveLength(2);
 
     // Ordered by id: without ORDER BY, Postgres returns heap order, which after deletes from other
     // tests sharing the database needn't be insertion order (ST-120).
@@ -588,254 +1001,601 @@ withDb("SDK and client-declared source", () => {
       .from(schema.activity)
       .where(eq(schema.activity.entityId, kids[0]?.id ?? ""))
       .orderBy(asc(schema.activity.id));
-    expect(log.map((e) => e.action)).toEqual(["task.created", "task.updated", "task.updated"]);
+    expect(log.map((e) => e.action)).toEqual([
+      "task.created",
+      "task.updated",
+      "task.updated",
+    ]);
 
-    const bad = await client.tasks.bulkUpdate(slug, { keys, filter, set: { priority: 1 } }).catch((e: unknown) => e);
+    const bad = await client.tasks
+      .bulkUpdate(slug, { keys, filter, set: { priority: 1 } })
+      .catch((e: unknown) => e);
     expect(bad).toMatchObject({ status: 400, code: "validation" });
     const tooMany = await client.tasks
-      .bulkUpdate(slug, { keys: Array.from({ length: 101 }, (_, i) => `SPI-${i + 1}`), set: { priority: 1 } })
+      .bulkUpdate(slug, {
+        keys: Array.from({ length: 101 }, (_, i) => `SPI-${i + 1}`),
+        set: { priority: 1 },
+      })
       .catch((e: unknown) => e);
     expect(tooMany).toMatchObject({ status: 400 });
-    const nothing = await client.tasks.bulkUpdate(slug, { keys, set: {} }).catch((e: unknown) => e);
+    const nothing = await client.tasks
+      .bulkUpdate(slug, { keys, set: {} })
+      .catch((e: unknown) => e);
     expect(nothing).toMatchObject({ status: 400 });
   });
 
   test("marking a duplicate through the SDK: one call, idempotent, 400 for self and cycles, 409 for a second original (ST-114)", async () => {
     const client = sdk({ source: "cli" });
     const copy = await client.tasks.create(slug, "SPI", { title: "Dup copy" });
-    const original = await client.tasks.create(slug, "SPI", { title: "Dup original" });
-    const other = await client.tasks.create(slug, "SPI", { title: "Dup other" });
-    const canceled = (await client.projects.get(slug, "SPI")).statuses.find((s) => s.category === "canceled");
+    const original = await client.tasks.create(slug, "SPI", {
+      title: "Dup original",
+    });
+    const other = await client.tasks.create(slug, "SPI", {
+      title: "Dup other",
+    });
+    const canceled = (await client.projects.get(slug, "SPI")).statuses.find(
+      (s) => s.category === "canceled",
+    );
 
-    const marked = await client.tasks.markDuplicate(slug, copy.key, { of: original.key, comment: "Subset" });
-    expect(marked).toMatchObject({ key: copy.key, statusId: canceled?.id, url: copy.url });
-    expect((await client.tasks.relations.list(slug, copy.key)).items.map((r) => `${r.kind} ${r.task.key}`)).toEqual([
-      `duplicates ${original.key}`,
-    ]);
-    expect((await client.comments.list(slug, copy.key)).items.map((c) => c.body)).toEqual([
-      `Duplicate of ${original.key}: Dup original\n\nSubset`,
-    ]);
-    expect(await client.tasks.markDuplicate(slug, copy.key, { of: original.key })).toMatchObject({ updatedAt: marked.updatedAt });
+    const marked = await client.tasks.markDuplicate(slug, copy.key, {
+      of: original.key,
+      comment: "Subset",
+    });
+    expect(marked).toMatchObject({
+      key: copy.key,
+      statusId: canceled?.id,
+      url: copy.url,
+    });
+    expect(
+      (await client.tasks.relations.list(slug, copy.key)).items.map(
+        (r) => `${r.kind} ${r.task.key}`,
+      ),
+    ).toEqual([`duplicates ${original.key}`]);
+    expect(
+      (await client.comments.list(slug, copy.key)).items.map((c) => c.body),
+    ).toEqual([`Duplicate of ${original.key}: Dup original\n\nSubset`]);
+    expect(
+      await client.tasks.markDuplicate(slug, copy.key, { of: original.key }),
+    ).toMatchObject({ updatedAt: marked.updatedAt });
     expect((await client.comments.list(slug, copy.key)).items).toHaveLength(1);
-    const log = await db.select().from(schema.activity).where(eq(schema.activity.entityId, copy.id));
+    const log = await db
+      .select()
+      .from(schema.activity)
+      .where(eq(schema.activity.entityId, copy.id));
     expect(new Set(log.map((e) => e.source))).toEqual(new Set(["cli"]));
 
-    const fail = (key: string, of: string) => client.tasks.markDuplicate(slug, key, { of }).catch((e: unknown) => e);
-    expect(await fail(copy.key, copy.key)).toMatchObject({ status: 400, code: "validation" });
-    expect(await fail(original.key, copy.key)).toMatchObject({ status: 400, code: "validation" });
-    expect(await fail(copy.key, other.key)).toMatchObject({ status: 409, code: "conflict" });
+    const fail = (key: string, of: string) =>
+      client.tasks.markDuplicate(slug, key, { of }).catch((e: unknown) => e);
+    expect(await fail(copy.key, copy.key)).toMatchObject({
+      status: 400,
+      code: "validation",
+    });
+    expect(await fail(original.key, copy.key)).toMatchObject({
+      status: 400,
+      code: "validation",
+    });
+    expect(await fail(copy.key, other.key)).toMatchObject({
+      status: 409,
+      code: "conflict",
+    });
     expect(await fail(copy.key, "SPI-999")).toMatchObject({ status: 404 });
   });
 
   test("documents through the SDK: create, list, save with baseVersion, 409 on a stale save, versions", async () => {
     const client = sdk();
-    const doc = await client.documents.create(slug, { title: "Spec", project: "SPI", content: "v1" });
-    expect(doc).toMatchObject({ projectKey: "SPI", version: 1, url: `${env.WEB_ORIGIN}/${slug}/docs/${doc.id}` });
-    expect((await client.documents.list(slug, { project: "SPI" })).items.map((d) => d.id)).toEqual([doc.id]);
+    const doc = await client.documents.create(slug, {
+      title: "Spec",
+      project: "SPI",
+      content: "v1",
+    });
+    expect(doc).toMatchObject({
+      projectKey: "SPI",
+      version: 1,
+      url: `${env.WEB_ORIGIN}/${slug}/docs/${doc.id}`,
+    });
+    expect(
+      (await client.documents.list(slug, { project: "SPI" })).items.map(
+        (d) => d.id,
+      ),
+    ).toEqual([doc.id]);
     expect((await client.documents.get(slug, doc.id)).url).toBe(doc.url);
 
-    const saved = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "v2" });
+    const saved = await client.documents.update(slug, doc.id, {
+      baseVersion: 1,
+      content: "v2",
+    });
     expect(saved).toMatchObject({ version: 2, url: doc.url });
-    const stale = await client.documents.update(slug, doc.id, { baseVersion: 1, content: "lost" }).catch((e: unknown) => e);
+    const stale = await client.documents
+      .update(slug, doc.id, { baseVersion: 1, content: "lost" })
+      .catch((e: unknown) => e);
     expect(stale).toMatchObject({ status: 409, code: "conflict" });
 
-    expect((await client.documents.versions.list(slug, doc.id)).items.map((v) => v.version)).toEqual([2, 1]);
-    expect((await client.documents.versions.get(slug, doc.id, 1)).content).toBe("v1");
+    expect(
+      (await client.documents.versions.list(slug, doc.id)).items.map(
+        (v) => v.version,
+      ),
+    ).toEqual([2, 1]);
+    expect((await client.documents.versions.get(slug, doc.id, 1)).content).toBe(
+      "v1",
+    );
     await client.documents.delete(slug, doc.id);
-    expect(await client.documents.get(slug, doc.id).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await client.documents.get(slug, doc.id).catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
   });
 
   test("GET /documents/:id/diff compares two versions; a missing version is 404 (ST-117)", async () => {
     const client = sdk();
-    const doc = await client.documents.create(slug, { title: "Diffable", project: "SPI", content: "a\nb\nc\n" });
-    await client.documents.update(slug, doc.id, { baseVersion: 1, content: "a\nB\nc\n" });
-    await client.documents.update(slug, doc.id, { baseVersion: 2, content: "a\nB\nc\nd\n" });
+    const doc = await client.documents.create(slug, {
+      title: "Diffable",
+      project: "SPI",
+      content: "a\nb\nc\n",
+    });
+    await client.documents.update(slug, doc.id, {
+      baseVersion: 1,
+      content: "a\nB\nc\n",
+    });
+    await client.documents.update(slug, doc.id, {
+      baseVersion: 2,
+      content: "a\nB\nc\nd\n",
+    });
 
     const diff = await client.documents.diff(slug, doc.id, { from: 1, to: 2 });
-    expect(diff).toMatchObject({ documentId: doc.id, from: { version: 1 }, to: { version: 2 }, added: 1, removed: 1 });
-    expect(diff.hunks[0]?.lines.map((l) => l.kind)).toEqual(["context", "removed", "added", "context"]);
-    expect(await client.documents.diff(slug, doc.id, { from: 1 })).toMatchObject({ to: { version: 3 }, added: 2, removed: 1 });
+    expect(diff).toMatchObject({
+      documentId: doc.id,
+      from: { version: 1 },
+      to: { version: 2 },
+      added: 1,
+      removed: 1,
+    });
+    expect(diff.hunks[0]?.lines.map((l) => l.kind)).toEqual([
+      "context",
+      "removed",
+      "added",
+      "context",
+    ]);
+    expect(
+      await client.documents.diff(slug, doc.id, { from: 1 }),
+    ).toMatchObject({ to: { version: 3 }, added: 2, removed: 1 });
 
-    expect(await client.documents.diff(slug, doc.id, { from: 1, to: 7 }).catch((e: unknown) => e)).toMatchObject({
+    expect(
+      await client.documents
+        .diff(slug, doc.id, { from: 1, to: 7 })
+        .catch((e: unknown) => e),
+    ).toMatchObject({
       status: 404,
       code: "not_found",
     });
-    const noFrom = await app.request(`/v1/orgs/${slug}/documents/${doc.id}/diff`, {
-      headers: { authorization: `Bearer ${secret}` },
-    });
+    const noFrom = await app.request(
+      `/v1/orgs/${slug}/documents/${doc.id}/diff`,
+      {
+        headers: { authorization: `Bearer ${secret}` },
+      },
+    );
     expect(noFrom.status).toBe(400);
     await client.documents.delete(slug, doc.id);
-    expect(await client.documents.diff(slug, doc.id, { from: 1 }).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await client.documents
+        .diff(slug, doc.id, { from: 1 })
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
   });
 
   test("POST /documents/:id/edit applies partial edits as new versions (ST-116)", async () => {
     const client = sdk();
-    const doc = await client.documents.create(slug, { title: "Partial", content: "# P\n\nIntro.\n\n## Decisions\n\nOld.\n" });
-    const replaced = await client.documents.edit(slug, doc.id, { edits: [{ old: "Intro.", new: "Hello." }] });
-    expect(replaced).toMatchObject({ version: 2, content: "# P\n\nHello.\n\n## Decisions\n\nOld.\n" });
+    const doc = await client.documents.create(slug, {
+      title: "Partial",
+      content: "# P\n\nIntro.\n\n## Decisions\n\nOld.\n",
+    });
+    const replaced = await client.documents.edit(slug, doc.id, {
+      edits: [{ old: "Intro.", new: "Hello." }],
+    });
+    expect(replaced).toMatchObject({
+      version: 2,
+      content: "# P\n\nHello.\n\n## Decisions\n\nOld.\n",
+    });
     const sectioned = await client.documents.edit(slug, doc.id, {
       baseVersion: 2,
       edits: [{ section: "## Decisions", content: "New." }, { append: "End." }],
     });
-    expect(sectioned).toMatchObject({ version: 3, content: "# P\n\nHello.\n\n## Decisions\n\nNew.\nEnd." });
+    expect(sectioned).toMatchObject({
+      version: 3,
+      content: "# P\n\nHello.\n\n## Decisions\n\nNew.\nEnd.",
+    });
 
-    const missing = await client.documents.edit(slug, doc.id, { edits: [{ old: "Intro.", new: "x" }] }).catch((e: unknown) => e);
+    const missing = await client.documents
+      .edit(slug, doc.id, { edits: [{ old: "Intro.", new: "x" }] })
+      .catch((e: unknown) => e);
     expect(missing).toMatchObject({ status: 409, code: "conflict" });
     const ambiguous = await client.documents
       .edit(slug, doc.id, { edits: [{ old: "e", new: "E" }] })
       .catch((e: unknown) => e);
     expect(ambiguous).toMatchObject({ status: 400, code: "validation" });
-    const stale = await client.documents.edit(slug, doc.id, { baseVersion: 1, edits: [{ append: "x" }] }).catch((e: unknown) => e);
+    const stale = await client.documents
+      .edit(slug, doc.id, { baseVersion: 1, edits: [{ append: "x" }] })
+      .catch((e: unknown) => e);
     expect(stale).toMatchObject({ status: 409, code: "conflict" });
-    expect((await client.documents.versions.list(slug, doc.id)).items.map((v) => v.version)).toEqual([3, 2, 1]);
+    expect(
+      (await client.documents.versions.list(slug, doc.id)).items.map(
+        (v) => v.version,
+      ),
+    ).toEqual([3, 2, 1]);
     await client.documents.delete(slug, doc.id);
   });
 
   test("POST /documents/:id/move makes a document organization-wide and back, keeping its versions", async () => {
     const client = sdk();
-    const doc = await client.documents.create(slug, { title: "Movable", project: "SPI", content: "v1" });
-    await client.documents.update(slug, doc.id, { baseVersion: 1, content: "v2" });
-    expect(await client.documents.move(slug, doc.id, { project: null })).toMatchObject({ id: doc.id, projectKey: null, version: 2 });
-    expect(await client.documents.move(slug, doc.id, { project: "SPI" })).toMatchObject({ projectKey: "SPI", content: "v2" });
-    expect((await client.documents.versions.list(slug, doc.id)).items).toHaveLength(2);
-    expect(await client.documents.move(slug, doc.id, { project: "NOPE" }).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    const doc = await client.documents.create(slug, {
+      title: "Movable",
+      project: "SPI",
+      content: "v1",
+    });
+    await client.documents.update(slug, doc.id, {
+      baseVersion: 1,
+      content: "v2",
+    });
+    expect(
+      await client.documents.move(slug, doc.id, { project: null }),
+    ).toMatchObject({ id: doc.id, projectKey: null, version: 2 });
+    expect(
+      await client.documents.move(slug, doc.id, { project: "SPI" }),
+    ).toMatchObject({ projectKey: "SPI", content: "v2" });
+    expect(
+      (await client.documents.versions.list(slug, doc.id)).items,
+    ).toHaveLength(2);
+    expect(
+      await client.documents
+        .move(slug, doc.id, { project: "NOPE" })
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
     await client.documents.delete(slug, doc.id);
   });
 
   test("GET /documents/graph and /documents/:id/backlinks follow [[links]] (ST-100)", async () => {
     const client = sdk();
-    const target = await client.documents.create(slug, { title: "Graph target", project: "SPI" });
-    const source = await client.documents.create(slug, { title: "Graph source", content: "See [[graph target|it]]" });
+    const target = await client.documents.create(slug, {
+      title: "Graph target",
+      project: "SPI",
+    });
+    const source = await client.documents.create(slug, {
+      title: "Graph source",
+      content: "See [[graph target|it]]",
+    });
     const graph = await client.documents.graph(slug);
-    expect(graph.links).toContainEqual({ from: source.id, to: { type: "document", id: target.id } });
-    expect(graph.documents.map((d) => d.id)).toEqual(expect.arrayContaining([source.id, target.id]));
-    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id]);
-    expect(graph.documents.find((d) => d.id === target.id)?.url).toBe(`${env.WEB_ORIGIN}/${slug}/docs/${target.id}`);
+    expect(graph.links).toContainEqual({
+      from: source.id,
+      to: { type: "document", id: target.id },
+    });
+    expect(graph.documents.map((d) => d.id)).toEqual(
+      expect.arrayContaining([source.id, target.id]),
+    );
+    expect(
+      (await client.documents.backlinks(slug, target.id)).items.map(
+        (d) => d.id,
+      ),
+    ).toEqual([source.id]);
+    expect(graph.documents.find((d) => d.id === target.id)?.url).toBe(
+      `${env.WEB_ORIGIN}/${slug}/docs/${target.id}`,
+    );
 
     // [[doc:<id>]] links by id (ST-115): they survive renames and count as backlinks.
-    const byId = await client.documents.create(slug, { title: "By id", content: `[[doc:${target.id}]]` });
-    await client.documents.update(slug, target.id, { baseVersion: 1, title: "Graph target renamed" });
-    expect((await client.documents.graph(slug)).links).toContainEqual({ from: byId.id, to: { type: "document", id: target.id } });
+    const byId = await client.documents.create(slug, {
+      title: "By id",
+      content: `[[doc:${target.id}]]`,
+    });
+    await client.documents.update(slug, target.id, {
+      baseVersion: 1,
+      title: "Graph target renamed",
+    });
+    expect((await client.documents.graph(slug)).links).toContainEqual({
+      from: byId.id,
+      to: { type: "document", id: target.id },
+    });
     // The rename rewrote the source's [[graph target|it]] too (ST-101): saved last, it comes first.
-    expect((await client.documents.backlinks(slug, target.id)).items.map((d) => d.id)).toEqual([source.id, byId.id]);
+    expect(
+      (await client.documents.backlinks(slug, target.id)).items.map(
+        (d) => d.id,
+      ),
+    ).toEqual([source.id, byId.id]);
     await client.documents.delete(slug, byId.id);
-    expect(await client.documents.backlinks(slug, crypto.randomUUID()).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await client.documents
+        .backlinks(slug, crypto.randomUUID())
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
     await client.documents.delete(slug, source.id);
     await client.documents.delete(slug, target.id);
   });
 
   test("a rename rewrites [[links]]; GET /tasks/:key/backlinks lists mentioning documents (ST-101)", async () => {
     const client = sdk();
-    const task = await client.tasks.create(slug, "SPI", { title: "Mentioned task" });
-    const target = await client.documents.create(slug, { title: "Relink target", project: "SPI" });
+    const task = await client.tasks.create(slug, "SPI", {
+      title: "Mentioned task",
+    });
+    const target = await client.documents.create(slug, {
+      title: "Relink target",
+      project: "SPI",
+    });
     const source = await client.documents.create(slug, {
       title: "Relink source",
       content: `[[Relink target|there]] and ${task.key}`,
     });
-    const renamed = await client.documents.update(slug, target.id, { baseVersion: 1, title: "Relinked" });
-    expect(renamed.relinked).toEqual({ rewritten: [{ id: source.id, title: "Relink source" }], skipped: [] });
-    expect((await client.documents.get(slug, source.id)).content).toBe(`[[Relinked|there]] and ${task.key}`);
+    const renamed = await client.documents.update(slug, target.id, {
+      baseVersion: 1,
+      title: "Relinked",
+    });
+    expect(renamed.relinked).toEqual({
+      rewritten: [{ id: source.id, title: "Relink source" }],
+      skipped: [],
+    });
+    expect((await client.documents.get(slug, source.id)).content).toBe(
+      `[[Relinked|there]] and ${task.key}`,
+    );
 
     const backlinks = (await client.tasks.backlinks(slug, task.key)).items;
-    expect(backlinks.map((d) => [d.id, d.url])).toEqual([[source.id, `${env.WEB_ORIGIN}/${slug}/docs/${source.id}`]]);
-    expect((await client.documents.graph(slug)).tasks.find((t) => t.key === task.key)?.url).toBe(
-      `${env.WEB_ORIGIN}/${slug}/tasks/${task.key}`,
-    );
-    expect(await client.tasks.backlinks(slug, "SPI-99999").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(backlinks.map((d) => [d.id, d.url])).toEqual([
+      [source.id, `${env.WEB_ORIGIN}/${slug}/docs/${source.id}`],
+    ]);
+    expect(
+      (await client.documents.graph(slug)).tasks.find((t) => t.key === task.key)
+        ?.url,
+    ).toBe(`${env.WEB_ORIGIN}/${slug}/tasks/${task.key}`);
+    expect(
+      await client.tasks.backlinks(slug, "SPI-99999").catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
     await client.documents.delete(slug, source.id);
     await client.documents.delete(slug, target.id);
   });
 
   test("saved views through the SDK: create, list, rename, delete; bad filters are a 400", async () => {
     const client = sdk();
-    const view = await client.views.create(slug, "SPI", { name: "Mine", filters: { assignee: ["me"], priority: [1, 2] }, view: "list" });
-    expect(view).toMatchObject({ projectKey: "SPI", ownerActorId: agentId, shared: false, view: "list", filters: { assignee: ["me"], priority: [1, 2] } });
-    expect((await client.views.list(slug, "SPI")).items.map((v) => v.id)).toEqual([view.id]);
-    expect((await client.views.update(slug, "SPI", view.id, { name: "Renamed", shared: true })).name).toBe("Renamed");
-    const bad = await client.views.create(slug, "SPI", { name: "Bad", filters: { priority: [7 as 1] } }).catch((e: unknown) => e);
+    const view = await client.views.create(slug, "SPI", {
+      name: "Mine",
+      filters: { assignee: ["me"], priority: [1, 2] },
+      view: "list",
+    });
+    expect(view).toMatchObject({
+      projectKey: "SPI",
+      ownerActorId: agentId,
+      shared: false,
+      view: "list",
+      filters: { assignee: ["me"], priority: [1, 2] },
+    });
+    expect(
+      (await client.views.list(slug, "SPI")).items.map((v) => v.id),
+    ).toEqual([view.id]);
+    expect(
+      (
+        await client.views.update(slug, "SPI", view.id, {
+          name: "Renamed",
+          shared: true,
+        })
+      ).name,
+    ).toBe("Renamed");
+    const bad = await client.views
+      .create(slug, "SPI", { name: "Bad", filters: { priority: [7 as 1] } })
+      .catch((e: unknown) => e);
     expect(bad).toMatchObject({ status: 400, code: "validation" });
     expect(await client.views.delete(slug, "SPI", view.id)).toBeUndefined();
     expect((await client.views.list(slug, "SPI")).items).toEqual([]);
-    expect(await client.views.list(slug, "NOPE").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await client.views.list(slug, "NOPE").catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
   });
 
   test("repos and apps through the SDK: add by URL, attach, apps; 409, 400 and 404 (ST-92)", async () => {
     const client = sdk();
-    const repo = await client.repos.create(slug, { url: "https://github.com/pipisasa/spider-tracker.git", projects: ["SPI"] });
-    expect(repo).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"], apps: [] });
-    expect(await client.repos.create(slug, { url: "pipisasa/Spider-Tracker" }).catch((e: unknown) => e)).toMatchObject({ status: 409 });
-    expect(await client.repos.create(slug, { url: "https://gitlab.com/a/b" }).catch((e: unknown) => e)).toMatchObject({ status: 400 });
+    const repo = await client.repos.create(slug, {
+      url: "https://github.com/pipisasa/spider-tracker.git",
+      projects: ["SPI"],
+    });
+    expect(repo).toMatchObject({
+      fullName: "pipisasa/spider-tracker",
+      defaultBranch: "main",
+      projects: ["SPI"],
+      apps: [],
+    });
+    expect(
+      await client.repos
+        .create(slug, { url: "pipisasa/Spider-Tracker" })
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 409 });
+    expect(
+      await client.repos
+        .create(slug, { url: "https://gitlab.com/a/b" })
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 400 });
 
-    const web = await client.repos.apps.create(slug, "pipisasa/spider-tracker", {
+    const web = await client.repos.apps.create(
+      slug,
+      "pipisasa/spider-tracker",
+      {
+        name: "web",
+        path: "web/app",
+        versioning: "date",
+        environments: ["staging", "prod"],
+      },
+    );
+    expect(web).toMatchObject({
+      repo: "pipisasa/spider-tracker",
       name: "web",
-      path: "web/app",
-      versioning: "date",
       environments: ["staging", "prod"],
     });
-    expect(web).toMatchObject({ repo: "pipisasa/spider-tracker", name: "web", environments: ["staging", "prod"] });
-    expect((await client.repos.apps.update(slug, "pipisasa/spider-tracker", "web", { sharedPaths: ["packages/core"] })).sharedPaths).toEqual([
-      "packages/core",
-    ]);
-    expect((await client.repos.get(slug, "PIPISASA/spider-tracker")).apps.map((a) => a.name)).toEqual(["web"]);
-    expect((await client.repos.list(slug, { project: "SPI" })).items.map((r) => r.fullName)).toEqual(["pipisasa/spider-tracker"]);
+    expect(
+      (
+        await client.repos.apps.update(slug, "pipisasa/spider-tracker", "web", {
+          sharedPaths: ["packages/core"],
+        })
+      ).sharedPaths,
+    ).toEqual(["packages/core"]);
+    expect(
+      (await client.repos.get(slug, "PIPISASA/spider-tracker")).apps.map(
+        (a) => a.name,
+      ),
+    ).toEqual(["web"]);
+    expect(
+      (await client.repos.list(slug, { project: "SPI" })).items.map(
+        (r) => r.fullName,
+      ),
+    ).toEqual(["pipisasa/spider-tracker"]);
 
-    expect((await client.repos.detach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual([]);
-    expect((await client.repos.list(slug, { project: "SPI" })).items).toEqual([]);
-    expect((await client.repos.attach(slug, "SPI", "pipisasa/spider-tracker")).projects).toEqual(["SPI"]);
-    expect(await client.repos.update(slug, "pipisasa/spider-tracker", { defaultBranch: "trunk" })).toMatchObject({ defaultBranch: "trunk" });
+    expect(
+      (await client.repos.detach(slug, "SPI", "pipisasa/spider-tracker"))
+        .projects,
+    ).toEqual([]);
+    expect((await client.repos.list(slug, { project: "SPI" })).items).toEqual(
+      [],
+    );
+    expect(
+      (await client.repos.attach(slug, "SPI", "pipisasa/spider-tracker"))
+        .projects,
+    ).toEqual(["SPI"]);
+    expect(
+      await client.repos.update(slug, "pipisasa/spider-tracker", {
+        defaultBranch: "trunk",
+      }),
+    ).toMatchObject({ defaultBranch: "trunk" });
 
-    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web")).toBeUndefined();
-    expect(await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web").catch((e: unknown) => e)).toMatchObject({ status: 404 });
-    expect(await client.repos.delete(slug, "pipisasa/spider-tracker")).toBeUndefined();
-    expect(await client.repos.get(slug, "pipisasa/spider-tracker").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await client.repos.apps.delete(slug, "pipisasa/spider-tracker", "web"),
+    ).toBeUndefined();
+    expect(
+      await client.repos.apps
+        .delete(slug, "pipisasa/spider-tracker", "web")
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
+    expect(
+      await client.repos.delete(slug, "pipisasa/spider-tracker"),
+    ).toBeUndefined();
+    expect(
+      await client.repos
+        .get(slug, "pipisasa/spider-tracker")
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
   });
 
   test("deployments through the SDK: 201 with the release moved to On staging, list by environment, 400 and 404 (ST-94)", async () => {
     const client = sdk({ source: "cli" });
-    await client.repos.create(slug, { url: "pipisasa/deploy-demo", projects: ["SPI"] });
-    await client.repos.apps.create(slug, "pipisasa/deploy-demo", { name: "web", path: "web", versioning: "date", environments: ["staging", "prod"] });
+    await client.repos.create(slug, {
+      url: "pipisasa/deploy-demo",
+      projects: ["SPI"],
+    });
+    await client.repos.apps.create(slug, "pipisasa/deploy-demo", {
+      name: "web",
+      path: "web",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
     const release = await client.releases.create(slug, "SPI", {
       title: "2026.10.13",
-      apps: [{ repo: "pipisasa/deploy-demo", app: "web", version: "2026.10.13" }],
+      apps: [
+        { repo: "pipisasa/deploy-demo", app: "web", version: "2026.10.13" },
+      ],
     });
-    const raw = await app.request(`/v1/orgs/${slug}/releases/${release.key}/deployments`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${secret}`, "X-Spider-Source": "cli", "Content-Type": "application/json" },
-      body: JSON.stringify({ app: "web", environment: "staging", commitSha: "3f2c1ab" }),
-    });
+    const raw = await app.request(
+      `/v1/orgs/${slug}/releases/${release.key}/deployments`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "X-Spider-Source": "cli",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          app: "web",
+          environment: "staging",
+          commitSha: "3f2c1ab",
+        }),
+      },
+    );
     expect(raw.status).toBe(201);
     const recorded = (await raw.json()) as RecordDeploymentResponse;
     expect(recorded).toMatchObject({
-      deployment: { app: "web", repo: "pipisasa/deploy-demo", environment: "staging", production: false, source: "cli" },
-      release: { key: release.key, status: { name: "On staging" }, url: expect.stringContaining(`/tasks/${release.key}`) },
+      deployment: {
+        app: "web",
+        repo: "pipisasa/deploy-demo",
+        environment: "staging",
+        production: false,
+        source: "cli",
+      },
+      release: {
+        key: release.key,
+        status: { name: "On staging" },
+        url: expect.stringContaining(`/tasks/${release.key}`),
+      },
       movedFrom: { name: "Planned" },
     });
-    const prod = await client.releases.deploy(slug, release.key, { app: "web", environment: "prod", commitSha: "4a5b6c7" });
-    expect(prod.release.deployments?.map((d) => d.environment)).toEqual(["prod", "staging"]);
-    expect((await client.releases.deployments(slug, release.key, { environment: "staging" })).items).toEqual([recorded.deployment]);
-    expect((await client.releases.get(slug, release.key)).deployments).toHaveLength(2);
+    const prod = await client.releases.deploy(slug, release.key, {
+      app: "web",
+      environment: "prod",
+      commitSha: "4a5b6c7",
+    });
+    expect(prod.release.deployments?.map((d) => d.environment)).toEqual([
+      "prod",
+      "staging",
+    ]);
+    expect(
+      (
+        await client.releases.deployments(slug, release.key, {
+          environment: "staging",
+        })
+      ).items,
+    ).toEqual([recorded.deployment]);
+    expect(
+      (await client.releases.get(slug, release.key)).deployments,
+    ).toHaveLength(2);
 
-    expect(await client.releases.deploy(slug, release.key, { app: "web", environment: "qa", commitSha: "4a5b6c7" }).catch((e: unknown) => e)).toMatchObject({
+    expect(
+      await client.releases
+        .deploy(slug, release.key, {
+          app: "web",
+          environment: "qa",
+          commitSha: "4a5b6c7",
+        })
+        .catch((e: unknown) => e),
+    ).toMatchObject({
       status: 400,
     });
-    expect(await client.releases.deploy(slug, release.key, { app: "web", environment: "prod", commitSha: "HEAD" }).catch((e: unknown) => e)).toMatchObject({
+    expect(
+      await client.releases
+        .deploy(slug, release.key, {
+          app: "web",
+          environment: "prod",
+          commitSha: "HEAD",
+        })
+        .catch((e: unknown) => e),
+    ).toMatchObject({
       status: 400,
     });
-    expect(await client.releases.deployments(slug, "SPI-99999").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await client.releases
+        .deployments(slug, "SPI-99999")
+        .catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
   });
 
   test("API-key clients declare their source; unknown values fall back to api", async () => {
-    const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", { title: "From the CLI" });
+    const cli = await sdk({ source: "cli" }).tasks.create(slug, "SPI", {
+      title: "From the CLI",
+    });
     const raw = await app.request(`/v1/orgs/${slug}/projects/SPI/tasks`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${secret}`, "X-Spider-Source": "ui", "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "X-Spider-Source": "ui",
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({ title: "Claims to be the UI" }),
     });
     expect(raw.status).toBe(201);
     const spoofed = (await raw.json()) as { id: string };
 
-    const log = await db.select().from(schema.activity).where(eq(schema.activity.actorId, agentId));
-    const sourceOf = (taskId: string) => log.find((e) => e.entityId === taskId)?.source;
+    const log = await db
+      .select()
+      .from(schema.activity)
+      .where(eq(schema.activity.actorId, agentId));
+    const sourceOf = (taskId: string) =>
+      log.find((e) => e.entityId === taskId)?.source;
     expect(sourceOf(cli.id)).toBe("cli");
     expect(sourceOf(spoofed.id)).toBe("api");
   });
@@ -847,43 +1607,85 @@ withDb("agent presence (ST-67)", () => {
   const slug = `presence-${stamp}`;
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.email, ownerEmail));
   });
 
   test("an agent reading a task is working on it; a person reading it is not", async () => {
     const owner = await signIn(ownerEmail);
-    const send = (method: string, path: string, body?: unknown, headers: Record<string, string> = { Cookie: owner }) =>
+    const send = (
+      method: string,
+      path: string,
+      body?: unknown,
+      headers: Record<string, string> = { Cookie: owner },
+    ) =>
       app.request(path, {
         method,
         headers: { "Content-Type": "application/json", ...headers },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     await send("POST", "/v1/organizations", { name: "Presence Org", slug });
-    await send("POST", `/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
-    const agent = (await (await send("POST", `/v1/orgs/${slug}/agents`, { name: "Watcher" })).json()) as { actor: { id: string } };
-    const key = (await (await send("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "k" })).json()) as { secret: string };
+    await send("POST", `/v1/orgs/${slug}/projects`, {
+      name: "Spider",
+      key: "SPI",
+    });
+    const agent = (await (
+      await send("POST", `/v1/orgs/${slug}/agents`, { name: "Watcher" })
+    ).json()) as { actor: { id: string } };
+    const key = (await (
+      await send("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, {
+        name: "k",
+      })
+    ).json()) as { secret: string };
     const bearer = { Authorization: `Bearer ${key.secret}` };
-    await send("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, { title: "Look at me" });
+    await send("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, {
+      title: "Look at me",
+    });
 
     const presence = async (headers?: Record<string, string>) =>
-      ((await (await send("GET", `/v1/orgs/${slug}/projects/SPI/presence`, undefined, headers)).json()) as {
-        items: { taskKey: string; actorId: string; lastSeenAt: string }[];
-      }).items;
+      (
+        (await (
+          await send(
+            "GET",
+            `/v1/orgs/${slug}/projects/SPI/presence`,
+            undefined,
+            headers,
+          )
+        ).json()) as {
+          items: { taskKey: string; actorId: string; lastSeenAt: string }[];
+        }
+      ).items;
 
     expect(await presence()).toEqual([]);
-    expect((await send("GET", `/v1/orgs/${slug}/tasks/SPI-1`)).status).toBe(200);
+    expect((await send("GET", `/v1/orgs/${slug}/tasks/SPI-1`)).status).toBe(
+      200,
+    );
     expect(await presence()).toEqual([]);
 
-    expect((await send("GET", `/v1/orgs/${slug}/tasks/SPI-1`, undefined, bearer)).status).toBe(200);
+    expect(
+      (await send("GET", `/v1/orgs/${slug}/tasks/SPI-1`, undefined, bearer))
+        .status,
+    ).toBe(200);
     const active = await presence();
-    expect(active).toMatchObject([{ taskKey: "SPI-1", actorId: agent.actor.id }]);
-    expect(Date.now() - Date.parse(active[0]?.lastSeenAt ?? "")).toBeLessThan(10_000);
+    expect(active).toMatchObject([
+      { taskKey: "SPI-1", actorId: agent.actor.id },
+    ]);
+    expect(Date.now() - Date.parse(active[0]?.lastSeenAt ?? "")).toBeLessThan(
+      10_000,
+    );
     // Visible to agents too, through the SDK.
-    const client = createClient({ baseUrl: env.API_ORIGIN, token: key.secret, fetch: (input, init) => app.request(input, init) });
+    const client = createClient({
+      baseUrl: env.API_ORIGIN,
+      token: key.secret,
+      fetch: (input, init) => app.request(input, init),
+    });
     expect((await client.tasks.presence(slug, "SPI")).items).toHaveLength(1);
 
-    expect((await send("GET", `/v1/orgs/${slug}/projects/NOPE/presence`)).status).toBe(404);
+    expect(
+      (await send("GET", `/v1/orgs/${slug}/projects/NOPE/presence`)).status,
+    ).toBe(404);
   });
 });
 
@@ -893,7 +1695,9 @@ withDb("device login (spider login)", () => {
   const slug = `device-${stamp}`;
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
@@ -910,21 +1714,35 @@ withDb("device login (spider login)", () => {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "client_name=MacBook",
     });
-    const code = (await start.json()) as { device_code: string; user_code: string; verification_uri_complete: string };
-    expect(code.verification_uri_complete).toBe(`${env.WEB_ORIGIN}/device?code=${code.user_code}`);
+    const code = (await start.json()) as {
+      device_code: string;
+      user_code: string;
+      verification_uri_complete: string;
+    };
+    expect(code.verification_uri_complete).toBe(
+      `${env.WEB_ORIGIN}/device?code=${code.user_code}`,
+    );
 
     const token = () =>
       app.request("/device/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: code.device_code }),
+        body: JSON.stringify({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: code.device_code,
+        }),
       });
     const pending = await token();
     expect(pending.status).toBe(400);
     expect(await pending.json()).toEqual({ error: "authorization_pending" });
 
-    const info = await app.request(`/v1/device/${code.user_code}`, { headers: { Cookie: cookie } });
-    expect(await info.json()).toMatchObject({ clientName: "MacBook", status: "pending" });
+    const info = await app.request(`/v1/device/${code.user_code}`, {
+      headers: { Cookie: cookie },
+    });
+    expect(await info.json()).toMatchObject({
+      clientName: "MacBook",
+      status: "pending",
+    });
     const approve = await app.request(`/v1/device/${code.user_code}/approve`, {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -932,22 +1750,55 @@ withDb("device login (spider login)", () => {
     });
     expect(approve.status).toBe(204);
 
-    await db.update(schema.deviceCodes).set({ lastPolledAt: null }).where(eq(schema.deviceCodes.userCode, code.user_code));
+    await db
+      .update(schema.deviceCodes)
+      .set({ lastPolledAt: null })
+      .where(eq(schema.deviceCodes.userCode, code.user_code));
     const granted = await token();
     expect(granted.status).toBe(200);
-    const body = (await granted.json()) as { access_token: string; actor: { name: string }; organization: { slug: string } };
-    expect(body).toMatchObject({ token_type: "Bearer", actor: { name: "spider CLI · MacBook" }, organization: { slug } });
+    const body = (await granted.json()) as {
+      access_token: string;
+      actor: { name: string };
+      organization: { slug: string };
+    };
+    expect(body).toMatchObject({
+      token_type: "Bearer",
+      actor: { name: "spider CLI · MacBook" },
+      organization: { slug },
+    });
 
     const bearer = { Authorization: `Bearer ${body.access_token}` };
-    expect((await app.request("/v1/whoami", { headers: bearer })).status).toBe(200);
-    expect((await app.request("/v1/api-keys/current", { method: "DELETE", headers: { Cookie: cookie } })).status).toBe(403);
-    expect((await app.request("/v1/api-keys/current", { method: "DELETE", headers: bearer })).status).toBe(204);
-    expect((await app.request("/v1/whoami", { headers: bearer })).status).toBe(401);
+    expect((await app.request("/v1/whoami", { headers: bearer })).status).toBe(
+      200,
+    );
+    expect(
+      (
+        await app.request("/v1/api-keys/current", {
+          method: "DELETE",
+          headers: { Cookie: cookie },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await app.request("/v1/api-keys/current", {
+          method: "DELETE",
+          headers: bearer,
+        })
+      ).status,
+    ).toBe(204);
+    expect((await app.request("/v1/whoami", { headers: bearer })).status).toBe(
+      401,
+    );
   });
 
   test("an agent key can't approve devices", async () => {
-    const start = (await (await app.request("/device/code", { method: "POST" })).json()) as { user_code: string };
-    const res = await app.request(`/v1/device/${start.user_code}`, { headers: { Authorization: "Bearer spt_nope" } });
+    const start = (await (
+      await app.request("/device/code", { method: "POST" })
+    ).json()) as { user_code: string };
+    const res = await app.request(`/v1/device/${start.user_code}`, {
+      headers: { Authorization: "Bearer spt_nope" },
+    });
     expect(res.status).toBe(401);
   });
 });
@@ -958,7 +1809,9 @@ withDb("comments and inbox API", () => {
   const slug = `inbox-${stamp}`;
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
@@ -971,47 +1824,89 @@ withDb("comments and inbox API", () => {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     await asOwner("POST", "/v1/organizations", { name: "Inbox Org", slug });
-    await asOwner("POST", `/v1/orgs/${slug}/projects`, { name: "Spider", key: "SPI" });
-    await asOwner("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, { title: "Talk to me" });
-    const agent = (await (await asOwner("POST", `/v1/orgs/${slug}/agents`, { name: "Claude" })).json()) as {
+    await asOwner("POST", `/v1/orgs/${slug}/projects`, {
+      name: "Spider",
+      key: "SPI",
+    });
+    await asOwner("POST", `/v1/orgs/${slug}/projects/SPI/tasks`, {
+      title: "Talk to me",
+    });
+    const agent = (await (
+      await asOwner("POST", `/v1/orgs/${slug}/agents`, { name: "Claude" })
+    ).json()) as {
       actor: { id: string };
     };
-    const { secret } = (await (await asOwner("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "t" })).json()) as {
+    const { secret } = (await (
+      await asOwner("POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, {
+        name: "t",
+      })
+    ).json()) as {
       secret: string;
     };
     const asAgent = (method: string, path: string, body?: unknown) =>
       app.request(path, {
         method,
-        headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
 
     const started = Date.now();
-    const waiting = asAgent("GET", `/v1/orgs/${slug}/inbox?wait=10&unread=true`);
+    const waiting = asAgent(
+      "GET",
+      `/v1/orgs/${slug}/inbox?wait=10&unread=true`,
+    );
     await Bun.sleep(300);
-    const posted = await asOwner("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "@claude what's the status?" });
+    const posted = await asOwner(
+      "POST",
+      `/v1/orgs/${slug}/tasks/SPI-1/comments`,
+      { body: "@claude what's the status?" },
+    );
     expect(posted.status).toBe(201);
 
-    const inbox = (await (await waiting).json()) as { items: { id: number; kind: string; comment: { body: string } }[] };
+    const inbox = (await (await waiting).json()) as {
+      items: { id: number; kind: string; comment: { body: string } }[];
+    };
     expect(Date.now() - started).toBeLessThan(5000);
     expect(inbox.items.map((i) => i.kind)).toEqual(["mention"]);
     expect(inbox.items[0]?.comment.body).toContain("status");
 
-    const reply = await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "Working on it" });
+    const reply = await asAgent(
+      "POST",
+      `/v1/orgs/${slug}/tasks/SPI-1/comments`,
+      { body: "Working on it" },
+    );
     expect(reply.status).toBe(201);
-    const thread = (await (await asOwner("GET", `/v1/orgs/${slug}/tasks/SPI-1/comments`)).json()) as {
+    const thread = (await (
+      await asOwner("GET", `/v1/orgs/${slug}/tasks/SPI-1/comments`)
+    ).json()) as {
       items: { authorId: string }[];
     };
     expect(thread.items.map((c) => c.authorId).at(-1)).toBe(agent.actor.id);
 
-    const read = await asAgent("POST", `/v1/orgs/${slug}/inbox/read`, { upTo: inbox.items[0]?.id });
+    const read = await asAgent("POST", `/v1/orgs/${slug}/inbox/read`, {
+      upTo: inbox.items[0]?.id,
+    });
     expect(await read.json()).toEqual({ updated: 1 });
-    const empty = (await (await asAgent("GET", `/v1/orgs/${slug}/inbox?unread=true`)).json()) as { items: unknown[] };
+    const empty = (await (
+      await asAgent("GET", `/v1/orgs/${slug}/inbox?unread=true`)
+    ).json()) as { items: unknown[] };
     expect(empty.items).toEqual([]);
 
     // The loop guard surfaces as 429.
-    for (let i = 0; i < 4; i++) await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: `note ${i}` });
-    expect((await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "too much" })).status).toBe(429);
+    for (let i = 0; i < 4; i++)
+      await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, {
+        body: `note ${i}`,
+      });
+    expect(
+      (
+        await asAgent("POST", `/v1/orgs/${slug}/tasks/SPI-1/comments`, {
+          body: "too much",
+        })
+      ).status,
+    ).toBe(429);
   });
 
   test("document comments (ST-118): a review stays on the document and reaches its author", async () => {
@@ -1022,25 +1917,63 @@ withDb("comments and inbox API", () => {
         headers: { Cookie: cookie, "Content-Type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-    const doc = (await (await asOwner("POST", "/documents", { title: "Spec", project: "SPI", content: "Ship **it** today." })).json()) as { id: string };
-    const before = (await (await asOwner("GET", "/inbox?kinds=document_comment,document_reply")).json()) as { items: unknown[] };
+    const doc = (await (
+      await asOwner("POST", "/documents", {
+        title: "Spec",
+        project: "SPI",
+        content: "Ship **it** today.",
+      })
+    ).json()) as { id: string };
+    const before = (await (
+      await asOwner("GET", "/inbox?kinds=document_comment,document_reply")
+    ).json()) as { items: unknown[] };
     expect(before.items).toEqual([]);
 
     // Commenting on a fragment that isn't there is a 400; one that is, a 201.
-    expect((await asOwner("POST", `/documents/${doc.id}/comments`, { body: "?", quote: "tomorrow" })).status).toBe(400);
-    const posted = await asOwner("POST", `/documents/${doc.id}/comments`, { body: "Why today?", quote: "Ship it today" });
+    expect(
+      (
+        await asOwner("POST", `/documents/${doc.id}/comments`, {
+          body: "?",
+          quote: "tomorrow",
+        })
+      ).status,
+    ).toBe(400);
+    const posted = await asOwner("POST", `/documents/${doc.id}/comments`, {
+      body: "Why today?",
+      quote: "Ship it today",
+    });
     expect(posted.status).toBe(201);
     const root = (await posted.json()) as { id: string };
-    expect(root).toMatchObject({ documentId: doc.id, quote: "Ship it today", outdated: false, documentVersion: 1, resolvedAt: null });
+    expect(root).toMatchObject({
+      documentId: doc.id,
+      quote: "Ship it today",
+      outdated: false,
+      documentVersion: 1,
+      resolvedAt: null,
+    });
 
-    const listed = (await (await asOwner("GET", `/documents/${doc.id}/comments`)).json()) as { items: { id: string }[] };
+    const listed = (await (
+      await asOwner("GET", `/documents/${doc.id}/comments`)
+    ).json()) as { items: { id: string }[] };
     expect(listed.items.map((c) => c.id)).toEqual([root.id]);
 
-    const resolved = await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, { resolved: true });
+    const resolved = await asOwner(
+      "PATCH",
+      `/documents/${doc.id}/comments/${root.id}`,
+      { resolved: true },
+    );
     expect(resolved.status).toBe(200);
-    expect(await resolved.json()).toMatchObject({ resolvedAt: expect.any(String) });
-    expect((await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, {})).status).toBe(400);
-    expect((await asOwner("GET", `/documents/${crypto.randomUUID()}/comments`)).status).toBe(404);
+    expect(await resolved.json()).toMatchObject({
+      resolvedAt: expect.any(String),
+    });
+    expect(
+      (await asOwner("PATCH", `/documents/${doc.id}/comments/${root.id}`, {}))
+        .status,
+    ).toBe(400);
+    expect(
+      (await asOwner("GET", `/documents/${crypto.randomUUID()}/comments`))
+        .status,
+    ).toBe(404);
   });
 });
 
@@ -1051,7 +1984,10 @@ withDb("realtime events (SSE)", () => {
   const otherSlug = `sse-other-${stamp}`;
 
   afterAll(async () => {
-    for (const s of [slug, otherSlug]) await db.delete(schema.organizations).where(eq(schema.organizations.slug, s));
+    for (const s of [slug, otherSlug])
+      await db
+        .delete(schema.organizations)
+        .where(eq(schema.organizations.slug, s));
     await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
@@ -1069,7 +2005,10 @@ withDb("realtime events (SSE)", () => {
     }
 
     const controller = new AbortController();
-    const res = await app.request(`/v1/orgs/${slug}/events`, { headers: { Cookie: cookie }, signal: controller.signal });
+    const res = await app.request(`/v1/orgs/${slug}/events`, {
+      headers: { Cookie: cookie },
+      signal: controller.signal,
+    });
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
@@ -1084,7 +2023,9 @@ withDb("realtime events (SSE)", () => {
     };
 
     expect(await readUntil("event: ready")).toBe(true);
-    await post(`/v1/orgs/${otherSlug}/projects/SPI/tasks`, { title: "elsewhere" });
+    await post(`/v1/orgs/${otherSlug}/projects/SPI/tasks`, {
+      title: "elsewhere",
+    });
     await post(`/v1/orgs/${slug}/projects/SPI/tasks`, { title: "Live" });
     await post(`/v1/orgs/${slug}/tasks/SPI-1/comments`, { body: "hi" });
     expect(await readUntil("event: comment.created")).toBe(true);
@@ -1092,7 +2033,10 @@ withDb("realtime events (SSE)", () => {
     const events = buffer
       .split("\n")
       .filter((line) => line.startsWith("data: ") && line.includes("orgId"))
-      .map((line) => JSON.parse(line.slice(6)) as { type: string; taskKey?: string });
+      .map(
+        (line) =>
+          JSON.parse(line.slice(6)) as { type: string; taskKey?: string },
+      );
     expect(events.map((e) => [e.type, e.taskKey])).toEqual([
       ["task.changed", "SPI-1"],
       ["comment.created", "SPI-1"],
@@ -1130,7 +2074,8 @@ withDb("sign-up allowlist", () => {
     });
 
   afterAll(async () => {
-    for (const email of [allowed, refused]) await db.delete(schema.user).where(eq(schema.user.email, email));
+    for (const email of [allowed, refused])
+      await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
   test("refused emails get no link; allowed ones sign up", async () => {
@@ -1140,11 +2085,19 @@ withDb("sign-up allowlist", () => {
 
     expect((await request(allowed)).status).toBe(200);
     const link = new URL(links.get(allowed) ?? "");
-    const verify = await gatedApp.request(link.pathname + link.search, { redirect: "manual" });
+    const verify = await gatedApp.request(link.pathname + link.search, {
+      redirect: "manual",
+    });
     expect(verify.headers.get("location")).toStartWith(gated.WEB_ORIGIN);
-    const [user] = await db.select().from(schema.user).where(eq(schema.user.email, allowed));
+    const [user] = await db
+      .select()
+      .from(schema.user)
+      .where(eq(schema.user.email, allowed));
     expect(user).toBeDefined();
-    const [blocked] = await db.select().from(schema.user).where(eq(schema.user.email, refused));
+    const [blocked] = await db
+      .select()
+      .from(schema.user)
+      .where(eq(schema.user.email, refused));
     expect(blocked).toBeUndefined();
   });
 
@@ -1162,7 +2115,10 @@ withDb("sign-up allowlist", () => {
     const send = (email: string) =>
       slowApp.request("/api/auth/sign-in/magic-link", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Origin: gated.WEB_ORIGIN },
+        headers: {
+          "Content-Type": "application/json",
+          Origin: gated.WEB_ORIGIN,
+        },
         body: JSON.stringify({ email, callbackURL: `${gated.WEB_ORIGIN}/` }),
       });
 
@@ -1181,7 +2137,13 @@ withDb("sign-up allowlist", () => {
     const call = (
       email: string,
       action: "create-user" | "sign-in",
-      { emailVerified = false, provider = "batele-id" }: { emailVerified?: boolean; provider?: "batele-id" | "github" | "magic-link" } = {},
+      {
+        emailVerified = false,
+        provider = "batele-id",
+      }: {
+        emailVerified?: boolean;
+        provider?: "batele-id" | "github" | "magic-link";
+      } = {},
     ) =>
       hook({
         user: { email, emailVerified },
@@ -1191,16 +2153,42 @@ withDb("sign-up allowlist", () => {
             : { action, method: "oauth", oauth: { providerId: provider } },
       });
     const refusedSignup = { error: "signup_not_allowed" };
-    expect(await call("someone@elsewhere.test", "create-user", { emailVerified: true })).toMatchObject(refusedSignup);
-    expect(await call("someone@allowed-domain.test", "create-user", { emailVerified: true, provider: "github" })).toBeUndefined();
-    expect(await call("someone@allowed-domain.test", "create-user", { emailVerified: true, provider: "magic-link" })).toBeUndefined();
+    expect(
+      await call("someone@elsewhere.test", "create-user", {
+        emailVerified: true,
+      }),
+    ).toMatchObject(refusedSignup);
+    expect(
+      await call("someone@allowed-domain.test", "create-user", {
+        emailVerified: true,
+        provider: "github",
+      }),
+    ).toBeUndefined();
+    expect(
+      await call("someone@allowed-domain.test", "create-user", {
+        emailVerified: true,
+        provider: "magic-link",
+      }),
+    ).toBeUndefined();
     // Anyone can put a listed address on their provider profile: it has to be verified.
-    expect(await call("someone@allowed-domain.test", "create-user", { provider: "github" })).toMatchObject(refusedSignup);
-    expect(await call("someone@allowed-domain.test", "create-user")).toMatchObject(refusedSignup);
+    expect(
+      await call("someone@allowed-domain.test", "create-user", {
+        provider: "github",
+      }),
+    ).toMatchObject(refusedSignup);
+    expect(
+      await call("someone@allowed-domain.test", "create-user"),
+    ).toMatchObject(refusedSignup);
     expect(await call("someone@elsewhere.test", "sign-in")).toBeUndefined();
     // Email is optional for Batele ID: the placeholder address may always sign up, through Batele ID only.
-    expect(await call("01abc@users.batele-id.invalid", "create-user")).toBeUndefined();
-    expect(await call("01abc@users.batele-id.invalid", "create-user", { provider: "github" })).toMatchObject(refusedSignup);
+    expect(
+      await call("01abc@users.batele-id.invalid", "create-user"),
+    ).toBeUndefined();
+    expect(
+      await call("01abc@users.batele-id.invalid", "create-user", {
+        provider: "github",
+      }),
+    ).toMatchObject(refusedSignup);
     expect(await call("", "create-user")).toMatchObject(refusedSignup);
   });
 });
@@ -1212,17 +2200,27 @@ withDb("invitation codes", () => {
   const slug = `inv-${stamp}`;
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
-    for (const email of [ownerEmail, joinerEmail]) await db.delete(schema.user).where(eq(schema.user.email, email));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
+    for (const email of [ownerEmail, joinerEmail])
+      await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
-  const send = (credentials: { cookie?: string; token?: string }, method: string, path: string, body?: unknown) =>
+  const send = (
+    credentials: { cookie?: string; token?: string },
+    method: string,
+    path: string,
+    body?: unknown,
+  ) =>
     app.request(path, {
       method,
       headers: {
         "Content-Type": "application/json",
         ...(credentials.cookie ? { Cookie: credentials.cookie } : {}),
-        ...(credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {}),
+        ...(credentials.token
+          ? { Authorization: `Bearer ${credentials.token}` }
+          : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -1230,42 +2228,84 @@ withDb("invitation codes", () => {
   test("create → preview → accept; revoked, expired, already-member and agent keys are refused", async () => {
     const owner = { cookie: await signIn(ownerEmail) };
     const joiner = { cookie: await signIn(joinerEmail) };
-    await send(owner, "POST", "/v1/organizations", { name: "Invite Org", slug });
+    await send(owner, "POST", "/v1/organizations", {
+      name: "Invite Org",
+      slug,
+    });
 
-    const created = await send(owner, "POST", `/v1/orgs/${slug}/invitations`, { role: "guest", expiresInDays: 7 });
+    const created = await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {
+      role: "guest",
+      expiresInDays: 7,
+    });
     expect(created.status).toBe(201);
-    const invitation = (await created.json()) as { id: string; code: string; role: string; status: string };
+    const invitation = (await created.json()) as {
+      id: string;
+      code: string;
+      role: string;
+      status: string;
+    };
     expect(invitation).toMatchObject({ role: "guest", status: "active" });
 
-    const preview = await send(joiner, "POST", "/v1/invitations/preview", { code: invitation.code.toLowerCase() });
-    expect(await preview.json()).toMatchObject({ organization: { slug }, role: "guest", alreadyMember: false });
+    const preview = await send(joiner, "POST", "/v1/invitations/preview", {
+      code: invitation.code.toLowerCase(),
+    });
+    expect(await preview.json()).toMatchObject({
+      organization: { slug },
+      role: "guest",
+      alreadyMember: false,
+    });
 
-    const accepted = await send(joiner, "POST", "/v1/invitations/accept", { code: invitation.code });
+    const accepted = await send(joiner, "POST", "/v1/invitations/accept", {
+      code: invitation.code,
+    });
     expect(accepted.status).toBe(201);
     const membership = (await accepted.json()) as MembershipDto;
-    expect(membership).toMatchObject({ organization: { slug }, actor: { role: "guest", type: "human" } });
+    expect(membership).toMatchObject({
+      organization: { slug },
+      actor: { role: "guest", type: "human" },
+    });
 
-    const me = (await (await send(joiner, "GET", "/v1/me")).json()) as MeResponse;
+    const me = (await (
+      await send(joiner, "GET", "/v1/me")
+    ).json()) as MeResponse;
     expect(me.memberships.map((m) => m.organization.slug)).toEqual([slug]);
 
-    const again = await send(joiner, "POST", "/v1/invitations/accept", { code: invitation.code });
+    const again = await send(joiner, "POST", "/v1/invitations/accept", {
+      code: invitation.code,
+    });
     expect(again.status).toBe(409);
-    expect(((await again.json()) as { error: { message: string } }).error.message).toBe(
-      "You're already a member of Invite Org",
-    );
+    expect(
+      ((await again.json()) as { error: { message: string } }).error.message,
+    ).toBe("You're already a member of Invite Org");
 
     // Guests can't see or create codes.
-    expect((await send(joiner, "GET", `/v1/orgs/${slug}/invitations`)).status).toBe(403);
-    expect((await send(joiner, "POST", `/v1/orgs/${slug}/invitations`, {})).status).toBe(403);
+    expect(
+      (await send(joiner, "GET", `/v1/orgs/${slug}/invitations`)).status,
+    ).toBe(403);
+    expect(
+      (await send(joiner, "POST", `/v1/orgs/${slug}/invitations`, {})).status,
+    ).toBe(403);
 
-    expect((await send(owner, "DELETE", `/v1/orgs/${slug}/invitations/${invitation.id}`)).status).toBe(204);
-    const revoked = await send(joiner, "POST", "/v1/invitations/accept", { code: invitation.code });
+    expect(
+      (
+        await send(
+          owner,
+          "DELETE",
+          `/v1/orgs/${slug}/invitations/${invitation.id}`,
+        )
+      ).status,
+    ).toBe(204);
+    const revoked = await send(joiner, "POST", "/v1/invitations/accept", {
+      code: invitation.code,
+    });
     expect(revoked.status).toBe(400);
-    expect(((await revoked.json()) as { error: { message: string } }).error.message).toBe(
-      "Invalid or expired invitation code",
-    );
+    expect(
+      ((await revoked.json()) as { error: { message: string } }).error.message,
+    ).toBe("Invalid or expired invitation code");
 
-    const expiring = (await (await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {})).json()) as {
+    const expiring = (await (
+      await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {})
+    ).json()) as {
       id: string;
       code: string;
     };
@@ -1273,46 +2313,89 @@ withDb("invitation codes", () => {
       .update(schema.invitations)
       .set({ expiresAt: new Date(Date.now() - 1000) })
       .where(eq(schema.invitations.id, expiring.id));
-    expect((await send(joiner, "POST", "/v1/invitations/accept", { code: expiring.code })).status).toBe(400);
+    expect(
+      (
+        await send(joiner, "POST", "/v1/invitations/accept", {
+          code: expiring.code,
+        })
+      ).status,
+    ).toBe(400);
 
-    const list = (await (await send(owner, "GET", `/v1/orgs/${slug}/invitations`)).json()) as {
+    const list = (await (
+      await send(owner, "GET", `/v1/orgs/${slug}/invitations`)
+    ).json()) as {
       items: { id: string; status: string }[];
     };
-    expect(Object.fromEntries(list.items.map((i) => [i.id, i.status]))).toEqual({
-      [invitation.id]: "revoked",
-      [expiring.id]: "expired",
-    });
+    expect(Object.fromEntries(list.items.map((i) => [i.id, i.status]))).toEqual(
+      {
+        [invitation.id]: "revoked",
+        [expiring.id]: "expired",
+      },
+    );
 
     // Agent keys can't join organizations.
-    const agent = (await (await send(owner, "POST", `/v1/orgs/${slug}/agents`, { name: "Bot" })).json()) as {
+    const agent = (await (
+      await send(owner, "POST", `/v1/orgs/${slug}/agents`, { name: "Bot" })
+    ).json()) as {
       actor: { id: string };
     };
     const { secret } = (await (
-      await send(owner, "POST", `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`, { name: "k" })
+      await send(
+        owner,
+        "POST",
+        `/v1/orgs/${slug}/agents/${agent.actor.id}/keys`,
+        { name: "k" },
+      )
     ).json()) as { secret: string };
-    const fresh = (await (await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {})).json()) as { code: string };
-    expect((await send({ token: secret }, "POST", "/v1/invitations/accept", { code: fresh.code })).status).toBe(403);
-    expect((await send({ token: secret }, "POST", "/v1/invitations/preview", { code: fresh.code })).status).toBe(403);
+    const fresh = (await (
+      await send(owner, "POST", `/v1/orgs/${slug}/invitations`, {})
+    ).json()) as { code: string };
+    expect(
+      (
+        await send({ token: secret }, "POST", "/v1/invitations/accept", {
+          code: fresh.code,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await send({ token: secret }, "POST", "/v1/invitations/preview", {
+          code: fresh.code,
+        })
+      ).status,
+    ).toBe(403);
   });
 });
 
 withDb("members manage their own agents", () => {
   const stamp = Date.now();
-  const emails = ["owner", "alice", "bob", "admin", "guest"].map((n) => `agents-${n}-${stamp}@example.com`);
+  const emails = ["owner", "alice", "bob", "admin", "guest"].map(
+    (n) => `agents-${n}-${stamp}@example.com`,
+  );
   const slug = `own-agents-${stamp}`;
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
-    for (const email of emails) await db.delete(schema.user).where(eq(schema.user.email, email));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
+    for (const email of emails)
+      await db.delete(schema.user).where(eq(schema.user.email, email));
   });
 
-  const send = (credentials: { cookie?: string; token?: string }, method: string, path: string, body?: unknown) =>
+  const send = (
+    credentials: { cookie?: string; token?: string },
+    method: string,
+    path: string,
+    body?: unknown,
+  ) =>
     app.request(path, {
       method,
       headers: {
         "Content-Type": "application/json",
         ...(credentials.cookie ? { Cookie: credentials.cookie } : {}),
-        ...(credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {}),
+        ...(credentials.token
+          ? { Authorization: `Bearer ${credentials.token}` }
+          : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -1321,62 +2404,143 @@ withDb("members manage their own agents", () => {
     const [owner, alice, bob, admin, guest] = await Promise.all(
       emails.map(async (email) => ({ cookie: await signIn(email) })),
     );
-    if (!owner || !alice || !bob || !admin || !guest) throw new Error("sign-in failed");
-    await send(owner, "POST", "/v1/organizations", { name: "Own Agents", slug });
+    if (!owner || !alice || !bob || !admin || !guest)
+      throw new Error("sign-in failed");
+    await send(owner, "POST", "/v1/organizations", {
+      name: "Own Agents",
+      slug,
+    });
     for (const [who, role] of [
       [alice, "member"],
       [bob, "member"],
       [admin, "admin"],
       [guest, "guest"],
     ] as const) {
-      const { code } = (await (await send(owner, "POST", `/v1/orgs/${slug}/invitations`, { role })).json()) as {
+      const { code } = (await (
+        await send(owner, "POST", `/v1/orgs/${slug}/invitations`, { role })
+      ).json()) as {
         code: string;
       };
-      expect((await send(who, "POST", "/v1/invitations/accept", { code })).status).toBe(201);
+      expect(
+        (await send(who, "POST", "/v1/invitations/accept", { code })).status,
+      ).toBe(201);
     }
     const agents = `/v1/orgs/${slug}/agents`;
 
     const created = await send(alice, "POST", agents, { name: "Alice Bot" });
     expect(created.status).toBe(201);
-    const agent = (await created.json()) as { actor: { id: string; ownerId: string | null }; ownerId: string; canManage: boolean };
+    const agent = (await created.json()) as {
+      actor: { id: string; ownerId: string | null };
+      ownerId: string;
+      canManage: boolean;
+    };
     expect(agent.canManage).toBe(true);
     expect(agent.actor.ownerId).toBe(agent.ownerId);
-    expect((await send(guest, "POST", agents, { name: "Guest Bot" })).status).toBe(403);
+    expect(
+      (await send(guest, "POST", agents, { name: "Guest Bot" })).status,
+    ).toBe(403);
 
-    const keyRes = await send(alice, "POST", `${agents}/${agent.actor.id}/keys`, { name: "laptop" });
+    const keyRes = await send(
+      alice,
+      "POST",
+      `${agents}/${agent.actor.id}/keys`,
+      { name: "laptop" },
+    );
     expect(keyRes.status).toBe(201);
-    const { secret, key } = (await keyRes.json()) as { secret: string; key: { id: string } };
-    expect((await send({ token: secret }, "POST", agents, { name: "Child Bot" })).status).toBe(403);
+    const { secret, key } = (await keyRes.json()) as {
+      secret: string;
+      key: { id: string };
+    };
+    expect(
+      (await send({ token: secret }, "POST", agents, { name: "Child Bot" }))
+        .status,
+    ).toBe(403);
 
     // Bob sees the agent and its owner, but no keys and no actions.
     const bobList = (await (await send(bob, "GET", agents)).json()) as {
-      items: { actor: { id: string }; canManage: boolean; keys: unknown[]; owner: { handle: string } }[];
+      items: {
+        actor: { id: string };
+        canManage: boolean;
+        keys: unknown[];
+        owner: { handle: string };
+      }[];
     };
     const seen = bobList.items.find((a) => a.actor.id === agent.actor.id);
     expect(seen).toMatchObject({ canManage: false, keys: [] });
-    expect((await send(bob, "PATCH", `${agents}/${agent.actor.id}`, { name: "Mine" })).status).toBe(403);
-    expect((await send(bob, "POST", `${agents}/${agent.actor.id}/keys`, { name: "x" })).status).toBe(403);
-    expect((await send(bob, "DELETE", `/v1/orgs/${slug}/api-keys/${key.id}`)).status).toBe(403);
-    expect((await send(bob, "DELETE", `${agents}/${agent.actor.id}`)).status).toBe(403);
+    expect(
+      (
+        await send(bob, "PATCH", `${agents}/${agent.actor.id}`, {
+          name: "Mine",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await send(bob, "POST", `${agents}/${agent.actor.id}/keys`, {
+          name: "x",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await send(bob, "DELETE", `/v1/orgs/${slug}/api-keys/${key.id}`)).status,
+    ).toBe(403);
+    expect(
+      (await send(bob, "DELETE", `${agents}/${agent.actor.id}`)).status,
+    ).toBe(403);
 
-    const renamed = await send(admin, "PATCH", `${agents}/${agent.actor.id}`, { name: "Renamed", handle: "renamed" });
+    const renamed = await send(admin, "PATCH", `${agents}/${agent.actor.id}`, {
+      name: "Renamed",
+      handle: "renamed",
+    });
     expect(renamed.status).toBe(200);
-    expect(await renamed.json()).toMatchObject({ actor: { name: "Renamed", handle: "renamed" }, canManage: true });
+    expect(await renamed.json()).toMatchObject({
+      actor: { name: "Renamed", handle: "renamed" },
+      canManage: true,
+    });
 
     const whoami = await send({ token: secret }, "GET", "/v1/whoami");
     expect(whoami.status).toBe(200);
-    expect(await whoami.json()).toMatchObject({ actor: { id: agent.actor.id, ownerId: agent.ownerId } });
-    expect((await send(alice, "DELETE", `${agents}/${agent.actor.id}`)).status).toBe(204);
-    expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(401);
-    const members = (await (await send(alice, "GET", `/v1/orgs/${slug}/members`)).json()) as { items: { id: string }[] };
+    expect(await whoami.json()).toMatchObject({
+      actor: { id: agent.actor.id, ownerId: agent.ownerId },
+    });
+    expect(
+      (await send(alice, "DELETE", `${agents}/${agent.actor.id}`)).status,
+    ).toBe(204);
+    expect((await send({ token: secret }, "GET", "/v1/whoami")).status).toBe(
+      401,
+    );
+    const members = (await (
+      await send(alice, "GET", `/v1/orgs/${slug}/members`)
+    ).json()) as { items: { id: string }[] };
     expect(members.items.map((m) => m.id)).not.toContain(agent.actor.id);
-    const all = (await (await send(alice, "GET", `/v1/orgs/${slug}/members?all=true`)).json()) as {
-      items: { id: string; type: string; handle: string; deactivated: boolean; ownerId: string | null }[];
+    const all = (await (
+      await send(alice, "GET", `/v1/orgs/${slug}/members?all=true`)
+    ).json()) as {
+      items: {
+        id: string;
+        type: string;
+        handle: string;
+        deactivated: boolean;
+        ownerId: string | null;
+      }[];
     };
     // A deleted agent still says whose it was; people have no owner.
-    expect(all.items.find((m) => m.id === agent.actor.id)).toMatchObject({ handle: "renamed", deactivated: true, ownerId: agent.ownerId });
-    expect(all.items.find((m) => m.id === agent.ownerId)).toMatchObject({ type: "human", ownerId: null });
-    expect(all.items.filter((m) => m.type === "human").every((m) => m.ownerId === null)).toBe(true);
-    expect(all.items.filter((m) => !m.deactivated)).toHaveLength(members.items.length);
+    expect(all.items.find((m) => m.id === agent.actor.id)).toMatchObject({
+      handle: "renamed",
+      deactivated: true,
+      ownerId: agent.ownerId,
+    });
+    expect(all.items.find((m) => m.id === agent.ownerId)).toMatchObject({
+      type: "human",
+      ownerId: null,
+    });
+    expect(
+      all.items
+        .filter((m) => m.type === "human")
+        .every((m) => m.ownerId === null),
+    ).toBe(true);
+    expect(all.items.filter((m) => !m.deactivated)).toHaveLength(
+      members.items.length,
+    );
   });
 });

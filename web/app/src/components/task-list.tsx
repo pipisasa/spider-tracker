@@ -2,12 +2,20 @@ import { TagChips } from "@/components/tags";
 import { WorkingAvatars } from "@/components/working-avatars";
 import { PriorityIcon, StatusIcon, TargetDate } from "@/components/task-fields";
 import { assigneesOf } from "@/lib/assignees";
-import type { ActorDto, StatusDto, TagDto, TaskDto } from "@repo/core/contracts";
+import type {
+  ActorDto,
+  StatusDto,
+  TagDto,
+  TaskDto,
+} from "@repo/core/contracts";
 import { ListChecksIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 
-const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const dateFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
 
 export function TaskList({
   orgSlug,
@@ -22,16 +30,28 @@ export function TaskList({
   members: ActorDto[];
   tags: TagDto[];
 }) {
-  const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  const memberMap = useMemo(
+    () => new Map(members.map((m) => [m.id, m])),
+    [members],
+  );
   const groups = useMemo(() => {
-    const sorted = [...tasks].sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+    const sorted = [...tasks].sort((a, b) =>
+      a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0,
+    );
     return statuses
-      .map((status) => ({ status, tasks: sorted.filter((t) => t.statusId === status.id) }))
+      .map((status) => ({
+        status,
+        tasks: sorted.filter((t) => t.statusId === status.id),
+      }))
       .filter((g) => g.tasks.length > 0);
   }, [statuses, tasks]);
 
   if (groups.length === 0) {
-    return <p className="p-8 text-center text-sm text-muted-foreground">No tasks yet.</p>;
+    return (
+      <p className="p-8 text-center text-sm text-muted-foreground">
+        No tasks yet.
+      </p>
+    );
   }
 
   return (
@@ -52,25 +72,44 @@ export function TaskList({
                   className="flex flex-col gap-1 px-4 py-2.5 text-sm hover:bg-muted/50 md:flex-row md:items-center md:gap-3 md:px-6 md:py-2"
                 >
                   <div className="flex min-w-0 items-center gap-3 md:flex-1">
-                    <PriorityIcon priority={task.priority} className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="w-16 shrink-0 text-muted-foreground">{task.key}</span>
-                    <StatusIcon status={status} className="size-4 hidden md:inline-block" />
-                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                    <PriorityIcon
+                      priority={task.priority}
+                      className="size-4 shrink-0 text-muted-foreground"
+                    />
+                    <span className="w-16 shrink-0 text-muted-foreground">
+                      {task.key}
+                    </span>
+                    <StatusIcon
+                      status={status}
+                      className="size-4 hidden md:inline-block"
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {task.title}
+                    </span>
                   </div>
                   <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pl-7 md:flex-nowrap md:pl-0">
-                  <StatusIcon status={status} className="size-4 md:hidden" />
-                  {task.subtasks && (
-                    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                      <ListChecksIcon className="size-3.5" aria-hidden />
-                      {task.subtasks.done}/{task.subtasks.total}
+                    <StatusIcon status={status} className="size-4 md:hidden" />
+                    {task.subtasks && (
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                        <ListChecksIcon className="size-3.5" aria-hidden />
+                        {task.subtasks.done}/{task.subtasks.total}
+                      </span>
+                    )}
+                    <TargetDate task={task} category={status.category} />
+                    <TagChips
+                      tagIds={task.tagIds}
+                      tags={tags}
+                      className="shrink-0"
+                    />
+                    <WorkingAvatars
+                      orgSlug={orgSlug}
+                      taskKey={task.key}
+                      actors={assigneesOf(task.assigneeIds, memberMap)}
+                      interactive={false}
+                    />
+                    <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
+                      {dateFormat.format(new Date(task.createdAt))}
                     </span>
-                  )}
-                  <TargetDate task={task} category={status.category} />
-                  <TagChips tagIds={task.tagIds} tags={tags} className="shrink-0" />
-                  <WorkingAvatars orgSlug={orgSlug} taskKey={task.key} actors={assigneesOf(task.assigneeIds, memberMap)} interactive={false} />
-                  <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
-                    {dateFormat.format(new Date(task.createdAt))}
-                  </span>
                   </div>
                 </Link>
               </li>

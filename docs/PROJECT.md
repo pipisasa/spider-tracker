@@ -41,16 +41,16 @@ Most trackers add automation to a tool built for people. Spider Tracker treats a
 
 ## Documentation
 
-| Document | Covers |
-|---|---|
-| [features.md](./features.md) | Feature details by area |
-| [data-model.md](./data-model.md) | Entities, relationships, database schema |
-| [architecture.md](./architecture.md) | Tech stack, services, monorepo layout, hosting |
-| [decisions.md](./decisions.md) | Technology choices and their reasoning |
-| [agents.md](./agents.md) | Agent model, connectivity, runs, guardrails |
-| [git-integration.md](./git-integration.md) | Git and GitHub integration |
-| [interfaces.md](./interfaces.md) | API, MCP server, CLI, webhooks |
-| [auth.md](./auth.md) | Authentication, OAuth/OIDC provider, tokens, scopes |
-| [deployment.md](./deployment.md) | Cloudflare Pages, Railway, Access setup |
-| [roadmap.md](./roadmap.md) | Delivery phases |
-| [open-questions.md](./open-questions.md) | Unresolved questions |
+| Document                                   | Covers                                              |
+| ------------------------------------------ | --------------------------------------------------- |
+| [features.md](./features.md)               | Feature details by area                             |
+| [data-model.md](./data-model.md)           | Entities, relationships, database schema            |
+| [architecture.md](./architecture.md)       | Tech stack, services, monorepo layout, hosting      |
+| [decisions.md](./decisions.md)             | Technology choices and their reasoning              |
+| [agents.md](./agents.md)                   | Agent model, connectivity, runs, guardrails         |
+| [git-integration.md](./git-integration.md) | Git and GitHub integration                          |
+| [interfaces.md](./interfaces.md)           | API, MCP server, CLI, webhooks                      |
+| [auth.md](./auth.md)                       | Authentication, OAuth/OIDC provider, tokens, scopes |
+| [deployment.md](./deployment.md)           | Cloudflare Pages, Railway, Access setup             |
+| [roadmap.md](./roadmap.md)                 | Delivery phases                                     |
+| [open-questions.md](./open-questions.md)   | Unresolved questions                                |

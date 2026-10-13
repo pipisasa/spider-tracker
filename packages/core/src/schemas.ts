@@ -9,7 +9,10 @@ export const slugSchema = z
   .toLowerCase()
   .min(2, "At least 2 characters")
   .max(40, "At most 40 characters")
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes");
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Lowercase letters, numbers and single dashes",
+  );
 
 export const createOrganizationInput = z.object({
   name: z.string().trim().min(1, "Required").max(80, "At most 80 characters"),
@@ -22,9 +25,16 @@ export const projectKeySchema = z
   .string()
   .trim()
   .toUpperCase()
-  .regex(/^[A-Z][A-Z0-9]{1,9}$/, "2–10 letters or digits, starting with a letter");
+  .regex(
+    /^[A-Z][A-Z0-9]{1,9}$/,
+    "2–10 letters or digits, starting with a letter",
+  );
 
-const projectName = z.string().trim().min(1, "Required").max(80, "At most 80 characters");
+const projectName = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(80, "At most 80 characters");
 
 export const createProjectInput = z.object({
   name: projectName,
@@ -34,7 +44,14 @@ export const createProjectInput = z.object({
 
 export type CreateProjectInput = z.infer<typeof createProjectInput>;
 
-export const statusCategorySchema = z.enum(["backlog", "todo", "in_progress", "in_review", "done", "canceled"]);
+export const statusCategorySchema = z.enum([
+  "backlog",
+  "todo",
+  "in_progress",
+  "in_review",
+  "done",
+  "canceled",
+]);
 
 const gitAutomationTarget = statusCategorySchema.nullable();
 
@@ -50,7 +67,10 @@ export const gitAutomationSchema = z.strictObject({
 /** Changes to it: only the fields given change. */
 export const gitAutomationInput = gitAutomationSchema
   .partial()
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type GitAutomationInput = z.infer<typeof gitAutomationInput>;
 
@@ -64,7 +84,10 @@ export const updateProjectInput = z
     /** Status automation from pull request events (ST-85); null goes back to the defaults. */
     gitAutomation: gitAutomationInput.nullable().optional(),
   })
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
 
@@ -73,9 +96,14 @@ export const taskKindSchema = z.enum(["task", "release", "milestone"]);
 
 export const TASK_KINDS = taskKindSchema.options;
 
-
-const statusName = z.string().trim().min(1, "Required").max(40, "At most 40 characters");
-const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "A hex colour like #22c55e");
+const statusName = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(40, "At most 40 characters");
+const hexColor = z
+  .string()
+  .regex(/^#[0-9a-fA-F]{6}$/, "A hex colour like #22c55e");
 /** Index in the kind's workflow, from 0; past the end means last. */
 const statusPosition = z.number().int().min(0).max(1000);
 
@@ -92,40 +120,67 @@ export type CreateStatusInput = z.input<typeof createStatusInput>;
 
 /** Rename, recolor (null clears) or move a status within its workflow (ST-90). */
 export const updateStatusInput = z
-  .object({ name: statusName, color: hexColor.nullable(), position: statusPosition })
+  .object({
+    name: statusName,
+    color: hexColor.nullable(),
+    position: statusPosition,
+  })
   .partial()
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateStatusInput = z.infer<typeof updateStatusInput>;
 
 /** Deleting a status first moves its tasks to `moveTo`, another status of the same workflow (ST-90). */
-export const deleteStatusInput = z.object({ moveTo: z.uuid("The id of the status to move its tasks to") });
+export const deleteStatusInput = z.object({
+  moveTo: z.uuid("The id of the status to move its tasks to"),
+});
 
 export type DeleteStatusInput = z.infer<typeof deleteStatusInput>;
 
-export const prioritySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
+export const prioritySchema = z.union([
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+]);
 
-const taskTitle = z.string().trim().min(1, "Required").max(255, "At most 255 characters");
+const taskTitle = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(255, "At most 255 characters");
 const taskDescription = z.string().max(50_000).nullable();
 
 /** A calendar date, "YYYY-MM-DD", with no time or time zone (ST-91); null clears it. */
 export const taskDateSchema = z.iso.date("A date as YYYY-MM-DD").nullable();
 
-export const DATES_OUT_OF_ORDER = "The start date must be on or before the target date";
+export const DATES_OUT_OF_ORDER =
+  "The start date must be on or before the target date";
 
 /** Start ≤ target when both are set; ISO dates compare as strings. */
-export const datesInOrder = (start: string | null | undefined, target: string | null | undefined) =>
-  !start || !target || start <= target;
+export const datesInOrder = (
+  start: string | null | undefined,
+  target: string | null | undefined,
+) => !start || !target || start <= target;
 
 /** Today's date in UTC, "YYYY-MM-DD": what "overdue" compares target dates with. */
-export const todayUtc = (now: Date = new Date()) => now.toISOString().slice(0, 10);
+export const todayUtc = (now: Date = new Date()) =>
+  now.toISOString().slice(0, 10);
 
 /** The target date has passed (before `today`, UTC) and the task isn't closed (done or canceled). */
 export const isOverdue = (
   task: { targetDate: string | null },
   category: string | null | undefined,
   today: string = todayUtc(),
-) => task.targetDate !== null && task.targetDate < today && category !== "done" && category !== "canceled";
+) =>
+  task.targetDate !== null &&
+  task.targetDate < today &&
+  category !== "done" &&
+  category !== "canceled";
 
 export const createTaskInput = z
   .object({
@@ -143,7 +198,10 @@ export const createTaskInput = z
     /** A milestone of the same project to put the task in (ST-96); tasks only. */
     milestoneId: z.uuid().nullable().optional(),
   })
-  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), {
+    message: DATES_OUT_OF_ORDER,
+    path: ["targetDate"],
+  });
 
 export type CreateTaskInput = z.infer<typeof createTaskInput>;
 
@@ -199,7 +257,15 @@ export const taskListFilters = z.object({
   tagMatch: tagMatchSchema.optional(),
   /** 0–4; numeric strings too, as they arrive in a query string. */
   priority: z
-    .array(z.union([prioritySchema, z.enum(["0", "1", "2", "3", "4"]).transform(Number).pipe(prioritySchema)]))
+    .array(
+      z.union([
+        prioritySchema,
+        z
+          .enum(["0", "1", "2", "3", "4"])
+          .transform(Number)
+          .pipe(prioritySchema),
+      ]),
+    )
     .max(5)
     .optional(),
   /** Case-insensitive text in the title. */
@@ -207,7 +273,12 @@ export const taskListFilters = z.object({
   /** Direct sub-tasks of this task key ("ST-3"). */
   parent: z.string().trim().min(1).max(30).optional(),
   /** true: only overdue tasks (see `isOverdue`); "true"/"false" too, as they arrive in a query string. */
-  overdue: z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional(),
+  overdue: z
+    .union([
+      z.boolean(),
+      z.enum(["true", "false"]).transform((v) => v === "true"),
+    ])
+    .optional(),
 });
 
 export type TaskListFilters = z.input<typeof taskListFilters>;
@@ -232,10 +303,15 @@ export const bulkTaskChanges = z
     milestoneId: z.uuid().nullable(),
   })
   .partial()
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 /** The tasks of one project matching the list filters (see `taskListFilters`). */
-export const bulkTaskFilter = taskListFilters.extend({ project: z.string().trim().min(1).max(10) });
+export const bulkTaskFilter = taskListFilters.extend({
+  project: z.string().trim().min(1).max(10),
+});
 
 /** Either `keys` or `filter`; `dryRun` reports what would happen without changing anything. */
 export const bulkUpdateTasksInput = z
@@ -249,12 +325,17 @@ export const bulkUpdateTasksInput = z
     set: bulkTaskChanges,
     dryRun: z.boolean().optional(),
   })
-  .refine((v) => (v.keys === undefined) !== (v.filter === undefined), "Pass either keys or a filter");
+  .refine(
+    (v) => (v.keys === undefined) !== (v.filter === undefined),
+    "Pass either keys or a filter",
+  );
 
 export type BulkUpdateTasksInput = z.input<typeof bulkUpdateTasksInput>;
 
 /** Parses "SPI-12" into its project key and number. */
-export function parseTaskKey(value: string): { projectKey: string; number: number } | null {
+export function parseTaskKey(
+  value: string,
+): { projectKey: string; number: number } | null {
   const match = /^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})$/.exec(value);
   if (!match?.[1] || !match[2]) return null;
   return { projectKey: match[1].toUpperCase(), number: Number(match[2]) };
@@ -265,19 +346,36 @@ export function parseTaskKey(value: string): { projectKey: string; number: numbe
  * agents, "none" unassigned), "github", the GitHub bot's handle (ST-82), and "spider", the Spider
  * Tracker bot's (ST-96); no other actor may take them.
  */
-export const RESERVED_HANDLES: readonly string[] = ["me", "mine", "none", "github", "spider"];
+export const RESERVED_HANDLES: readonly string[] = [
+  "me",
+  "mine",
+  "none",
+  "github",
+  "spider",
+];
 
 /** A handle as typed in a filter or a command: trimmed, without a leading "@", lowercase. */
-export const normalizeHandle = (value: string) => value.trim().replace(/^@/, "").toLowerCase();
+export const normalizeHandle = (value: string) =>
+  value.trim().replace(/^@/, "").toLowerCase();
 
-const agentName = z.string().trim().min(1, "Required").max(80, "At most 80 characters");
+const agentName = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(80, "At most 80 characters");
 const agentHandle = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes")
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Lowercase letters, numbers and single dashes",
+  )
   .max(32)
-  .refine((v) => !RESERVED_HANDLES.includes(v), `"me", "mine", "none", "github" and "spider" are reserved`);
+  .refine(
+    (v) => !RESERVED_HANDLES.includes(v),
+    `"me", "mine", "none", "github" and "spider" are reserved`,
+  );
 
 export const createAgentInput = z.object({
   name: agentName,
@@ -293,7 +391,10 @@ export const updateAgentInput = z
     handle: agentHandle.optional(),
     description: z.string().trim().max(500).nullable().optional(),
   })
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateAgentInput = z.infer<typeof updateAgentInput>;
 
@@ -302,7 +403,12 @@ export const createAgentInviteInput = z.object({
     .array(z.string().trim().min(1).max(10))
     .min(1, "Pick at least one project")
     .max(100),
-  expiresInDays: z.number().int().min(1, "At least 1 day").max(30, "At most 30 days").default(7),
+  expiresInDays: z
+    .number()
+    .int()
+    .min(1, "At least 1 day")
+    .max(30, "At most 30 days")
+    .default(7),
 });
 
 export type CreateAgentInviteInput = z.input<typeof createAgentInviteInput>;
@@ -326,7 +432,11 @@ export const deviceCodeInput = z.object({
 });
 
 export const createCommentInput = z.object({
-  body: z.string().trim().min(1, "Required").max(20_000, "At most 20,000 characters"),
+  body: z
+    .string()
+    .trim()
+    .min(1, "Required")
+    .max(20_000, "At most 20,000 characters"),
   parentId: z.uuid().nullable().optional(),
 });
 
@@ -337,15 +447,25 @@ export type CreateCommentInput = z.infer<typeof createCommentInput>;
  * which must occur in the document's current text.
  */
 export const createDocumentCommentInput = createCommentInput.extend({
-  quote: z.string().trim().min(1, "Required").max(2_000, "At most 2,000 characters").nullable().optional(),
+  quote: z
+    .string()
+    .trim()
+    .min(1, "Required")
+    .max(2_000, "At most 2,000 characters")
+    .nullable()
+    .optional(),
 });
 
-export type CreateDocumentCommentInput = z.infer<typeof createDocumentCommentInput>;
+export type CreateDocumentCommentInput = z.infer<
+  typeof createDocumentCommentInput
+>;
 
 /** Marks a document comment thread resolved, or reopens it. */
 export const resolveDocumentCommentInput = z.object({ resolved: z.boolean() });
 
-export type ResolveDocumentCommentInput = z.infer<typeof resolveDocumentCommentInput>;
+export type ResolveDocumentCommentInput = z.infer<
+  typeof resolveDocumentCommentInput
+>;
 
 export const INBOX_KINDS = [
   "mention",
@@ -359,19 +479,35 @@ export const INBOX_KINDS = [
 ] as const;
 
 /** Task notifications: what the inbox returns when `kinds` isn't given (clients from before ST-111 expect a task). */
-export const TASK_INBOX_KINDS = ["mention", "assigned", "comment", "reply"] as const;
+export const TASK_INBOX_KINDS = [
+  "mention",
+  "assigned",
+  "comment",
+  "reply",
+] as const;
 
 export const inboxQuery = z.object({
   after: z.coerce.number().int().nonnegative().optional(),
   // Query strings: "true"/"1" mean yes (z.coerce.boolean would read "false" as true).
   unread: z
-    .union([z.boolean(), z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1")])
+    .union([
+      z.boolean(),
+      z
+        .enum(["true", "false", "1", "0"])
+        .transform((v) => v === "true" || v === "1"),
+    ])
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   /** Which kinds to return, as a list or comma-separated; default: the task kinds (no `rules` or `document_*`). */
   kinds: z
     .preprocess(
-      (v) => (typeof v === "string" ? v.split(",").map((k) => k.trim()).filter(Boolean) : v),
+      (v) =>
+        typeof v === "string"
+          ? v
+              .split(",")
+              .map((k) => k.trim())
+              .filter(Boolean)
+          : v,
       z.array(z.enum(INBOX_KINDS)).min(1),
     )
     .default([...TASK_INBOX_KINDS]),
@@ -386,9 +522,15 @@ export const markInboxReadInput = z
      * clients from before ST-111 don't mark `rules` and `document_*` items they never saw. `ids`
      * marks the given items whatever their kind.
      */
-    kinds: z.array(z.enum(INBOX_KINDS)).min(1).default([...TASK_INBOX_KINDS]),
+    kinds: z
+      .array(z.enum(INBOX_KINDS))
+      .min(1)
+      .default([...TASK_INBOX_KINDS]),
   })
-  .refine((v) => v.ids !== undefined || v.upTo !== undefined, "Pass ids or upTo");
+  .refine(
+    (v) => v.ids !== undefined || v.upTo !== undefined,
+    "Pass ids or upTo",
+  );
 
 export const createTagInput = z.object({
   name: z.string().trim().min(1, "Required").max(40, "At most 40 characters"),
@@ -400,7 +542,13 @@ export const createTagInput = z.object({
 
 export type CreateTagInput = z.infer<typeof createTagInput>;
 
-export const relationKindSchema = z.enum(["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"]);
+export const relationKindSchema = z.enum([
+  "blocks",
+  "blocked_by",
+  "relates",
+  "duplicates",
+  "duplicated_by",
+]);
 
 export const relationInput = z.object({
   kind: relationKindSchema,
@@ -414,7 +562,11 @@ export type RelationInput = z.infer<typeof relationInput>;
 export const markDuplicateInput = z.object({
   /** The original task's key, e.g. "ST-12". */
   of: z.string().trim().min(1),
-  comment: z.string().trim().max(10_000, "At most 10,000 characters").optional(),
+  comment: z
+    .string()
+    .trim()
+    .max(10_000, "At most 10,000 characters")
+    .optional(),
 });
 
 export type MarkDuplicateInput = z.infer<typeof markDuplicateInput>;
@@ -424,10 +576,17 @@ export const documentFormatSchema = z.enum(["md", "html"]);
 /** Documents are capped at 1 MB of UTF-8. */
 export const MAX_DOCUMENT_BYTES = 1_000_000;
 
-const documentTitle = z.string().trim().min(1, "Required").max(255, "At most 255 characters");
+const documentTitle = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(255, "At most 255 characters");
 const documentContent = z
   .string()
-  .refine((v) => new TextEncoder().encode(v).length <= MAX_DOCUMENT_BYTES, "At most 1 MB");
+  .refine(
+    (v) => new TextEncoder().encode(v).length <= MAX_DOCUMENT_BYTES,
+    "At most 1 MB",
+  );
 
 /** Scope: `task` (which implies its project), `project`, or neither for an organization-wide document. */
 export const createDocumentInput = z.object({
@@ -457,11 +616,18 @@ export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
  */
 export const documentEditSchema = z.union(
   [
-    z.strictObject({ old: z.string(), new: z.string(), all: z.boolean().optional() }),
+    z.strictObject({
+      old: z.string(),
+      new: z.string(),
+      all: z.boolean().optional(),
+    }),
     z.strictObject({ append: z.string() }),
     z.strictObject({ section: z.string(), content: z.string() }),
   ],
-  { error: "Each edit is { old, new, all? }, { append } or { section, content }" },
+  {
+    error:
+      "Each edit is { old, new, all? }, { append } or { section, content }",
+  },
 );
 
 export type DocumentEdit = z.infer<typeof documentEditSchema>;
@@ -473,7 +639,10 @@ export type DocumentEdit = z.infer<typeof documentEditSchema>;
  */
 export const editDocumentInput = z.object({
   baseVersion: z.number().int().positive().optional(),
-  edits: z.array(documentEditSchema).min(1, "At least one edit").max(100, "At most 100 edits"),
+  edits: z
+    .array(documentEditSchema)
+    .min(1, "At least one edit")
+    .max(100, "At most 100 edits"),
 });
 
 export type EditDocumentInput = z.infer<typeof editDocumentInput>;
@@ -502,8 +671,18 @@ export const invitationRoleSchema = z.enum(["admin", "member", "guest"]);
 
 export const createInvitationInput = z.object({
   role: invitationRoleSchema.default("member"),
-  expiresInDays: z.number().int().min(1, "At least 1 day").max(30, "At most 30 days").default(7),
-  maxUses: z.number().int().min(1, "At least 1").max(1000, "At most 1000").nullish(),
+  expiresInDays: z
+    .number()
+    .int()
+    .min(1, "At least 1 day")
+    .max(30, "At most 30 days")
+    .default(7),
+  maxUses: z
+    .number()
+    .int()
+    .min(1, "At least 1")
+    .max(1000, "At most 1000")
+    .nullish(),
 });
 
 export type CreateInvitationInput = z.input<typeof createInvitationInput>;
@@ -521,7 +700,17 @@ export const invitationCodeInput = z.object({
  */
 export const viewFiltersSchema = z.object({
   status: z.array(z.uuid()).max(50).optional(),
-  assignee: z.array(z.union([z.literal("me"), z.literal("mine"), z.literal("none"), z.uuid()])).max(50).optional(),
+  assignee: z
+    .array(
+      z.union([
+        z.literal("me"),
+        z.literal("mine"),
+        z.literal("none"),
+        z.uuid(),
+      ]),
+    )
+    .max(50)
+    .optional(),
   priority: z.array(prioritySchema).max(5).optional(),
   tag: z.array(z.uuid()).max(50).optional(),
   tagMatch: tagMatchSchema.optional(),
@@ -533,7 +722,11 @@ export type ViewFilters = z.infer<typeof viewFiltersSchema>;
 
 export const viewKindSchema = z.enum(["board", "list"]);
 
-const viewName = z.string().trim().min(1, "Required").max(60, "At most 60 characters");
+const viewName = z
+  .string()
+  .trim()
+  .min(1, "Required")
+  .max(60, "At most 60 characters");
 
 export const createSavedViewInput = z.object({
   name: viewName,
@@ -551,7 +744,10 @@ export const updateSavedViewInput = z
     shared: z.boolean().optional(),
     view: viewKindSchema.optional(),
   })
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateSavedViewInput = z.infer<typeof updateSavedViewInput>;
 
@@ -568,7 +764,8 @@ export const repoRemoteSchema = z
     if (!remote) {
       ctx.addIssue({
         code: "custom",
-        message: 'A GitHub repo: "owner/name", https://github.com/owner/name or git@github.com:owner/name.git',
+        message:
+          'A GitHub repo: "owner/name", https://github.com/owner/name or git@github.com:owner/name.git',
       });
       return z.NEVER;
     }
@@ -576,7 +773,8 @@ export const repoRemoteSchema = z
   });
 
 /** Git branch names (simplified): letters, digits, ".", "_", "-" and "/" between parts. */
-const BRANCH_NAME = /^(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9_][A-Za-z0-9._/-]*(?<![/.])$/;
+const BRANCH_NAME =
+  /^(?!.*\.\.)(?!.*\/\/)(?!.*\.lock$)[A-Za-z0-9_][A-Za-z0-9._/-]*(?<![/.])$/;
 
 /** A branch name as git allows it (simplified): letters, digits, ".", "_", "-" and "/" between parts. */
 export const branchNameSchema = z
@@ -591,10 +789,16 @@ export const repoPathSchema = z
   .string()
   .trim()
   .max(200, "At most 200 characters")
-  .transform((value) => value.replace(/^\.\/(?=.)/, "").replace(/(?<=.)\/+$/, ""))
+  .transform((value) =>
+    value.replace(/^\.\/(?=.)/, "").replace(/(?<=.)\/+$/, ""),
+  )
   .refine((value) => value !== "", "Required")
   .refine(
-    (value) => value === "." || value.split("/").every((part) => /^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*$/.test(part)),
+    (value) =>
+      value === "." ||
+      value
+        .split("/")
+        .every((part) => /^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*$/.test(part)),
     'A relative path in the repo, e.g. "web/app" ("." for the whole repo)',
   );
 
@@ -605,15 +809,25 @@ const appSlug = z
   .toLowerCase()
   .min(1, "Required")
   .max(30, "At most 30 characters")
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and single dashes");
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Lowercase letters, numbers and single dashes",
+  );
 
 export const appVersioningSchema = z.enum(["date", "semver"]);
 
-const uniqueList = <T extends z.ZodType<string>>(item: T, max: number, what: string) =>
+const uniqueList = <T extends z.ZodType<string>>(
+  item: T,
+  max: number,
+  what: string,
+) =>
   z
     .array(item)
     .max(max, `At most ${max} ${what}`)
-    .refine((list) => new Set(list).size === list.length, `Each ${what.replace(/s$/, "")} only once`);
+    .refine(
+      (list) => new Set(list).size === list.length,
+      `Each ${what.replace(/s$/, "")} only once`,
+    );
 
 /** Deploy order, e.g. ["staging", "prod"]; empty when a release is the only "deploy" (a CLI). */
 export const appEnvironmentsSchema = uniqueList(appSlug, 10, "environments");
@@ -638,7 +852,10 @@ export const updateRepoInput = z
     url: repoRemoteSchema.optional(),
     defaultBranch: branchNameSchema.optional(),
   })
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateRepoInput = z.input<typeof updateRepoInput>;
 
@@ -654,11 +871,22 @@ export const openPullRequestInput = z.object({
   /** The repo ("owner/name" or a remote URL), one of those attached to the task's project; needed only when it has several. */
   repo: z.string().trim().min(1, "Required").max(300).optional(),
   /** The branch with the changes, already pushed to GitHub; default the task's branch ("st-12-short-title"). */
-  head: z.string().trim().min(1, "Required").max(255, "At most 255 characters").regex(BRANCH_NAME, "A git branch name, e.g. st-12-fix").optional(),
+  head: z
+    .string()
+    .trim()
+    .min(1, "Required")
+    .max(255, "At most 255 characters")
+    .regex(BRANCH_NAME, "A git branch name, e.g. st-12-fix")
+    .optional(),
   /** The branch to merge into; default the repo's default branch. */
   base: branchNameSchema.optional(),
   /** Default: the task's title and key, e.g. "Fix the login (ST-12)". */
-  title: z.string().trim().min(1, "Required").max(256, "At most 256 characters").optional(),
+  title: z
+    .string()
+    .trim()
+    .min(1, "Required")
+    .max(256, "At most 256 characters")
+    .optional(),
   /** Markdown; "Closes ST-12" is added when it doesn't close the task already. Default: a link to the task and "Closes ST-12". */
   body: z.string().max(60_000, "At most 60000 characters").optional(),
   /** Open it as a draft. */
@@ -687,24 +915,42 @@ export const updateAppInput = z
     environments: appEnvironmentsSchema,
   })
   .partial()
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateAppInput = z.input<typeof updateAppInput>;
 
 // Releases (ST-93): tasks of kind "release" that link repos and apps and include Done tasks.
 
-const DATE_VERSION = /^\d{4}\.(0?[1-9]|1[0-2])\.(0?[1-9]|[12]\d|3[01])(\.\d+)?$/;
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+const DATE_VERSION =
+  /^\d{4}\.(0?[1-9]|1[0-2])\.(0?[1-9]|[12]\d|3[01])(\.\d+)?$/;
+const SEMVER =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
 
 /** A version as stored: trimmed, a semver without its leading "v". */
-export const normalizeAppVersion = (versioning: "date" | "semver", version: string) =>
-  versioning === "semver" ? version.trim().replace(/^v(?=\d)/, "") : version.trim();
+export const normalizeAppVersion = (
+  versioning: "date" | "semver",
+  version: string,
+) =>
+  versioning === "semver"
+    ? version.trim().replace(/^v(?=\d)/, "")
+    : version.trim();
 
 /** Why `version` doesn't fit the app's versioning, or null when it does ("2026.10.13", or "1.4.0"). */
-export function appVersionProblem(versioning: "date" | "semver", version: string): string | null {
+export function appVersionProblem(
+  versioning: "date" | "semver",
+  version: string,
+): string | null {
   const value = normalizeAppVersion(versioning, version);
-  if (versioning === "date") return DATE_VERSION.test(value) ? null : `"${version}" isn't a date version like 2026.10.13`;
-  return SEMVER.test(value) ? null : `"${version}" isn't a semver version like 1.4.0`;
+  if (versioning === "date")
+    return DATE_VERSION.test(value)
+      ? null
+      : `"${version}" isn't a date version like 2026.10.13`;
+  return SEMVER.test(value)
+    ? null
+    : `"${version}" isn't a semver version like 1.4.0`;
 }
 
 const taskKeyRef = z.string().trim().min(1).max(30);
@@ -715,20 +961,30 @@ export const releaseAppInput = z.object({
   repo: z.string().trim().min(1, "Required").max(300),
   /** The app's name, e.g. "web". */
   app: appSlug,
-  version: z.string().trim().min(1, "Required").max(50, "At most 50 characters"),
+  version: z
+    .string()
+    .trim()
+    .min(1, "Required")
+    .max(50, "At most 50 characters"),
 });
 
 export type ReleaseAppInput = z.input<typeof releaseAppInput>;
 
-const releaseRepos = z.array(z.string().trim().min(1).max(300)).max(20, "At most 20 repos");
+const releaseRepos = z
+  .array(z.string().trim().min(1).max(300))
+  .max(20, "At most 20 repos");
 const releaseApps = z
   .array(releaseAppInput)
   .max(50, "At most 50 apps")
   .refine(
-    (list) => new Set(list.map((a) => `${a.repo.toLowerCase()}:${a.app}`)).size === list.length,
+    (list) =>
+      new Set(list.map((a) => `${a.repo.toLowerCase()}:${a.app}`)).size ===
+      list.length,
     "Each app only once",
   );
-const releaseTaskKeys = z.array(taskKeyRef).max(MAX_BULK_TASKS, `At most ${MAX_BULK_TASKS} tasks at once`);
+const releaseTaskKeys = z
+  .array(taskKeyRef)
+  .max(MAX_BULK_TASKS, `At most ${MAX_BULK_TASKS} tasks at once`);
 
 /**
  * A new release: a task of kind "release" whose title is its name, usually the version
@@ -747,7 +1003,10 @@ export const createReleaseInput = z
     apps: releaseApps.optional(),
     tasks: releaseTaskKeys.optional(),
   })
-  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), {
+    message: DATES_OUT_OF_ORDER,
+    path: ["targetDate"],
+  });
 
 export type CreateReleaseInput = z.input<typeof createReleaseInput>;
 
@@ -755,12 +1014,17 @@ export type CreateReleaseInput = z.input<typeof createReleaseInput>;
 export const updateReleaseInput = z
   .object({ repos: releaseRepos, apps: releaseApps })
   .partial()
-  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+  .refine(
+    (v) => Object.values(v).some((x) => x !== undefined),
+    "Nothing to update",
+  );
 
 export type UpdateReleaseInput = z.input<typeof updateReleaseInput>;
 
 /** Task keys to add to (or remove from) a release. */
-export const releaseTasksInput = z.object({ tasks: releaseTaskKeys.min(1, "At least one task") });
+export const releaseTasksInput = z.object({
+  tasks: releaseTaskKeys.min(1, "At least one task"),
+});
 
 export type ReleaseTasksInput = z.input<typeof releaseTasksInput>;
 
@@ -806,7 +1070,10 @@ export const commitShaSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[0-9a-f]{7,64}$/, "A git commit SHA: 7 to 64 hex digits, e.g. 3f2c1ab");
+  .regex(
+    /^[0-9a-f]{7,64}$/,
+    "A git commit SHA: 7 to 64 hex digits, e.g. 3f2c1ab",
+  );
 
 /**
  * `POST /releases/:key/deployments`: the release's `app` (by name; `repo` "owner/name" picks one
@@ -845,7 +1112,10 @@ export const createMilestoneInput = z
     startDate: taskDateSchema.optional(),
     targetDate: taskDateSchema.optional(),
   })
-  .refine((v) => datesInOrder(v.startDate, v.targetDate), { message: DATES_OUT_OF_ORDER, path: ["targetDate"] });
+  .refine((v) => datesInOrder(v.startDate, v.targetDate), {
+    message: DATES_OUT_OF_ORDER,
+    path: ["targetDate"],
+  });
 
 export type CreateMilestoneInput = z.input<typeof createMilestoneInput>;
 

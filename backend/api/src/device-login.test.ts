@@ -36,7 +36,8 @@ const withDb = databaseUrl ? describe : describe.skip;
 withDb("device login", () => {
   test("requesting device codes is rate limited per client IP", async () => {
     const ip = "198.51.100.20";
-    for (let i = 0; i < 10; i++) expect((await requestCode(ip)).status).toBe(200);
+    for (let i = 0; i < 10; i++)
+      expect((await requestCode(ip)).status).toBe(200);
     const limited = await requestCode(ip);
     expect(limited.status).toBe(429);
     expect(await limited.json()).toMatchObject({

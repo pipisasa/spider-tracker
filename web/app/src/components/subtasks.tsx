@@ -3,7 +3,12 @@ import { StatusIcon } from "@/components/task-fields";
 import { Input } from "@/components/ui/input";
 import { assigneesOf } from "@/lib/assignees";
 import { keys, subtasksQuery, useCreateTask } from "@/lib/work";
-import type { ActorDto, StatusDto, SubtaskDto, TaskDto } from "@repo/core/contracts";
+import type {
+  ActorDto,
+  StatusDto,
+  SubtaskDto,
+  TaskDto,
+} from "@repo/core/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, type FormEvent } from "react";
@@ -27,8 +32,13 @@ export function Subtasks({
   const create = useCreateTask(orgSlug, projectKey);
   const qc = useQueryClient();
   const [title, setTitle] = useState("");
-  const memberMap = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
-  const done = subtasks.filter((t) => t.status.category === "done" || t.status.category === "canceled").length;
+  const memberMap = useMemo(
+    () => new Map(members.map((m) => [m.id, m])),
+    [members],
+  );
+  const done = subtasks.filter(
+    (t) => t.status.category === "done" || t.status.category === "canceled",
+  ).length;
 
   function add(event: FormEvent) {
     event.preventDefault();
@@ -40,8 +50,19 @@ export function Subtasks({
           setTitle("");
           const status = statuses.find((s) => s.id === child.statusId);
           if (!status) return;
-          const entry: SubtaskDto = { ...child, status: { id: status.id, name: status.name, category: status.category, color: status.color } };
-          qc.setQueryData<SubtaskDto[]>(keys.subtasks(orgSlug, task.key), (old) => [...(old ?? []), entry]);
+          const entry: SubtaskDto = {
+            ...child,
+            status: {
+              id: status.id,
+              name: status.name,
+              category: status.category,
+              color: status.color,
+            },
+          };
+          qc.setQueryData<SubtaskDto[]>(
+            keys.subtasks(orgSlug, task.key),
+            (old) => [...(old ?? []), entry],
+          );
         },
         onError: (err) => toast.error(err.message),
       },
@@ -69,9 +90,16 @@ export function Subtasks({
                   className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted/50"
                 >
                   <StatusIcon status={child.status} />
-                  <span className="w-16 shrink-0 text-muted-foreground">{child.key}</span>
+                  <span className="w-16 shrink-0 text-muted-foreground">
+                    {child.key}
+                  </span>
                   <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                  <WorkingAvatars orgSlug={orgSlug} taskKey={child.key} actors={assigneesOf(child.assigneeIds, memberMap)} interactive={false} />
+                  <WorkingAvatars
+                    orgSlug={orgSlug}
+                    taskKey={child.key}
+                    actors={assigneesOf(child.assigneeIds, memberMap)}
+                    interactive={false}
+                  />
                 </Link>
               </li>
             );

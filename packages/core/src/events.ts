@@ -10,7 +10,12 @@ import { projectScope, type Viewer } from "./access";
 export const EVENTS_CHANNEL = "spider_events";
 
 export type OrgEvent =
-  | { type: "task.changed" | "task.deleted"; orgId: string; projectKey: string; taskKey: string }
+  | {
+      type: "task.changed" | "task.deleted";
+      orgId: string;
+      projectKey: string;
+      taskKey: string;
+    }
   /** A branch, commit or pull request was linked to the task, or changed (ST-84). */
   | { type: "task.git"; orgId: string; projectKey: string; taskKey: string }
   | { type: "comment.created"; orgId: string; taskKey: string }
@@ -29,11 +34,16 @@ export type OrgEvent =
     };
 
 export async function publish(tx: Db | Tx, event: OrgEvent) {
-  await tx.execute(sql`select pg_notify(${EVENTS_CHANNEL}, ${JSON.stringify(event)})`);
+  await tx.execute(
+    sql`select pg_notify(${EVENTS_CHANNEL}, ${JSON.stringify(event)})`,
+  );
 }
 
 /** Keys of the projects in a viewer's scope, or null when it sees every project (for filtering events). */
-export async function scopedProjectKeys(db: Db, viewer: Viewer): Promise<Set<string> | null> {
+export async function scopedProjectKeys(
+  db: Db,
+  viewer: Viewer,
+): Promise<Set<string> | null> {
   const scope = await projectScope(db, viewer);
   if (!scope) return null;
   if (scope.size === 0) return new Set();
@@ -45,7 +55,10 @@ export async function scopedProjectKeys(db: Db, viewer: Viewer): Promise<Set<str
 }
 
 /** Whether an event concerns only projects inside `keys` (null: everything is visible). */
-export function eventInScope(event: OrgEvent, keys: Set<string> | null): boolean {
+export function eventInScope(
+  event: OrgEvent,
+  keys: Set<string> | null,
+): boolean {
   if (!keys) return true;
   switch (event.type) {
     case "task.changed":

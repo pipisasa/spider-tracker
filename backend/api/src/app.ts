@@ -1,4 +1,10 @@
-import type { AcceptedAgentInviteDto, ApiErrorBody, AuthProvidersResponse, MeResponse, WhoAmIResponse } from "@repo/core";
+import type {
+  AcceptedAgentInviteDto,
+  ApiErrorBody,
+  AuthProvidersResponse,
+  MeResponse,
+  WhoAmIResponse,
+} from "@repo/core";
 import type { InvitationPreviewDto } from "@repo/core";
 import {
   DomainError,
@@ -22,7 +28,11 @@ import { apiDocsRoutes } from "./api-docs";
 import { CLIENT_IP_HEADER, enabledAuthProviders, type Auth } from "./auth";
 import { toActorDto, toMembership } from "./dto";
 import { githubAppConfig, type Env } from "./env";
-import { GithubUnavailableError, logGithubFailure, type GithubApp } from "./github";
+import {
+  GithubUnavailableError,
+  logGithubFailure,
+  type GithubApp,
+} from "./github";
 import { mcpRoutes } from "./mcp";
 import { openApiDocument } from "./openapi";
 import { clientIp, createRateLimiter } from "./rate-limit";
@@ -42,21 +52,43 @@ const errorStatus: Record<DomainError["code"], ContentfulStatusCode> = {
 
 /** An invite code (or link) with the shape of a real one: 8 letters or digits. */
 function isWellFormedCode(input: unknown): boolean {
-  if (typeof input !== "object" || input === null || !("code" in input) || typeof input.code !== "string") return false;
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("code" in input) ||
+    typeof input.code !== "string"
+  )
+    return false;
   return /^[A-Z0-9]{8}$/.test(normalizeAgentInviteCode(input.code));
 }
 
 function errorBody(code: string, message: string, url?: string): ApiErrorBody {
-  return { error: url === undefined ? { code, message } : { code, message, url } };
+  return {
+    error: url === undefined ? { code, message } : { code, message, url },
+  };
 }
 
 /** `github`: the GitHub App port (ST-82); null or left out when the server has none configured. */
-export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth; env: Env; github?: GithubApp | null }) {
+export function createApp({
+  db,
+  auth,
+  env,
+  github = null,
+}: {
+  db: Db;
+  auth: Auth;
+  env: Env;
+  github?: GithubApp | null;
+}) {
   const app = new Hono<AppEnv>();
   const realtime = createRealtime(db);
-  const ipOf = (c: Context<AppEnv>) => clientIp(c.req.raw, env.TRUSTED_PROXY, c.env);
+  const ipOf = (c: Context<AppEnv>) =>
+    clientIp(c.req.raw, env.TRUSTED_PROXY, c.env);
   const tooMany = (c: Context<AppEnv>) =>
-    c.json(errorBody("rate_limited", "Too many attempts. Try again in a minute"), 429);
+    c.json(
+      errorBody("rate_limited", "Too many attempts. Try again in a minute"),
+      429,
+    );
 
   app.use(
     "*",
@@ -68,7 +100,9 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
     }),
   );
 
-  app.get("/health", (c) => c.json({ status: "ok", minCliVersion: MIN_CLI_VERSION }));
+  app.get("/health", (c) =>
+    c.json({ status: "ok", minCliVersion: MIN_CLI_VERSION }),
+  );
 
   // Lets the spider CLI warn when it is older than this server supports.
   const minCli: MiddlewareHandler = async (c, next) => {
@@ -85,7 +119,9 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
   });
 
   app.get("/auth/providers", (c) => {
-    const body: AuthProvidersResponse = { providers: enabledAuthProviders(env) };
+    const body: AuthProvidersResponse = {
+      providers: enabledAuthProviders(env),
+    };
     return c.json(body);
   });
 
@@ -114,7 +150,14 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
   // Where GitHub returns after installing the App; needs the browser session (ST-82).
   app.route("/github", githubSetupRoutes(db, auth, github, env));
   // GitHub's webhook (ST-83): no session or key, the signature is the credential.
-  app.route("/webhooks", githubWebhookRoutes(db, github, githubAppConfig(env)?.webhookSecret ?? null));
+  app.route(
+    "/webhooks",
+    githubWebhookRoutes(
+      db,
+      github,
+      githubAppConfig(env)?.webhookSecret ?? null,
+    ),
+  );
 
   // MCP over Streamable HTTP, for agents with an API key (Bearer spt_…).
   app.route("/mcp", mcpRoutes(db, realtime, env.WEB_ORIGIN, github));
@@ -123,31 +166,55 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
   // Registered before the /v1 auth middleware; rate limited per client IP, and failed codes from
   // all IPs together are capped so distributed guessing stays bounded.
   const inviteAttempts = createRateLimiter({ limit: 10, windowMs: 60_000 });
-  const failedInviteCodes = createRateLimiter({ limit: 100, windowMs: 60 * 60_000 });
+  const failedInviteCodes = createRateLimiter({
+    limit: 100,
+    windowMs: 60 * 60_000,
+  });
   app.post("/v1/agent-invites/accept", async (c) => {
     if (!inviteAttempts.attempt(ipOf(c))) return tooMany(c);
     if (failedInviteCodes.exhausted("all")) {
-      return c.json(errorBody("rate_limited", "Too many invalid invite codes. Try again later"), 429);
+      return c.json(
+        errorBody(
+          "rate_limited",
+          "Too many invalid invite codes. Try again later",
+        ),
+        429,
+      );
     }
     const input: unknown = await c.req.json().catch(() => null);
     const source = c.req.header("X-Spider-Source")?.trim().toLowerCase();
-    const accepted = await acceptAgentInvite(db, input, source === "cli" || source === "mcp" ? source : "api").catch(
-      (err: unknown) => {
-        // Only well-formed codes that don't match count: malformed input can't guess anything,
-        // and counting it would let one client block onboarding for everyone.
-        if (err instanceof DomainError && (err.code === "validation" || err.code === "not_found") && isWellFormedCode(input)) {
-          failedInviteCodes.attempt("all");
-        }
-        throw err;
-      },
-    );
-    const body: AcceptedAgentInviteDto = { ...accepted, actor: toActorDto(accepted.actor, accepted.owner.id) };
+    const accepted = await acceptAgentInvite(
+      db,
+      input,
+      source === "cli" || source === "mcp" ? source : "api",
+    ).catch((err: unknown) => {
+      // Only well-formed codes that don't match count: malformed input can't guess anything,
+      // and counting it would let one client block onboarding for everyone.
+      if (
+        err instanceof DomainError &&
+        (err.code === "validation" || err.code === "not_found") &&
+        isWellFormedCode(input)
+      ) {
+        failedInviteCodes.attempt("all");
+      }
+      throw err;
+    });
+    const body: AcceptedAgentInviteDto = {
+      ...accepted,
+      actor: toActorDto(accepted.actor, accepted.owner.id),
+    };
     return c.json(body, 201);
   });
 
   // Joining with an invitation code: per client IP before sign-in is checked, per user below.
-  const invitationIpAttempts = createRateLimiter({ limit: 20, windowMs: 60_000 });
-  const invitationUserAttempts = createRateLimiter({ limit: 10, windowMs: 60_000 });
+  const invitationIpAttempts = createRateLimiter({
+    limit: 20,
+    windowMs: 60_000,
+  });
+  const invitationUserAttempts = createRateLimiter({
+    limit: 10,
+    windowMs: 60_000,
+  });
   app.use("/v1/invitations/*", async (c, next) => {
     if (!invitationIpAttempts.attempt(ipOf(c))) return tooMany(c);
     await next();
@@ -155,15 +222,22 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
 
   // Everything under /v1 requires a browser session or an agent API key (Bearer spt_…).
   app.use("/v1/*", async (c, next) => {
-    const bearer = c.req.header("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+    const bearer = c.req
+      .header("Authorization")
+      ?.match(/^Bearer\s+(.+)$/i)?.[1];
     if (bearer) {
       const key = await authenticateApiKey(db, bearer.trim());
-      if (!key) return c.json(errorBody("unauthorized", "Invalid or revoked API key"), 401);
+      if (!key)
+        return c.json(
+          errorBody("unauthorized", "Invalid or revoked API key"),
+          401,
+        );
       c.set("apiKey", key);
       return next();
     }
     const data = await auth.api.getSession({ headers: c.req.raw.headers });
-    if (!data) return c.json(errorBody("unauthorized", "Sign in required"), 401);
+    if (!data)
+      return c.json(errorBody("unauthorized", "Sign in required"), 401);
     c.set("user", data.user);
     c.set("session", data.session);
     await next();
@@ -176,15 +250,30 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
       return c.json(body);
     }
     // Browser sessions span organizations; /v1/me lists them.
-    return c.json(errorBody("bad_request", "Use /v1/me for browser sessions"), 400);
+    return c.json(
+      errorBody("bad_request", "Use /v1/me for browser sessions"),
+      400,
+    );
   });
 
   app.get("/v1/me", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json(errorBody("forbidden", "API keys act inside one organization; use /v1/whoami"), 403);
+    if (!user)
+      return c.json(
+        errorBody(
+          "forbidden",
+          "API keys act inside one organization; use /v1/whoami",
+        ),
+        403,
+      );
     const rows = await listMemberships(db, user.id);
     const body: MeResponse = {
-      user: { id: user.id, name: user.name, email: user.email, image: user.image ?? null },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image ?? null,
+      },
       memberships: rows.map(toMembership),
     };
     return c.json(body);
@@ -192,7 +281,11 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
 
   app.post("/v1/organizations", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json(errorBody("forbidden", "Only people can create organizations"), 403);
+    if (!user)
+      return c.json(
+        errorBody("forbidden", "Only people can create organizations"),
+        403,
+      );
     const input: unknown = await c.req.json().catch(() => null);
     const created = await createOrganization(db, user, input);
     return c.json(toMembership(created), 201);
@@ -201,16 +294,28 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
   // Joining with an invitation code is for people only; agents are added by an owner.
   app.post("/v1/invitations/preview", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json(errorBody("forbidden", "Only people can join organizations"), 403);
+    if (!user)
+      return c.json(
+        errorBody("forbidden", "Only people can join organizations"),
+        403,
+      );
     if (!invitationUserAttempts.attempt(user.id)) return tooMany(c);
     const input: unknown = await c.req.json().catch(() => null);
-    const body: InvitationPreviewDto = await previewInvitation(db, user.id, input);
+    const body: InvitationPreviewDto = await previewInvitation(
+      db,
+      user.id,
+      input,
+    );
     return c.json(body);
   });
 
   app.post("/v1/invitations/accept", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json(errorBody("forbidden", "Only people can join organizations"), 403);
+    if (!user)
+      return c.json(
+        errorBody("forbidden", "Only people can join organizations"),
+        403,
+      );
     if (!invitationUserAttempts.attempt(user.id)) return tooMany(c);
     const input: unknown = await c.req.json().catch(() => null);
     const joined = await acceptInvitation(db, user, input);
@@ -222,10 +327,22 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
   // `spider logout`: revoke the key this request was made with.
   app.delete("/v1/api-keys/current", async (c) => {
     const key = c.get("apiKey");
-    if (!key) return c.json(errorBody("forbidden", "Only API-key requests can revoke their own key"), 403);
+    if (!key)
+      return c.json(
+        errorBody(
+          "forbidden",
+          "Only API-key requests can revoke their own key",
+        ),
+        403,
+      );
     await revokeCurrentApiKey(
       db,
-      { orgId: key.organization.id, actorId: key.actor.id, role: key.actor.role, source: "cli" },
+      {
+        orgId: key.organization.id,
+        actorId: key.actor.id,
+        role: key.actor.role,
+        source: "cli",
+      },
       key.keyId,
     );
     return c.body(null, 204);
@@ -233,18 +350,30 @@ export function createApp({ db, auth, env, github = null }: { db: Db; auth: Auth
 
   app.route(
     "/v1/orgs/:orgSlug",
-    orgRoutes(db, realtime, env.WEB_ORIGIN, { app: github, stateSecret: env.BETTER_AUTH_SECRET }),
+    orgRoutes(db, realtime, env.WEB_ORIGIN, {
+      app: github,
+      stateSecret: env.BETTER_AUTH_SECRET,
+    }),
   );
 
   app.notFound((c) => c.json(errorBody("not_found", "Route not found"), 404));
 
   app.onError((err, c) => {
     if (err instanceof DomainError) {
-      return c.json(errorBody(err.code, err.message, err.url), errorStatus[err.code]);
+      return c.json(
+        errorBody(err.code, err.message, err.url),
+        errorStatus[err.code],
+      );
     }
     if (err instanceof GithubUnavailableError) {
       logGithubFailure(err);
-      return c.json(errorBody("github_unavailable", "GitHub couldn't be reached or refused the request. Try again"), 502);
+      return c.json(
+        errorBody(
+          "github_unavailable",
+          "GitHub couldn't be reached or refused the request. Try again",
+        ),
+        502,
+      );
     }
     console.error(err);
     return c.json(errorBody("internal", "Something went wrong"), 500);

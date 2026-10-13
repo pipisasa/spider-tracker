@@ -15,7 +15,12 @@ export const PRESENCE_WINDOW_MS = 10 * 60_000;
 
 type TaskFilter = { projectKey: string } | { taskIds: string[] };
 
-async function recentAgentActivity(db: Db, viewer: Viewer, filter: TaskFilter, since: Date): Promise<PresenceDto[]> {
+async function recentAgentActivity(
+  db: Db,
+  viewer: Viewer,
+  filter: TaskFilter,
+  since: Date,
+): Promise<PresenceDto[]> {
   const scope = await projectScope(db, viewer);
   if (scope && scope.size === 0) return [];
   const orgId = orgIdOf(viewer);
@@ -24,7 +29,9 @@ async function recentAgentActivity(db: Db, viewer: Viewer, filter: TaskFilter, s
   const where = and(
     eq(projects.orgId, orgId),
     isNull(tasks.deletedAt),
-    "projectKey" in filter ? eq(projects.key, filter.projectKey.toUpperCase()) : inArray(tasks.id, filter.taskIds),
+    "projectKey" in filter
+      ? eq(projects.key, filter.projectKey.toUpperCase())
+      : inArray(tasks.id, filter.taskIds),
     scope ? inArray(projects.id, [...scope]) : undefined,
     eq(actors.type, "agent"),
     eq(activity.orgId, orgId),
@@ -37,13 +44,21 @@ async function recentAgentActivity(db: Db, viewer: Viewer, filter: TaskFilter, s
     actorId: activity.actorId,
     lastSeenAt: max(activity.createdAt),
   };
-  const group = [projects.key, tasks.number, tasks.id, activity.actorId] as const;
+  const group = [
+    projects.key,
+    tasks.number,
+    tasks.id,
+    activity.actorId,
+  ] as const;
 
   const [direct, viaDocuments] = await Promise.all([
     db
       .select(columns)
       .from(activity)
-      .innerJoin(tasks, and(eq(activity.entityType, "task"), eq(activity.entityId, tasks.id)))
+      .innerJoin(
+        tasks,
+        and(eq(activity.entityType, "task"), eq(activity.entityId, tasks.id)),
+      )
       .innerJoin(projects, eq(tasks.projectId, projects.id))
       .innerJoin(actors, eq(activity.actorId, actors.id))
       .where(where)
@@ -51,7 +66,13 @@ async function recentAgentActivity(db: Db, viewer: Viewer, filter: TaskFilter, s
     db
       .select(columns)
       .from(activity)
-      .innerJoin(documents, and(eq(activity.entityType, "document"), eq(activity.entityId, documents.id)))
+      .innerJoin(
+        documents,
+        and(
+          eq(activity.entityType, "document"),
+          eq(activity.entityId, documents.id),
+        ),
+      )
       .innerJoin(tasks, eq(documents.taskId, tasks.id))
       .innerJoin(projects, eq(tasks.projectId, projects.id))
       .innerJoin(actors, eq(activity.actorId, actors.id))
@@ -66,14 +87,25 @@ async function recentAgentActivity(db: Db, viewer: Viewer, filter: TaskFilter, s
     const id = `${taskKey}:${r.actorId}`;
     const seen = latest.get(id);
     if (!seen || seen.lastSeenAt < r.lastSeenAt.toISOString()) {
-      latest.set(id, { taskKey, actorId: r.actorId, lastSeenAt: r.lastSeenAt.toISOString() });
+      latest.set(id, {
+        taskKey,
+        actorId: r.actorId,
+        lastSeenAt: r.lastSeenAt.toISOString(),
+      });
     }
   }
-  return [...latest.values()].sort((a, b) => (a.taskKey + a.actorId).localeCompare(b.taskKey + b.actorId));
+  return [...latest.values()].sort((a, b) =>
+    (a.taskKey + a.actorId).localeCompare(b.taskKey + b.actorId),
+  );
 }
 
 /** Agents that acted on any of these tasks since `since` (tasks outside the viewer's scope are left out). */
-export function activeAgentsForTasks(db: Db, viewer: Viewer, taskIds: string[], since: Date): Promise<PresenceDto[]> {
+export function activeAgentsForTasks(
+  db: Db,
+  viewer: Viewer,
+  taskIds: string[],
+  since: Date,
+): Promise<PresenceDto[]> {
   return recentAgentActivity(db, viewer, { taskIds }, since);
 }
 
@@ -87,7 +119,12 @@ export async function activeAgentsInProject(
   const [project] = await db
     .select({ id: projects.id })
     .from(projects)
-    .where(and(eq(projects.orgId, orgIdOf(viewer)), eq(projects.key, projectKey.toUpperCase())))
+    .where(
+      and(
+        eq(projects.orgId, orgIdOf(viewer)),
+        eq(projects.key, projectKey.toUpperCase()),
+      ),
+    )
     .limit(1);
   if (!project || !inScope(await projectScope(db, viewer), project.id)) {
     throw new DomainError("not_found", `Project ${projectKey} not found`);

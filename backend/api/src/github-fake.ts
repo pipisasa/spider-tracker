@@ -1,4 +1,10 @@
-import { DomainError, type GithubInstallationData, type GithubPullRequestData, type GithubPullRequestRequest, type GithubRepoData } from "@repo/core";
+import {
+  DomainError,
+  type GithubInstallationData,
+  type GithubPullRequestData,
+  type GithubPullRequestRequest,
+  type GithubRepoData,
+} from "@repo/core";
 import { GithubUnavailableError, type GithubApp } from "./github";
 
 /**
@@ -6,7 +12,10 @@ import { GithubUnavailableError, type GithubApp } from "./github";
  * that name the installations their person can access. Codes are single-use, as on GitHub.
  */
 export interface FakeGithub extends GithubApp {
-  installations: Map<number, { installation: GithubInstallationData; repos: GithubRepoData[] }>;
+  installations: Map<
+    number,
+    { installation: GithubInstallationData; repos: GithubRepoData[] }
+  >;
   /** code → installation ids the person who got it can access. */
   codes: Map<string, number[]>;
   /** When set, every call fails as if GitHub were down. */
@@ -29,29 +38,46 @@ export function createFakeGithub(slug = "spider-tracker-test"): FakeGithub {
     pullRequests: new Map(),
     pullRequestRequests: [],
     refusePullRequests: null,
-    installUrl: (state) => `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(state)}`,
+    installUrl: (state) =>
+      `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(state)}`,
     async userCanAccessInstallation(code, installationId) {
-      if (fake.down) throw new GithubUnavailableError("GitHub request failed: OAuth code exchange");
+      if (fake.down)
+        throw new GithubUnavailableError(
+          "GitHub request failed: OAuth code exchange",
+        );
       const ids = fake.codes.get(code);
       fake.codes.delete(code);
       return ids?.includes(installationId) ?? false;
     },
     async getInstallation(installationId) {
-      if (fake.down) throw new GithubUnavailableError("GitHub request failed: installation");
+      if (fake.down)
+        throw new GithubUnavailableError("GitHub request failed: installation");
       return fake.installations.get(installationId)?.installation ?? null;
     },
     async listInstallationRepos(installationId) {
-      if (fake.down) throw new GithubUnavailableError("GitHub request failed: installation repositories");
+      if (fake.down)
+        throw new GithubUnavailableError(
+          "GitHub request failed: installation repositories",
+        );
       return fake.installations.get(installationId)?.repos ?? [];
     },
     async createPullRequest(request) {
       fake.pullRequestRequests.push(request);
-      if (fake.down) throw new GithubUnavailableError("GitHub request failed: create pull request");
+      if (fake.down)
+        throw new GithubUnavailableError(
+          "GitHub request failed: create pull request",
+        );
       const repo = `${request.owner}/${request.name}`.toLowerCase();
       const list = fake.pullRequests.get(repo) ?? [];
-      const open = list.find((pr) => pr.state === "open" && pr.headBranch === request.head);
+      const open = list.find(
+        (pr) => pr.state === "open" && pr.headBranch === request.head,
+      );
       if (open) return { created: false, pullRequest: open };
-      if (fake.refusePullRequests) throw new DomainError("validation", `GitHub refused the pull request: ${fake.refusePullRequests}`);
+      if (fake.refusePullRequests)
+        throw new DomainError(
+          "validation",
+          `GitHub refused the pull request: ${fake.refusePullRequests}`,
+        );
       clock += 1000;
       const pullRequest: GithubPullRequestData = {
         number: list.length + 1,

@@ -2,19 +2,35 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { styleText } from "node:util";
-import { Separator, confirm as inquirerConfirm, select as inquirerSelect } from "@inquirer/prompts";
+import {
+  Separator,
+  confirm as inquirerConfirm,
+  select as inquirerSelect,
+} from "@inquirer/prompts";
 import { run, type Choice } from "./cli";
 import { isCompiled, replaceBinary } from "./self-update";
 
 /** Best effort: open a URL in the default browser. */
 function openUrl(url: string) {
-  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
-  spawn(command, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "explorer"
+        : "xdg-open";
+  spawn(command, [url], { stdio: "ignore", detached: true })
+    .on("error", () => {})
+    .unref();
 }
 
 /** Arrow-key menu on stderr: ↑/↓ move, Enter picks, Esc or Ctrl-C cancels. Groups become dividers. */
-async function select(question: string, choices: Choice[]): Promise<string | null> {
-  const items: (Separator | { value: string; name: string; description?: string })[] = [];
+async function select(
+  question: string,
+  choices: Choice[],
+): Promise<string | null> {
+  const items: (
+    Separator | { value: string; name: string; description?: string }
+  )[] = [];
   let group: string | undefined;
   for (const choice of choices) {
     if (choice.group && choice.group !== group) {
@@ -23,7 +39,9 @@ async function select(question: string, choices: Choice[]): Promise<string | nul
     }
     items.push({
       value: choice.value,
-      name: choice.hint ? `${choice.label}  ${styleText("dim", choice.hint)}` : choice.label,
+      name: choice.hint
+        ? `${choice.label}  ${styleText("dim", choice.hint)}`
+        : choice.label,
     });
   }
   const controller = new AbortController();
@@ -34,7 +52,11 @@ async function select(question: string, choices: Choice[]): Promise<string | nul
   try {
     return await inquirerSelect(
       { message: question, choices: items, pageSize: 12, loop: false },
-      { output: process.stderr, signal: controller.signal, clearPromptOnDone: false },
+      {
+        output: process.stderr,
+        signal: controller.signal,
+        clearPromptOnDone: false,
+      },
     );
   } catch {
     // ExitPromptError (Ctrl-C) or AbortPromptError (Esc).
@@ -47,15 +69,24 @@ async function select(question: string, choices: Choice[]): Promise<string | nul
 /** Yes/no on stderr; Ctrl-C or Esc counts as no. */
 async function confirm(question: string): Promise<boolean> {
   try {
-    return await inquirerConfirm({ message: question, default: false }, { output: process.stderr });
+    return await inquirerConfirm(
+      { message: question, default: false },
+      { output: process.stderr },
+    );
   } catch {
     return false;
   }
 }
 
 /** Runs a program attached to this terminal; resolves to its exit code. */
-async function spawnInherit(argv: string[], options: { env: Record<string, string | undefined> }) {
-  const child = Bun.spawn(argv, { env: options.env, stdio: ["inherit", "inherit", "inherit"] });
+async function spawnInherit(
+  argv: string[],
+  options: { env: Record<string, string | undefined> },
+) {
+  const child = Bun.spawn(argv, {
+    env: options.env,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
   // Ctrl-C reaches the child through the terminal; don't die before it does.
   const ignore = () => {};
   process.on("SIGINT", ignore);
@@ -74,7 +105,12 @@ async function spawnInherit(argv: string[], options: { env: Record<string, strin
 async function runClaude(args: string[]) {
   const claude = Bun.which("claude");
   if (!claude) return undefined;
-  const child = Bun.spawn([claude, ...args], { cwd: homedir(), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([claude, ...args], {
+    cwd: homedir(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -101,7 +137,8 @@ process.exitCode = await run(process.argv.slice(2), {
   selfUpdate: isCompiled()
     ? (version) =>
         replaceBinary(version, (input, init) => fetch(input, init), {
-          warn: (message) => process.stderr.write(`spider update: warning: ${message}\n`),
+          warn: (message) =>
+            process.stderr.write(`spider update: warning: ${message}\n`),
         })
     : undefined,
 });

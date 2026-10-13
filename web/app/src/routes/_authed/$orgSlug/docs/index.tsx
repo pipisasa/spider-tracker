@@ -9,7 +9,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { filterDocumentsByProject, ORG_FILTER } from "@/lib/document-filter";
-import { archivedProjectsQuery, documentsQuery, projectsQuery } from "@/lib/work";
+import {
+  archivedProjectsQuery,
+  documentsQuery,
+  projectsQuery,
+} from "@/lib/work";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { NetworkIcon, PlusIcon } from "lucide-react";
@@ -55,7 +59,11 @@ function DocumentsPage() {
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3 md:px-6">
         <h1 className="font-semibold">Documents</h1>
         <Select value={filter} onValueChange={setFilter}>
-          <SelectTrigger size="sm" className="ml-auto w-48 max-w-full" aria-label="Filter by project">
+          <SelectTrigger
+            size="sm"
+            className="ml-auto w-48 max-w-full"
+            aria-label="Filter by project"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

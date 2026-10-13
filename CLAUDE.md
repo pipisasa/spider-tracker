@@ -29,11 +29,11 @@ bunx turbo run dev --filter=@repo/<name>
 
 Turborepo monorepo with bun workspaces.
 
-| Folder | Contents |
-|---|---|
-| `web/*` | Web apps (frontends) |
-| `backend/*` | Backend apps (APIs, workers, CLI, services) |
-| `packages/*` | Shared packages |
+| Folder       | Contents                                    |
+| ------------ | ------------------------------------------- |
+| `web/*`      | Web apps (frontends)                        |
+| `backend/*`  | Backend apps (APIs, workers, CLI, services) |
+| `packages/*` | Shared packages                             |
 
 ### Apps
 

@@ -14,7 +14,10 @@ interface BateleUserinfo {
 /** Domain of the placeholder email given to Batele users who have none. */
 export const BATELE_PLACEHOLDER_DOMAIN = "users.batele-id.invalid";
 
-export function bateleIdProvider(clientId: string, issuer: string): GenericOAuthConfig {
+export function bateleIdProvider(
+  clientId: string,
+  issuer: string,
+): GenericOAuthConfig {
   return {
     providerId: "batele-id",
     clientId,

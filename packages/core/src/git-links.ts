@@ -3,7 +3,14 @@ import { schema } from "@repo/db";
 import { and, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import type { ActorContext, Viewer } from "./access";
-import type { GitBranchDto, GitCommitDto, GitLinkVia, PullRequestDto, PullRequestState, TaskGitDto } from "./contracts";
+import type {
+  GitBranchDto,
+  GitCommitDto,
+  GitLinkVia,
+  PullRequestDto,
+  PullRequestState,
+  TaskGitDto,
+} from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { automatePullRequest } from "./git-automation";
@@ -28,8 +35,16 @@ type RepoRow = typeof repos.$inferSelect;
 type PullRequestRow = typeof pullRequests.$inferSelect;
 
 /** Strongest first; a link found several ways keeps the strongest. */
-const VIA_ORDER: readonly GitLinkVia[] = ["closing", "branch", "title", "body", "message"];
-const VIA_SQL = sql.raw(`array[${VIA_ORDER.map((v) => `'${v}'`).join(", ")}]::text[]`);
+const VIA_ORDER: readonly GitLinkVia[] = [
+  "closing",
+  "branch",
+  "title",
+  "body",
+  "message",
+];
+const VIA_SQL = sql.raw(
+  `array[${VIA_ORDER.map((v) => `'${v}'`).join(", ")}]::text[]`,
+);
 
 const stronger = (a: GitLinkVia, b: GitLinkVia | undefined): GitLinkVia =>
   b === undefined || VIA_ORDER.indexOf(a) <= VIA_ORDER.indexOf(b) ? a : b;
@@ -40,16 +55,25 @@ const MAX_KEYS = 50;
 const MAX_PUSH_COMMITS = 2048;
 const COMMIT_TITLE_MAX = 300;
 
-function addMatch(matches: Map<string, GitLinkVia>, key: string, via: GitLinkVia) {
+function addMatch(
+  matches: Map<string, GitLinkVia>,
+  key: string,
+  via: GitLinkVia,
+) {
   if (matches.size >= MAX_KEYS && !matches.has(key)) return;
   matches.set(key, stronger(via, matches.get(key)));
 }
 
 /** The task keys a pull request names, each with the strongest way it does. */
-export function pullRequestKeys(pr: { title: string; body: string | null; headBranch: string }): Map<string, GitLinkVia> {
+export function pullRequestKeys(pr: {
+  title: string;
+  body: string | null;
+  headBranch: string;
+}): Map<string, GitLinkVia> {
   const matches = new Map<string, GitLinkVia>();
   const body = pr.body ?? "";
-  for (const key of closingKeysIn(`${pr.title}\n${body}`)) addMatch(matches, key, "closing");
+  for (const key of closingKeysIn(`${pr.title}\n${body}`))
+    addMatch(matches, key, "closing");
   const branchKey = taskKeyFromBranch(pr.headBranch);
   if (branchKey) addMatch(matches, branchKey, "branch");
   for (const key of taskKeysIn(pr.title)) addMatch(matches, key, "title");
@@ -58,7 +82,10 @@ export function pullRequestKeys(pr: { title: string; body: string | null; headBr
 }
 
 /** The task keys a commit names in its message, plus its branch's key. */
-export function commitKeys(message: string, branchKey: string | null): Map<string, GitLinkVia> {
+export function commitKeys(
+  message: string,
+  branchKey: string | null,
+): Map<string, GitLinkVia> {
   const matches = new Map<string, GitLinkVia>();
   for (const key of closingKeysIn(message)) addMatch(matches, key, "closing");
   if (branchKey) addMatch(matches, branchKey, "branch");
@@ -72,11 +99,19 @@ const repoUrl = (repo: { owner: string; name: string }) =>
   `https://github.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
 const branchUrl = (repo: { owner: string; name: string }, branch: string) =>
   `${repoUrl(repo)}/tree/${branch.split("/").map(encodeURIComponent).join("/")}`;
-const commitUrl = (repo: { owner: string; name: string }, sha: string) => `${repoUrl(repo)}/commit/${sha}`;
-export const pullRequestUrl = (repo: { owner: string; name: string }, number: number) => `${repoUrl(repo)}/pull/${number}`;
+const commitUrl = (repo: { owner: string; name: string }, sha: string) =>
+  `${repoUrl(repo)}/commit/${sha}`;
+export const pullRequestUrl = (
+  repo: { owner: string; name: string },
+  number: number,
+) => `${repoUrl(repo)}/pull/${number}`;
 
 /** A saved pull request as the API shows it, with how it names the task. */
-export function toPullRequestDto(repo: { owner: string; name: string }, pr: PullRequestRow, via: GitLinkVia): PullRequestDto {
+export function toPullRequestDto(
+  repo: { owner: string; name: string },
+  pr: PullRequestRow,
+  via: GitLinkVia,
+): PullRequestDto {
   return {
     repo: repoFullName(repo),
     number: pr.number,
@@ -103,38 +138,78 @@ export interface LinkedTask {
   projectKey: string;
 }
 
-async function findRepoByName(tx: Tx, orgId: string, owner: string, name: string): Promise<RepoRow | null> {
+async function findRepoByName(
+  tx: Tx,
+  orgId: string,
+  owner: string,
+  name: string,
+): Promise<RepoRow | null> {
   const [row] = await tx
     .select()
     .from(repos)
     .where(
-      and(eq(repos.orgId, orgId), sql`lower(${repos.owner}) = ${owner.toLowerCase()}`, sql`lower(${repos.name}) = ${name.toLowerCase()}`),
+      and(
+        eq(repos.orgId, orgId),
+        sql`lower(${repos.owner}) = ${owner.toLowerCase()}`,
+        sql`lower(${repos.name}) = ${name.toLowerCase()}`,
+      ),
     )
     .limit(1);
   return row ?? null;
 }
 
 /** The tasks `keys` name, by key; only tasks (not deleted) of projects attached to `repo`. */
-async function tasksOfKeys(tx: Tx, repo: RepoRow, keys: Iterable<string>): Promise<Map<string, LinkedTask>> {
+async function tasksOfKeys(
+  tx: Tx,
+  repo: RepoRow,
+  keys: Iterable<string>,
+): Promise<Map<string, LinkedTask>> {
   const numbersByProject = new Map<string, number[]>();
   for (const key of keys) {
     const parsed = parseTaskKey(key);
     if (!parsed) continue;
-    numbersByProject.set(parsed.projectKey, [...(numbersByProject.get(parsed.projectKey) ?? []), parsed.number]);
+    numbersByProject.set(parsed.projectKey, [
+      ...(numbersByProject.get(parsed.projectKey) ?? []),
+      parsed.number,
+    ]);
   }
   if (numbersByProject.size === 0) return new Map();
   const conditions: SQL[] = [];
   for (const [projectKey, numbers] of numbersByProject) {
-    const condition = and(eq(projects.key, projectKey), inArray(tasks.number, numbers));
+    const condition = and(
+      eq(projects.key, projectKey),
+      inArray(tasks.number, numbers),
+    );
     if (condition) conditions.push(condition);
   }
   const rows = await tx
     .select({ id: tasks.id, number: tasks.number, projectKey: projects.key })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .innerJoin(projectRepos, and(eq(projectRepos.projectId, projects.id), eq(projectRepos.repoId, repo.id)))
-    .where(and(eq(projects.orgId, repo.orgId), isNull(tasks.deletedAt), or(...conditions)));
-  return new Map(rows.map((r) => [`${r.projectKey}-${r.number}`, { id: r.id, key: `${r.projectKey}-${r.number}`, projectKey: r.projectKey }]));
+    .innerJoin(
+      projectRepos,
+      and(
+        eq(projectRepos.projectId, projects.id),
+        eq(projectRepos.repoId, repo.id),
+      ),
+    )
+    .where(
+      and(
+        eq(projects.orgId, repo.orgId),
+        isNull(tasks.deletedAt),
+        or(...conditions),
+      ),
+    );
+  return new Map(
+    rows.map((r) => [
+      `${r.projectKey}-${r.number}`,
+      {
+        id: r.id,
+        key: `${r.projectKey}-${r.number}`,
+        projectKey: r.projectKey,
+      },
+    ]),
+  );
 }
 
 /** The keys of tasks by id (for events about links that were removed or changed). */
@@ -145,7 +220,11 @@ async function tasksByIds(tx: Tx, ids: string[]): Promise<LinkedTask[]> {
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(inArray(tasks.id, [...new Set(ids)]));
-  return rows.map((r) => ({ id: r.id, key: `${r.projectKey}-${r.number}`, projectKey: r.projectKey }));
+  return rows.map((r) => ({
+    id: r.id,
+    key: `${r.projectKey}-${r.number}`,
+    projectKey: r.projectKey,
+  }));
 }
 
 async function announce(tx: Tx, orgId: string, linked: Iterable<LinkedTask>) {
@@ -153,18 +232,36 @@ async function announce(tx: Tx, orgId: string, linked: Iterable<LinkedTask>) {
   for (const task of linked) {
     if (seen.has(task.id)) continue;
     seen.add(task.id);
-    await publish(tx, { type: "task.git", orgId, projectKey: task.projectKey, taskKey: task.key });
+    await publish(tx, {
+      type: "task.git",
+      orgId,
+      projectKey: task.projectKey,
+      taskKey: task.key,
+    });
   }
 }
 
 // --- Branches and commits ---------------------------------------------------------------------------
 
 /** Links a branch to a task; a deleted one that is created again is live again. True when changed. */
-async function linkBranch(tx: Tx, repo: RepoRow, task: LinkedTask, branch: string): Promise<boolean> {
+async function linkBranch(
+  tx: Tx,
+  repo: RepoRow,
+  task: LinkedTask,
+  branch: string,
+): Promise<boolean> {
   const now = new Date();
   const [row] = await tx
     .insert(gitLinks)
-    .values({ orgId: repo.orgId, taskId: task.id, repoId: repo.id, kind: "branch", ref: branch, via: "branch", occurredAt: now })
+    .values({
+      orgId: repo.orgId,
+      taskId: task.id,
+      repoId: repo.id,
+      kind: "branch",
+      ref: branch,
+      via: "branch",
+      occurredAt: now,
+    })
     .onConflictDoUpdate({
       target: [gitLinks.taskId, gitLinks.repoId, gitLinks.kind, gitLinks.ref],
       set: { deletedAt: null, updatedAt: now },
@@ -175,11 +272,22 @@ async function linkBranch(tx: Tx, repo: RepoRow, task: LinkedTask, branch: strin
 }
 
 /** Marks a branch's links deleted (they stay); the tasks whose link changed. */
-async function markBranchDeleted(tx: Tx, repo: RepoRow, branch: string): Promise<LinkedTask[]> {
+async function markBranchDeleted(
+  tx: Tx,
+  repo: RepoRow,
+  branch: string,
+): Promise<LinkedTask[]> {
   const rows = await tx
     .update(gitLinks)
     .set({ deletedAt: new Date(), updatedAt: new Date() })
-    .where(and(eq(gitLinks.repoId, repo.id), eq(gitLinks.kind, "branch"), eq(gitLinks.ref, branch), isNull(gitLinks.deletedAt)))
+    .where(
+      and(
+        eq(gitLinks.repoId, repo.id),
+        eq(gitLinks.kind, "branch"),
+        eq(gitLinks.ref, branch),
+        isNull(gitLinks.deletedAt),
+      ),
+    )
     .returning({ taskId: gitLinks.taskId });
   return tasksByIds(
     tx,
@@ -195,8 +303,16 @@ interface CommitData {
 }
 
 /** Links commits to the tasks they name (and to the branch's task); the tasks with new or stronger links. */
-async function linkCommits(tx: Tx, repo: RepoRow, commits: CommitData[], branchKey: string | null): Promise<LinkedTask[]> {
-  const perCommit = commits.map((commit) => ({ commit, keys: commitKeys(commit.message, branchKey) }));
+async function linkCommits(
+  tx: Tx,
+  repo: RepoRow,
+  commits: CommitData[],
+  branchKey: string | null,
+): Promise<LinkedTask[]> {
+  const perCommit = commits.map((commit) => ({
+    commit,
+    keys: commitKeys(commit.message, branchKey),
+  }));
   const found = await tasksOfKeys(
     tx,
     repo,
@@ -214,7 +330,9 @@ async function linkCommits(tx: Tx, repo: RepoRow, commits: CommitData[], branchK
           kind: "commit" as const,
           ref: commit.sha,
           via,
-          title: (commit.message.split("\n", 1)[0] ?? "").trim().slice(0, COMMIT_TITLE_MAX),
+          title: (commit.message.split("\n", 1)[0] ?? "")
+            .trim()
+            .slice(0, COMMIT_TITLE_MAX),
           author: commit.author,
           occurredAt: commit.committedAt,
         },
@@ -268,9 +386,17 @@ export interface PullRequestOrigin {
  * runs in the delivery's transaction after the PR and its links are saved (never for stale events)
  * and says whether it changed something.
  */
-export type PullRequestAutomation = (tx: Tx, ctx: ActorContext, change: PullRequestChange) => Promise<boolean>;
+export type PullRequestAutomation = (
+  tx: Tx,
+  ctx: ActorContext,
+  change: PullRequestChange,
+) => Promise<boolean>;
 
-const STATE_RANK: Record<PullRequestState, number> = { open: 0, closed: 1, merged: 2 };
+const STATE_RANK: Record<PullRequestState, number> = {
+  open: 0,
+  closed: 1,
+  merged: 2,
+};
 
 /** A pull request as GitHub describes it (from a webhook, or the API's answer when one is opened). */
 export interface PullRequestData {
@@ -300,7 +426,8 @@ export function nextPullRequestState(
   const age = incoming.updatedAt.getTime() - stored.githubUpdatedAt.getTime();
   if (age < 0) return null;
   if (stored.state === "merged") return "merged";
-  if (age === 0 && STATE_RANK[stored.state] > STATE_RANK[incoming.state]) return stored.state;
+  if (age === 0 && STATE_RANK[stored.state] > STATE_RANK[incoming.state])
+    return stored.state;
   return incoming.state;
 }
 
@@ -320,11 +447,20 @@ export async function savePullRequest(
 ): Promise<boolean> {
   // One PR event per repo at a time, so two first events of a PR can't both insert it. (No key
   // update: links and PRs referencing the repo can still be written meanwhile.)
-  await tx.select({ id: repos.id }).from(repos).where(eq(repos.id, repo.id)).for("no key update");
+  await tx
+    .select({ id: repos.id })
+    .from(repos)
+    .where(eq(repos.id, repo.id))
+    .for("no key update");
   const [previous] = await tx
     .select()
     .from(pullRequests)
-    .where(and(eq(pullRequests.repoId, repo.id), eq(pullRequests.number, data.number)))
+    .where(
+      and(
+        eq(pullRequests.repoId, repo.id),
+        eq(pullRequests.number, data.number),
+      ),
+    )
     .for("update")
     .limit(1);
   const state = nextPullRequestState(previous ?? null, data);
@@ -343,20 +479,33 @@ export async function savePullRequest(
     baseBranch: data.baseBranch,
     authorLogin: data.author,
     mergedAt: state === "merged" ? (previous?.mergedAt ?? data.mergedAt) : null,
-    closedAt: state === "open" ? null : (data.closedAt ?? previous?.closedAt ?? null),
+    closedAt:
+      state === "open" ? null : (data.closedAt ?? previous?.closedAt ?? null),
     githubUpdatedAt: data.updatedAt,
     updatedAt: new Date(),
   };
   const [pullRequest] = previous
-    ? await tx.update(pullRequests).set(values).where(eq(pullRequests.id, previous.id)).returning()
+    ? await tx
+        .update(pullRequests)
+        .set(values)
+        .where(eq(pullRequests.id, previous.id))
+        .returning()
     : await tx
         .insert(pullRequests)
-        .values({ ...values, orgId: repo.orgId, repoId: repo.id, number: data.number })
+        .values({
+          ...values,
+          orgId: repo.orgId,
+          repoId: repo.id,
+          number: data.number,
+        })
         .returning();
   if (!pullRequest) throw new Error("Failed to save the pull request");
 
   // Its links follow the latest title, body and branch.
-  const linked = [...found.values()].map((task) => ({ task, via: matches.get(task.key) ?? "body" }));
+  const linked = [...found.values()].map((task) => ({
+    task,
+    via: matches.get(task.key) ?? "body",
+  }));
   const before = await tx
     .select({ id: gitLinks.id, taskId: gitLinks.taskId, via: gitLinks.via })
     .from(gitLinks)
@@ -389,20 +538,43 @@ export async function savePullRequest(
       });
   }
 
-  await announce(tx, ctx.orgId, [...linked.map((l) => l.task), ...(await tasksByIds(tx, removed.map((l) => l.taskId)))]);
-  await automatePullRequest(tx, ctx, { action, pullRequest, previous: previous ?? null, tasks: linked, origin });
+  await announce(tx, ctx.orgId, [
+    ...linked.map((l) => l.task),
+    ...(await tasksByIds(
+      tx,
+      removed.map((l) => l.taskId),
+    )),
+  ]);
+  await automatePullRequest(tx, ctx, {
+    action,
+    pullRequest,
+    previous: previous ?? null,
+    tasks: linked,
+    origin,
+  });
   return true;
 }
 
 // --- Webhook payloads: only the fields used -----------------------------------------------------------
 
-function parsePayload<T extends z.ZodType>(schemaOf: T, event: string, payload: unknown): z.infer<T> {
+function parsePayload<T extends z.ZodType>(
+  schemaOf: T,
+  event: string,
+  payload: unknown,
+): z.infer<T> {
   const parsed = schemaOf.safeParse(payload);
-  if (!parsed.success) throw new DomainError("validation", `Unexpected ${event} payload: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+  if (!parsed.success)
+    throw new DomainError(
+      "validation",
+      `Unexpected ${event} payload: ${parsed.error.issues[0]?.message ?? "invalid"}`,
+    );
   return parsed.data;
 }
 
-const repositoryRef = z.object({ name: z.string(), owner: z.object({ login: z.string() }) });
+const repositoryRef = z.object({
+  name: z.string(),
+  owner: z.object({ login: z.string() }),
+});
 const userRef = z.object({ login: z.string(), type: z.string().optional() });
 const timestamp = z.iso.datetime({ offset: true });
 
@@ -421,7 +593,13 @@ const pushPayload = z.object({
         id: z.string().regex(/^[0-9a-f]{40}$/i),
         message: z.string(),
         timestamp: timestamp.nullable().optional(),
-        author: z.object({ name: z.string().optional(), username: z.string().optional() }).nullable().optional(),
+        author: z
+          .object({
+            name: z.string().optional(),
+            username: z.string().optional(),
+          })
+          .nullable()
+          .optional(),
       }),
     )
     .nullable()
@@ -441,12 +619,17 @@ const pullRequestPayload = z.object({
     merged_at: timestamp.nullable().optional(),
     closed_at: timestamp.nullable().optional(),
     updated_at: timestamp,
-    head: z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }).nullable().optional() }),
+    head: z.object({
+      ref: z.string(),
+      repo: z.object({ full_name: z.string() }).nullable().optional(),
+    }),
     base: z.object({ ref: z.string() }),
     user: userRef.nullable().optional(),
     author_association: z.string().optional(),
   }),
-  repository: repositoryRef.extend({ default_branch: z.string().min(1).optional() }),
+  repository: repositoryRef.extend({
+    default_branch: z.string().min(1).optional(),
+  }),
   sender: userRef.nullable().optional(),
 });
 
@@ -457,7 +640,14 @@ export const handleCreate: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(refPayload, "create", e.payload);
   if (data.ref_type !== "branch") return false;
   const key = taskKeyFromBranch(data.ref);
-  const repo = key ? await findRepoByName(tx, e.ctx.orgId, data.repository.owner.login, data.repository.name) : null;
+  const repo = key
+    ? await findRepoByName(
+        tx,
+        e.ctx.orgId,
+        data.repository.owner.login,
+        data.repository.name,
+      )
+    : null;
   if (!key || !repo) return false;
   const task = (await tasksOfKeys(tx, repo, [key])).get(key);
   if (!task || !(await linkBranch(tx, repo, task, data.ref))) return false;
@@ -469,7 +659,12 @@ export const handleCreate: GithubEventHandler = async (tx, e) => {
 export const handleDelete: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(refPayload, "delete", e.payload);
   if (data.ref_type !== "branch") return false;
-  const repo = await findRepoByName(tx, e.ctx.orgId, data.repository.owner.login, data.repository.name);
+  const repo = await findRepoByName(
+    tx,
+    e.ctx.orgId,
+    data.repository.owner.login,
+    data.repository.name,
+  );
   if (!repo) return false;
   const changed = await markBranchDeleted(tx, repo, data.ref);
   await announce(tx, e.ctx.orgId, changed);
@@ -481,7 +676,12 @@ export const handlePush: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(pushPayload, "push", e.payload);
   if (!data.ref.startsWith(HEADS)) return false;
   const branch = data.ref.slice(HEADS.length);
-  const repo = await findRepoByName(tx, e.ctx.orgId, data.repository.owner.login, data.repository.name);
+  const repo = await findRepoByName(
+    tx,
+    e.ctx.orgId,
+    data.repository.owner.login,
+    data.repository.name,
+  );
   if (!repo) return false;
   if (data.deleted) {
     const changed = await markBranchDeleted(tx, repo, branch);
@@ -491,15 +691,20 @@ export const handlePush: GithubEventHandler = async (tx, e) => {
 
   const changed: LinkedTask[] = [];
   const branchKey = taskKeyFromBranch(branch);
-  const branchTask = branchKey ? (await tasksOfKeys(tx, repo, [branchKey])).get(branchKey) : undefined;
-  if (branchTask && (await linkBranch(tx, repo, branchTask, branch))) changed.push(branchTask);
+  const branchTask = branchKey
+    ? (await tasksOfKeys(tx, repo, [branchKey])).get(branchKey)
+    : undefined;
+  if (branchTask && (await linkBranch(tx, repo, branchTask, branch)))
+    changed.push(branchTask);
   const commits = (data.commits ?? []).slice(0, MAX_PUSH_COMMITS).map((c) => ({
     sha: c.id.toLowerCase(),
     message: c.message,
     author: c.author?.username ?? c.author?.name ?? null,
     committedAt: c.timestamp ? new Date(c.timestamp) : null,
   }));
-  changed.push(...(await linkCommits(tx, repo, commits, branchTask ? branchKey : null)));
+  changed.push(
+    ...(await linkCommits(tx, repo, commits, branchTask ? branchKey : null)),
+  );
   await announce(tx, e.ctx.orgId, changed);
   return changed.length > 0;
 };
@@ -512,9 +717,15 @@ export const handlePush: GithubEventHandler = async (tx, e) => {
 export const handlePullRequest: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(pullRequestPayload, "pull_request", e.payload);
   const pr = data.pull_request;
-  const repo = await findRepoByName(tx, e.ctx.orgId, data.repository.owner.login, data.repository.name);
+  const repo = await findRepoByName(
+    tx,
+    e.ctx.orgId,
+    data.repository.owner.login,
+    data.repository.name,
+  );
   if (!repo) return false;
-  const merged = pr.merged === true || (pr.state === "closed" && pr.merged_at != null);
+  const merged =
+    pr.merged === true || (pr.state === "closed" && pr.merged_at != null);
   const origin: PullRequestOrigin = {
     defaultBranch: data.repository.default_branch ?? repo.defaultBranch,
     trusted: trustedPullRequest({
@@ -547,7 +758,11 @@ export const handlePullRequest: GithubEventHandler = async (tx, e) => {
 const COMMITS_LISTED = 100;
 
 /** What is linked to a task in git: pull requests (recently updated first), branches and commits (newest first). */
-export async function getTaskGit(db: Db, viewer: Viewer, taskKey: string): Promise<TaskGitDto> {
+export async function getTaskGit(
+  db: Db,
+  viewer: Viewer,
+  taskKey: string,
+): Promise<TaskGitDto> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
   const repo = { owner: repos.owner, name: repos.name };
 
@@ -569,10 +784,15 @@ export async function getTaskGit(db: Db, viewer: Viewer, taskKey: string): Promi
     .from(gitLinks)
     .innerJoin(repos, eq(repos.id, gitLinks.repoId))
     .where(and(eq(gitLinks.taskId, task.id), eq(gitLinks.kind, "commit")))
-    .orderBy(sql`${gitLinks.occurredAt} desc nulls last`, desc(gitLinks.createdAt))
+    .orderBy(
+      sql`${gitLinks.occurredAt} desc nulls last`,
+      desc(gitLinks.createdAt),
+    )
     .limit(COMMITS_LISTED);
 
-  const pullRequestDtos: PullRequestDto[] = prRows.map(({ repo, pr, via }) => toPullRequestDto(repo, pr, via));
+  const pullRequestDtos: PullRequestDto[] = prRows.map(({ repo, pr, via }) =>
+    toPullRequestDto(repo, pr, via),
+  );
   const branches: GitBranchDto[] = branchRows.map(({ repo, link }) => ({
     repo: repoFullName(repo),
     name: link.ref,
@@ -589,5 +809,10 @@ export async function getTaskGit(db: Db, viewer: Viewer, taskKey: string): Promi
     committedAt: link.occurredAt?.toISOString() ?? null,
     via: link.via,
   }));
-  return { taskKey: `${projectKey}-${task.number}`, pullRequests: pullRequestDtos, branches, commits };
+  return {
+    taskKey: `${projectKey}-${task.number}`,
+    pullRequests: pullRequestDtos,
+    branches,
+    commits,
+  };
 }

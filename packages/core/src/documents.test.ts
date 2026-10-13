@@ -34,13 +34,11 @@ run("documents", () => {
   let ctx: ActorContext;
 
   beforeAll(async () => {
-    await db
-      .insert(schema.user)
-      .values({
-        id: user.id,
-        name: user.name,
-        email: `${user.id}@example.com`,
-      });
+    await db.insert(schema.user).values({
+      id: user.id,
+      name: user.name,
+      email: `${user.id}@example.com`,
+    });
     const { organization, actor } = await createOrganization(db, user, {
       name: "Docs Org",
       slug,
@@ -199,11 +197,24 @@ run("documents", () => {
   });
 
   test("diffs two versions line by line; without to, against the current one", async () => {
-    const doc = await createDocument(db, ctx, { title: "Diffed", content: "# Plan\n\n- one\n- two\n" });
-    await updateDocument(db, ctx, doc.id, { baseVersion: 1, content: "# Plan\n\n- one\n- 2\n- three\n" });
-    await updateDocument(db, ctx, doc.id, { baseVersion: 2, title: "Diffed plan", content: "# Plan\n\n- 2\n- three\n" });
+    const doc = await createDocument(db, ctx, {
+      title: "Diffed",
+      content: "# Plan\n\n- one\n- two\n",
+    });
+    await updateDocument(db, ctx, doc.id, {
+      baseVersion: 1,
+      content: "# Plan\n\n- one\n- 2\n- three\n",
+    });
+    await updateDocument(db, ctx, doc.id, {
+      baseVersion: 2,
+      title: "Diffed plan",
+      content: "# Plan\n\n- 2\n- three\n",
+    });
 
-    const diff = await diffDocumentVersions(db, ctx, doc.id, { from: 1, to: 2 });
+    const diff = await diffDocumentVersions(db, ctx, doc.id, {
+      from: 1,
+      to: 2,
+    });
     expect(diff).toMatchObject({
       documentId: doc.id,
       from: { version: 1, title: "Diffed", authorId: ctx.actorId },
@@ -222,21 +233,48 @@ run("documents", () => {
     ]);
 
     // Query strings work as they come from the API; no `to` is the current version.
-    const toCurrent = await diffDocumentVersions(db, ctx, doc.id, { from: "2" });
-    expect(toCurrent).toMatchObject({ from: { version: 2 }, to: { version: 3, title: "Diffed plan" }, added: 0, removed: 1 });
+    const toCurrent = await diffDocumentVersions(db, ctx, doc.id, {
+      from: "2",
+    });
+    expect(toCurrent).toMatchObject({
+      from: { version: 2 },
+      to: { version: 3, title: "Diffed plan" },
+      added: 0,
+      removed: 1,
+    });
     // Backwards works too.
-    expect(await diffDocumentVersions(db, ctx, doc.id, { from: 3, to: 1 })).toMatchObject({ added: 2, removed: 2 });
-    expect((await diffDocumentVersions(db, ctx, doc.id, { from: 2, to: 2 })).hunks).toEqual([]);
+    expect(
+      await diffDocumentVersions(db, ctx, doc.id, { from: 3, to: 1 }),
+    ).toMatchObject({ added: 2, removed: 2 });
+    expect(
+      (await diffDocumentVersions(db, ctx, doc.id, { from: 2, to: 2 })).hunks,
+    ).toEqual([]);
 
-    await expect(diffDocumentVersions(db, ctx, doc.id, { from: 9 })).rejects.toMatchObject({ code: "not_found" });
-    await expect(diffDocumentVersions(db, ctx, doc.id, { from: 1, to: 4 })).rejects.toMatchObject({ code: "not_found" });
-    await expect(diffDocumentVersions(db, ctx, doc.id, {})).rejects.toMatchObject({ code: "validation" });
-    await expect(diffDocumentVersions(db, ctx, doc.id, { from: "x" })).rejects.toMatchObject({ code: "validation" });
-    await expect(diffDocumentVersions(db, ctx, crypto.randomUUID(), { from: 1 })).rejects.toMatchObject({
+    await expect(
+      diffDocumentVersions(db, ctx, doc.id, { from: 9 }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      diffDocumentVersions(db, ctx, doc.id, { from: 1, to: 4 }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      diffDocumentVersions(db, ctx, doc.id, {}),
+    ).rejects.toMatchObject({ code: "validation" });
+    await expect(
+      diffDocumentVersions(db, ctx, doc.id, { from: "x" }),
+    ).rejects.toMatchObject({ code: "validation" });
+    await expect(
+      diffDocumentVersions(db, ctx, crypto.randomUUID(), { from: 1 }),
+    ).rejects.toMatchObject({
       code: "not_found",
     });
     // Guests read, so they diff.
-    expect((await diffDocumentVersions(db, { ...ctx, role: "guest" }, doc.id, { from: 1 })).to.version).toBe(3);
+    expect(
+      (
+        await diffDocumentVersions(db, { ...ctx, role: "guest" }, doc.id, {
+          from: 1,
+        })
+      ).to.version,
+    ).toBe(3);
   });
 
   test("concurrent saves from the same version: one wins, the other conflicts", async () => {
@@ -254,15 +292,25 @@ run("documents", () => {
       title: "Edits",
       content: "# Edits\n\nIntro.\n\n## Решения\n\nOld.\n\n## Next\n\nLater.\n",
     });
-    const v2 = await editDocument(db, ctx, doc.id, { edits: [{ old: "Intro.", new: "Hello." }] });
-    expect(v2).toMatchObject({ version: 2, content: expect.stringContaining("Hello.") });
+    const v2 = await editDocument(db, ctx, doc.id, {
+      edits: [{ old: "Intro.", new: "Hello." }],
+    });
+    expect(v2).toMatchObject({
+      version: 2,
+      content: expect.stringContaining("Hello."),
+    });
 
     const v3 = await editDocument(db, ctx, doc.id, {
       baseVersion: 2,
-      edits: [{ section: "## Решения", content: "New." }, { append: "See [[Plan]]." }],
+      edits: [
+        { section: "## Решения", content: "New." },
+        { append: "See [[Plan]]." },
+      ],
     });
     expect(v3.version).toBe(3);
-    expect(v3.content).toBe("# Edits\n\nHello.\n\n## Решения\n\nNew.\n\n## Next\n\nLater.\nSee [[Plan]].");
+    expect(v3.content).toBe(
+      "# Edits\n\nHello.\n\n## Решения\n\nNew.\n\n## Next\n\nLater.\nSee [[Plan]].",
+    );
     const links = await db
       .select({ target: schema.documentLinks.target })
       .from(schema.documentLinks)
@@ -270,22 +318,45 @@ run("documents", () => {
     expect(links.map((l) => l.target)).toEqual(["Plan"]);
 
     await expect(
-      editDocument(db, ctx, doc.id, { baseVersion: 2, edits: [{ append: "stale" }] }),
-    ).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("version 3") });
+      editDocument(db, ctx, doc.id, {
+        baseVersion: 2,
+        edits: [{ append: "stale" }],
+      }),
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("version 3"),
+    });
     await expect(
       editDocument(db, ctx, doc.id, { edits: [{ old: "Intro.", new: "x" }] }),
     ).rejects.toMatchObject({ code: "conflict" });
     await expect(
-      editDocument(db, ctx, doc.id, { edits: [{ append: "ok" }, { old: "missing", new: "x" }] }),
-    ).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("Edit 2") });
-    await expect(editDocument(db, ctx, doc.id, { edits: [] })).rejects.toMatchObject({ code: "validation" });
+      editDocument(db, ctx, doc.id, {
+        edits: [{ append: "ok" }, { old: "missing", new: "x" }],
+      }),
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("Edit 2"),
+    });
     await expect(
-      editDocument(db, ctx, doc.id, { edits: [{ old: "a", new: "b", append: "c" }] }),
+      editDocument(db, ctx, doc.id, { edits: [] }),
+    ).rejects.toMatchObject({ code: "validation" });
+    await expect(
+      editDocument(db, ctx, doc.id, {
+        edits: [{ old: "a", new: "b", append: "c" }],
+      }),
     ).rejects.toMatchObject({ code: "validation" });
     // A no-op edit keeps the version.
-    expect((await editDocument(db, ctx, doc.id, { edits: [{ old: "New.", new: "New." }] })).version).toBe(3);
+    expect(
+      (
+        await editDocument(db, ctx, doc.id, {
+          edits: [{ old: "New.", new: "New." }],
+        })
+      ).version,
+    ).toBe(3);
 
-    expect((await listDocumentVersions(db, ctx.orgId, doc.id)).map((v) => v.version)).toEqual([3, 2, 1]);
+    expect(
+      (await listDocumentVersions(db, ctx.orgId, doc.id)).map((v) => v.version),
+    ).toEqual([3, 2, 1]);
     const [activity] = await db
       .select({ changes: schema.activity.changes })
       .from(schema.activity)
@@ -298,23 +369,39 @@ run("documents", () => {
       )
       .orderBy(desc(schema.activity.id))
       .limit(1);
-    expect(activity?.changes).toMatchObject({ version: [2, 3], fields: ["content"], edits: ["section", "append"] });
+    expect(activity?.changes).toMatchObject({
+      version: [2, 3],
+      fields: ["content"],
+      edits: ["section", "append"],
+    });
   });
 
   test("concurrent partial edits without baseVersion both apply", async () => {
-    const doc = await createDocument(db, ctx, { title: "Shared", content: "a\nb\n" });
+    const doc = await createDocument(db, ctx, {
+      title: "Shared",
+      content: "a\nb\n",
+    });
     await Promise.all([
       editDocument(db, ctx, doc.id, { edits: [{ old: "a", new: "A" }] }),
       editDocument(db, ctx, doc.id, { edits: [{ old: "b", new: "B" }] }),
     ]);
-    expect(await getDocument(db, ctx.orgId, doc.id)).toMatchObject({ version: 3, content: "A\nB\n" });
+    expect(await getDocument(db, ctx.orgId, doc.id)).toMatchObject({
+      version: 3,
+      content: "A\nB\n",
+    });
   });
 
   test("an edit can't push a document over 1 MB", async () => {
-    const doc = await createDocument(db, ctx, { title: "Big", content: "x".repeat(999_990) });
+    const doc = await createDocument(db, ctx, {
+      title: "Big",
+      content: "x".repeat(999_990),
+    });
     await expect(
       editDocument(db, ctx, doc.id, { edits: [{ append: "y".repeat(20) }] }),
-    ).rejects.toMatchObject({ code: "validation", message: expect.stringContaining("1 MB") });
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringContaining("1 MB"),
+    });
   });
 
   test("guests read but can't write", async () => {
@@ -424,7 +511,8 @@ run("documents", () => {
         (await getDocumentVersion(db, agent(), visible.id, 1)).version,
       ).toBe(1);
       expect(
-        (await diffDocumentVersions(db, agent(), visible.id, { from: 1 })).hunks,
+        (await diffDocumentVersions(db, agent(), visible.id, { from: 1 }))
+          .hunks,
       ).toEqual([]);
     }
 
@@ -435,36 +523,66 @@ run("documents", () => {
   });
 
   test("moves keep id and versions; task documents leave their task; activity is recorded", async () => {
-    const doc = await createDocument(db, ctx, { title: "Plan", project: "SPI" });
+    const doc = await createDocument(db, ctx, {
+      title: "Plan",
+      project: "SPI",
+    });
     await updateDocument(db, ctx, doc.id, { baseVersion: 1, content: "v2" });
 
     const moved = await moveDocument(db, ctx, doc.id, { project: "oth" });
-    expect(moved).toMatchObject({ id: doc.id, projectKey: "OTH", taskKey: null, version: 2, content: "v2" });
+    expect(moved).toMatchObject({
+      id: doc.id,
+      projectKey: "OTH",
+      taskKey: null,
+      version: 2,
+      content: "v2",
+    });
     expect(await listDocumentVersions(db, ctx, doc.id)).toHaveLength(2);
-    expect((await listDocuments(db, ctx, { project: "SPI" })).map((d) => d.id)).not.toContain(doc.id);
-    expect((await listDocuments(db, ctx, { project: "OTH" })).map((d) => d.id)).toContain(doc.id);
+    expect(
+      (await listDocuments(db, ctx, { project: "SPI" })).map((d) => d.id),
+    ).not.toContain(doc.id);
+    expect(
+      (await listDocuments(db, ctx, { project: "OTH" })).map((d) => d.id),
+    ).toContain(doc.id);
 
     // Already there: nothing changes.
     await moveDocument(db, ctx, doc.id, { project: "OTH" });
 
     const orgWide = await moveDocument(db, ctx, doc.id, { project: null });
-    expect(orgWide).toMatchObject({ id: doc.id, projectKey: null, taskKey: null, version: 2 });
+    expect(orgWide).toMatchObject({
+      id: doc.id,
+      projectKey: null,
+      taskKey: null,
+      version: 2,
+    });
 
     const entries = await db
       .select()
       .from(schema.activity)
-      .where(and(eq(schema.activity.entityId, doc.id), eq(schema.activity.action, "document.moved")))
+      .where(
+        and(
+          eq(schema.activity.entityId, doc.id),
+          eq(schema.activity.action, "document.moved"),
+        ),
+      )
       .orderBy(asc(schema.activity.id));
     expect(entries.map((e) => e.changes)).toEqual([
       { title: "Plan", project: ["SPI", "OTH"] },
       { title: "Plan", project: ["OTH", null] },
     ]);
 
-    const onTask = await createDocument(db, ctx, { title: "Task doc", task: "SPI-1" });
+    const onTask = await createDocument(db, ctx, {
+      title: "Task doc",
+      task: "SPI-1",
+    });
     const detached = await moveDocument(db, ctx, onTask.id, { project: "SPI" });
     expect(detached).toMatchObject({ projectKey: "SPI", taskKey: null });
-    await expect(moveDocument(db, ctx, doc.id, { project: "NOPE" })).rejects.toMatchObject({ code: "not_found" });
-    await expect(moveDocument(db, { ...ctx, role: "guest" }, doc.id, { project: "SPI" })).rejects.toMatchObject({
+    await expect(
+      moveDocument(db, ctx, doc.id, { project: "NOPE" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      moveDocument(db, { ...ctx, role: "guest" }, doc.id, { project: "SPI" }),
+    ).rejects.toMatchObject({
       code: "forbidden",
     });
   });
@@ -472,33 +590,81 @@ run("documents", () => {
   test("scoped agents need access to both the source and the target", async () => {
     const [agent] = await db
       .insert(schema.actors)
-      .values({ orgId: ctx.orgId, type: "agent", name: "Scoped", handle: `scoped-${Date.now()}` })
+      .values({
+        orgId: ctx.orgId,
+        type: "agent",
+        name: "Scoped",
+        handle: `scoped-${Date.now()}`,
+      })
       .returning();
     if (!agent) throw new Error("no agent");
-    const [spi] = await db.select().from(schema.projects).where(and(eq(schema.projects.orgId, ctx.orgId), eq(schema.projects.key, "SPI")));
+    const [spi] = await db
+      .select()
+      .from(schema.projects)
+      .where(
+        and(
+          eq(schema.projects.orgId, ctx.orgId),
+          eq(schema.projects.key, "SPI"),
+        ),
+      );
     if (!spi) throw new Error("no project");
-    await db.insert(schema.agentProjects).values({ agentId: agent.id, projectId: spi.id });
-    const scoped: ActorContext = { ...ctx, actorId: agent.id, role: "member", source: "mcp" };
+    await db
+      .insert(schema.agentProjects)
+      .values({ agentId: agent.id, projectId: spi.id });
+    const scoped: ActorContext = {
+      ...ctx,
+      actorId: agent.id,
+      role: "member",
+      source: "mcp",
+    };
 
-    const inOther = await createDocument(db, ctx, { title: "Hidden", project: "OTH" });
-    const inSpi = await createDocument(db, ctx, { title: "Visible", project: "SPI" });
-    await expect(moveDocument(db, scoped, inOther.id, { project: "SPI" })).rejects.toMatchObject({ code: "not_found" });
-    await expect(moveDocument(db, scoped, inSpi.id, { project: "OTH" })).rejects.toMatchObject({ code: "not_found" });
-    expect(await moveDocument(db, scoped, inSpi.id, { project: null })).toMatchObject({ projectKey: null });
+    const inOther = await createDocument(db, ctx, {
+      title: "Hidden",
+      project: "OTH",
+    });
+    const inSpi = await createDocument(db, ctx, {
+      title: "Visible",
+      project: "SPI",
+    });
+    await expect(
+      moveDocument(db, scoped, inOther.id, { project: "SPI" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      moveDocument(db, scoped, inSpi.id, { project: "OTH" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(
+      await moveDocument(db, scoped, inSpi.id, { project: null }),
+    ).toMatchObject({ projectKey: null });
   });
 
   test("a scoped agent with no projects left fails closed when moving", async () => {
     const [agent] = await db
       .insert(schema.actors)
-      .values({ orgId: ctx.orgId, type: "agent", name: "Emptied", handle: `emptied-${Date.now()}` })
+      .values({
+        orgId: ctx.orgId,
+        type: "agent",
+        name: "Emptied",
+        handle: `emptied-${Date.now()}`,
+      })
       .returning();
     if (!agent) throw new Error("no agent");
-    await db.insert(schema.agents).values({ actorId: agent.id, ownerId: ctx.actorId, scoped: true });
-    const scoped: ActorContext = { ...ctx, actorId: agent.id, role: "member", source: "mcp" };
+    await db
+      .insert(schema.agents)
+      .values({ actorId: agent.id, ownerId: ctx.actorId, scoped: true });
+    const scoped: ActorContext = {
+      ...ctx,
+      actorId: agent.id,
+      role: "member",
+      source: "mcp",
+    };
 
     const orgWide = await createDocument(db, ctx, { title: "Shared" });
-    await expect(moveDocument(db, scoped, orgWide.id, { project: "SPI" })).rejects.toMatchObject({ code: "not_found" });
-    expect(await moveDocument(db, scoped, orgWide.id, { project: null })).toMatchObject({
+    await expect(
+      moveDocument(db, scoped, orgWide.id, { project: "SPI" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(
+      await moveDocument(db, scoped, orgWide.id, { project: null }),
+    ).toMatchObject({
       id: orgWide.id,
       projectKey: null,
       taskKey: null,
@@ -507,23 +673,37 @@ run("documents", () => {
     const moves = await db
       .select()
       .from(schema.activity)
-      .where(and(eq(schema.activity.entityId, orgWide.id), eq(schema.activity.action, "document.moved")));
+      .where(
+        and(
+          eq(schema.activity.entityId, orgWide.id),
+          eq(schema.activity.action, "document.moved"),
+        ),
+      );
     expect(moves).toHaveLength(0);
   });
 
   test("documents can't be created or moved into an archived project, but can leave one", async () => {
     await createProject(db, ctx, { name: "Old", key: "OLD" });
-    const inOld = await createDocument(db, ctx, { title: "Legacy", project: "OLD" });
+    const inOld = await createDocument(db, ctx, {
+      title: "Legacy",
+      project: "OLD",
+    });
     const free = await createDocument(db, ctx, { title: "Free" });
     await archiveProject(db, ctx, "OLD", true);
-    await expect(createDocument(db, ctx, { title: "New", project: "OLD" })).rejects.toMatchObject({
+    await expect(
+      createDocument(db, ctx, { title: "New", project: "OLD" }),
+    ).rejects.toMatchObject({
       code: "validation",
       message: "Project OLD is archived",
     });
-    await expect(moveDocument(db, ctx, free.id, { project: "OLD" })).rejects.toMatchObject({
+    await expect(
+      moveDocument(db, ctx, free.id, { project: "OLD" }),
+    ).rejects.toMatchObject({
       code: "validation",
       message: "Project OLD is archived",
     });
-    expect(await moveDocument(db, ctx, inOld.id, { project: "SPI" })).toMatchObject({ projectKey: "SPI" });
+    expect(
+      await moveDocument(db, ctx, inOld.id, { project: "SPI" }),
+    ).toMatchObject({ projectKey: "SPI" });
   });
 });

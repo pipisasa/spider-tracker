@@ -40,7 +40,10 @@ export function DuplicateDialog({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = markDuplicateInput.safeParse({ of: of.trim().toUpperCase(), comment: comment.trim() || undefined });
+    const parsed = markDuplicateInput.safeParse({
+      of: of.trim().toUpperCase(),
+      comment: comment.trim() || undefined,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid input");
       return;
@@ -49,7 +52,9 @@ export function DuplicateDialog({
       { taskKey, input: parsed.data },
       {
         onSuccess: () => {
-          toast.success(`${taskKey} marked as a duplicate of ${parsed.data.of}`);
+          toast.success(
+            `${taskKey} marked as a duplicate of ${parsed.data.of}`,
+          );
           onOpenChange(false);
           reset();
         },
@@ -71,7 +76,8 @@ export function DuplicateDialog({
           <DialogHeader>
             <DialogTitle>Duplicate of…</DialogTitle>
             <DialogDescription>
-              Links {taskKey} to the original, moves it to Canceled and leaves a comment naming the original.
+              Links {taskKey} to the original, moves it to Canceled and leaves a
+              comment naming the original.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
@@ -86,7 +92,12 @@ export function DuplicateDialog({
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="duplicate-comment">Comment (optional)</Label>
-            <Textarea id="duplicate-comment" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} />
+            <Textarea
+              id="duplicate-comment"
+              rows={3}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+            />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>

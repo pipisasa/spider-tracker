@@ -26,11 +26,15 @@ function subscribe(listener: () => void) {
 
 const getNow = () => now;
 
-const projectKeyOf = (taskKey: string) => taskKey.slice(0, taskKey.lastIndexOf("-"));
+const projectKeyOf = (taskKey: string) =>
+  taskKey.slice(0, taskKey.lastIndexOf("-"));
 
 /** Ids of the agents working on a task right now. The project's presence is fetched once and shared. */
 export function useWorkingNow(orgSlug: string, taskKey: string): string[] {
   const { data } = useQuery(presenceQuery(orgSlug, projectKeyOf(taskKey)));
   const clock = useSyncExternalStore(subscribe, getNow);
-  return useMemo(() => workingActorIds(data ?? [], taskKey, clock), [data, taskKey, clock]);
+  return useMemo(
+    () => workingActorIds(data ?? [], taskKey, clock),
+    [data, taskKey, clock],
+  );
 }

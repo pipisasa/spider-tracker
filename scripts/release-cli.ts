@@ -17,7 +17,9 @@ const dryRun = process.argv.includes("--dry-run");
 const releaseFlag = process.argv.indexOf("--release");
 const releaseKey = releaseFlag >= 0 ? process.argv[releaseFlag + 1] : undefined;
 if (releaseFlag >= 0 && (!releaseKey || releaseKey.startsWith("-"))) {
-  console.error("--release needs the release's task key, e.g. --release ST-120");
+  console.error(
+    "--release needs the release's task key, e.g. --release ST-120",
+  );
   process.exit(2);
 }
 const targets = [
@@ -60,7 +62,16 @@ const head = await output(["git", "rev-parse", "HEAD"]);
 let changes = "";
 if (releaseKey) {
   const notes = JSON.parse(
-    await output(["bun", "backend/cli/src/index.ts", "release", "notes", releaseKey, "--app", "cli", "--json"]),
+    await output([
+      "bun",
+      "backend/cli/src/index.ts",
+      "release",
+      "notes",
+      releaseKey,
+      "--app",
+      "cli",
+      "--json",
+    ]),
   ) as { tag: string | null; markdown: string };
   if (notes.tag !== tag) {
     console.error(

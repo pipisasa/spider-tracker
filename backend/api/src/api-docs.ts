@@ -7,11 +7,15 @@ import { Hono } from "hono";
 const SPEC_URL = "/openapi.json";
 
 const SWAGGER_UI = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.15";
-const SWAGGER_UI_JS_SRI = "sha384-m7zaGj7MPzU+G4lz2eyy73GxK9bbRDr9bB2CSdj8wodg2wu/Wnt6wsoLP3JD+RS9";
-const SWAGGER_UI_CSS_SRI = "sha384-fgyWYkUAamzuI8mJFu/xpRP0JWCJRwkwUwsYDoOYVHUJ8NQE5cENn8ib3ppwFFSX";
+const SWAGGER_UI_JS_SRI =
+  "sha384-m7zaGj7MPzU+G4lz2eyy73GxK9bbRDr9bB2CSdj8wodg2wu/Wnt6wsoLP3JD+RS9";
+const SWAGGER_UI_CSS_SRI =
+  "sha384-fgyWYkUAamzuI8mJFu/xpRP0JWCJRwkwUwsYDoOYVHUJ8NQE5cENn8ib3ppwFFSX";
 
-const SCALAR_JS = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.68.0/dist/browser/standalone.js";
-const SCALAR_JS_SRI = "sha384-PhSzhE9ihf7z/cKeRSKAeP+oJMMzotyFv0EjvNYgL798a2ODBQVuJLTP4Klle6IB";
+const SCALAR_JS =
+  "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.68.0/dist/browser/standalone.js";
+const SCALAR_JS_SRI =
+  "sha384-PhSzhE9ihf7z/cKeRSKAeP+oJMMzotyFv0EjvNYgL798a2ODBQVuJLTP4Klle6IB";
 
 const TITLE = "Spider Tracker API";
 

@@ -33,14 +33,21 @@ const env = loadEnv({
 });
 
 const db = createDb(env.DATABASE_URL);
-const app = createApp({ db, auth: createAuth(db, env, { async sendMagicLink() {} }), env });
+const app = createApp({
+  db,
+  auth: createAuth(db, env, { async sendMagicLink() {} }),
+  env,
+});
 
 afterAll(() => db.$client.end());
 
 test("/mcp requires an agent API key", async () => {
   const res = await app.request("/mcp", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
   });
   expect(res.status).toBe(401);
@@ -51,21 +58,35 @@ test("/mcp requires an agent API key", async () => {
 
 /** An MCP client whose HTTP requests go straight to the app. */
 async function connect(secret: string) {
-  const transport = new StreamableHTTPClientTransport(new URL(`${env.API_ORIGIN}/mcp`), {
-    fetch: async (url, init) => app.request(url, init),
-    requestInit: { headers: { Authorization: `Bearer ${secret}` } },
-  });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${env.API_ORIGIN}/mcp`),
+    {
+      fetch: async (url, init) => app.request(url, init),
+      requestInit: { headers: { Authorization: `Bearer ${secret}` } },
+    },
+  );
   const client = new Client({ name: "spider-test", version: "0.0.0" });
   await client.connect(transport);
   return client;
 }
 
-type ToolText = { content: { type: string; text: string }[]; isError?: boolean };
+type ToolText = {
+  content: { type: string; text: string }[];
+  isError?: boolean;
+};
 
-async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
+async function call(
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+) {
   const result = (await client.callTool({ name, arguments: args })) as ToolText;
   const text = result.content[0]?.text ?? "";
-  return { isError: result.isError ?? false, text, json: () => JSON.parse(text) as Record<string, unknown> };
+  return {
+    isError: result.isError ?? false,
+    text,
+    json: () => JSON.parse(text) as Record<string, unknown>,
+  };
 }
 
 const withDb = databaseUrl ? describe : describe.skip;
@@ -73,7 +94,10 @@ const withDb = databaseUrl ? describe : describe.skip;
 withDb("MCP server", () => {
   const stamp = Date.now();
   const slugs = [`mcp-${stamp}`, `mcp-other-${stamp}`];
-  const userIds = [`test-${crypto.randomUUID()}`, `test-${crypto.randomUUID()}`];
+  const userIds = [
+    `test-${crypto.randomUUID()}`,
+    `test-${crypto.randomUUID()}`,
+  ];
   let client: Client;
   let otherClient: Client;
   const agentIds: string[] = [];
@@ -83,18 +107,27 @@ withDb("MCP server", () => {
   /** Creates an org with a project and an agent key; returns the key's secret. */
   async function setUpOrg(i: number) {
     const userId = userIds[i] ?? "";
-    await db.insert(schema.user).values({ id: userId, name: "Owner", email: `${userId}@example.com` });
+    await db
+      .insert(schema.user)
+      .values({ id: userId, name: "Owner", email: `${userId}@example.com` });
     const { organization, actor } = await createOrganization(
       db,
       { id: userId, name: "Owner", email: `owner-${i}@example.com` },
       { name: "MCP Org", slug: slugs[i] },
     );
-    const ctx: ActorContext = { orgId: organization.id, actorId: actor.id, role: "owner", source: "ui" };
+    const ctx: ActorContext = {
+      orgId: organization.id,
+      actorId: actor.id,
+      role: "owner",
+      source: "ui",
+    };
     ownerCtxs[i] = ctx;
     await createProject(db, ctx, { name: "Spider", key: "SPI" });
     const agent = await createAgent(db, ctx, { name: "Claude Code" });
     agentIds[i] = agent.actor.id;
-    const { secret } = await createApiKey(db, ctx, agent.actor.id, { name: "test" });
+    const { secret } = await createApiKey(db, ctx, agent.actor.id, {
+      name: "test",
+    });
     secrets[i] = secret;
     return secret;
   }
@@ -107,7 +140,9 @@ withDb("MCP server", () => {
   afterAll(async () => {
     await client.close();
     await otherClient.close();
-    await db.delete(schema.organizations).where(inArray(schema.organizations.slug, slugs));
+    await db
+      .delete(schema.organizations)
+      .where(inArray(schema.organizations.slug, slugs));
     await db.delete(schema.user).where(inArray(schema.user.id, userIds));
   });
 
@@ -195,109 +230,304 @@ withDb("MCP server", () => {
       assignees: ["@owner-0"],
     });
     expect(created.isError).toBe(false);
-    expect(created.json()).toMatchObject({ key: "SPI-1", status: { name: "Todo", category: "todo" }, priority: 2, assignees: ["owner-0"] });
+    expect(created.json()).toMatchObject({
+      key: "SPI-1",
+      status: { name: "Todo", category: "todo" },
+      priority: 2,
+      assignees: ["owner-0"],
+    });
 
     const started = await call(client, "start_task", { key: "SPI-1" });
-    expect(started.json()).toMatchObject({ status: { name: "In Progress" }, assignees: ["owner-0", "claude-code"] });
+    expect(started.json()).toMatchObject({
+      status: { name: "In Progress" },
+      assignees: ["owner-0", "claude-code"],
+    });
 
     const task = await call(client, "get_task", { key: "spi-1" });
-    expect(task.json()).toMatchObject({ key: "SPI-1", title: "Wire up MCP", status: { name: "In Progress" }, subtasks: [], relations: [], documents: [] });
+    expect(task.json()).toMatchObject({
+      key: "SPI-1",
+      title: "Wire up MCP",
+      status: { name: "In Progress" },
+      subtasks: [],
+      relations: [],
+      documents: [],
+    });
     // The web page's address (ST-115).
-    expect(task.json()).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1` });
+    expect(task.json()).toMatchObject({
+      url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1`,
+    });
 
-    const mine = await call(client, "list_tasks", { projectKey: "SPI", assignee: "me", status: "in progress" });
+    const mine = await call(client, "list_tasks", {
+      projectKey: "SPI",
+      assignee: "me",
+      status: "in progress",
+    });
     expect(mine.json()).toMatchObject({ total: 1, items: [{ key: "SPI-1" }] });
-    const done = await call(client, "list_tasks", { projectKey: "SPI", status: "done" });
+    const done = await call(client, "list_tasks", {
+      projectKey: "SPI",
+      status: "done",
+    });
     expect(done.json()).toMatchObject({ total: 0 });
 
-    const [org] = await db.select().from(schema.organizations).where(eq(schema.organizations.slug, slugs[0] ?? ""));
+    const [org] = await db
+      .select()
+      .from(schema.organizations)
+      .where(eq(schema.organizations.slug, slugs[0] ?? ""));
     const rows = await db
-      .select({ action: schema.activity.action, source: schema.activity.source })
+      .select({
+        action: schema.activity.action,
+        source: schema.activity.source,
+      })
       .from(schema.activity)
-      .where(and(eq(schema.activity.orgId, org?.id ?? ""), eq(schema.activity.entityType, "task")));
-    expect(rows.map((r) => r.action).sort()).toEqual(["task.created", "task.updated"]);
+      .where(
+        and(
+          eq(schema.activity.orgId, org?.id ?? ""),
+          eq(schema.activity.entityType, "task"),
+        ),
+      );
+    expect(rows.map((r) => r.action).sort()).toEqual([
+      "task.created",
+      "task.updated",
+    ]);
     expect(rows.every((r) => r.source === "mcp")).toBe(true);
   });
 
   test("tags by name on create and update; unknown names list the existing ones", async () => {
-    expect((await call(client, "create_tag", { name: "infra" })).isError).toBeFalsy();
-    const created = await call(client, "create_task", { projectKey: "SPI", title: "Tagged", tags: ["Infra"] });
+    expect(
+      (await call(client, "create_tag", { name: "infra" })).isError,
+    ).toBeFalsy();
+    const created = await call(client, "create_task", {
+      projectKey: "SPI",
+      title: "Tagged",
+      tags: ["Infra"],
+    });
     expect(created.json()).toMatchObject({ tags: ["infra"] });
-    const bad = await call(client, "update_task", { key: created.json().key, tags: ["nope"] });
+    const bad = await call(client, "update_task", {
+      key: created.json().key,
+      tags: ["nope"],
+    });
     expect(bad).toMatchObject({ isError: true });
     expect(bad.text).toContain("infra");
-    expect(JSON.parse((await call(client, "list_tags")).text)).toEqual([{ name: "infra", color: null }]);
+    expect(JSON.parse((await call(client, "list_tags")).text)).toEqual([
+      { name: "infra", color: null },
+    ]);
 
-    const listed = await call(client, "list_tasks", { projectKey: "SPI", tags: ["INFRA"], priority: [0, 1] });
-    expect(listed.json()).toMatchObject({ total: 1, items: [{ title: "Tagged", tags: ["infra"] }] });
-    expect((await call(client, "list_tasks", { projectKey: "SPI", tags: ["infra"], priority: [2] })).json()).toMatchObject({
+    const listed = await call(client, "list_tasks", {
+      projectKey: "SPI",
+      tags: ["INFRA"],
+      priority: [0, 1],
+    });
+    expect(listed.json()).toMatchObject({
+      total: 1,
+      items: [{ title: "Tagged", tags: ["infra"] }],
+    });
+    expect(
+      (
+        await call(client, "list_tasks", {
+          projectKey: "SPI",
+          tags: ["infra"],
+          priority: [2],
+        })
+      ).json(),
+    ).toMatchObject({
       total: 0,
     });
     // tagMatch: all by default, any on request; status and assignee also take arrays.
-    expect((await call(client, "create_tag", { name: "docs" })).isError).toBeFalsy();
-    await call(client, "create_task", { projectKey: "SPI", title: "Docs only", tags: ["docs"] });
+    expect(
+      (await call(client, "create_tag", { name: "docs" })).isError,
+    ).toBeFalsy();
+    await call(client, "create_task", {
+      projectKey: "SPI",
+      title: "Docs only",
+      tags: ["docs"],
+    });
     const both = { projectKey: "SPI", tags: ["infra", "docs"] };
-    expect((await call(client, "list_tasks", both)).json()).toMatchObject({ total: 0 });
-    const any = (await call(client, "list_tasks", { ...both, tagMatch: "any", status: ["todo", "backlog"], assignee: ["none", "@me"] })).json() as {
+    expect((await call(client, "list_tasks", both)).json()).toMatchObject({
+      total: 0,
+    });
+    const any = (
+      await call(client, "list_tasks", {
+        ...both,
+        tagMatch: "any",
+        status: ["todo", "backlog"],
+        assignee: ["none", "@me"],
+      })
+    ).json() as {
       items: { title: string }[];
     };
-    expect(any.items.map((t) => t.title).sort()).toEqual(["Docs only", "Tagged"]);
-    const unknownTag = await call(client, "list_tasks", { projectKey: "SPI", tags: ["nope"] });
+    expect(any.items.map((t) => t.title).sort()).toEqual([
+      "Docs only",
+      "Tagged",
+    ]);
+    const unknownTag = await call(client, "list_tasks", {
+      projectKey: "SPI",
+      tags: ["nope"],
+    });
     expect(unknownTag).toMatchObject({ isError: true });
     expect(unknownTag.text).toContain("infra");
   });
 
   test("sub-tasks: create with a parent key, see them on the parent, clear the parent", async () => {
-    const child = (await call(client, "create_task", { projectKey: "SPI", title: "Child", parent: "SPI-1" })).json() as {
+    const child = (
+      await call(client, "create_task", {
+        projectKey: "SPI",
+        title: "Child",
+        parent: "SPI-1",
+      })
+    ).json() as {
       key: string;
       parentKey: string | null;
     };
     expect(child.parentKey).toBe("SPI-1");
-    const parent = (await call(client, "get_task", { key: "SPI-1" })).json() as { subtasks: { key: string }[] };
+    const parent = (
+      await call(client, "get_task", { key: "SPI-1" })
+    ).json() as { subtasks: { key: string }[] };
     expect(parent.subtasks.map((t) => t.key)).toContain(child.key);
-    const cleared = await call(client, "update_task", { key: child.key, parent: null });
+    const cleared = await call(client, "update_task", {
+      key: child.key,
+      parent: null,
+    });
     expect(cleared.json()).toMatchObject({ parentKey: null, parentId: null });
   });
 
   test("start and target dates on create_task, update_task and update_tasks; list_tasks overdue (ST-91)", async () => {
-    const created = await call(client, "create_task", { projectKey: "SPI", title: "Dated", startDate: "2020-01-01", targetDate: "2020-01-31" });
-    expect(created.json()).toMatchObject({ startDate: "2020-01-01", targetDate: "2020-01-31", status: { category: "todo" } });
+    const created = await call(client, "create_task", {
+      projectKey: "SPI",
+      title: "Dated",
+      startDate: "2020-01-01",
+      targetDate: "2020-01-31",
+    });
+    expect(created.json()).toMatchObject({
+      startDate: "2020-01-01",
+      targetDate: "2020-01-31",
+      status: { category: "todo" },
+    });
     const key = String(created.json().key);
-    expect((await call(client, "list_tasks", { projectKey: "SPI", overdue: true })).json()).toMatchObject({ total: 1, items: [{ key }] });
+    expect(
+      (
+        await call(client, "list_tasks", { projectKey: "SPI", overdue: true })
+      ).json(),
+    ).toMatchObject({ total: 1, items: [{ key }] });
 
-    const backwards = await call(client, "update_task", { key, startDate: "2020-02-15" });
-    expect(backwards).toMatchObject({ isError: true, text: expect.stringContaining("on or before the target date") });
-    expect(await call(client, "create_task", { projectKey: "SPI", title: "Bad", targetDate: "Jan 31" })).toMatchObject({ isError: true });
+    const backwards = await call(client, "update_task", {
+      key,
+      startDate: "2020-02-15",
+    });
+    expect(backwards).toMatchObject({
+      isError: true,
+      text: expect.stringContaining("on or before the target date"),
+    });
+    expect(
+      await call(client, "create_task", {
+        projectKey: "SPI",
+        title: "Bad",
+        targetDate: "Jan 31",
+      }),
+    ).toMatchObject({ isError: true });
 
-    expect((await call(client, "update_task", { key, startDate: null, targetDate: "2999-12-31" })).json()).toMatchObject({
+    expect(
+      (
+        await call(client, "update_task", {
+          key,
+          startDate: null,
+          targetDate: "2999-12-31",
+        })
+      ).json(),
+    ).toMatchObject({
       startDate: null,
       targetDate: "2999-12-31",
     });
-    expect((await call(client, "list_tasks", { projectKey: "SPI", overdue: true })).json()).toMatchObject({ total: 0 });
-    const bulk = await call(client, "update_tasks", { keys: [key], targetDate: "2020-06-01" });
-    expect(bulk.json()).toMatchObject({ summary: { changed: 1 }, results: [{ task: { targetDate: "2020-06-01" } }] });
-    const cleared = await call(client, "update_tasks", { filter: { projectKey: "SPI", overdue: true }, targetDate: null });
-    expect(cleared.json()).toMatchObject({ summary: { changed: 1 }, results: [{ key, task: { targetDate: null } }] });
+    expect(
+      (
+        await call(client, "list_tasks", { projectKey: "SPI", overdue: true })
+      ).json(),
+    ).toMatchObject({ total: 0 });
+    const bulk = await call(client, "update_tasks", {
+      keys: [key],
+      targetDate: "2020-06-01",
+    });
+    expect(bulk.json()).toMatchObject({
+      summary: { changed: 1 },
+      results: [{ task: { targetDate: "2020-06-01" } }],
+    });
+    const cleared = await call(client, "update_tasks", {
+      filter: { projectKey: "SPI", overdue: true },
+      targetDate: null,
+    });
+    expect(cleared.json()).toMatchObject({
+      summary: { changed: 1 },
+      results: [{ key, task: { targetDate: null } }],
+    });
   });
 
   test("relations: link, see them on get_task from both sides, unlink", async () => {
-    const other = (await call(client, "create_task", { projectKey: "SPI", title: "Blocked" })).json() as { key: string };
-    expect((await call(client, "link_tasks", { key: "SPI-1", kind: "blocks", task: other.key })).isError).toBeFalsy();
-    const blocked = (await call(client, "get_task", { key: other.key })).json() as { relations: { kind: string; task: string; title: string }[] };
-    expect(blocked.relations).toEqual([{ kind: "blocked_by", task: "SPI-1", title: expect.any(String) }]);
-    expect((await call(client, "link_tasks", { key: other.key, kind: "blocks", task: "SPI-1" })).isError).toBe(true);
-    expect((await call(client, "unlink_tasks", { key: other.key, kind: "blocked_by", task: "SPI-1" })).isError).toBeFalsy();
+    const other = (
+      await call(client, "create_task", { projectKey: "SPI", title: "Blocked" })
+    ).json() as { key: string };
+    expect(
+      (
+        await call(client, "link_tasks", {
+          key: "SPI-1",
+          kind: "blocks",
+          task: other.key,
+        })
+      ).isError,
+    ).toBeFalsy();
+    const blocked = (
+      await call(client, "get_task", { key: other.key })
+    ).json() as { relations: { kind: string; task: string; title: string }[] };
+    expect(blocked.relations).toEqual([
+      { kind: "blocked_by", task: "SPI-1", title: expect.any(String) },
+    ]);
+    expect(
+      (
+        await call(client, "link_tasks", {
+          key: other.key,
+          kind: "blocks",
+          task: "SPI-1",
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await call(client, "unlink_tasks", {
+          key: other.key,
+          kind: "blocked_by",
+          task: "SPI-1",
+        })
+      ).isError,
+    ).toBeFalsy();
   });
 
   test("mark_duplicate: closes and links in one call, repeats change nothing, self and cycles are refused (ST-114)", async () => {
-    const create = async (title: string) => ((await call(client, "create_task", { projectKey: "SPI", title })).json() as { key: string }).key;
+    const create = async (title: string) =>
+      (
+        (
+          await call(client, "create_task", { projectKey: "SPI", title })
+        ).json() as { key: string }
+      ).key;
     const [copy, original] = [await create("Copy"), await create("Original")];
-    const marked = await call(client, "mark_duplicate", { key: copy, of: original, comment: "Same thing" });
+    const marked = await call(client, "mark_duplicate", {
+      key: copy,
+      of: original,
+      comment: "Same thing",
+    });
     expect(marked.isError).toBeFalsy();
-    expect(marked.json()).toMatchObject({ key: copy, status: { name: "Canceled", category: "canceled" }, completedAt: expect.any(String) });
-    const seen = (await call(client, "get_task", { key: copy })).json() as { relations: { kind: string; task: string; title: string }[] };
-    expect(seen.relations).toEqual([{ kind: "duplicates", task: original, title: "Original" }]);
-    const again = await call(client, "mark_duplicate", { key: copy, of: original });
+    expect(marked.json()).toMatchObject({
+      key: copy,
+      status: { name: "Canceled", category: "canceled" },
+      completedAt: expect.any(String),
+    });
+    const seen = (await call(client, "get_task", { key: copy })).json() as {
+      relations: { kind: string; task: string; title: string }[];
+    };
+    expect(seen.relations).toEqual([
+      { kind: "duplicates", task: original, title: "Original" },
+    ]);
+    const again = await call(client, "mark_duplicate", {
+      key: copy,
+      of: original,
+    });
     expect(again.json()).toMatchObject({ updatedAt: marked.json().updatedAt });
     const comments = (await call(client, "list_comments", { key: copy })).text;
     expect(comments).toContain(`Duplicate of ${original}: Original`);
@@ -307,59 +537,143 @@ withDb("MCP server", () => {
     const self = await call(client, "mark_duplicate", { key: copy, of: copy });
     expect(self).toMatchObject({ isError: true });
     expect(self.text).toContain("itself");
-    const cycle = await call(client, "mark_duplicate", { key: original, of: copy });
+    const cycle = await call(client, "mark_duplicate", {
+      key: original,
+      of: copy,
+    });
     expect(cycle).toMatchObject({ isError: true });
     expect(cycle.text).toContain("cycle");
   });
 
   test("documents: create, list, read, update with baseVersion; shown on get_project and get_task", async () => {
-    const created = await call(client, "create_document", { title: "Spec", project: "SPI", content: "# v1" });
+    const created = await call(client, "create_document", {
+      title: "Spec",
+      project: "SPI",
+      content: "# v1",
+    });
     expect(created.isError).toBeFalsy();
     const doc = created.json() as { id: string; version: number };
-    expect(doc).toMatchObject({ projectKey: "SPI", taskKey: null, version: 1, authorId: agentIds[0], content: "# v1" });
-    expect(created.json()).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${doc.id}` });
+    expect(doc).toMatchObject({
+      projectKey: "SPI",
+      taskKey: null,
+      version: 1,
+      authorId: agentIds[0],
+      content: "# v1",
+    });
+    expect(created.json()).toMatchObject({
+      url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${doc.id}`,
+    });
 
-    const onTask = (await call(client, "create_document", { title: "Notes", task: "SPI-1" })).json() as { id: string };
-    expect((await call(client, "get_task", { key: "SPI-1" })).json()).toMatchObject({ documents: [{ id: onTask.id, title: "Notes" }] });
-    const project = (await call(client, "get_project", { projectKey: "SPI" })).json() as { documents: { title: string }[] };
-    expect(project.documents.map((d) => d.title).sort()).toEqual(["Notes", "Spec"]);
-    expect(project).toMatchObject({ url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI` });
+    const onTask = (
+      await call(client, "create_document", { title: "Notes", task: "SPI-1" })
+    ).json() as { id: string };
+    expect(
+      (await call(client, "get_task", { key: "SPI-1" })).json(),
+    ).toMatchObject({ documents: [{ id: onTask.id, title: "Notes" }] });
+    const project = (
+      await call(client, "get_project", { projectKey: "SPI" })
+    ).json() as { documents: { title: string }[] };
+    expect(project.documents.map((d) => d.title).sort()).toEqual([
+      "Notes",
+      "Spec",
+    ]);
+    expect(project).toMatchObject({
+      url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI`,
+    });
 
-    const updated = await call(client, "update_document", { id: doc.id, baseVersion: 1, content: "# v2" });
+    const updated = await call(client, "update_document", {
+      id: doc.id,
+      baseVersion: 1,
+      content: "# v2",
+    });
     expect(updated.json()).toMatchObject({ version: 2 });
-    const stale = await call(client, "update_document", { id: doc.id, baseVersion: 1, content: "# lost" });
+    const stale = await call(client, "update_document", {
+      id: doc.id,
+      baseVersion: 1,
+      content: "# lost",
+    });
     expect(stale.isError).toBe(true);
     expect(stale.text).toContain("version 2");
 
-    expect((await call(client, "get_document", { id: doc.id })).json()).toMatchObject({ version: 2, content: "# v2" });
-    expect((await call(client, "get_document", { id: doc.id, version: 1 })).json()).toMatchObject({
+    expect(
+      (await call(client, "get_document", { id: doc.id })).json(),
+    ).toMatchObject({ version: 2, content: "# v2" });
+    expect(
+      (await call(client, "get_document", { id: doc.id, version: 1 })).json(),
+    ).toMatchObject({
       id: doc.id,
       version: 1,
       currentVersion: 2,
       projectKey: "SPI",
       content: "# v1",
     });
-    const listed = (await call(client, "list_documents", { task: "SPI-1" })).json() as { items: { title: string; taskKey: string }[] };
+    const listed = (
+      await call(client, "list_documents", { task: "SPI-1" })
+    ).json() as { items: { title: string; taskKey: string }[] };
     expect(listed.items).toMatchObject([{ title: "Notes", taskKey: "SPI-1" }]);
-    expect((await call(otherClient, "get_document", { id: doc.id })).isError).toBe(true);
+    expect(
+      (await call(otherClient, "get_document", { id: doc.id })).isError,
+    ).toBe(true);
 
-    const orgWide = await call(client, "move_document", { id: doc.id, project: null });
-    expect(orgWide.json()).toMatchObject({ id: doc.id, projectKey: null, version: 2 });
-    expect((await call(client, "move_document", { id: doc.id, project: "NOPE" })).isError).toBe(true);
+    const orgWide = await call(client, "move_document", {
+      id: doc.id,
+      project: null,
+    });
+    expect(orgWide.json()).toMatchObject({
+      id: doc.id,
+      projectKey: null,
+      version: 2,
+    });
+    expect(
+      (await call(client, "move_document", { id: doc.id, project: "NOPE" }))
+        .isError,
+    ).toBe(true);
   });
 
   test("list_backlinks and get_document_graph follow links; a rename relinks (ST-101)", async () => {
-    const target = (await call(client, "create_document", { title: "MCP target", project: "SPI" })).json() as { id: string };
-    const source = (await call(client, "create_document", { title: "MCP source", content: "[[MCP target]] and SPI-1" })).json() as {
+    const target = (
+      await call(client, "create_document", {
+        title: "MCP target",
+        project: "SPI",
+      })
+    ).json() as { id: string };
+    const source = (
+      await call(client, "create_document", {
+        title: "MCP source",
+        content: "[[MCP target]] and SPI-1",
+      })
+    ).json() as {
       id: string;
     };
-    const renamed = await call(client, "update_document", { id: target.id, baseVersion: 1, title: "MCP target 2" });
-    expect(renamed.json()).toMatchObject({ title: "MCP target 2", relinked: { rewritten: [{ id: source.id }], skipped: [] } });
-    expect((await call(client, "get_document", { id: source.id })).json()).toMatchObject({ content: "[[MCP target 2]] and SPI-1" });
+    const renamed = await call(client, "update_document", {
+      id: target.id,
+      baseVersion: 1,
+      title: "MCP target 2",
+    });
+    expect(renamed.json()).toMatchObject({
+      title: "MCP target 2",
+      relinked: { rewritten: [{ id: source.id }], skipped: [] },
+    });
+    expect(
+      (await call(client, "get_document", { id: source.id })).json(),
+    ).toMatchObject({ content: "[[MCP target 2]] and SPI-1" });
 
-    const docBacklinks = ((await call(client, "list_backlinks", { id: target.id })).json() as { items: { id: string; url: string }[] }).items;
-    expect(docBacklinks).toEqual([expect.objectContaining({ id: source.id, url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${source.id}` })]);
-    const taskBacklinks = ((await call(client, "list_backlinks", { task: "spi-1" })).json() as { items: { id: string }[] }).items;
+    const docBacklinks = (
+      (await call(client, "list_backlinks", { id: target.id })).json() as {
+        items: { id: string; url: string }[];
+      }
+    ).items;
+    expect(docBacklinks).toEqual([
+      expect.objectContaining({
+        id: source.id,
+        url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/docs/${source.id}`,
+      }),
+    ]);
+    const taskBacklinks = (
+      (await call(client, "list_backlinks", { task: "spi-1" })).json() as {
+        items: { id: string }[];
+      }
+    ).items;
     expect(taskBacklinks.map((d) => d.id)).toEqual([source.id]);
     expect((await call(client, "list_backlinks", {})).isError).toBe(true);
 
@@ -369,79 +683,199 @@ withDb("MCP server", () => {
       documents: { id: string; projectKey: string | null }[];
       projects: { key: string; name: string; url: string }[];
     };
-    expect(graph.documents).toContainEqual(expect.objectContaining({ id: target.id, projectKey: "SPI", version: 2 }));
-    expect(graph.projects).toContainEqual({ key: "SPI", name: "Spider", url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI` });
-    expect(graph.links.filter((l) => l.from === source.id).map((l) => l.to)).toEqual([
+    expect(graph.documents).toContainEqual(
+      expect.objectContaining({ id: target.id, projectKey: "SPI", version: 2 }),
+    );
+    expect(graph.projects).toContainEqual({
+      key: "SPI",
+      name: "Spider",
+      url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI`,
+    });
+    expect(
+      graph.links.filter((l) => l.from === source.id).map((l) => l.to),
+    ).toEqual([
       { type: "document", id: target.id },
       { type: "task", key: "SPI-1" },
     ]);
-    expect(graph.tasks).toContainEqual(expect.objectContaining({ key: "SPI-1", url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1` }));
+    expect(graph.tasks).toContainEqual(
+      expect.objectContaining({
+        key: "SPI-1",
+        url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/tasks/SPI-1`,
+      }),
+    );
   });
 
   test("update_tasks: by keys or a filter, per-task results, dry run, scope checked per task (ST-106)", async () => {
-    const parent = (await call(client, "create_task", { projectKey: "SPI", title: "Bulk parent" })).json();
+    const parent = (
+      await call(client, "create_task", {
+        projectKey: "SPI",
+        title: "Bulk parent",
+      })
+    ).json();
     const kids: string[] = [];
     for (const title of ["Bulk kid 1", "Bulk kid 2"]) {
-      kids.push(String((await call(client, "create_task", { projectKey: "SPI", title, parent: parent.key })).json().key));
+      kids.push(
+        String(
+          (
+            await call(client, "create_task", {
+              projectKey: "SPI",
+              title,
+              parent: parent.key,
+            })
+          ).json().key,
+        ),
+      );
     }
 
-    const byKeys = await call(client, "update_tasks", { keys: [...kids, "SPI-999"], status: "In Review", assignees: ["me"], tags: [] });
+    const byKeys = await call(client, "update_tasks", {
+      keys: [...kids, "SPI-999"],
+      status: "In Review",
+      assignees: ["me"],
+      tags: [],
+    });
     expect(byKeys.isError).toBe(false);
     expect(byKeys.json()).toMatchObject({
       dryRun: false,
       summary: { changed: 2, unchanged: 0, failed: 1 },
       results: [
-        { key: kids[0], outcome: "changed", task: { status: { name: "In Review" }, assignees: ["claude-code"] }, error: null },
-        { key: kids[1], outcome: "changed", task: { status: { name: "In Review" } } },
-        { key: "SPI-999", outcome: "error", task: null, error: { code: "not_found", message: "Task SPI-999 not found" } },
+        {
+          key: kids[0],
+          outcome: "changed",
+          task: { status: { name: "In Review" }, assignees: ["claude-code"] },
+          error: null,
+        },
+        {
+          key: kids[1],
+          outcome: "changed",
+          task: { status: { name: "In Review" } },
+        },
+        {
+          key: "SPI-999",
+          outcome: "error",
+          task: null,
+          error: { code: "not_found", message: "Task SPI-999 not found" },
+        },
       ],
     });
 
-    const filter = { projectKey: "spi", parent: parent.key, status: "in_review" };
-    const preview = await call(client, "update_tasks", { filter, status: "Backlog", priority: 4, dryRun: true });
-    expect(preview.json()).toMatchObject({ dryRun: true, summary: { changed: 2 }, results: [{ task: { status: { name: "Backlog" }, priority: 4 } }, {}] });
-    expect((await call(client, "list_tasks", { projectKey: "SPI", status: "backlog" })).json()).toMatchObject({ total: 0 });
-    const applied = await call(client, "update_tasks", { filter, status: "Backlog" });
+    const filter = {
+      projectKey: "spi",
+      parent: parent.key,
+      status: "in_review",
+    };
+    const preview = await call(client, "update_tasks", {
+      filter,
+      status: "Backlog",
+      priority: 4,
+      dryRun: true,
+    });
+    expect(preview.json()).toMatchObject({
+      dryRun: true,
+      summary: { changed: 2 },
+      results: [{ task: { status: { name: "Backlog" }, priority: 4 } }, {}],
+    });
+    expect(
+      (
+        await call(client, "list_tasks", {
+          projectKey: "SPI",
+          status: "backlog",
+        })
+      ).json(),
+    ).toMatchObject({ total: 0 });
+    const applied = await call(client, "update_tasks", {
+      filter,
+      status: "Backlog",
+    });
     expect(applied.json()).toMatchObject({ summary: { changed: 2 } });
-    expect((await call(client, "list_tasks", { projectKey: "SPI", status: "backlog" })).json()).toMatchObject({ total: 2 });
+    expect(
+      (
+        await call(client, "list_tasks", {
+          projectKey: "SPI",
+          status: "backlog",
+        })
+      ).json(),
+    ).toMatchObject({ total: 2 });
 
     // Another organization's agent sees these tasks as missing, one by one.
-    const foreign = await call(otherClient, "update_tasks", { keys: kids, priority: 1 });
-    expect(foreign.json()).toMatchObject({ summary: { failed: 2 }, results: [{ outcome: "error" }, { outcome: "error" }] });
+    const foreign = await call(otherClient, "update_tasks", {
+      keys: kids,
+      priority: 1,
+    });
+    expect(foreign.json()).toMatchObject({
+      summary: { failed: 2 },
+      results: [{ outcome: "error" }, { outcome: "error" }],
+    });
 
-    expect(await call(client, "update_tasks", { keys: kids })).toMatchObject({ isError: true, text: expect.stringContaining("Nothing to update") });
-    expect(await call(client, "update_tasks", { keys: kids, filter, priority: 1 })).toMatchObject({ isError: true });
-    expect(await call(client, "update_tasks", { keys: kids, tags: ["nope"] })).toMatchObject({ isError: true });
+    expect(await call(client, "update_tasks", { keys: kids })).toMatchObject({
+      isError: true,
+      text: expect.stringContaining("Nothing to update"),
+    });
+    expect(
+      await call(client, "update_tasks", { keys: kids, filter, priority: 1 }),
+    ).toMatchObject({ isError: true });
+    expect(
+      await call(client, "update_tasks", { keys: kids, tags: ["nope"] }),
+    ).toMatchObject({ isError: true });
   });
 
   test("edit_document: partial edits without resending the document", async () => {
     const doc = (
-      await call(client, "create_document", { title: "Partial", content: "# Partial\n\nIntro.\n\n## Decisions\n\nOld.\n" })
+      await call(client, "create_document", {
+        title: "Partial",
+        content: "# Partial\n\nIntro.\n\n## Decisions\n\nOld.\n",
+      })
     ).json() as { id: string };
 
-    const edited = await call(client, "edit_document", { id: doc.id, edits: [{ old: "Intro.", new: "Hello." }] });
-    expect(edited.json()).toMatchObject({ id: doc.id, version: 2, authorId: agentIds[0] });
+    const edited = await call(client, "edit_document", {
+      id: doc.id,
+      edits: [{ old: "Intro.", new: "Hello." }],
+    });
+    expect(edited.json()).toMatchObject({
+      id: doc.id,
+      version: 2,
+      authorId: agentIds[0],
+    });
     const sectioned = await call(client, "edit_document", {
       id: doc.id,
       baseVersion: 2,
-      edits: [{ section: "## Decisions", content: "New." }, { append: "Done." }],
+      edits: [
+        { section: "## Decisions", content: "New." },
+        { append: "Done." },
+      ],
     });
     expect(sectioned.json()).toMatchObject({ version: 3 });
-    expect((await call(client, "get_document", { id: doc.id })).json()).toMatchObject({
+    expect(
+      (await call(client, "get_document", { id: doc.id })).json(),
+    ).toMatchObject({
       content: "# Partial\n\nHello.\n\n## Decisions\n\nNew.\nDone.",
     });
 
-    const missing = await call(client, "edit_document", { id: doc.id, edits: [{ old: "Intro.", new: "x" }] });
+    const missing = await call(client, "edit_document", {
+      id: doc.id,
+      edits: [{ old: "Intro.", new: "x" }],
+    });
     expect(missing.isError).toBe(true);
     expect(missing.text).toContain(`doesn't contain "Intro."`);
-    const stale = await call(client, "edit_document", { id: doc.id, baseVersion: 2, edits: [{ append: "late" }] });
+    const stale = await call(client, "edit_document", {
+      id: doc.id,
+      baseVersion: 2,
+      edits: [{ append: "late" }],
+    });
     expect(stale.isError).toBe(true);
     expect(stale.text).toContain("version 3");
   });
 
   test("diff_document: a unified diff between versions, or against the current one (ST-117)", async () => {
-    const doc = (await call(client, "create_document", { title: "Diffed", content: "# D\n\nold\n" })).json() as { id: string };
-    await call(client, "edit_document", { id: doc.id, edits: [{ old: "old", new: "new" }] });
+    const doc = (
+      await call(client, "create_document", {
+        title: "Diffed",
+        content: "# D\n\nold\n",
+      })
+    ).json() as { id: string };
+    await call(client, "edit_document", {
+      id: doc.id,
+      edits: [{ old: "old", new: "new" }],
+    });
 
     const diff = await call(client, "diff_document", { id: doc.id, from: 1 });
     expect(diff.isError).toBeFalsy();
@@ -454,40 +888,104 @@ withDb("MCP server", () => {
       diff: "--- v1\n+++ v2\n@@ -1,3 +1,3 @@\n # D\n \n-old\n+new",
       hunks: [expect.objectContaining({ lines: expect.any(Array) })],
     });
-    expect((await call(client, "diff_document", { id: doc.id, from: 2, to: 2 })).json()).toMatchObject({ diff: "" });
-    const missing = await call(client, "diff_document", { id: doc.id, from: 1, to: 5 });
+    expect(
+      (
+        await call(client, "diff_document", { id: doc.id, from: 2, to: 2 })
+      ).json(),
+    ).toMatchObject({ diff: "" });
+    const missing = await call(client, "diff_document", {
+      id: doc.id,
+      from: 1,
+      to: 5,
+    });
     expect(missing.isError).toBe(true);
     expect(missing.text).toContain("Version 5 not found");
-    expect((await call(otherClient, "diff_document", { id: doc.id, from: 1 })).isError).toBe(true);
+    expect(
+      (await call(otherClient, "diff_document", { id: doc.id, from: 1 }))
+        .isError,
+    ).toBe(true);
   });
 
   test("statuses can be given by category, like the CLI", async () => {
-    const moved = await call(client, "update_task", { key: "SPI-1", status: "in_review" });
+    const moved = await call(client, "update_task", {
+      key: "SPI-1",
+      status: "in_review",
+    });
     expect(moved.isError).toBeFalsy();
     expect(moved.text).toContain("In Review");
   });
 
   test("task kinds and workflow editing (ST-90): statuses match the task's kind; create, update and delete statuses", async () => {
     await call(client, "create_project", { key: "MWF", name: "MCP workflows" });
-    const project = (await call(client, "get_project", { projectKey: "MWF" })).json() as unknown as ProjectDetailDto;
-    expect(project.workflows.release.map((s) => s.name)).toEqual(["Planned", "On staging", "Release review", "Released", "Canceled"]);
+    const project = (
+      await call(client, "get_project", { projectKey: "MWF" })
+    ).json() as unknown as ProjectDetailDto;
+    expect(project.workflows.release.map((s) => s.name)).toEqual([
+      "Planned",
+      "On staging",
+      "Release review",
+      "Released",
+      "Canceled",
+    ]);
 
     // Releases can't be created through MCP yet (ST-93); core makes one here.
-    const release = await createTask(db, ownerCtxs[0]!, "MWF", { title: "v1", kind: "release" });
+    const release = await createTask(db, ownerCtxs[0]!, "MWF", {
+      title: "v1",
+      kind: "release",
+    });
     const started = await call(client, "start_task", { key: release.key });
-    expect(started.json()).toMatchObject({ kind: "release", status: { name: "On staging", category: "in_progress" } });
-    const reviewed = await call(client, "update_task", { key: release.key, status: "in_review" });
-    expect(reviewed.json()).toMatchObject({ status: { name: "Release review" } });
-    const wrong = await call(client, "update_task", { key: release.key, status: "Backlog" });
+    expect(started.json()).toMatchObject({
+      kind: "release",
+      status: { name: "On staging", category: "in_progress" },
+    });
+    const reviewed = await call(client, "update_task", {
+      key: release.key,
+      status: "in_review",
+    });
+    expect(reviewed.json()).toMatchObject({
+      status: { name: "Release review" },
+    });
+    const wrong = await call(client, "update_task", {
+      key: release.key,
+      status: "Backlog",
+    });
     expect(wrong).toMatchObject({ isError: true });
     expect(wrong.text).toContain("release workflow");
-    const plain = await call(client, "create_task", { projectKey: "MWF", title: "Plain", status: "done" });
-    expect(plain.json()).toMatchObject({ kind: "task", status: { name: "Done" } });
-    expect((await call(client, "list_tasks", { projectKey: "MWF", kind: "release" })).json()).toMatchObject({ total: 1, items: [{ key: release.key }] });
-    expect((await call(client, "list_tasks", { projectKey: "MWF", status: "in_review" })).json()).toMatchObject({ total: 1 });
+    const plain = await call(client, "create_task", {
+      projectKey: "MWF",
+      title: "Plain",
+      status: "done",
+    });
+    expect(plain.json()).toMatchObject({
+      kind: "task",
+      status: { name: "Done" },
+    });
+    expect(
+      (
+        await call(client, "list_tasks", { projectKey: "MWF", kind: "release" })
+      ).json(),
+    ).toMatchObject({ total: 1, items: [{ key: release.key }] });
+    expect(
+      (
+        await call(client, "list_tasks", {
+          projectKey: "MWF",
+          status: "in_review",
+        })
+      ).json(),
+    ).toMatchObject({ total: 1 });
 
-    const added = await call(client, "create_status", { projectKey: "MWF", kind: "release", name: "Smoke test", category: "in_review", position: 1 });
-    expect((added.json() as unknown as ProjectDetailDto).workflows.release.map((s) => s.name)).toEqual([
+    const added = await call(client, "create_status", {
+      projectKey: "MWF",
+      kind: "release",
+      name: "Smoke test",
+      category: "in_review",
+      position: 1,
+    });
+    expect(
+      (added.json() as unknown as ProjectDetailDto).workflows.release.map(
+        (s) => s.name,
+      ),
+    ).toEqual([
       "Planned",
       "Smoke test",
       "On staging",
@@ -495,14 +993,43 @@ withDb("MCP server", () => {
       "Released",
       "Canceled",
     ]);
-    const renamed = await call(client, "update_status", { projectKey: "MWF", kind: "release", status: "smoke test", name: "Smoke", position: 9 });
-    expect((renamed.json() as unknown as ProjectDetailDto).workflows.release.at(-1)?.name).toBe("Smoke");
-    expect((await call(client, "update_status", { projectKey: "MWF", status: "Smoke", name: "X" })).text).toContain('Unknown status "Smoke" in MWF');
+    const renamed = await call(client, "update_status", {
+      projectKey: "MWF",
+      kind: "release",
+      status: "smoke test",
+      name: "Smoke",
+      position: 9,
+    });
+    expect(
+      (renamed.json() as unknown as ProjectDetailDto).workflows.release.at(-1)
+        ?.name,
+    ).toBe("Smoke");
+    expect(
+      (
+        await call(client, "update_status", {
+          projectKey: "MWF",
+          status: "Smoke",
+          name: "X",
+        })
+      ).text,
+    ).toContain('Unknown status "Smoke" in MWF');
 
     await call(client, "update_task", { key: release.key, status: "Smoke" });
-    const deleted = await call(client, "delete_status", { projectKey: "MWF", kind: "release", status: "Smoke", moveTo: "Planned" });
-    expect(deleted.json()).toMatchObject({ movedTasks: 1, project: { key: "MWF" } });
-    const lastDone = await call(client, "delete_status", { projectKey: "MWF", status: "Done", moveTo: "Todo" });
+    const deleted = await call(client, "delete_status", {
+      projectKey: "MWF",
+      kind: "release",
+      status: "Smoke",
+      moveTo: "Planned",
+    });
+    expect(deleted.json()).toMatchObject({
+      movedTasks: 1,
+      project: { key: "MWF" },
+    });
+    const lastDone = await call(client, "delete_status", {
+      projectKey: "MWF",
+      status: "Done",
+      moveTo: "Todo",
+    });
     expect(lastDone).toMatchObject({ isError: true });
     expect(lastDone.text).toContain("done status");
     // Out of the way of the project list checks below.
@@ -510,36 +1037,81 @@ withDb("MCP server", () => {
   });
 
   test("comments and inbox: a mention reaches the agent, which replies", async () => {
-    const [org] = await db.select().from(schema.organizations).where(eq(schema.organizations.slug, slugs[0] ?? ""));
+    const [org] = await db
+      .select()
+      .from(schema.organizations)
+      .where(eq(schema.organizations.slug, slugs[0] ?? ""));
     const [ownerRow] = await db
       .select()
       .from(schema.actors)
-      .where(and(eq(schema.actors.orgId, org?.id ?? ""), eq(schema.actors.type, "human")));
-    const ownerCtx: ActorContext = { orgId: org?.id ?? "", actorId: ownerRow?.id ?? "", role: "owner", source: "ui" };
+      .where(
+        and(
+          eq(schema.actors.orgId, org?.id ?? ""),
+          eq(schema.actors.type, "human"),
+        ),
+      );
+    const ownerCtx: ActorContext = {
+      orgId: org?.id ?? "",
+      actorId: ownerRow?.id ?? "",
+      role: "owner",
+      source: "ui",
+    };
     await addComment(db, ownerCtx, "SPI-1", { body: "@claude-code status?" });
 
     const inbox = await call(client, "get_inbox", { wait_seconds: 2 });
-    const items = JSON.parse(inbox.text) as { id: number; kind: string; task: string; comment: { id: string } }[];
+    const items = JSON.parse(inbox.text) as {
+      id: number;
+      kind: string;
+      task: string;
+      comment: { id: string };
+    }[];
     const mention = items.find((i) => i.kind === "mention");
     expect(mention).toMatchObject({ task: "SPI-1" });
 
-    const reply = await call(client, "add_comment", { key: "SPI-1", body: "Almost done", parent_id: mention?.comment.id });
+    const reply = await call(client, "add_comment", {
+      key: "SPI-1",
+      body: "Almost done",
+      parent_id: mention?.comment.id,
+    });
     expect(reply.isError).toBeFalsy();
-    expect(reply.json()).toMatchObject({ taskKey: "SPI-1", parentId: mention?.comment.id, body: "Almost done", author: "claude-code" });
-    const thread = (await call(client, "list_comments", { key: "SPI-1" })).json() as { items: { author: string; authorId: string }[] };
-    expect(thread.items.map((c) => c.author)).toEqual([ownerRow?.handle ?? "", "claude-code"]);
+    expect(reply.json()).toMatchObject({
+      taskKey: "SPI-1",
+      parentId: mention?.comment.id,
+      body: "Almost done",
+      author: "claude-code",
+    });
+    const thread = (
+      await call(client, "list_comments", { key: "SPI-1" })
+    ).json() as { items: { author: string; authorId: string }[] };
+    expect(thread.items.map((c) => c.author)).toEqual([
+      ownerRow?.handle ?? "",
+      "claude-code",
+    ]);
     expect(thread.items[0]?.authorId).toBe(ownerRow?.id ?? "");
 
-    const history = JSON.parse((await call(client, "get_task_activity", { key: "SPI-1" })).text) as {
+    const history = JSON.parse(
+      (await call(client, "get_task_activity", { key: "SPI-1" })).text,
+    ) as {
       action: string;
       via: string;
       changes: Record<string, unknown>;
     }[];
     expect(history[0]).toMatchObject({ action: "task.created", via: "mcp" });
-    expect(history.some((e) => e.action === "task.updated" && Array.isArray(e.changes.status))).toBe(true);
-    expect(history.at(-1)).toMatchObject({ action: "comment.created", via: "mcp" });
+    expect(
+      history.some(
+        (e) => e.action === "task.updated" && Array.isArray(e.changes.status),
+      ),
+    ).toBe(true);
+    expect(history.at(-1)).toMatchObject({
+      action: "comment.created",
+      via: "mcp",
+    });
 
-    expect(JSON.parse((await call(client, "mark_inbox_read", { up_to: mention?.id })).text)).toMatchObject({
+    expect(
+      JSON.parse(
+        (await call(client, "mark_inbox_read", { up_to: mention?.id })).text,
+      ),
+    ).toMatchObject({
       updated: expect.any(Number),
     });
     expect(JSON.parse((await call(client, "get_inbox", {})).text)).toEqual([]);
@@ -548,74 +1120,187 @@ withDb("MCP server", () => {
   test("document comments (ST-118): the agent reviews a fragment, the author is notified, replies reach the agent", async () => {
     const owner = ownerCtxs[0];
     if (!owner) throw new Error("no owner");
-    const doc = await createDocument(db, owner, { title: "Review me", project: "SPI", content: "# Plan\n\nMigrate the **database** first." });
+    const doc = await createDocument(db, owner, {
+      title: "Review me",
+      project: "SPI",
+      content: "# Plan\n\nMigrate the **database** first.",
+    });
 
-    const review = await call(client, "add_document_comment", { id: doc.id, body: "Risky order", quote: "Migrate the database first" });
+    const review = await call(client, "add_document_comment", {
+      id: doc.id,
+      body: "Risky order",
+      quote: "Migrate the database first",
+    });
     expect(review.isError).toBeFalsy();
     const comment = review.json() as { id: string };
-    expect(comment).toMatchObject({ documentId: doc.id, quote: "Migrate the database first", outdated: false, author: "claude-code", resolver: null });
-    expect((await listInbox(db, owner, { kinds: "document_comment" })).map((i) => i.comment?.id)).toEqual([comment.id]);
-    const bad = await call(client, "add_document_comment", { id: doc.id, body: "?", quote: "not there" });
-    expect(bad).toMatchObject({ isError: true, text: "The quoted text isn't in the document's current version" });
+    expect(comment).toMatchObject({
+      documentId: doc.id,
+      quote: "Migrate the database first",
+      outdated: false,
+      author: "claude-code",
+      resolver: null,
+    });
+    expect(
+      (await listInbox(db, owner, { kinds: "document_comment" })).map(
+        (i) => i.comment?.id,
+      ),
+    ).toEqual([comment.id]);
+    const bad = await call(client, "add_document_comment", {
+      id: doc.id,
+      body: "?",
+      quote: "not there",
+    });
+    expect(bad).toMatchObject({
+      isError: true,
+      text: "The quoted text isn't in the document's current version",
+    });
 
-    await addDocumentComment(db, owner, doc.id, { body: "@claude-code what order then?", parentId: comment.id });
-    const inbox = JSON.parse((await call(client, "get_inbox", { wait_seconds: 2 })).text) as Record<string, unknown>[];
+    await addDocumentComment(db, owner, doc.id, {
+      body: "@claude-code what order then?",
+      parentId: comment.id,
+    });
+    const inbox = JSON.parse(
+      (await call(client, "get_inbox", { wait_seconds: 2 })).text,
+    ) as Record<string, unknown>[];
     expect(inbox.find((i) => i.kind === "document_mention")).toMatchObject({
       project: "SPI",
-      document: { id: doc.id, title: "Review me", url: expect.stringContaining(doc.id) },
+      document: {
+        id: doc.id,
+        title: "Review me",
+        url: expect.stringContaining(doc.id),
+      },
       comment: { body: "@claude-code what order then?" },
     });
 
-    const resolved = await call(client, "resolve_document_comment", { id: doc.id, comment_id: comment.id });
-    expect(resolved.json()).toMatchObject({ resolvedAt: expect.any(String), resolver: "claude-code" });
-    const thread = (await call(client, "list_document_comments", { id: doc.id })).json() as { items: { author: string }[] };
-    expect(thread.items.map((c) => c.author)).toEqual(["claude-code", expect.any(String)]);
+    const resolved = await call(client, "resolve_document_comment", {
+      id: doc.id,
+      comment_id: comment.id,
+    });
+    expect(resolved.json()).toMatchObject({
+      resolvedAt: expect.any(String),
+      resolver: "claude-code",
+    });
+    const thread = (
+      await call(client, "list_document_comments", { id: doc.id })
+    ).json() as { items: { author: string }[] };
+    expect(thread.items.map((c) => c.author)).toEqual([
+      "claude-code",
+      expect.any(String),
+    ]);
     // Another organization's agent can't see it.
-    expect((await call(otherClient, "list_document_comments", { id: doc.id })).isError).toBe(true);
+    expect(
+      (await call(otherClient, "list_document_comments", { id: doc.id }))
+        .isError,
+    ).toBe(true);
     await call(client, "mark_inbox_read", { up_to: 1_000_000_000 });
   });
 
   test("unknown statuses and handles are tool errors that list the valid options", async () => {
-    const badStatus = await call(client, "update_task", { key: "SPI-1", status: "Shipped" });
+    const badStatus = await call(client, "update_task", {
+      key: "SPI-1",
+      status: "Shipped",
+    });
     expect(badStatus.isError).toBe(true);
     expect(badStatus.text).toContain("In Review");
 
-    const badHandle = await call(client, "update_task", { key: "SPI-1", assignees: ["nobody"] });
+    const badHandle = await call(client, "update_task", {
+      key: "SPI-1",
+      assignees: ["nobody"],
+    });
     expect(badHandle.isError).toBe(true);
     expect(badHandle.text).toContain("claude-code");
 
     const missing = await call(client, "get_task", { key: "SPI-999" });
-    expect(missing).toMatchObject({ isError: true, text: "Task SPI-999 not found" });
+    expect(missing).toMatchObject({
+      isError: true,
+      text: "Task SPI-999 not found",
+    });
   });
 
   test("projects: an agent acts with its owner's rights; a member's agent is refused", async () => {
     const owner = ownerCtxs[0];
     if (!owner) throw new Error("no owner");
-    await db.update(schema.actors).set({ role: "member" }).where(eq(schema.actors.id, owner.actorId));
+    await db
+      .update(schema.actors)
+      .set({ role: "member" })
+      .where(eq(schema.actors.id, owner.actorId));
     try {
-      const refused = await call(client, "create_project", { key: "OPS", name: "Ops" });
-      expect(refused).toMatchObject({ isError: true, text: "Your role can't create projects" });
+      const refused = await call(client, "create_project", {
+        key: "OPS",
+        name: "Ops",
+      });
+      expect(refused).toMatchObject({
+        isError: true,
+        text: "Your role can't create projects",
+      });
     } finally {
-      await db.update(schema.actors).set({ role: "owner" }).where(eq(schema.actors.id, owner.actorId));
+      await db
+        .update(schema.actors)
+        .set({ role: "owner" })
+        .where(eq(schema.actors.id, owner.actorId));
     }
 
-    expect((await call(client, "create_project", { key: "ops", name: "Ops", description: "Runbooks" })).json()).toMatchObject({
+    expect(
+      (
+        await call(client, "create_project", {
+          key: "ops",
+          name: "Ops",
+          description: "Runbooks",
+        })
+      ).json(),
+    ).toMatchObject({
       key: "OPS",
       name: "Ops",
       description: "Runbooks",
       archivedAt: null,
-      statuses: ["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"].map((name) => ({ name })),
+      statuses: [
+        "Backlog",
+        "Todo",
+        "In Progress",
+        "In Review",
+        "Done",
+        "Canceled",
+      ].map((name) => ({ name })),
     });
-    const updated = await call(client, "update_project", { projectKey: "OPS", name: "Operations", description: null });
-    expect(updated.json()).toMatchObject({ name: "Operations", description: null });
+    const updated = await call(client, "update_project", {
+      projectKey: "OPS",
+      name: "Operations",
+      description: null,
+    });
+    expect(updated.json()).toMatchObject({
+      name: "Operations",
+      description: null,
+    });
     // Status automation from pull requests (ST-85): only the fields given change; null resets.
-    expect((await call(client, "update_project", { projectKey: "OPS", gitAutomation: { enabled: false, merged: null } })).json()).toMatchObject({
-      gitAutomation: { enabled: false, draft: "in_progress", opened: "in_review", merged: null, closed: null },
+    expect(
+      (
+        await call(client, "update_project", {
+          projectKey: "OPS",
+          gitAutomation: { enabled: false, merged: null },
+        })
+      ).json(),
+    ).toMatchObject({
+      gitAutomation: {
+        enabled: false,
+        draft: "in_progress",
+        opened: "in_review",
+        merged: null,
+        closed: null,
+      },
     });
-    expect((await call(client, "update_project", { projectKey: "OPS", gitAutomation: null })).json()).toMatchObject({
+    expect(
+      (
+        await call(client, "update_project", {
+          projectKey: "OPS",
+          gitAutomation: null,
+        })
+      ).json(),
+    ).toMatchObject({
       gitAutomation: { enabled: true, merged: "done" },
     });
-    expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archivedAt: expect.any(String) });
+    expect(
+      (await call(client, "archive_project", { projectKey: "OPS" })).json(),
+    ).toMatchObject({ archivedAt: expect.any(String) });
     expect((await call(client, "list_projects")).json()).toEqual({
       items: [
         {
@@ -626,18 +1311,34 @@ withDb("MCP server", () => {
           createdAt: expect.any(String),
           archivedAt: null,
           rulesDocumentId: null,
-          gitAutomation: { enabled: true, draft: "in_progress", opened: "in_review", merged: "done", closed: null },
+          gitAutomation: {
+            enabled: true,
+            draft: "in_progress",
+            opened: "in_review",
+            merged: "done",
+            closed: null,
+          },
           url: `${env.WEB_ORIGIN}/${slugs[0] ?? ""}/projects/SPI`,
         },
       ],
     });
-    expect((await call(client, "get_project", { projectKey: "OPS" })).json()).toMatchObject({ archivedAt: expect.any(String) });
-    expect(await call(client, "create_task", { projectKey: "OPS", title: "x" })).toMatchObject({
+    expect(
+      (await call(client, "get_project", { projectKey: "OPS" })).json(),
+    ).toMatchObject({ archivedAt: expect.any(String) });
+    expect(
+      await call(client, "create_task", { projectKey: "OPS", title: "x" }),
+    ).toMatchObject({
       isError: true,
       text: "Project OPS is archived",
     });
-    expect((await call(client, "archive_project", { projectKey: "OPS", undo: true })).json()).toMatchObject({ archivedAt: null });
-    expect((await call(client, "archive_project", { projectKey: "OPS" })).json()).toMatchObject({ archivedAt: expect.any(String) });
+    expect(
+      (
+        await call(client, "archive_project", { projectKey: "OPS", undo: true })
+      ).json(),
+    ).toMatchObject({ archivedAt: null });
+    expect(
+      (await call(client, "archive_project", { projectKey: "OPS" })).json(),
+    ).toMatchObject({ archivedAt: expect.any(String) });
   });
 
   test("projects: a project-scoped agent gets access to the project it creates", async () => {
@@ -645,51 +1346,124 @@ withDb("MCP server", () => {
     const [spi] = await db
       .select({ id: schema.projects.id })
       .from(schema.projects)
-      .where(and(eq(schema.projects.orgId, ownerCtxs[0]?.orgId ?? ""), eq(schema.projects.key, "SPI")));
-    await db.update(schema.agents).set({ scoped: true }).where(eq(schema.agents.actorId, agentId));
-    await db.insert(schema.agentProjects).values({ agentId, projectId: spi?.id ?? "" });
+      .where(
+        and(
+          eq(schema.projects.orgId, ownerCtxs[0]?.orgId ?? ""),
+          eq(schema.projects.key, "SPI"),
+        ),
+      );
+    await db
+      .update(schema.agents)
+      .set({ scoped: true })
+      .where(eq(schema.agents.actorId, agentId));
+    await db
+      .insert(schema.agentProjects)
+      .values({ agentId, projectId: spi?.id ?? "" });
     try {
-      expect((await call(client, "create_project", { key: "SCP", name: "Scoped" })).json()).toMatchObject({ key: "SCP" });
-      expect((await call(client, "get_project", { projectKey: "SCP" })).json()).toMatchObject({ key: "SCP" });
-      expect((await call(client, "create_task", { projectKey: "SCP", title: "First" })).json()).toMatchObject({ key: "SCP-1" });
-      expect((await call(client, "archive_project", { projectKey: "SCP" })).json()).toMatchObject({ archivedAt: expect.any(String) });
+      expect(
+        (
+          await call(client, "create_project", { key: "SCP", name: "Scoped" })
+        ).json(),
+      ).toMatchObject({ key: "SCP" });
+      expect(
+        (await call(client, "get_project", { projectKey: "SCP" })).json(),
+      ).toMatchObject({ key: "SCP" });
+      expect(
+        (
+          await call(client, "create_task", {
+            projectKey: "SCP",
+            title: "First",
+          })
+        ).json(),
+      ).toMatchObject({ key: "SCP-1" });
+      expect(
+        (await call(client, "archive_project", { projectKey: "SCP" })).json(),
+      ).toMatchObject({ archivedAt: expect.any(String) });
     } finally {
-      await db.delete(schema.agentProjects).where(eq(schema.agentProjects.agentId, agentId));
-      await db.update(schema.agents).set({ scoped: false }).where(eq(schema.agents.actorId, agentId));
+      await db
+        .delete(schema.agentProjects)
+        .where(eq(schema.agentProjects.agentId, agentId));
+      await db
+        .update(schema.agents)
+        .set({ scoped: false })
+        .where(eq(schema.agents.actorId, agentId));
     }
   });
 
   test("a deleted agent stays shown as a deactivated assignee but can't be assigned", async () => {
     const ctx = ownerCtxs[0];
     if (!ctx) throw new Error("no owner");
-    const { actor: gone } = await createAgent(db, ctx, { name: "Gone", handle: "gone" });
-    const task = await createTask(db, ctx, "SPI", { title: "Orphaned", assigneeIds: [gone.id] });
+    const { actor: gone } = await createAgent(db, ctx, {
+      name: "Gone",
+      handle: "gone",
+    });
+    const task = await createTask(db, ctx, "SPI", {
+      title: "Orphaned",
+      assigneeIds: [gone.id],
+    });
     await deleteAgent(db, ctx, gone.id);
 
-    expect((await call(client, "get_task", { key: task.key })).json()).toMatchObject({ assignees: ["gone (deactivated)"] });
-    const reassigned = await call(client, "update_task", { key: task.key, assignees: ["gone"] });
+    expect(
+      (await call(client, "get_task", { key: task.key })).json(),
+    ).toMatchObject({ assignees: ["gone (deactivated)"] });
+    const reassigned = await call(client, "update_task", {
+      key: task.key,
+      assignees: ["gone"],
+    });
     expect(reassigned.isError).toBe(true);
-    expect(reassigned.text).toBe('Unknown member "gone". Valid handles: me, claude-code, owner-0');
+    expect(reassigned.text).toBe(
+      'Unknown member "gone". Valid handles: me, claude-code, owner-0',
+    );
     expect((await call(client, "list_members")).text).not.toContain("gone");
 
     // Orphaned assignments can still be found by the deactivated handle (ST-65).
-    const orphaned = await call(client, "list_tasks", { projectKey: "SPI", assignee: "@gone" });
-    expect(orphaned.json()).toMatchObject({ total: 1, items: [{ key: task.key, assignees: ["gone (deactivated)"] }] });
+    const orphaned = await call(client, "list_tasks", {
+      projectKey: "SPI",
+      assignee: "@gone",
+    });
+    expect(orphaned.json()).toMatchObject({
+      total: 1,
+      items: [{ key: task.key, assignees: ["gone (deactivated)"] }],
+    });
   });
 
-  test('assignee "mine": the agent\'s owner and all the owner\'s agents, deleted ones too', async () => {
+  test("assignee \"mine\": the agent's owner and all the owner's agents, deleted ones too", async () => {
     const ctx = ownerCtxs[0];
     if (!ctx) throw new Error("no owner");
-    const { actor: sibling } = await createAgent(db, ctx, { name: "Sibling", handle: "sibling" });
-    await createTask(db, ctx, "SPI", { title: "mine-check owner", assigneeIds: [ctx.actorId] });
-    await createTask(db, ctx, "SPI", { title: "mine-check sibling", assigneeIds: [sibling.id] });
+    const { actor: sibling } = await createAgent(db, ctx, {
+      name: "Sibling",
+      handle: "sibling",
+    });
+    await createTask(db, ctx, "SPI", {
+      title: "mine-check owner",
+      assigneeIds: [ctx.actorId],
+    });
+    await createTask(db, ctx, "SPI", {
+      title: "mine-check sibling",
+      assigneeIds: [sibling.id],
+    });
     await createTask(db, ctx, "SPI", { title: "mine-check nobody" });
     const titles = async (assignee: unknown, query: string) =>
-      ((await call(client, "list_tasks", { projectKey: "SPI", assignee, query })).json() as { items: { title: string }[] }).items
+      (
+        (
+          await call(client, "list_tasks", {
+            projectKey: "SPI",
+            assignee,
+            query,
+          })
+        ).json() as { items: { title: string }[] }
+      ).items
         .map((t) => t.title)
         .sort();
-    expect(await titles("mine", "mine-check")).toEqual(["mine-check owner", "mine-check sibling"]);
-    expect(await titles(["@MINE", "none"], "mine-check")).toEqual(["mine-check nobody", "mine-check owner", "mine-check sibling"]);
+    expect(await titles("mine", "mine-check")).toEqual([
+      "mine-check owner",
+      "mine-check sibling",
+    ]);
+    expect(await titles(["@MINE", "none"], "mine-check")).toEqual([
+      "mine-check nobody",
+      "mine-check owner",
+      "mine-check sibling",
+    ]);
     expect(await titles("mine", "Orphaned")).toEqual(["Orphaned"]);
     expect(await titles("me", "mine-check")).toEqual([]);
   });
@@ -697,10 +1471,18 @@ withDb("MCP server", () => {
   test("project rules (ST-111): in the server instructions, whoami and get_project; changes reach the inbox", async () => {
     const owner = ownerCtxs[1];
     if (!owner) throw new Error("no owner");
-    expect((await call(otherClient, "whoami")).json()).toMatchObject({ projectRules: [] });
-    expect((await call(otherClient, "get_project", { projectKey: "SPI" })).json()).toMatchObject({ rules: null });
+    expect((await call(otherClient, "whoami")).json()).toMatchObject({
+      projectRules: [],
+    });
+    expect(
+      (await call(otherClient, "get_project", { projectKey: "SPI" })).json(),
+    ).toMatchObject({ rules: null });
 
-    const doc = await createDocument(db, owner, { title: "Agent rules", project: "SPI", content: "Finished reviews go to Done." });
+    const doc = await createDocument(db, owner, {
+      title: "Agent rules",
+      project: "SPI",
+      content: "Finished reviews go to Done.",
+    });
     await updateProject(db, owner, "SPI", { rulesDocumentId: doc.id });
 
     // A new session gets them with its first answer (initialize), without calling anything.
@@ -726,41 +1508,83 @@ withDb("MCP server", () => {
       content: "Finished reviews go to Done.",
       url: expect.stringContaining(`/docs/${doc.id}`),
     };
-    expect((await call(otherClient, "whoami")).json()).toMatchObject({ projectRules: [rules] });
-    expect((await call(otherClient, "get_project", { projectKey: "SPI" })).json()).toMatchObject({
+    expect((await call(otherClient, "whoami")).json()).toMatchObject({
+      projectRules: [rules],
+    });
+    expect(
+      (await call(otherClient, "get_project", { projectKey: "SPI" })).json(),
+    ).toMatchObject({
       rulesDocumentId: doc.id,
       rules,
     });
-    expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual([
-      expect.objectContaining({
-        kind: "rules",
-        project: "SPI",
-        rulesDocument: { id: doc.id, title: "Agent rules", url: expect.stringContaining(`/docs/${doc.id}`) },
-      }),
-    ]);
+    expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual(
+      [
+        expect.objectContaining({
+          kind: "rules",
+          project: "SPI",
+          rulesDocument: {
+            id: doc.id,
+            title: "Agent rules",
+            url: expect.stringContaining(`/docs/${doc.id}`),
+          },
+        }),
+      ],
+    );
 
     // mark_inbox_read up_to marks every kind get_inbox lists, rules included (ST-128).
-    const [rulesItem] = JSON.parse((await call(otherClient, "get_inbox", {})).text) as { id: number }[];
-    expect(JSON.parse((await call(otherClient, "mark_inbox_read", { up_to: rulesItem?.id })).text)).toEqual({ updated: 1 });
-    expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual([]);
+    const [rulesItem] = JSON.parse(
+      (await call(otherClient, "get_inbox", {})).text,
+    ) as { id: number }[];
+    expect(
+      JSON.parse(
+        (await call(otherClient, "mark_inbox_read", { up_to: rulesItem?.id }))
+          .text,
+      ),
+    ).toEqual({ updated: 1 });
+    expect(JSON.parse((await call(otherClient, "get_inbox", {})).text)).toEqual(
+      [],
+    );
 
     // The owner's agent can change them through update_project; a non-document id is a tool error.
-    expect((await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: null })).json()).toMatchObject({
+    expect(
+      (
+        await call(otherClient, "update_project", {
+          projectKey: "SPI",
+          rulesDocumentId: null,
+        })
+      ).json(),
+    ).toMatchObject({
       rulesDocumentId: null,
     });
-    expect(await call(otherClient, "update_project", { projectKey: "SPI", rulesDocumentId: "nope" })).toMatchObject({
+    expect(
+      await call(otherClient, "update_project", {
+        projectKey: "SPI",
+        rulesDocumentId: "nope",
+      }),
+    ).toMatchObject({
       isError: true,
     });
   });
 
   test("repos and apps (ST-92): add by URL, apps, attach and detach, recorded with source mcp", async () => {
-    const repo = await call(client, "add_repo", { url: "git@github.com:pipisasa/spider-tracker.git", projects: ["SPI"] });
-    expect(repo.json()).toMatchObject({ fullName: "pipisasa/spider-tracker", defaultBranch: "main", projects: ["SPI"] });
-    expect(await call(client, "add_repo", { url: "pipisasa/spider-tracker" })).toMatchObject({
+    const repo = await call(client, "add_repo", {
+      url: "git@github.com:pipisasa/spider-tracker.git",
+      projects: ["SPI"],
+    });
+    expect(repo.json()).toMatchObject({
+      fullName: "pipisasa/spider-tracker",
+      defaultBranch: "main",
+      projects: ["SPI"],
+    });
+    expect(
+      await call(client, "add_repo", { url: "pipisasa/spider-tracker" }),
+    ).toMatchObject({
       isError: true,
       text: "Repo pipisasa/spider-tracker already exists",
     });
-    expect(await call(client, "add_repo", { url: "https://gitlab.com/a/b" })).toMatchObject({ isError: true });
+    expect(
+      await call(client, "add_repo", { url: "https://gitlab.com/a/b" }),
+    ).toMatchObject({ isError: true });
 
     const app = await call(client, "add_app", {
       repo: "pipisasa/spider-tracker",
@@ -769,48 +1593,115 @@ withDb("MCP server", () => {
       versioning: "date",
       environments: ["staging", "prod"],
     });
-    expect(app.json()).toMatchObject({ repo: "pipisasa/spider-tracker", name: "api", versioning: "date", environments: ["staging", "prod"] });
+    expect(app.json()).toMatchObject({
+      repo: "pipisasa/spider-tracker",
+      name: "api",
+      versioning: "date",
+      environments: ["staging", "prod"],
+    });
     expect(
-      (await call(client, "update_app", { repo: "https://github.com/pipisasa/spider-tracker", app: "api", sharedPaths: ["packages/db"] })).json(),
+      (
+        await call(client, "update_app", {
+          repo: "https://github.com/pipisasa/spider-tracker",
+          app: "api",
+          sharedPaths: ["packages/db"],
+        })
+      ).json(),
     ).toMatchObject({ name: "api", sharedPaths: ["packages/db"] });
 
-    expect((await call(client, "attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "SPI", detach: true })).json()).toMatchObject({
+    expect(
+      (
+        await call(client, "attach_repo", {
+          repo: "pipisasa/spider-tracker",
+          projectKey: "SPI",
+          detach: true,
+        })
+      ).json(),
+    ).toMatchObject({
       projects: [],
     });
-    expect((await call(client, "list_repos", { project: "SPI" })).json()).toEqual({ items: [] });
-    expect((await call(client, "attach_repo", { repo: "pipisasa/spider-tracker", projectKey: "SPI" })).json()).toMatchObject({
+    expect(
+      (await call(client, "list_repos", { project: "SPI" })).json(),
+    ).toEqual({ items: [] });
+    expect(
+      (
+        await call(client, "attach_repo", {
+          repo: "pipisasa/spider-tracker",
+          projectKey: "SPI",
+        })
+      ).json(),
+    ).toMatchObject({
       projects: ["SPI"],
     });
-    expect((await call(client, "update_repo", { repo: "pipisasa/spider-tracker", defaultBranch: "trunk" })).json()).toMatchObject({
+    expect(
+      (
+        await call(client, "update_repo", {
+          repo: "pipisasa/spider-tracker",
+          defaultBranch: "trunk",
+        })
+      ).json(),
+    ).toMatchObject({
       defaultBranch: "trunk",
     });
-    const listed = (await call(client, "list_repos")).json() as { items: { apps: { name: string }[] }[] };
-    expect(listed.items.map((r) => r.apps.map((a) => a.name))).toEqual([["api"]]);
-    expect((await call(client, "get_repo", { repo: "pipisasa/spider-tracker" })).json() as unknown).toEqual(listed.items[0]);
-    expect(await call(otherClient, "get_repo", { repo: "pipisasa/spider-tracker" })).toMatchObject({ isError: true });
+    const listed = (await call(client, "list_repos")).json() as {
+      items: { apps: { name: string }[] }[];
+    };
+    expect(listed.items.map((r) => r.apps.map((a) => a.name))).toEqual([
+      ["api"],
+    ]);
+    expect(
+      (
+        await call(client, "get_repo", { repo: "pipisasa/spider-tracker" })
+      ).json() as unknown,
+    ).toEqual(listed.items[0]);
+    expect(
+      await call(otherClient, "get_repo", { repo: "pipisasa/spider-tracker" }),
+    ).toMatchObject({ isError: true });
 
     const sources = await db
       .select({ source: schema.activity.source })
       .from(schema.activity)
-      .where(and(eq(schema.activity.entityType, "repo"), eq(schema.activity.entityId, (repo.json() as { id: string }).id)));
+      .where(
+        and(
+          eq(schema.activity.entityType, "repo"),
+          eq(schema.activity.entityId, (repo.json() as { id: string }).id),
+        ),
+      );
     expect(new Set(sources.map((s) => s.source))).toEqual(new Set(["mcp"]));
   });
 
   test("releases (ST-93): create with apps and Done tasks, candidates, remove, Released ships them", async () => {
     const done = async (title: string) =>
-      (await call(client, "create_task", { projectKey: "SPI", title, status: "Done" })).json() as { key: string; shipping: unknown };
+      (
+        await call(client, "create_task", {
+          projectKey: "SPI",
+          title,
+          status: "Done",
+        })
+      ).json() as { key: string; shipping: unknown };
     const [a, b] = [await done("Release A"), await done("Release B")];
     expect(a.shipping).toEqual({ state: "not_in_release", release: null });
-    const candidates = (await call(client, "list_release_candidates", { projectKey: "SPI" })).json() as { items: { key: string }[] };
-    expect(candidates.items.map((t) => t.key)).toEqual(expect.arrayContaining([a.key, b.key]));
+    const candidates = (
+      await call(client, "list_release_candidates", { projectKey: "SPI" })
+    ).json() as { items: { key: string }[] };
+    expect(candidates.items.map((t) => t.key)).toEqual(
+      expect.arrayContaining([a.key, b.key]),
+    );
 
     const created = await call(client, "create_release", {
       projectKey: "SPI",
       title: "2026.10.13",
-      apps: [{ repo: "pipisasa/spider-tracker", app: "api", version: "2026.10.13" }],
+      apps: [
+        { repo: "pipisasa/spider-tracker", app: "api", version: "2026.10.13" },
+      ],
       tasks: [a.key],
     });
-    const release = created.json() as { key: string; url: string; status: { name: string }; tasks: { key: string; url: string }[] };
+    const release = created.json() as {
+      key: string;
+      url: string;
+      status: { name: string };
+      tasks: { key: string; url: string }[];
+    };
     expect(release).toMatchObject({
       kind: "release",
       status: { name: "Planned" },
@@ -819,62 +1710,202 @@ withDb("MCP server", () => {
       tasks: [{ key: a.key, url: expect.stringContaining(`/tasks/${a.key}`) }],
       assignees: [],
     });
-    expect((await call(client, "add_to_release", { key: release.key, tasks: [b.key] })).json()).toMatchObject({ tasks: [{ key: a.key }, { key: b.key }] });
-    expect((await call(client, "remove_from_release", { key: release.key, tasks: [b.key] })).json()).toMatchObject({ tasks: [{ key: a.key }] });
-    expect(await call(client, "add_to_release", { key: release.key, tasks: ["SPI-1"] })).toMatchObject({ isError: true });
-    expect((await call(client, "update_task", { key: b.key, noCode: true })).json()).toMatchObject({ shipping: { state: "no_code" } });
-    expect((await call(client, "update_release", { key: release.key, apps: [{ repo: "pipisasa/spider-tracker", app: "api", version: "2026.10.14" }] })).json()).toMatchObject({
+    expect(
+      (
+        await call(client, "add_to_release", {
+          key: release.key,
+          tasks: [b.key],
+        })
+      ).json(),
+    ).toMatchObject({ tasks: [{ key: a.key }, { key: b.key }] });
+    expect(
+      (
+        await call(client, "remove_from_release", {
+          key: release.key,
+          tasks: [b.key],
+        })
+      ).json(),
+    ).toMatchObject({ tasks: [{ key: a.key }] });
+    expect(
+      await call(client, "add_to_release", {
+        key: release.key,
+        tasks: ["SPI-1"],
+      }),
+    ).toMatchObject({ isError: true });
+    expect(
+      (await call(client, "update_task", { key: b.key, noCode: true })).json(),
+    ).toMatchObject({ shipping: { state: "no_code" } });
+    expect(
+      (
+        await call(client, "update_release", {
+          key: release.key,
+          apps: [
+            {
+              repo: "pipisasa/spider-tracker",
+              app: "api",
+              version: "2026.10.14",
+            },
+          ],
+        })
+      ).json(),
+    ).toMatchObject({
       apps: [{ version: "2026.10.14" }],
     });
 
     // Changelog (ST-95): the handoff's What changed under the one app; write saves it, a hand edit is kept.
-    await call(client, "add_comment", { key: a.key, body: "**What changed**\n- Faster webhooks\n\n**Verified**\n- tests" });
-    const changelog = (await call(client, "get_release_changelog", { key: release.key })).json() as { markdown: string };
+    await call(client, "add_comment", {
+      key: a.key,
+      body: "**What changed**\n- Faster webhooks\n\n**Verified**\n- tests",
+    });
+    const changelog = (
+      await call(client, "get_release_changelog", { key: release.key })
+    ).json() as { markdown: string };
     expect(changelog).toMatchObject({
-      release: { key: release.key, url: expect.stringContaining(`/tasks/${release.key}`) },
+      release: {
+        key: release.key,
+        url: expect.stringContaining(`/tasks/${release.key}`),
+      },
       grouped: true,
-      entries: [{ key: a.key, whatChanged: "- Faster webhooks", apps: ["api"], url: expect.stringContaining(`/tasks/${a.key}`) }],
+      entries: [
+        {
+          key: a.key,
+          whatChanged: "- Faster webhooks",
+          apps: ["api"],
+          url: expect.stringContaining(`/tasks/${a.key}`),
+        },
+      ],
       description: { state: "missing" },
       written: null,
     });
-    expect(changelog.markdown).toBe(`### api 2026.10.14\n\n- **${a.key}** Release A\n  - Faster webhooks`);
-    expect((await call(client, "get_release_changelog", { key: release.key, write: true })).json()).toMatchObject({ written: "added" });
-    const description = ((await call(client, "get_task", { key: release.key })).json() as { description: string }).description;
-    await call(client, "update_task", { key: release.key, description: description.replace("Faster", "Much faster") });
-    const refused = await call(client, "get_release_changelog", { key: release.key, write: true });
+    expect(changelog.markdown).toBe(
+      `### api 2026.10.14\n\n- **${a.key}** Release A\n  - Faster webhooks`,
+    );
+    expect(
+      (
+        await call(client, "get_release_changelog", {
+          key: release.key,
+          write: true,
+        })
+      ).json(),
+    ).toMatchObject({ written: "added" });
+    const description = (
+      (await call(client, "get_task", { key: release.key })).json() as {
+        description: string;
+      }
+    ).description;
+    await call(client, "update_task", {
+      key: release.key,
+      description: description.replace("Faster", "Much faster"),
+    });
+    const refused = await call(client, "get_release_changelog", {
+      key: release.key,
+      write: true,
+    });
     expect(refused).toMatchObject({ isError: true });
     expect(refused.text).toContain("edited by hand");
-    expect((await call(client, "get_release_changelog", { key: release.key, write: true, force: true })).json()).toMatchObject({ written: "replaced" });
+    expect(
+      (
+        await call(client, "get_release_changelog", {
+          key: release.key,
+          write: true,
+          force: true,
+        })
+      ).json(),
+    ).toMatchObject({ written: "replaced" });
 
     // Deployments (ST-94): the first moves it to On staging; Released waits for api in prod.
-    const staged = (await call(client, "record_deployment", { key: release.key, app: "api", environment: "staging", commitSha: "3f2c1ab" })).json() as {
+    const staged = (
+      await call(client, "record_deployment", {
+        key: release.key,
+        app: "api",
+        environment: "staging",
+        commitSha: "3f2c1ab",
+      })
+    ).json() as {
       deployment: unknown;
     };
     expect(staged).toMatchObject({
-      deployment: { app: "api", environment: "staging", production: false, commitSha: "3f2c1ab", source: "mcp" },
-      release: { key: release.key, status: { name: "On staging" }, url: expect.stringContaining(`/tasks/${release.key}`), assignees: [] },
+      deployment: {
+        app: "api",
+        environment: "staging",
+        production: false,
+        commitSha: "3f2c1ab",
+        source: "mcp",
+      },
+      release: {
+        key: release.key,
+        status: { name: "On staging" },
+        url: expect.stringContaining(`/tasks/${release.key}`),
+        assignees: [],
+      },
       movedFrom: { name: "Planned" },
     });
-    expect(await call(client, "record_deployment", { key: release.key, app: "api", environment: "qa", commitSha: "3f2c1ab" })).toMatchObject({
+    expect(
+      await call(client, "record_deployment", {
+        key: release.key,
+        app: "api",
+        environment: "qa",
+        commitSha: "3f2c1ab",
+      }),
+    ).toMatchObject({
       isError: true,
       text: 'api has no environment "qa"; its environments are staging, prod',
     });
-    const blocked = await call(client, "update_task", { key: release.key, status: "Released" });
+    const blocked = await call(client, "update_task", {
+      key: release.key,
+      status: "Released",
+    });
     expect(blocked).toMatchObject({ isError: true });
     expect(blocked.text).toContain("it isn't deployed api to prod yet");
-    await call(client, "record_deployment", { key: release.key, app: "api", environment: "prod", commitSha: "3f2c1ab" });
-    const deployments = (await call(client, "list_deployments", { key: release.key })).json() as { items: { environment: string }[] };
-    expect(deployments.items.map((d) => d.environment)).toEqual(["prod", "staging"]);
-    expect(deployments.items[1] as unknown).toEqual(staged.deployment);
-    expect((await call(client, "list_deployments", { key: release.key, environment: "staging" })).json()).toEqual({ items: [staged.deployment] });
-
-    expect((await call(client, "update_task", { key: release.key, status: "Released" })).json()).toMatchObject({ status: { name: "Released" } });
-    expect((await call(client, "get_task", { key: a.key })).json()).toMatchObject({
-      status: { category: "done" },
-      shipping: { state: "shipped", release: { key: release.key, title: "2026.10.13" } },
+    await call(client, "record_deployment", {
+      key: release.key,
+      app: "api",
+      environment: "prod",
+      commitSha: "3f2c1ab",
     });
-    const listed = (await call(client, "list_releases", { projectKey: "SPI", status: "Released" })).json() as { items: unknown[] };
-    expect(listed.items).toEqual([(await call(client, "get_release", { key: release.key })).json()]);
+    const deployments = (
+      await call(client, "list_deployments", { key: release.key })
+    ).json() as { items: { environment: string }[] };
+    expect(deployments.items.map((d) => d.environment)).toEqual([
+      "prod",
+      "staging",
+    ]);
+    expect(deployments.items[1] as unknown).toEqual(staged.deployment);
+    expect(
+      (
+        await call(client, "list_deployments", {
+          key: release.key,
+          environment: "staging",
+        })
+      ).json(),
+    ).toEqual({ items: [staged.deployment] });
+
+    expect(
+      (
+        await call(client, "update_task", {
+          key: release.key,
+          status: "Released",
+        })
+      ).json(),
+    ).toMatchObject({ status: { name: "Released" } });
+    expect(
+      (await call(client, "get_task", { key: a.key })).json(),
+    ).toMatchObject({
+      status: { category: "done" },
+      shipping: {
+        state: "shipped",
+        release: { key: release.key, title: "2026.10.13" },
+      },
+    });
+    const listed = (
+      await call(client, "list_releases", {
+        projectKey: "SPI",
+        status: "Released",
+      })
+    ).json() as { items: unknown[] };
+    expect(listed.items).toEqual([
+      (await call(client, "get_release", { key: release.key })).json(),
+    ]);
   });
 
   test("milestones (ST-96): create, put tasks in (sub-tasks inherit), roadmap with progress; Done and no code moves it to Ready to close", async () => {
@@ -887,42 +1918,114 @@ withDb("MCP server", () => {
         targetDate: "2026-12-01",
       })
     ).json() as { key: string; url: string };
-    expect(created).toMatchObject({ kind: "milestone", status: { name: "Active" }, progress: { total: 0 }, url: expect.stringContaining(`/tasks/${created.key}`) });
+    expect(created).toMatchObject({
+      kind: "milestone",
+      status: { name: "Active" },
+      progress: { total: 0 },
+      url: expect.stringContaining(`/tasks/${created.key}`),
+    });
 
-    const parent = (await call(client, "create_task", { projectKey: "SPI", title: "Milestone parent", milestone: created.key })).json() as { key: string };
-    expect(parent).toMatchObject({ milestone: { key: created.key, inherited: false } });
-    const child = (await call(client, "create_task", { projectKey: "SPI", title: "Milestone child", parent: parent.key })).json() as { key: string };
-    expect(child).toMatchObject({ milestoneId: null, milestone: { key: created.key, inherited: true } });
-    const other = (await call(client, "create_task", { projectKey: "SPI", title: "Milestone other" })).json() as { key: string };
-    expect((await call(client, "update_task", { key: other.key, milestone: created.key })).json()).toMatchObject({ milestone: { key: created.key } });
-    expect((await call(client, "update_task", { key: other.key, milestone: null })).json()).toMatchObject({ milestoneId: null, milestone: null });
-    const wrong = await call(client, "update_task", { key: other.key, milestone: parent.key });
+    const parent = (
+      await call(client, "create_task", {
+        projectKey: "SPI",
+        title: "Milestone parent",
+        milestone: created.key,
+      })
+    ).json() as { key: string };
+    expect(parent).toMatchObject({
+      milestone: { key: created.key, inherited: false },
+    });
+    const child = (
+      await call(client, "create_task", {
+        projectKey: "SPI",
+        title: "Milestone child",
+        parent: parent.key,
+      })
+    ).json() as { key: string };
+    expect(child).toMatchObject({
+      milestoneId: null,
+      milestone: { key: created.key, inherited: true },
+    });
+    const other = (
+      await call(client, "create_task", {
+        projectKey: "SPI",
+        title: "Milestone other",
+      })
+    ).json() as { key: string };
+    expect(
+      (
+        await call(client, "update_task", {
+          key: other.key,
+          milestone: created.key,
+        })
+      ).json(),
+    ).toMatchObject({ milestone: { key: created.key } });
+    expect(
+      (
+        await call(client, "update_task", { key: other.key, milestone: null })
+      ).json(),
+    ).toMatchObject({ milestoneId: null, milestone: null });
+    const wrong = await call(client, "update_task", {
+      key: other.key,
+      milestone: parent.key,
+    });
     expect(wrong).toMatchObject({ isError: true });
     expect(wrong.text).toContain("not a milestone");
 
-    const listed = (await call(client, "list_milestones", { projectKey: "SPI" })).json() as { items: { key: string; tasks: { key: string; url: string }[] }[] };
+    const listed = (
+      await call(client, "list_milestones", { projectKey: "SPI" })
+    ).json() as {
+      items: { key: string; tasks: { key: string; url: string }[] }[];
+    };
     const item = listed.items.find((m) => m.key === created.key);
     expect(item).toMatchObject({
       progress: { total: 2, done: 0, complete: false },
       tasks: [
-        { key: parent.key, inherited: false, url: expect.stringContaining(`/tasks/${parent.key}`) },
+        {
+          key: parent.key,
+          inherited: false,
+          url: expect.stringContaining(`/tasks/${parent.key}`),
+        },
         { key: child.key, inherited: true, parentKey: parent.key },
       ],
     });
-    expect(item as unknown).toEqual((await call(client, "get_milestone", { key: created.key })).json());
+    expect(item as unknown).toEqual(
+      (await call(client, "get_milestone", { key: created.key })).json(),
+    );
 
-    const bulk = (await call(client, "update_tasks", { keys: [parent.key, child.key], status: "Done", noCode: true })).json() as { summary: unknown };
+    const bulk = (
+      await call(client, "update_tasks", {
+        keys: [parent.key, child.key],
+        status: "Done",
+        noCode: true,
+      })
+    ).json() as { summary: unknown };
     expect(bulk.summary).toEqual({ changed: 2, unchanged: 0, failed: 0 });
-    expect((await call(client, "get_milestone", { key: created.key })).json()).toMatchObject({
+    expect(
+      (await call(client, "get_milestone", { key: created.key })).json(),
+    ).toMatchObject({
       status: { name: "Ready to close", category: "in_review" },
       progress: { total: 2, done: 2, withCode: 0, shipped: 0, complete: true },
     });
-    expect((await call(client, "list_milestones", { projectKey: "SPI", status: "Ready to close" })).json()).toMatchObject({ items: [{ key: created.key }] });
+    expect(
+      (
+        await call(client, "list_milestones", {
+          projectKey: "SPI",
+          status: "Ready to close",
+        })
+      ).json(),
+    ).toMatchObject({ items: [{ key: created.key }] });
   });
 
   test("a key from another organization can't see this one's tasks", async () => {
-    expect(await call(otherClient, "get_task", { key: "SPI-1" })).toMatchObject({ isError: true });
-    expect((await call(otherClient, "list_tasks", { projectKey: "SPI" })).json()).toMatchObject({ total: 0 });
-    expect((await call(otherClient, "whoami")).json()).toMatchObject({ organization: { slug: slugs[1] } });
+    expect(await call(otherClient, "get_task", { key: "SPI-1" })).toMatchObject(
+      { isError: true },
+    );
+    expect(
+      (await call(otherClient, "list_tasks", { projectKey: "SPI" })).json(),
+    ).toMatchObject({ total: 0 });
+    expect((await call(otherClient, "whoami")).json()).toMatchObject({
+      organization: { slug: slugs[1] },
+    });
   });
 });

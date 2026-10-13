@@ -26,7 +26,8 @@ export function remarkWikiLinks(
     for (const match of value.matchAll(WIKI_LINK)) {
       const link = parseWikiLink(match[1] ?? "", match[2]);
       if (!link || match.index === undefined) continue;
-      if (match.index > last) out.push({ type: "text", value: value.slice(last, match.index) });
+      if (match.index > last)
+        out.push({ type: "text", value: value.slice(last, match.index) });
       const target = (match[1] ?? "").trim();
       const url = href(target);
       out.push({
@@ -45,13 +46,15 @@ export function remarkWikiLinks(
       });
       last = match.index + match[0].length;
     }
-    if (last < value.length) out.push({ type: "text", value: value.slice(last) });
+    if (last < value.length)
+      out.push({ type: "text", value: value.slice(last) });
     return out;
   };
   const walk = (node: MdNode) => {
     if (!node.children) return;
     node.children = node.children.flatMap((child) => {
-      if (child.type === "text" && child.value?.includes("[[")) return split(child.value);
+      if (child.type === "text" && child.value?.includes("[["))
+        return split(child.value);
       walk(child);
       return [child];
     });

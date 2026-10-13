@@ -5,7 +5,11 @@ import { generateKeyBetween } from "fractional-indexing";
 import type { ActorContext, ProjectScope } from "./access";
 import { recordActivity } from "./activity";
 import { systemContext } from "./bots";
-import type { MilestoneProgressDto, StatusCategory, TaskKind } from "./contracts";
+import type {
+  MilestoneProgressDto,
+  StatusCategory,
+  TaskKind,
+} from "./contracts";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 
@@ -35,10 +39,17 @@ export interface Membership {
 }
 
 /** The milestone each task belongs to (its own, else the nearest ancestor's); tasks in none are left out. */
-export async function effectiveMilestones(db: Db | Tx, taskIds: string[]): Promise<Map<string, Membership>> {
+export async function effectiveMilestones(
+  db: Db | Tx,
+  taskIds: string[],
+): Promise<Map<string, Membership>> {
   const map = new Map<string, Membership>();
   if (taskIds.length === 0) return map;
-  const rows = await db.execute<{ origin: string; milestone_id: string; depth: number }>(sql`
+  const rows = await db.execute<{
+    origin: string;
+    milestone_id: string;
+    depth: number;
+  }>(sql`
     with recursive up(origin, project_id, parent_id, milestone_id, depth) as (
       select t.id, t.project_id, t.parent_id, t.milestone_id, 0 from tasks t
       where t.id in (${uuidList(taskIds)}) and t.kind = 'task'
@@ -49,7 +60,11 @@ export async function effectiveMilestones(db: Db | Tx, taskIds: string[]): Promi
     )
     select origin, milestone_id, depth from up where milestone_id is not null
   `);
-  for (const row of rows) map.set(row.origin, { milestoneId: row.milestone_id, inherited: Number(row.depth) > 0 });
+  for (const row of rows)
+    map.set(row.origin, {
+      milestoneId: row.milestone_id,
+      inherited: Number(row.depth) > 0,
+    });
   return map;
 }
 
@@ -62,9 +77,17 @@ export interface MemberRow {
 }
 
 /** The live tasks of each milestone (inside `scope`), by project key and number. */
-export async function milestoneMembers(db: Db | Tx, scope: ProjectScope, milestoneIds: string[]): Promise<MemberRow[]> {
+export async function milestoneMembers(
+  db: Db | Tx,
+  scope: ProjectScope,
+  milestoneIds: string[],
+): Promise<MemberRow[]> {
   if (milestoneIds.length === 0) return [];
-  const members = await db.execute<{ id: string; milestone_id: string; depth: number }>(sql`
+  const members = await db.execute<{
+    id: string;
+    milestone_id: string;
+    depth: number;
+  }>(sql`
     with recursive member(id, project_id, milestone_id, depth) as (
       select t.id, t.project_id, t.milestone_id, 0 from tasks t
       where t.milestone_id in (${uuidList(milestoneIds)}) and t.deleted_at is null and t.kind = 'task'
@@ -77,13 +100,31 @@ export async function milestoneMembers(db: Db | Tx, scope: ProjectScope, milesto
     select id, milestone_id, depth from member
   `);
   if (members.length === 0) return [];
-  const byTask = new Map(members.map((m) => [m.id, { milestoneId: m.milestone_id, inherited: Number(m.depth) > 0 }]));
+  const byTask = new Map(
+    members.map((m) => [
+      m.id,
+      { milestoneId: m.milestone_id, inherited: Number(m.depth) > 0 },
+    ]),
+  );
   const rows = await db
-    .select({ task: tasks, projectKey: projects.key, status: { id: statuses.id, name: statuses.name, category: statuses.category } })
+    .select({
+      task: tasks,
+      projectKey: projects.key,
+      status: {
+        id: statuses.id,
+        name: statuses.name,
+        category: statuses.category,
+      },
+    })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
-    .where(and(inArray(tasks.id, [...byTask.keys()]), scope ? inArray(tasks.projectId, [...scope]) : undefined))
+    .where(
+      and(
+        inArray(tasks.id, [...byTask.keys()]),
+        scope ? inArray(tasks.projectId, [...scope]) : undefined,
+      ),
+    )
     .orderBy(asc(projects.key), asc(tasks.number));
   return rows.flatMap((row) => {
     const membership = byTask.get(row.task.id);
@@ -92,7 +133,9 @@ export async function milestoneMembers(db: Db | Tx, scope: ProjectScope, milesto
 }
 
 /** Progress over a milestone's tasks: canceled ones don't count; Done ones with code count as shipped once released. */
-export function progressOf(members: Pick<MemberRow, "task" | "status">[]): MilestoneProgressDto {
+export function progressOf(
+  members: Pick<MemberRow, "task" | "status">[],
+): MilestoneProgressDto {
   const live = members.filter((m) => m.status.category !== "canceled");
   const done = live.filter((m) => m.status.category === "done");
   const withCode = done.filter((m) => !m.task.noCode);
@@ -103,7 +146,10 @@ export function progressOf(members: Pick<MemberRow, "task" | "status">[]): Miles
     canceled: members.length - live.length,
     withCode: withCode.length,
     shipped: shipped.length,
-    complete: live.length > 0 && done.length === live.length && shipped.length === withCode.length,
+    complete:
+      live.length > 0 &&
+      done.length === live.length &&
+      shipped.length === withCode.length,
   };
 }
 
@@ -111,19 +157,38 @@ export function progressOf(members: Pick<MemberRow, "task" | "status">[]): Miles
  * A task may join a milestone: it is an ordinary task, and the milestone is a live milestone of
  * the same project.
  */
-export async function assertMilestoneFor(tx: Tx, task: { kind: TaskKind; projectId: string; label: string }, milestoneId: string) {
-  if (task.kind !== "task") throw new DomainError("validation", `Only tasks go into a milestone; ${task.label} is a ${task.kind}`);
+export async function assertMilestoneFor(
+  tx: Tx,
+  task: { kind: TaskKind; projectId: string; label: string },
+  milestoneId: string,
+) {
+  if (task.kind !== "task")
+    throw new DomainError(
+      "validation",
+      `Only tasks go into a milestone; ${task.label} is a ${task.kind}`,
+    );
   const [milestone] = await tx
-    .select({ kind: tasks.kind, number: tasks.number, projectId: tasks.projectId, projectKey: projects.key })
+    .select({
+      kind: tasks.kind,
+      number: tasks.number,
+      projectId: tasks.projectId,
+      projectKey: projects.key,
+    })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(and(eq(tasks.id, milestoneId), isNull(tasks.deletedAt)))
     .limit(1);
   if (!milestone || milestone.projectId !== task.projectId) {
-    throw new DomainError("validation", `Milestone not found in ${task.label}'s project; a task joins a milestone of its own project`);
+    throw new DomainError(
+      "validation",
+      `Milestone not found in ${task.label}'s project; a task joins a milestone of its own project`,
+    );
   }
   if (milestone.kind !== "milestone") {
-    throw new DomainError("validation", `${milestone.projectKey}-${milestone.number} is a ${milestone.kind}, not a milestone`);
+    throw new DomainError(
+      "validation",
+      `${milestone.projectKey}-${milestone.number} is a ${milestone.kind}, not a milestone`,
+    );
   }
 }
 
@@ -137,15 +202,34 @@ const OPEN: StatusCategory[] = ["backlog", "todo", "in_progress"];
  * reopens it. Runs inside the transaction of the change that may have completed it; the milestone
  * rows are locked first, so two tasks finishing at once can't both miss the other's change.
  */
-export async function settleMilestones(tx: Tx, orgId: string, milestoneIds: (string | null | undefined)[]): Promise<void> {
-  const ids = [...new Set(milestoneIds.filter((id): id is string => typeof id === "string"))].sort();
+export async function settleMilestones(
+  tx: Tx,
+  orgId: string,
+  milestoneIds: (string | null | undefined)[],
+): Promise<void> {
+  const ids = [
+    ...new Set(
+      milestoneIds.filter((id): id is string => typeof id === "string"),
+    ),
+  ].sort();
   if (ids.length === 0) return;
   const rows = await tx
-    .select({ task: tasks, projectKey: projects.key, category: statuses.category })
+    .select({
+      task: tasks,
+      projectKey: projects.key,
+      category: statuses.category,
+    })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
-    .where(and(inArray(tasks.id, ids), eq(tasks.orgId, orgId), eq(tasks.kind, "milestone"), isNull(tasks.deletedAt)))
+    .where(
+      and(
+        inArray(tasks.id, ids),
+        eq(tasks.orgId, orgId),
+        eq(tasks.kind, "milestone"),
+        isNull(tasks.deletedAt),
+      ),
+    )
     .orderBy(asc(tasks.id))
     .for("update", { of: tasks });
   const open = rows.filter((r) => OPEN.includes(r.category));
@@ -156,11 +240,18 @@ export async function settleMilestones(tx: Tx, orgId: string, milestoneIds: (str
     open.map((r) => r.task.id),
   );
   for (const { task, projectKey } of open) {
-    if (!progressOf(members.filter((m) => m.milestoneId === task.id)).complete) continue;
+    if (!progressOf(members.filter((m) => m.milestoneId === task.id)).complete)
+      continue;
     const [target] = await tx
       .select({ id: statuses.id })
       .from(statuses)
-      .where(and(eq(statuses.projectId, task.projectId), eq(statuses.kind, "milestone"), eq(statuses.category, "in_review")))
+      .where(
+        and(
+          eq(statuses.projectId, task.projectId),
+          eq(statuses.kind, "milestone"),
+          eq(statuses.category, "in_review"),
+        ),
+      )
       .orderBy(asc(statuses.position))
       .limit(1);
     // A workflow edited to have no such status leaves the milestone where it is.
@@ -168,27 +259,56 @@ export async function settleMilestones(tx: Tx, orgId: string, milestoneIds: (str
     const [last] = await tx
       .select({ sortKey: tasks.sortKey })
       .from(tasks)
-      .where(and(eq(tasks.projectId, task.projectId), eq(tasks.statusId, target.id), isNull(tasks.deletedAt)))
+      .where(
+        and(
+          eq(tasks.projectId, task.projectId),
+          eq(tasks.statusId, target.id),
+          isNull(tasks.deletedAt),
+        ),
+      )
       .orderBy(desc(tasks.sortKey))
       .limit(1);
     await tx
       .update(tasks)
-      .set({ statusId: target.id, sortKey: generateKeyBetween(last?.sortKey ?? null, null), updatedAt: new Date() })
+      .set({
+        statusId: target.id,
+        sortKey: generateKeyBetween(last?.sortKey ?? null, null),
+        updatedAt: new Date(),
+      })
       .where(eq(tasks.id, task.id));
     const ctx = await systemContext(tx, orgId);
-    await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes: { statusId: [task.statusId, target.id] } });
-    await publish(tx, { type: "task.changed", orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
+    await recordActivity(tx, ctx, {
+      entityType: "task",
+      entityId: task.id,
+      action: "task.updated",
+      changes: { statusId: [task.statusId, target.id] },
+    });
+    await publish(tx, {
+      type: "task.changed",
+      orgId,
+      projectKey,
+      taskKey: `${projectKey}-${task.number}`,
+    });
   }
 }
 
 /** A deleted milestone lets go of its tasks (their `milestone_id`); their sub-tasks follow. */
-export async function milestoneTasksOnDelete(tx: Tx, ctx: ActorContext, milestoneId: string) {
+export async function milestoneTasksOnDelete(
+  tx: Tx,
+  ctx: ActorContext,
+  milestoneId: string,
+) {
   const now = new Date();
   const freed = await tx
     .update(tasks)
     .set({ milestoneId: null, updatedAt: now })
     .where(eq(tasks.milestoneId, milestoneId))
-    .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId, deletedAt: tasks.deletedAt });
+    .returning({
+      id: tasks.id,
+      number: tasks.number,
+      projectId: tasks.projectId,
+      deletedAt: tasks.deletedAt,
+    });
   const live = freed.filter((t) => !t.deletedAt);
   if (live.length === 0) return;
   const keys = await tx
@@ -196,8 +316,19 @@ export async function milestoneTasksOnDelete(tx: Tx, ctx: ActorContext, mileston
     .from(projects)
     .where(inArray(projects.id, [...new Set(live.map((t) => t.projectId))]));
   for (const task of live) {
-    await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes: { milestoneId: [milestoneId, null] } });
+    await recordActivity(tx, ctx, {
+      entityType: "task",
+      entityId: task.id,
+      action: "task.updated",
+      changes: { milestoneId: [milestoneId, null] },
+    });
     const projectKey = keys.find((p) => p.id === task.projectId)?.key;
-    if (projectKey) await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: `${projectKey}-${task.number}` });
+    if (projectKey)
+      await publish(tx, {
+        type: "task.changed",
+        orgId: ctx.orgId,
+        projectKey,
+        taskKey: `${projectKey}-${task.number}`,
+      });
   }
 }

@@ -7,10 +7,20 @@ import { MilestonePanel, MilestonePicker } from "@/components/roadmap";
 import { Subtasks } from "@/components/subtasks";
 import { TagPicker } from "@/components/tags";
 import { TaskComments } from "@/components/task-comments";
-import { ActorAvatar, AssigneePicker, DateInput, PrioritySelect, StatusSelect } from "@/components/task-fields";
+import {
+  ActorAvatar,
+  AssigneePicker,
+  DateInput,
+  PrioritySelect,
+  StatusSelect,
+} from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { afterSave, descriptionToSave, remoteChange } from "@/components/editor/description-sync";
+import {
+  afterSave,
+  descriptionToSave,
+  remoteChange,
+} from "@/components/editor/description-sync";
 import { actorLabel } from "@/lib/assignees";
 import { useWorkingNow } from "@/lib/use-presence";
 import {
@@ -30,20 +40,40 @@ import { allStatuses, kindOf, workflowOf } from "@repo/core/statuses";
 import { isOverdue, type UpdateTaskInput } from "@repo/core/schemas";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, CopyIcon, GitBranchIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  ChevronRightIcon,
+  CopyIcon,
+  GitBranchIcon,
+  Trash2Icon,
+} from "lucide-react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
 
 type SaveCallbacks = { onSuccess?: () => void; onError?: () => void };
 
-const projectKeyOf = (taskKey: string) => taskKey.slice(0, taskKey.lastIndexOf("-")).toUpperCase();
-const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const projectKeyOf = (taskKey: string) =>
+  taskKey.slice(0, taskKey.lastIndexOf("-")).toUpperCase();
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 export const Route = createFileRoute("/_authed/$orgSlug/tasks/$taskKey")({
   loader: async ({ context, params }) => {
     await Promise.all([
-      context.queryClient.ensureQueryData(taskQuery(params.orgSlug, params.taskKey)),
-      context.queryClient.ensureQueryData(projectQuery(params.orgSlug, projectKeyOf(params.taskKey))),
+      context.queryClient.ensureQueryData(
+        taskQuery(params.orgSlug, params.taskKey),
+      ),
+      context.queryClient.ensureQueryData(
+        projectQuery(params.orgSlug, projectKeyOf(params.taskKey)),
+      ),
     ]);
   },
   component: TaskPage,
@@ -61,13 +91,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function TaskPage() {
   const { orgSlug, taskKey } = Route.useParams();
   const { data: task } = useSuspenseQuery(taskQuery(orgSlug, taskKey));
-  const { data: project } = useSuspenseQuery(projectQuery(orgSlug, projectKeyOf(taskKey)));
+  const { data: project } = useSuspenseQuery(
+    projectQuery(orgSlug, projectKeyOf(taskKey)),
+  );
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
   const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const { membership } = Route.useRouteContext();
   const working = useWorkingNow(orgSlug, task.key);
   // Assignees show their own indicator; other agents working on the task are named here.
-  const visitors = actors.filter((a) => working.includes(a.id) && !task.assigneeIds.includes(a.id));
+  const visitors = actors.filter(
+    (a) => working.includes(a.id) && !task.assigneeIds.includes(a.id),
+  );
   const update = useUpdateTask(orgSlug);
   const remove = useDeleteTask(orgSlug);
   const navigate = useNavigate();
@@ -79,20 +113,35 @@ function TaskPage() {
   const creator = actors.find((m) => m.id === task.creatorId);
   // Every kind's statuses, for looking up other tasks' (ST-90); the picker offers this task's workflow.
   const statuses = allStatuses(project);
-  const overdue = isOverdue(task, statuses.find((s) => s.id === task.statusId)?.category);
+  const overdue = isOverdue(
+    task,
+    statuses.find((s) => s.id === task.statusId)?.category,
+  );
   const category = statuses.find((s) => s.id === task.statusId)?.category;
   const isRelease = kindOf(task) === "release";
-  const { data: release } = useQuery({ ...releaseQuery(orgSlug, task.key), enabled: isRelease });
+  const { data: release } = useQuery({
+    ...releaseQuery(orgSlug, task.key),
+    enabled: isRelease,
+  });
   // Milestones (ST-96): a milestone's page shows its progress; a task's has the milestone picker.
   const isMilestone = kindOf(task) === "milestone";
-  const { data: milestone } = useQuery({ ...milestoneQuery(orgSlug, task.key), enabled: isMilestone });
-  const { data: milestones = [] } = useQuery({ ...milestonesQuery(orgSlug, project.key), enabled: kindOf(task) === "task" });
+  const { data: milestone } = useQuery({
+    ...milestoneQuery(orgSlug, task.key),
+    enabled: isMilestone,
+  });
+  const { data: milestones = [] } = useQuery({
+    ...milestonesQuery(orgSlug, project.key),
+    enabled: kindOf(task) === "task",
+  });
 
   function deleteTask() {
     remove.mutate(task.key, {
       onSuccess: async () => {
         toast.success(`Deleted ${task.key}`);
-        await navigate({ to: "/$orgSlug/projects/$projectKey", params: { orgSlug, projectKey: project.key } });
+        await navigate({
+          to: "/$orgSlug/projects/$projectKey",
+          params: { orgSlug, projectKey: project.key },
+        });
       },
       onError: (err) => toast.error(err.message),
     });
@@ -110,103 +159,148 @@ function TaskPage() {
 
   const fields = (
     <>
-        <Field label="Status">
-          <StatusSelect statuses={workflowOf(project, kindOf(task))} value={task.statusId} onChange={(statusId) => save({ statusId })} />
-        </Field>
-        <Field label="Priority">
-          <PrioritySelect value={task.priority} onChange={(priority) => save({ priority })} />
-        </Field>
-        <Field label="Assignees">
-          <AssigneePicker
-            members={members}
-            actors={actors}
-            value={task.assigneeIds}
-            working={working}
-            onChange={(assigneeIds) => save({ assigneeIds })}
+      <Field label="Status">
+        <StatusSelect
+          statuses={workflowOf(project, kindOf(task))}
+          value={task.statusId}
+          onChange={(statusId) => save({ statusId })}
+        />
+      </Field>
+      <Field label="Priority">
+        <PrioritySelect
+          value={task.priority}
+          onChange={(priority) => save({ priority })}
+        />
+      </Field>
+      <Field label="Assignees">
+        <AssigneePicker
+          members={members}
+          actors={actors}
+          value={task.assigneeIds}
+          working={working}
+          onChange={(assigneeIds) => save({ assigneeIds })}
+        />
+      </Field>
+      <Field label="Tags">
+        <TagPicker
+          orgSlug={orgSlug}
+          value={task.tagIds ?? []}
+          onChange={(tagIds) => save({ tagIds })}
+        />
+      </Field>
+      {kindOf(task) === "task" && (
+        <Field label="Milestone">
+          <MilestonePicker
+            milestones={milestones}
+            value={task.milestoneId ?? null}
+            current={task.milestone ?? null}
+            disabled={!canEdit}
+            onChange={(milestoneId) => save({ milestoneId })}
           />
         </Field>
-        <Field label="Tags">
-          <TagPicker orgSlug={orgSlug} value={task.tagIds ?? []} onChange={(tagIds) => save({ tagIds })} />
-        </Field>
-        {kindOf(task) === "task" && (
-          <Field label="Milestone">
-            <MilestonePicker
-              milestones={milestones}
-              value={task.milestoneId ?? null}
-              current={task.milestone ?? null}
-              disabled={!canEdit}
-              onChange={(milestoneId) => save({ milestoneId })}
-            />
-          </Field>
-        )}
-        <Field label="Start date">
-          <DateInput label="Start date" value={task.startDate} max={task.targetDate} onChange={(startDate) => save({ startDate })} />
-        </Field>
-        <Field label={overdue ? "Target date · overdue" : "Target date"}>
-          <DateInput
-            label="Target date"
-            value={task.targetDate}
-            min={task.startDate}
-            invalid={overdue}
-            onChange={(targetDate) => save({ targetDate })}
-          />
-        </Field>
-        <Field label="Created">
-          <span className="flex items-center gap-2 text-sm">
-            {creator && <ActorAvatar actor={creator} className="size-5" />}
-            {creator ? actorLabel(creator) : "Unknown"} · {dateTimeFormat.format(new Date(task.createdAt))}
+      )}
+      <Field label="Start date">
+        <DateInput
+          label="Start date"
+          value={task.startDate}
+          max={task.targetDate}
+          onChange={(startDate) => save({ startDate })}
+        />
+      </Field>
+      <Field label={overdue ? "Target date · overdue" : "Target date"}>
+        <DateInput
+          label="Target date"
+          value={task.targetDate}
+          min={task.startDate}
+          invalid={overdue}
+          onChange={(targetDate) => save({ targetDate })}
+        />
+      </Field>
+      <Field label="Created">
+        <span className="flex items-center gap-2 text-sm">
+          {creator && <ActorAvatar actor={creator} className="size-5" />}
+          {creator ? actorLabel(creator) : "Unknown"} ·{" "}
+          {dateTimeFormat.format(new Date(task.createdAt))}
+        </span>
+      </Field>
+      {task.completedAt && (
+        <Field label="Completed">
+          <span className="text-sm">
+            {dateTimeFormat.format(new Date(task.completedAt))}
           </span>
         </Field>
-        {task.completedAt && (
-          <Field label="Completed">
-            <span className="text-sm">{dateTimeFormat.format(new Date(task.completedAt))}</span>
-          </Field>
-        )}
-        {/* Done means finished; shipping is tracked by releases (ST-93). */}
-        {task.shipping && (
-          <Field label="Shipping">
-            <span className="flex flex-col gap-1 text-sm">
-              {task.shipping.release ? (
-                <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.shipping.release.key }} className="w-fit hover:underline">
-                  <ShippingChip shipping={task.shipping} />
-                </Link>
-              ) : (
+      )}
+      {/* Done means finished; shipping is tracked by releases (ST-93). */}
+      {task.shipping && (
+        <Field label="Shipping">
+          <span className="flex flex-col gap-1 text-sm">
+            {task.shipping.release ? (
+              <Link
+                to="/$orgSlug/tasks/$taskKey"
+                params={{ orgSlug, taskKey: task.shipping.release.key }}
+                className="w-fit hover:underline"
+              >
                 <ShippingChip shipping={task.shipping} />
-              )}
-              {task.shippedAt && <span className="text-xs text-muted-foreground">{dateTimeFormat.format(new Date(task.shippedAt))}</span>}
-            </span>
-          </Field>
-        )}
-        {isRelease && task.shippedAt && (
-          <Field label="Released">
-            <span className="text-sm">{dateTimeFormat.format(new Date(task.shippedAt))}</span>
-          </Field>
-        )}
-        {canEdit && kindOf(task) === "task" && category === "done" && !task.releaseId && !task.shippedAt && (
+              </Link>
+            ) : (
+              <ShippingChip shipping={task.shipping} />
+            )}
+            {task.shippedAt && (
+              <span className="text-xs text-muted-foreground">
+                {dateTimeFormat.format(new Date(task.shippedAt))}
+              </span>
+            )}
+          </span>
+        </Field>
+      )}
+      {isRelease && task.shippedAt && (
+        <Field label="Released">
+          <span className="text-sm">
+            {dateTimeFormat.format(new Date(task.shippedAt))}
+          </span>
+        </Field>
+      )}
+      {canEdit &&
+        kindOf(task) === "task" &&
+        category === "done" &&
+        !task.releaseId &&
+        !task.shippedAt && (
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={task.noCode} onChange={(e) => save({ noCode: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={task.noCode}
+              onChange={(e) => save({ noCode: e.target.checked })}
+            />
             No code to ship
           </label>
         )}
-        <Button variant="ghost" className="mt-auto justify-start" onClick={copyBranchName}>
-          <GitBranchIcon />
-          Copy branch name
-        </Button>
-        {canEdit && (
-          <Button variant="ghost" className="justify-start" onClick={() => setMarkingDuplicate(true)}>
-            <CopyIcon />
-            Duplicate of…
-          </Button>
-        )}
+      <Button
+        variant="ghost"
+        className="mt-auto justify-start"
+        onClick={copyBranchName}
+      >
+        <GitBranchIcon />
+        Copy branch name
+      </Button>
+      {canEdit && (
         <Button
           variant="ghost"
-          className="justify-start text-destructive hover:text-destructive"
-          onClick={deleteTask}
-          disabled={remove.isPending}
+          className="justify-start"
+          onClick={() => setMarkingDuplicate(true)}
         >
-          <Trash2Icon />
-          Delete task
+          <CopyIcon />
+          Duplicate of…
         </Button>
+      )}
+      <Button
+        variant="ghost"
+        className="justify-start text-destructive hover:text-destructive"
+        onClick={deleteTask}
+        disabled={remove.isPending}
+      >
+        <Trash2Icon />
+        Delete task
+      </Button>
     </>
   );
 
@@ -224,7 +318,11 @@ function TaskPage() {
           <ChevronRightIcon className="size-4" />
           {task.parentKey && (
             <>
-              <Link to="/$orgSlug/tasks/$taskKey" params={{ orgSlug, taskKey: task.parentKey }} className="hover:text-foreground">
+              <Link
+                to="/$orgSlug/tasks/$taskKey"
+                params={{ orgSlug, taskKey: task.parentKey }}
+                className="hover:text-foreground"
+              >
                 {task.parentKey}
               </Link>
               <ChevronRightIcon className="size-4" />
@@ -234,16 +332,35 @@ function TaskPage() {
         </nav>
         {visitors.length > 0 && (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span aria-hidden className="size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
+            <span
+              aria-hidden
+              className="size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse"
+            />
             Working now: {visitors.map((a) => `@${a.handle}`).join(", ")}
           </p>
         )}
         {/* Keyed by task so local edits reset when navigating between tasks. */}
-        <TaskText key={task.id} task={task} onSave={save} canEdit={membership.actor.role !== "guest"}
-          afterTitle={<div className="flex flex-col gap-4 rounded-lg border p-3 md:hidden">{fields}</div>}
+        <TaskText
+          key={task.id}
+          task={task}
+          onSave={save}
+          canEdit={membership.actor.role !== "guest"}
+          afterTitle={
+            <div className="flex flex-col gap-4 rounded-lg border p-3 md:hidden">
+              {fields}
+            </div>
+          }
         />
-        {release && <ReleasePanel orgSlug={orgSlug} release={release} canWrite={canEdit} />}
-        {milestone && <MilestonePanel orgSlug={orgSlug} milestone={milestone} />}
+        {release && (
+          <ReleasePanel
+            orgSlug={orgSlug}
+            release={release}
+            canWrite={canEdit}
+          />
+        )}
+        {milestone && (
+          <MilestonePanel orgSlug={orgSlug} milestone={milestone} />
+        )}
         <Subtasks
           key={`subtasks-${task.id}`}
           orgSlug={orgSlug}
@@ -252,15 +369,36 @@ function TaskPage() {
           statuses={statuses}
           members={actors}
         />
-        <Relations key={`relations-${task.id}`} orgSlug={orgSlug} taskKey={task.key} statuses={statuses} />
+        <Relations
+          key={`relations-${task.id}`}
+          orgSlug={orgSlug}
+          taskKey={task.key}
+          statuses={statuses}
+        />
         <Development orgSlug={orgSlug} taskKey={task.key} />
-        <TaskDocuments orgSlug={orgSlug} taskKey={task.key} canWrite={membership.actor.role !== "guest"} />
+        <TaskDocuments
+          orgSlug={orgSlug}
+          taskKey={task.key}
+          canWrite={membership.actor.role !== "guest"}
+        />
         <TaskMentions orgSlug={orgSlug} taskKey={task.key} />
-        <TaskComments orgSlug={orgSlug} taskKey={task.key} members={members} statuses={statuses} />
+        <TaskComments
+          orgSlug={orgSlug}
+          taskKey={task.key}
+          members={members}
+          statuses={statuses}
+        />
       </main>
 
-      <aside className="hidden w-72 shrink-0 flex-col gap-4 border-l p-4 md:flex">{fields}</aside>
-      <DuplicateDialog orgSlug={orgSlug} taskKey={task.key} open={markingDuplicate} onOpenChange={setMarkingDuplicate} />
+      <aside className="hidden w-72 shrink-0 flex-col gap-4 border-l p-4 md:flex">
+        {fields}
+      </aside>
+      <DuplicateDialog
+        orgSlug={orgSlug}
+        taskKey={task.key}
+        open={markingDuplicate}
+        onOpenChange={setMarkingDuplicate}
+      />
     </div>
   );
 }
@@ -281,7 +419,10 @@ function TaskText({
 }) {
   const [title, setTitle] = useState(task.title);
   // What the editor was mounted with; a new key remounts it with `value`.
-  const [loaded, setLoaded] = useState({ value: task.description ?? "", key: 0 });
+  const [loaded, setLoaded] = useState({
+    value: task.description ?? "",
+    key: 0,
+  });
   // Description sync (see description-sync.ts): the server value the current edit
   // started from, whether the user really edited, and their latest text.
   const baseline = useRef(task.description);
@@ -320,7 +461,8 @@ function TaskText({
   }
 
   function resolveConflict() {
-    if (conflictToast.current !== undefined) toast.dismiss(conflictToast.current);
+    if (conflictToast.current !== undefined)
+      toast.dismiss(conflictToast.current);
     conflictToast.current = undefined;
   }
 
@@ -340,26 +482,33 @@ function TaskText({
       resolveConflict();
     } else if (conflictToast.current === undefined) {
       // Keep the user's text, but never save over theirs without asking.
-      conflictToast.current = toast.warning("Someone else changed this description", {
-        description: "Your edits are kept here but not saved yet.",
-        duration: Infinity,
-        action: {
-          label: "Overwrite theirs",
-          onClick: () => {
-            conflictToast.current = undefined;
-            const next = descriptionToSave({ dirty: true, draft: draft.current, server: null });
-            // Once this lands the baseline follows.
-            saveText(next ?? null);
+      conflictToast.current = toast.warning(
+        "Someone else changed this description",
+        {
+          description: "Your edits are kept here but not saved yet.",
+          duration: Infinity,
+          action: {
+            label: "Overwrite theirs",
+            onClick: () => {
+              conflictToast.current = undefined;
+              const next = descriptionToSave({
+                dirty: true,
+                draft: draft.current,
+                server: null,
+              });
+              // Once this lands the baseline follows.
+              saveText(next ?? null);
+            },
+          },
+          cancel: {
+            label: "Use theirs",
+            onClick: () => {
+              conflictToast.current = undefined;
+              load(task.description);
+            },
           },
         },
-        cancel: {
-          label: "Use theirs",
-          onClick: () => {
-            conflictToast.current = undefined;
-            load(task.description);
-          },
-        },
-      });
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to the server value
   }, [task.description]);
@@ -376,7 +525,11 @@ function TaskText({
   function saveDescription() {
     // A pending conflict is resolved through its toast, never by a stray blur.
     if (!canEdit || conflictToast.current !== undefined) return;
-    const next = descriptionToSave({ dirty: dirty.current, draft: draft.current, server: task.description });
+    const next = descriptionToSave({
+      dirty: dirty.current,
+      draft: draft.current,
+      server: task.description,
+    });
     if (next !== undefined) saveText(next);
   }
 

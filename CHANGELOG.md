@@ -59,6 +59,7 @@ Unchanged: `whoami` (apart from `projectRules`), `get_inbox`, `get_task_activity
 ### Releases (ST-93)
 
 Done means finished, not shipped; releases ship Done tasks.
+
 - **API:** tasks gain `releaseId`, `shippedAt`, `noCode` and `shipping` (`{ state: not_in_release | in_release | shipped | no_code, release }`; null for releases, milestones and tasks that aren't Done and in no release). `PATCH /tasks/:key` and bulk updates take `noCode`. New `GET|POST /v1/orgs/{org}/projects/{key}/releases`, `GET|PATCH /v1/orgs/{org}/releases/{key}`, `POST …/releases/{key}/tasks`, `DELETE …/releases/{key}/tasks/{taskKey}` and `GET /v1/orgs/{org}/release-candidates`. Moving a release to Released ships its tasks (`shippedAt`, activity `task.shipped` "shipped in <version>"), and needs them all Done; moving it back unships them; canceling or deleting it takes its tasks out. SDK: `releases.*`.
 - **MCP:** new `create_release`, `get_release`, `list_releases`, `update_release`, `add_to_release`, `remove_from_release` and `list_release_candidates` (same JSON as `spider release … --json`); `update_task` and `update_tasks` take `noCode`. Task outputs gain the four fields above (additive).
 - **CLI:** new `spider release list|view|create|update|add|remove|candidates` (`--app web=2026.10.13`, default repo the origin remote) and `spider task update --no-code` / `--code`. `task view` shows `Shipping: …`; `task list` rows of Done tasks show `[not in a release]`, `[2026.10.14 · on staging]`, `[shipped 2026.10.13]` or `[no code]`. `--json` task output gains the four fields.

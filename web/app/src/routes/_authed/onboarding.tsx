@@ -1,5 +1,11 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
@@ -31,9 +37,14 @@ function OnboardingPage() {
       queryClient.setQueryData(meQuery.queryKey, (me) =>
         me ? { ...me, memberships: [...me.memberships, membership] } : me,
       );
-      await navigate({ to: "/$orgSlug", params: { orgSlug: membership.organization.slug }, replace: true });
+      await navigate({
+        to: "/$orgSlug",
+        params: { orgSlug: membership.organization.slug },
+        replace: true,
+      });
     },
-    onError: (err) => setError(err instanceof ApiError ? err.message : "Something went wrong"),
+    onError: (err) =>
+      setError(err instanceof ApiError ? err.message : "Something went wrong"),
   });
 
   function submit(event: FormEvent) {
@@ -61,7 +72,9 @@ function OnboardingPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Create an organization</CardTitle>
-          <CardDescription>Projects, tasks and agents live inside an organization.</CardDescription>
+          <CardDescription>
+            Projects, tasks and agents live inside an organization.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="flex flex-col gap-4">

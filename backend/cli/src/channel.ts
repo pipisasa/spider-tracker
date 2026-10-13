@@ -62,7 +62,15 @@ function summary(item: InboxItemDto) {
 }
 
 function text(value: unknown, isError = false): CallToolResult {
-  return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }], isError };
+  return {
+    content: [
+      {
+        type: "text",
+        text: typeof value === "string" ? value : JSON.stringify(value),
+      },
+    ],
+    isError,
+  };
 }
 
 /** A tool call the session got wrong; its message goes back to the session. */
@@ -72,7 +80,12 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
     return text(await fn());
   } catch (err) {
-    return text(err instanceof SpiderApiError || err instanceof ToolInputError ? err.message : "Something went wrong", true);
+    return text(
+      err instanceof SpiderApiError || err instanceof ToolInputError
+        ? err.message
+        : "Something went wrong",
+      true,
+    );
   }
 }
 
@@ -81,7 +94,10 @@ export function createChannel(options: ChannelOptions) {
   const log = options.log ?? (() => {});
   const server = new McpServer(
     { name: "spider", version: "0.1.0" },
-    { capabilities: { tools: {}, experimental: { "claude/channel": {} } }, instructions: INSTRUCTIONS(handle) },
+    {
+      capabilities: { tools: {}, experimental: { "claude/channel": {} } },
+      instructions: INSTRUCTIONS(handle),
+    },
   );
 
   server.registerTool(
@@ -90,20 +106,39 @@ export function createChannel(options: ChannelOptions) {
       description:
         "Post a comment on a Spider Tracker task, or on a document when the message has a document_id (Markdown). Mention others with @handle.",
       inputSchema: {
-        task: z.string().optional().describe('Task key from the channel message, e.g. "ST-12"'),
-        document_id: z.string().optional().describe("document_id from the channel message, for comments on a document"),
+        task: z
+          .string()
+          .optional()
+          .describe('Task key from the channel message, e.g. "ST-12"'),
+        document_id: z
+          .string()
+          .optional()
+          .describe(
+            "document_id from the channel message, for comments on a document",
+          ),
         text: z.string().min(1).describe("Your reply. Never include secrets"),
-        reply_to: z.string().optional().describe("comment_id of the message you are answering"),
+        reply_to: z
+          .string()
+          .optional()
+          .describe("comment_id of the message you are answering"),
       },
     },
     ({ task, document_id, text: body, reply_to }) =>
       run(async () => {
-        if (!task === !document_id) throw new ToolInputError("Pass either task or document_id");
+        if (!task === !document_id)
+          throw new ToolInputError("Pass either task or document_id");
         if (document_id) {
-          const comment = await client.documents.comments.create(org, document_id, { body, parentId: reply_to ?? null });
+          const comment = await client.documents.comments.create(
+            org,
+            document_id,
+            { body, parentId: reply_to ?? null },
+          );
           return { posted: comment.id, document_id: comment.documentId };
         }
-        const comment = await client.comments.create(org, task ?? "", { body, parentId: reply_to ?? null });
+        const comment = await client.comments.create(org, task ?? "", {
+          body,
+          parentId: reply_to ?? null,
+        });
         return { posted: comment.id, task: comment.taskKey };
       }),
   );
@@ -111,7 +146,8 @@ export function createChannel(options: ChannelOptions) {
   server.registerTool(
     "get_comments",
     {
-      description: "Read the whole comment thread of a task, or of a document (document_id), oldest first.",
+      description:
+        "Read the whole comment thread of a task, or of a document (document_id), oldest first.",
       inputSchema: {
         task: z.string().optional().describe('Task key, e.g. "ST-12"'),
         document_id: z.string().optional().describe("Document id"),
@@ -119,7 +155,8 @@ export function createChannel(options: ChannelOptions) {
     },
     ({ task, document_id }) =>
       run(async () => {
-        if (!task === !document_id) throw new ToolInputError("Pass either task or document_id");
+        if (!task === !document_id)
+          throw new ToolInputError("Pass either task or document_id");
         return document_id
           ? (await client.documents.comments.list(org, document_id)).items
           : (await client.comments.list(org, task ?? "")).items;
@@ -135,7 +172,12 @@ export function createChannel(options: ChannelOptions) {
           meta: {
             ...(item.task ? { task: item.task.key } : {}),
             ...(item.document
-              ? { ...(item.document.projectKey ? { project: item.document.projectKey } : {}), document_id: item.document.id }
+              ? {
+                  ...(item.document.projectKey
+                    ? { project: item.document.projectKey }
+                    : {}),
+                  document_id: item.document.id,
+                }
               : {}),
             kind: item.kind,
             from: item.from.handle,
@@ -148,7 +190,11 @@ export function createChannel(options: ChannelOptions) {
       });
     }
     const last = items.at(-1);
-    if (last) await client.inbox.markRead(org, { upTo: last.id, kinds: [...INBOX_KINDS] });
+    if (last)
+      await client.inbox.markRead(org, {
+        upTo: last.id,
+        kinds: [...INBOX_KINDS],
+      });
   }
 
   /** Delivers unread items, then waits for new ones until `signal` aborts. */
@@ -167,8 +213,12 @@ export function createChannel(options: ChannelOptions) {
         await deliver(items);
         cursor = items.at(-1)?.id ?? cursor;
       } catch (err) {
-        log(`inbox request failed: ${err instanceof Error ? err.message : String(err)}`);
-        await new Promise((resolve) => setTimeout(resolve, options.retryMs ?? 5000));
+        log(
+          `inbox request failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.retryMs ?? 5000),
+        );
       }
     }
   }

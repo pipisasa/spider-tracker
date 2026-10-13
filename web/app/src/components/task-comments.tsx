@@ -4,7 +4,13 @@ import { ActorAvatar, formatDay } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { mentionOf, nameOf } from "@/lib/assignees";
-import { actorsQuery, activityQuery, commentsQuery, tagsQuery, useAddComment } from "@/lib/work";
+import {
+  actorsQuery,
+  activityQuery,
+  commentsQuery,
+  tagsQuery,
+  useAddComment,
+} from "@/lib/work";
 import type {
   ActivityDto,
   ActorDto,
@@ -22,7 +28,6 @@ const timeFormat = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
-
 const PRIORITY_LABELS = ["no priority", "urgent", "high", "medium", "low"];
 
 /** One line describing an activity entry, e.g. "changed status Todo → In Progress". */
@@ -36,22 +41,35 @@ export function describeActivity(
     statuses.find((s) => s.id === id)?.name ?? "unknown";
   const names = (ids: unknown) =>
     Array.isArray(ids) && ids.length > 0
-      ? ids
-          .map((id) => mentionOf(members.get(String(id))))
-          .join(", ")
+      ? ids.map((id) => mentionOf(members.get(String(id)))).join(", ")
       : "nobody";
   if (entry.action === "task.created") return "created the task";
   if (entry.action === "task.deleted") return "deleted the task";
-  if ((entry.action === "relation.added" || entry.action === "relation.removed") && entry.changes) {
+  if (
+    (entry.action === "relation.added" ||
+      entry.action === "relation.removed") &&
+    entry.changes
+  ) {
     const { kind, task } = entry.changes;
-    const label = typeof kind === "string" && kind in RELATION_LABELS ? RELATION_LABELS[kind as RelationKind] : "Linked to";
-    const verb = entry.action === "relation.added" ? "added link" : "removed link";
+    const label =
+      typeof kind === "string" && kind in RELATION_LABELS
+        ? RELATION_LABELS[kind as RelationKind]
+        : "Linked to";
+    const verb =
+      entry.action === "relation.added" ? "added link" : "removed link";
     return `${verb}: ${label.toLowerCase()} ${String(task)}`;
   }
   // Releases (ST-93): a release marked Released ships its tasks; moving it back undoes that.
-  if ((entry.action === "task.shipped" || entry.action === "task.unshipped") && entry.changes) {
-    const version = String(entry.changes.version ?? entry.changes.release ?? "a release");
-    return entry.action === "task.shipped" ? `shipped in ${version}` : `no longer shipped in ${version}`;
+  if (
+    (entry.action === "task.shipped" || entry.action === "task.unshipped") &&
+    entry.changes
+  ) {
+    const version = String(
+      entry.changes.version ?? entry.changes.release ?? "a release",
+    );
+    return entry.action === "task.shipped"
+      ? `shipped in ${version}`
+      : `no longer shipped in ${version}`;
   }
   // Deployments (ST-94): "deployed web to staging at 3f2c1ab".
   if (entry.action === "release.deployed" && entry.changes) {
@@ -77,17 +95,24 @@ export function describeActivity(
     else if (field === "parentId")
       parts.push(to ? "set a parent task" : "removed the parent task");
     else if (field === "tagIds") parts.push(describeTagChange(from, to, tags));
-    else if (field === "releaseId") parts.push(to ? "added it to a release" : "took it out of its release");
-    else if (field === "noCode") parts.push(to ? "marked it as having no code" : "marked it as having code");
+    else if (field === "releaseId")
+      parts.push(to ? "added it to a release" : "took it out of its release");
+    else if (field === "noCode")
+      parts.push(
+        to ? "marked it as having no code" : "marked it as having code",
+      );
     else if (field === "apps" || field === "repos") {
-      const list = Array.isArray(to) && to.length > 0 ? to.map(String).join(", ") : "none";
+      const list =
+        Array.isArray(to) && to.length > 0 ? to.map(String).join(", ") : "none";
       parts.push(`set the ${field} to ${list}`);
-    }
-    else if (field === "startDate" || field === "targetDate") {
+    } else if (field === "startDate" || field === "targetDate") {
       const name = field === "startDate" ? "start date" : "target date";
-      parts.push(typeof to === "string" ? `set the ${name} to ${formatDay(to)}` : `removed the ${name}`);
-    }
-    else parts.push(`changed ${field}`);
+      parts.push(
+        typeof to === "string"
+          ? `set the ${name} to ${formatDay(to)}`
+          : `removed the ${name}`,
+      );
+    } else parts.push(`changed ${field}`);
   }
   const line = parts.join(", ");
   return (line && cause ? `${line} ${cause}` : line) || null;
@@ -110,7 +135,11 @@ function describePullRequestCause(value: unknown): string | null {
 }
 
 /** "added tag bug", "added tags bug, ui and removed 1 deleted tag". */
-function describeTagChange(from: unknown, to: unknown, tags: Map<string, string>): string {
+function describeTagChange(
+  from: unknown,
+  to: unknown,
+  tags: Map<string, string>,
+): string {
   const before = Array.isArray(from) ? from.map(String) : [];
   const after = Array.isArray(to) ? to.map(String) : [];
   const phrase = (verb: string, ids: string[]) => {
@@ -118,14 +147,22 @@ function describeTagChange(from: unknown, to: unknown, tags: Map<string, string>
     const names = ids.flatMap((id) => tags.get(id) ?? []);
     const gone = ids.length - names.length;
     const parts = [
-      names.length > 0 ? `${names.length > 1 ? "tags" : "tag"} ${names.join(", ")}` : null,
+      names.length > 0
+        ? `${names.length > 1 ? "tags" : "tag"} ${names.join(", ")}`
+        : null,
       gone > 0 ? `${gone} deleted ${gone > 1 ? "tags" : "tag"}` : null,
     ].filter((part) => part !== null);
     return `${verb} ${parts.join(" and ")}`;
   };
   const bits = [
-    phrase("added", after.filter((id) => !before.includes(id))),
-    phrase("removed", before.filter((id) => !after.includes(id))),
+    phrase(
+      "added",
+      after.filter((id) => !before.includes(id)),
+    ),
+    phrase(
+      "removed",
+      before.filter((id) => !after.includes(id)),
+    ),
   ].filter((bit) => bit !== null);
   return bits.length > 0 ? bits.join(", ") : "changed tags";
 }
@@ -254,7 +291,10 @@ export function TaskComments({
   const { data: comments = [] } = useQuery(commentsQuery(orgSlug, taskKey));
   const { data: activity = [] } = useQuery(activityQuery(orgSlug, taskKey));
   const { data: tagList = [] } = useQuery(tagsQuery(orgSlug));
-  const tagNames = useMemo(() => new Map(tagList.map((t) => [t.id, t.name])), [tagList]);
+  const tagNames = useMemo(
+    () => new Map(tagList.map((t) => [t.id, t.name])),
+    [tagList],
+  );
   const add = useAddComment(orgSlug, taskKey);
   // The comment being replied to; its thread shows the reply box.
   const [replyTo, setReplyTo] = useState<CommentDto | null>(null);
@@ -315,7 +355,12 @@ export function TaskComments({
       <ul className="flex flex-col gap-4">
         {timeline.map((item) => {
           if ("activity" in item) {
-            const text = describeActivity(item.activity, statuses, byId, tagNames);
+            const text = describeActivity(
+              item.activity,
+              statuses,
+              byId,
+              tagNames,
+            );
             if (!text) return null;
             const actor = byId.get(item.activity.actorId);
             return (
