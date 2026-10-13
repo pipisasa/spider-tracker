@@ -227,7 +227,8 @@ const schemas: Record<string, JsonSchema> = {
     project: ref("ProjectDetail"),
     movedTasks: {
       type: "integer",
-      description: "Tasks moved to the target status (deleted ones too)",
+      description:
+        "Live tasks moved to the target status; deleted ones move too but aren't counted",
     },
   }),
   Task: object({

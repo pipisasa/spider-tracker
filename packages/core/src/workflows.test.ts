@@ -452,7 +452,8 @@ run("task kinds and per-project workflows (ST-90)", () => {
     const result = await deleteStatus(db, owner, "KDE", review.id, {
       moveTo: done.id,
     });
-    expect(result.movedTasks).toBe(3);
+    // C moved too (it was deleted), but only live tasks count (ST-136).
+    expect(result.movedTasks).toBe(2);
     project = result.project;
     expect(names(project.workflows.task)).toEqual([
       "Backlog",
@@ -477,6 +478,7 @@ run("task kinds and per-project workflows (ST-90)", () => {
       .from(schema.tasks)
       .where(eq(schema.tasks.id, c.id));
     expect(deleted?.statusId).toBe(done.id);
+    expect(deleted?.completedAt).not.toBeNull();
     const history = await db
       .select()
       .from(schema.activity)
@@ -484,7 +486,11 @@ run("task kinds and per-project workflows (ST-90)", () => {
       .orderBy(asc(schema.activity.id));
     expect(history.at(-1)?.changes).toEqual({ statusId: [review.id, done.id] });
 
-    // Reopening: moving done tasks to an open status clears completedAt.
+    // Closed to closed keeps completedAt.
+    const dropped = await createTask(db, owner, "KDE", {
+      title: "Dropped",
+      statusId: byName(project, "task", "Canceled").id,
+    });
     await deleteStatus(
       db,
       owner,
@@ -492,6 +498,12 @@ run("task kinds and per-project workflows (ST-90)", () => {
       byName(project, "task", "Canceled").id,
       { moveTo: done.id },
     );
+    expect(dropped.completedAt).not.toBeNull();
+    expect((await getTask(db, owner, dropped.key)).completedAt).toBe(
+      dropped.completedAt,
+    );
+
+    // Reopening: moving done tasks to an open status clears completedAt.
     const reopened = await createStatus(db, owner, "KDE", {
       name: "Shipped",
       category: "done",
@@ -507,6 +519,12 @@ run("task kinds and per-project workflows (ST-90)", () => {
     );
     expect(moved.movedTasks).toBe(4);
     expect((await getTask(db, owner, a.key)).completedAt).toBeNull();
+    // Still in their order, after the column's tasks, in one statement.
+    expect(
+      (await listTasks(db, owner, "KDE", { status: ["Todo"] })).map(
+        (t) => t.title,
+      ),
+    ).toEqual([already.title, a.title, b.title, dropped.title]);
   });
 
   test("each workflow keeps an open status and a done status", async () => {
