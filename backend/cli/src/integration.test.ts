@@ -3195,6 +3195,8 @@ withDb("spider CLI against the API", () => {
     expect(ready.items.map((m) => m.key)).toEqual([milestone.key]);
   });
 
+  // Compares every CLI --json read and write with its MCP tool (dozens of in-process requests), so it needs more
+  // than bun's default 5 s when other test packages share the machine.
   test("CLI --json and MCP return tasks, documents, comments, document comments and projects in the same shape (ST-107)", async () => {
     const transport = new StreamableHTTPClientTransport(
       new URL(`${env.API_ORIGIN}/mcp`),
@@ -3723,7 +3725,7 @@ withDb("spider CLI against the API", () => {
     } finally {
       await client.close();
     }
-  });
+  }, 30_000);
 
   test("task update --status Todo --priority 1: works by name, category or number, and says why it fails (ST-107)", async () => {
     await spider(
