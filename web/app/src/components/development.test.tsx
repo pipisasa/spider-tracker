@@ -3,17 +3,28 @@ import type { TaskGitDto } from "@repo/core/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DevelopmentLinks, pullRequestStatus } from "./development";
 
-const empty: TaskGitDto = { taskKey: "ST-12", pullRequests: [], branches: [], commits: [] };
+const empty: TaskGitDto = {
+  taskKey: "ST-12",
+  pullRequests: [],
+  branches: [],
+  commits: [],
+};
 
 test("a pull request's state: open, draft, closed, merged", () => {
   expect(pullRequestStatus({ state: "open", draft: false }).label).toBe("Open");
   expect(pullRequestStatus({ state: "open", draft: true }).label).toBe("Draft");
-  expect(pullRequestStatus({ state: "closed", draft: true }).label).toBe("Closed");
-  expect(pullRequestStatus({ state: "merged", draft: false }).label).toBe("Merged");
+  expect(pullRequestStatus({ state: "closed", draft: true }).label).toBe(
+    "Closed",
+  );
+  expect(pullRequestStatus({ state: "merged", draft: false }).label).toBe(
+    "Merged",
+  );
 });
 
 test("with nothing linked, a hint names the task", () => {
-  expect(renderToStaticMarkup(<DevelopmentLinks git={empty} />)).toContain("Branches named after ST-12");
+  expect(renderToStaticMarkup(<DevelopmentLinks git={empty} />)).toContain(
+    "Branches named after ST-12",
+  );
 });
 
 test("lists pull requests, branches and the latest commits with links to GitHub", () => {
@@ -47,12 +58,22 @@ test("lists pull requests, branches and the latest commits with links to GitHub"
             via: "branch",
           },
         ],
-        branches: [{ repo: "acme/web", name: "st-12-ship-it", url: "https://github.com/acme/web/tree/st-12-ship-it", deleted: true, linkedAt: "2026-10-12T09:00:00.000Z" }],
+        branches: [
+          {
+            repo: "acme/web",
+            name: "st-12-ship-it",
+            url: "https://github.com/acme/web/tree/st-12-ship-it",
+            deleted: true,
+            linkedAt: "2026-10-12T09:00:00.000Z",
+          },
+        ],
         commits,
       }}
     />,
   );
-  expect(html).toContain('href="https://github.com/acme/web/pull/7" target="_blank" rel="noopener noreferrer"');
+  expect(html).toContain(
+    'href="https://github.com/acme/web/pull/7" target="_blank" rel="noopener noreferrer"',
+  );
   expect(html).toContain("Ship &lt;it&gt;");
   expect(html).toContain("Merged");
   expect(html).toContain("st-12-ship-it");

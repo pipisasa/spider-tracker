@@ -142,7 +142,12 @@ describe("credentials", () => {
       path,
       JSON.stringify({
         version: 2,
-        servers: { prod: { url: "u", orgs: { a: { name: "A", agents: { b: { token: 1 } } } } } },
+        servers: {
+          prod: {
+            url: "u",
+            orgs: { a: { name: "A", agents: { b: { token: 1 } } } },
+          },
+        },
       }),
     );
     await expect(readStore(env)).rejects.toThrow(

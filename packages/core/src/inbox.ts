@@ -1,8 +1,26 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { aliasedTable, and, asc, eq, gt, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
+import {
+  aliasedTable,
+  and,
+  asc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { projectScope, type ActorContext } from "./access";
-import type { DocumentInboxKind, InboxItemDto, InboxKind, TaskInboxKind } from "./contracts";
+import type {
+  DocumentInboxKind,
+  InboxItemDto,
+  InboxKind,
+  TaskInboxKind,
+} from "./contracts";
 import { publish } from "./events";
 import { inboxQuery, markInboxReadInput } from "./schemas";
 import { parseInput } from "./validate";
@@ -19,7 +37,9 @@ async function insertItems(
   entries: InboxEntry<InboxKind>[],
 ) {
   const seen = new Set<string>([ctx.actorId]);
-  const rows = entries.filter((e) => (seen.has(e.recipientId) ? false : seen.add(e.recipientId)));
+  const rows = entries.filter((e) =>
+    seen.has(e.recipientId) ? false : seen.add(e.recipientId),
+  );
   if (rows.length === 0) return;
   await tx.insert(inboxItems).values(
     rows.map((e) => ({
@@ -31,11 +51,20 @@ async function insertItems(
       actorId: ctx.actorId,
     })),
   );
-  await publish(tx, { type: "inbox.created", orgId: ctx.orgId, recipientIds: rows.map((r) => r.recipientId) });
+  await publish(tx, {
+    type: "inbox.created",
+    orgId: ctx.orgId,
+    recipientIds: rows.map((r) => r.recipientId),
+  });
 }
 
 /** Adds inbox items for a task event; never notifies the actor about their own action. */
-export async function notify(tx: Tx, ctx: ActorContext, taskId: string, entries: InboxEntry<TaskInboxKind>[]) {
+export async function notify(
+  tx: Tx,
+  ctx: ActorContext,
+  taskId: string,
+  entries: InboxEntry<TaskInboxKind>[],
+) {
   await insertItems(tx, ctx, { taskId }, entries);
 }
 
@@ -50,7 +79,12 @@ export async function notifyDocument(
 }
 
 /** Adds a `rules` item (ST-111) about a project's rules document for each recipient. */
-export async function notifyRulesChanged(tx: Tx, ctx: ActorContext, documentId: string, recipientIds: string[]) {
+export async function notifyRulesChanged(
+  tx: Tx,
+  ctx: ActorContext,
+  documentId: string,
+  recipientIds: string[],
+) {
   const rows = [...new Set(recipientIds)].filter((id) => id !== ctx.actorId);
   if (rows.length === 0) return;
   await tx.insert(inboxItems).values(
@@ -62,13 +96,21 @@ export async function notifyRulesChanged(tx: Tx, ctx: ActorContext, documentId: 
       actorId: ctx.actorId,
     })),
   );
-  await publish(tx, { type: "inbox.created", orgId: ctx.orgId, recipientIds: rows });
+  await publish(tx, {
+    type: "inbox.created",
+    orgId: ctx.orgId,
+    recipientIds: rows,
+  });
 }
 
 const sender = aliasedTable(actors, "sender");
 
 /** The acting actor's inbox, oldest first; `after` returns only newer items (a cursor). */
-export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}): Promise<InboxItemDto[]> {
+export async function listInbox(
+  db: Db,
+  ctx: ActorContext,
+  query: unknown = {},
+): Promise<InboxItemDto[]> {
   const { after, unread, limit, kinds } = parseInput(inboxQuery, query);
   const scope = await projectScope(db, ctx);
   const rows = await db
@@ -78,15 +120,30 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
       taskTitle: tasks.title,
       documentTitle: documents.title,
       projectKey: projects.key,
-      comment: { id: comments.id, body: comments.body, deletedAt: comments.deletedAt },
-      from: { id: sender.id, handle: sender.handle, name: sender.name, type: sender.type },
+      comment: {
+        id: comments.id,
+        body: comments.body,
+        deletedAt: comments.deletedAt,
+      },
+      from: {
+        id: sender.id,
+        handle: sender.handle,
+        name: sender.name,
+        type: sender.type,
+      },
     })
     .from(inboxItems)
     // An item is about a task, or (kinds `rules` and `document_*`) about a document, which may be
     // organization-wide (no project).
     .leftJoin(tasks, eq(inboxItems.taskId, tasks.id))
     .leftJoin(documents, eq(inboxItems.documentId, documents.id))
-    .leftJoin(projects, eq(projects.id, sql`coalesce(${tasks.projectId}, ${documents.projectId})`))
+    .leftJoin(
+      projects,
+      eq(
+        projects.id,
+        sql`coalesce(${tasks.projectId}, ${documents.projectId})`,
+      ),
+    )
     .innerJoin(sender, eq(inboxItems.actorId, sender.id))
     .leftJoin(comments, eq(inboxItems.commentId, comments.id))
     .where(
@@ -96,14 +153,24 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
         inArray(inboxItems.kind, kinds),
         or(
           and(isNotNull(inboxItems.taskId), isNull(tasks.deletedAt)),
-          and(isNull(inboxItems.taskId), isNotNull(documents.id), isNull(documents.deletedAt)),
+          and(
+            isNull(inboxItems.taskId),
+            isNotNull(documents.id),
+            isNull(documents.deletedAt),
+          ),
         ),
         // A `rules` item only while its document is still the project's rules (ST-128): not after
         // the rules were replaced or cleared, or the document moved away or was deleted.
-        or(ne(inboxItems.kind, "rules"), eq(projects.rulesDocumentId, inboxItems.documentId)),
+        or(
+          ne(inboxItems.kind, "rules"),
+          eq(projects.rulesDocumentId, inboxItems.documentId),
+        ),
         // Organization-wide documents are visible to every member, scoped agents included.
         scope
-          ? or(inArray(projects.id, [...scope]), and(isNull(inboxItems.taskId), isNull(documents.projectId)))
+          ? or(
+              inArray(projects.id, [...scope]),
+              and(isNull(inboxItems.taskId), isNull(documents.projectId)),
+            )
           : undefined,
         after !== undefined ? gt(inboxItems.id, after) : undefined,
         unread ? isNull(inboxItems.readAt) : undefined,
@@ -117,12 +184,22 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
     kind: r.item.kind,
     createdAt: r.item.createdAt.toISOString(),
     readAt: r.item.readAt?.toISOString() ?? null,
-    task: r.taskNumber !== null && r.taskTitle !== null ? { key: `${r.projectKey}-${r.taskNumber}`, title: r.taskTitle } : null,
+    task:
+      r.taskNumber !== null && r.taskTitle !== null
+        ? { key: `${r.projectKey}-${r.taskNumber}`, title: r.taskTitle }
+        : null,
     document:
       r.item.documentId && r.documentTitle !== null
-        ? { id: r.item.documentId, title: r.documentTitle, projectKey: r.projectKey ?? null }
+        ? {
+            id: r.item.documentId,
+            title: r.documentTitle,
+            projectKey: r.projectKey ?? null,
+          }
         : null,
-    comment: r.comment && !r.comment.deletedAt ? { id: r.comment.id, body: r.comment.body } : null,
+    comment:
+      r.comment && !r.comment.deletedAt
+        ? { id: r.comment.id, body: r.comment.body }
+        : null,
     from: r.from,
   }));
 }
@@ -131,7 +208,11 @@ export async function listInbox(db: Db, ctx: ActorContext, query: unknown = {}):
  * Marks the actor's items read, by id or everything of the given kinds (default: the task kinds)
  * up to a cursor. Returns how many changed.
  */
-export async function markInboxRead(db: Db, ctx: ActorContext, input: unknown): Promise<number> {
+export async function markInboxRead(
+  db: Db,
+  ctx: ActorContext,
+  input: unknown,
+): Promise<number> {
   const { ids, upTo, kinds } = parseInput(markInboxReadInput, input);
   const rows = await db
     .update(inboxItems)
@@ -142,7 +223,9 @@ export async function markInboxRead(db: Db, ctx: ActorContext, input: unknown): 
         isNull(inboxItems.readAt),
         ids ? inArray(inboxItems.id, ids) : undefined,
         // Only the kinds the client listed: older clients never fetch `rules` and `document_*` items.
-        upTo !== undefined ? and(lte(inboxItems.id, upTo), inArray(inboxItems.kind, kinds)) : undefined,
+        upTo !== undefined
+          ? and(lte(inboxItems.id, upTo), inArray(inboxItems.kind, kinds))
+          : undefined,
       ),
     )
     .returning({ id: inboxItems.id });

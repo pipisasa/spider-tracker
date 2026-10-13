@@ -22,9 +22,21 @@ const root = join(import.meta.dir, "..");
 const code = await deploy({
   argv: process.argv.slice(2),
   cwd: root,
-  spawn: async (cmd, cwd) => Bun.spawn(cmd, { cwd, stdout: "inherit", stderr: "inherit", stdin: "inherit" }).exited,
+  spawn: async (cmd, cwd) =>
+    Bun.spawn(cmd, {
+      cwd,
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+    }).exited,
   git: runGit,
-  spider: (argv) => run(argv, { env: process.env, stdout: process.stdout, stderr: process.stderr, cwd: root }),
+  spider: (argv) =>
+    run(argv, {
+      env: process.env,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      cwd: root,
+    }),
   exists: (path) => existsSync(join(root, path)),
   stdout: process.stdout,
   stderr: process.stderr,

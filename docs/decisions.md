@@ -11,6 +11,7 @@ Short records of technology choices. Add new ones at the bottom.
 **Decision:** use a relational database.
 
 **Why:**
+
 - The data is deeply relational: organizations → projects → tasks → assignees, tags, relations, repos, pull requests and runs.
 - Saved views are ad-hoc filters across many fields, which SQL handles naturally. A document store would need every access pattern planned in advance, plus duplicated data.
 - Status changes, activity entries and run updates must commit together, which needs transactions.
@@ -25,6 +26,7 @@ Short records of technology choices. Add new ones at the bottom.
 **Decision:** Postgres on the server. SQLite only on clients, later.
 
 **Why:**
+
 - Agents, webhooks, workers and people all write at the same time. Postgres handles that well; SQLite allows only one writer at a time.
 - The API and the worker run on different machines and need one shared database over the network.
 - Row-level security gives organization isolation inside the database.
@@ -42,6 +44,7 @@ Short records of technology choices. Add new ones at the bottom.
 **Decision:** a TypeScript backend.
 
 **Why:**
+
 - Agent tooling is strongest in TypeScript. The Claude Agent SDK, the MCP SDK and Octokit are all official and complete there. Elixir has only community libraries for these.
 - One language across web, API, SDK and CLI, with shared types and Zod schemas.
 - The workload waits on the database, GitHub and LLM calls, not CPU, so Node-style async handles it fine.
@@ -63,6 +66,7 @@ Short records of technology choices. Add new ones at the bottom.
 **Decision:** Postgres provides the job queue (pg-boss or Graphile Worker) and live updates (LISTEN/NOTIFY, streamed to browsers over SSE).
 
 **Revisit when:**
+
 - many workers need to fan out high-frequency token streams,
 - Postgres notifications become a bottleneck (they're capped at about 8KB per message), or
 - the system grows into many separate services.
@@ -84,7 +88,8 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 **Decision:** Better Auth, running inside `backend/api`, instead of Supabase Auth. Spider Tracker acts as its own OAuth 2.1 / OIDC provider. Details: [auth.md](./auth.md).
 
 **Why:**
-- MCP clients and the CLI must sign in to *us*, so we need an OAuth server, a device flow and API keys. Better Auth has plugins for all of them.
+
+- MCP clients and the CLI must sign in to _us_, so we need an OAuth server, a device flow and API keys. Better Auth has plugins for all of them.
 - It's TypeScript, runs in Hono on Bun, and stores its tables in our Postgres through Drizzle.
 - Identity stays in our own database, with no separate auth schema.
 
@@ -99,6 +104,7 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 **Decision:** `web/app` is a Vite + React single-page app using TanStack Router (type-safe routing) and TanStack Query (server state and caching), served as static files.
 
 **Why:**
+
 - The app sits behind login, so server rendering and SEO bring nothing. A marketing site can be separate later.
 - All data comes from our public API (API parity); the frontend needs no server code of its own.
 - Static files host cheaply anywhere (Cloudflare Pages) with no server runtime.
@@ -114,12 +120,14 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 **Decision:** Postgres and the backend run on Railway; the frontend on Cloudflare Pages; file storage on Cloudflare R2.
 
 **Why:**
+
 - After choosing Better Auth, Supabase would only provide Postgres, Realtime and storage. Each has a simple replacement, and fewer vendors means less to manage.
 - Postgres sits next to the API and worker on Railway's private network: low latency, no public database endpoint.
 - R2 is S3-compatible with no download (egress) fees, and is already used for `cdn.batele.plus`.
 - Cloudflare Pages serves the static SPA from the edge.
 
 **Replacements:**
+
 - Realtime → LISTEN/NOTIFY + SSE from `backend/api` (see [architecture.md](./architecture.md#realtime)).
 - Storage → R2 with presigned URLs.
 - Database backups → Railway backups, plus scheduled `pg_dump` to R2.
@@ -133,11 +141,13 @@ Then consider NATS or Redis Streams. External agents never connect to the broker
 **Decision:** while the project is private, `tracker.batele.plus` and `tracker-api.batele.plus` sit behind Cloudflare Access. Setup: [architecture.md](./architecture.md#private-access-for-now).
 
 **Why:**
+
 - The domain and frontend are already on Cloudflare, so there's nothing extra to run.
 - It works the same for browsers, the CLI and agents (service tokens), and allows path exceptions for GitHub webhooks.
 - It's a gate in front of the app, independent of Better Auth, and can be removed when the project goes public.
 
 **Alternative considered: Tailscale.** Gives no public surface at all, but:
+
 - Railway containers would need `tailscaled` running inside them (userspace mode), plus TLS certificates via DNS challenge.
 - GitHub webhooks couldn't reach a tailnet-only API without Tailscale Funnel or a separate public receiver.
 - Every agent and CI machine would have to join the tailnet.
@@ -151,6 +161,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** HTML documents are shown in `<iframe sandbox="" srcdoc=…>`: no `allow-scripts`, no `allow-same-origin`, no forms or popups. Markdown documents are rendered with react-markdown and raw HTML inside Markdown is skipped.
 
 **Why:**
+
 - Documents are written by people and agents alike; an agent could be prompt-injected into writing hostile HTML. With an empty `sandbox`, the frame gets a unique opaque origin, can't run scripts and can't reach the app, its cookies or the API.
 - No HTML sanitizer to keep up to date, and documents still render exactly as written (styles, tables, layout).
 
@@ -165,6 +176,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** a project's rules for agents (ST-111) are a nullable `projects.rules_document_id` pointing at one of the project's own project-level documents, not a flag on documents or a separate text field.
 
 **Why:**
+
 - "At most one per project" is the column itself; no partial unique index, and replacing the rules is one update.
 - The rules stay a normal document: versions, links, the editor and the API all work unchanged.
 - Agents get them through the MCP server's instructions on `initialize`, which every MCP session (plugin or `spider claude`) reads first, so neither the generated agent file nor the channel has to be regenerated when they change.
@@ -179,6 +191,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** comments on documents (ST-118) are rows of the existing `comments` table: `task_id` became nullable next to a new `document_id`, with a check that exactly one is set (as ST-111 did for `inbox_items`). Document-only columns are `quote` (the fragment a top-level comment is about), `document_version` and `resolved_at` / `resolved_by`. Their notifications are new inbox kinds `document_mention`, `document_reply` and `document_comment` about a document.
 
 **Why:**
+
 - One pipeline: mentions, the agent loop guard, soft delete and `inbox_items.comment_id` (which shows the comment's body in the inbox and the channel) work for both without a second table or a second foreign key on inbox items.
 - Task comment queries filter on `task_id` already, so they are unaffected; only the inbox joins learned that a document may have no project.
 - New inbox kinds instead of reusing `mention` / `reply` / `comment`: clients from before ST-111 expect a task on every item of those kinds, and the API returns the new kinds only when `kinds` asks for them.
@@ -193,6 +206,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** statuses get a `kind` (ST-90), so each project has one workflow per task kind (task, release, milestone), and a task's kind is fixed at creation. The database enforces that a task's status is of its project and kind with a composite foreign key. In API responses, `ProjectDetailDto.statuses` keeps meaning the task workflow, and the new `workflows` field holds every kind's.
 
 **Why:**
+
 - Releases and milestones need their own steps (On staging, Release review; Active, Ready to close) while code, agents and skills keep using only the fixed categories.
 - Keeping `statuses` as the task workflow means CLIs and scripts from before kinds still resolve "Done" or `in_progress` to the task statuses; mixing every kind into it would make them pick a milestone's Done (its position is lower).
 - A fixed kind means no status remapping when a task changes kind; a composite foreign key makes a wrong-kind status impossible even for writes that bypass core.
@@ -205,6 +219,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** releases (ST-93) are tasks of kind `release`, with their own workflow, and included tasks point at their release with `tasks.release_id` (one release per task). Shipping is stored on the task (`shipped_at`, set when its release enters the done category) and shown as a derived `shipping` state (`not_in_release`, `in_release`, `shipped`, `no_code`), never as a status: Done means finished, and an included task's status never changes when it ships. A Done task with nothing to ship is marked with an explicit `no_code` flag.
 
 **Why:**
+
 - A release needs what tasks have (status, owner, dates, comments, documents, activity, the board), so it reuses them instead of a parallel entity.
 - A status per shipping step would mix two questions (is the work finished? is it in production?) in one workflow and force every project's task workflow to grow release steps.
 - `shipped_at` on each task keeps "when did this reach users" readable without a join, and lets a release's status move back (Released → Release review) by clearing it.
@@ -219,6 +234,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** a release's changelog (ST-95) is generated from its included tasks: the title plus the "What changed" section of the task's handoff note, the latest comment with such a section by one of the task's assignees, else by anyone. It is written into the release's description only on request (`spider release changelog --write`, MCP `get_release_changelog` with `write`), between markers whose hash records what was written; a hand-edited block is never replaced without `force`. Grouping by app and the git check (`spider release check`) run in the CLI on local `git log`; CHANGELOG.md and GitHub release notes are CLI steps too (`spider release notes`).
 
 **Why:**
+
 - Handoff comments already carry a **What changed** section by convention (the tasks skill now asks for it), so no new field is needed; preferring the assignee's latest note skips reviewers' summaries and older drafts, and falling back to anyone keeps reassigned work.
 - An explicit write keeps the description editable: automatic regeneration on every task change would overwrite the release owner's wording. The hash notices edits without storing a second copy.
 - The server has no clone of the repo and no permission to push tags or create GitHub releases, and commit links (ST-84) aren't there yet. The local clone has everything, and every git call goes through the CLI's injected runner, so tests fake it.
@@ -232,6 +248,7 @@ Revisit Tailscale if the API must have no public endpoint at all.
 **Decision:** a task joins a milestone (ST-96) through its own `tasks.milestone_id`, which must point at a milestone of the same project. A sub-task without one belongs to its nearest ancestor's milestone, worked out on read with a recursive query; the inherited value is never written to the sub-task. When a change completes an open milestone (every task Done, all their code shipped), the tracker moves it to the first `in_review` status of its workflow (Ready to close) as a per-organization integration bot, `@spider`, with activity source `system`. It never moves a milestone backwards, and closing it is left to a person.
 
 **Why:**
+
 - Computing inheritance means re-parenting a task, or changing a parent's milestone, moves the whole subtree with nothing to keep in step; storing copies would need every parent change, delete and milestone change to rewrite descendants (and would race with concurrent re-parents). Sub-tasks nest at most 20 levels, so the walk is short, and a sub-task can still have its own milestone, which wins.
 - Same project only: a roadmap is per project (an org-wide one comes later, ST-98), and it keeps a scoped agent from putting tasks into milestones it can't see. A cross-project sub-task can still inherit its parent's milestone; a caller who can't see the milestone's project sees `milestone: null`.
 - "Has code" follows ST-93's shipping state (Done and not `noCode`), so a milestone of documentation tasks marked no code is ready as soon as they are Done. Canceled tasks are left out of the progress, so an abandoned task doesn't keep a milestone open.

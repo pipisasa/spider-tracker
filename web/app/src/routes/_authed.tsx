@@ -7,7 +7,8 @@ export const Route = createFileRoute("/_authed")({
   beforeLoad: async ({ context, location }) => {
     const me = await context.queryClient.ensureQueryData(meQuery);
     // Come back here after signing in (e.g. the /device approval page).
-    if (!me) throw redirect({ to: "/login", search: { redirect: location.href } });
+    if (!me)
+      throw redirect({ to: "/login", search: { redirect: location.href } });
     return { me };
   },
   component: AuthedLayout,

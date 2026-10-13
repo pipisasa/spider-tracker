@@ -1,5 +1,11 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
@@ -11,10 +17,14 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: (search: Record<string, unknown>): { error?: string; redirect?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { error?: string; redirect?: string } => ({
     ...(typeof search.error === "string" ? { error: search.error } : {}),
     // Only same-app paths, so the login page can't be used to send people elsewhere.
-    ...(typeof search.redirect === "string" && search.redirect.startsWith("/") && !search.redirect.startsWith("//")
+    ...(typeof search.redirect === "string" &&
+    search.redirect.startsWith("/") &&
+    !search.redirect.startsWith("//")
       ? { redirect: search.redirect }
       : {}),
   }),
@@ -22,10 +32,10 @@ export const Route = createFileRoute("/login")({
     const me = await context.queryClient.ensureQueryData(meQuery);
     if (me) throw redirect({ href: search.redirect ?? "/" });
   },
-  loader: ({ context }) => context.queryClient.prefetchQuery(authProvidersQuery),
+  loader: ({ context }) =>
+    context.queryClient.prefetchQuery(authProvidersQuery),
   component: LoginPage,
 });
-
 
 function LoginPage() {
   const search = Route.useSearch();
@@ -34,7 +44,9 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const { error: errorCode } = search;
-  const [error, setError] = useState<string | null>(errorCode ? authErrorMessage(errorCode) : null);
+  const [error, setError] = useState<string | null>(
+    errorCode ? authErrorMessage(errorCode) : null,
+  );
 
   async function sendLink(event: FormEvent) {
     event.preventDefault();
@@ -54,10 +66,17 @@ function LoginPage() {
   // Email links are offered only when no other sign-in method is configured.
   const showEmail = providers.includes("magic-link") && providers.length === 1;
 
-  async function signInWith(provider: Extract<AuthProvider, "github" | "batele-id">) {
+  async function signInWith(
+    provider: Extract<AuthProvider, "github" | "batele-id">,
+  ) {
     setError(null);
-    const { error } = await authClient.signIn.social({ provider, callbackURL, errorCallbackURL });
-    if (error) setError(error.message ?? "This sign-in method is not available");
+    const { error } = await authClient.signIn.social({
+      provider,
+      callbackURL,
+      errorCallbackURL,
+    });
+    if (error)
+      setError(error.message ?? "This sign-in method is not available");
   }
 
   return (
@@ -65,7 +84,9 @@ function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in to Spider Tracker</CardTitle>
-          {showEmail && <CardDescription>We'll email you a sign-in link.</CardDescription>}
+          {showEmail && (
+            <CardDescription>We'll email you a sign-in link.</CardDescription>
+          )}
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {status === "sent" ? (
@@ -73,22 +94,24 @@ function LoginPage() {
               Check <strong>{email}</strong> for a sign-in link.
             </p>
           ) : (
-            showEmail && <form onSubmit={sendLink} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-              <Button type="submit" disabled={status === "sending"}>
-                {status === "sending" ? "Sending…" : "Email me a link"}
-              </Button>
-            </form>
+            showEmail && (
+              <form onSubmit={sendLink} className="flex flex-col gap-3">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" disabled={status === "sending"}>
+                  {status === "sending" ? "Sending…" : "Email me a link"}
+                </Button>
+              </form>
+            )
           )}
           {providers.includes("batele-id") && (
             <Button variant="outline" onClick={() => signInWith("batele-id")}>

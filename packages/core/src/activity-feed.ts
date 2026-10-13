@@ -1,7 +1,13 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { inScope, orgIdOf, projectScope, type ProjectScope, type Viewer } from "./access";
+import {
+  inScope,
+  orgIdOf,
+  projectScope,
+  type ProjectScope,
+  type Viewer,
+} from "./access";
 import type { ActivityDto } from "./contracts";
 import { repoFullName } from "./remotes";
 import { repoVisibleIn } from "./repos";
@@ -16,12 +22,22 @@ export const HIDDEN_RELEASE = "hidden";
 type Changes = Record<string, unknown>;
 
 /** A task's history, oldest first (task and comment events), as the viewer may see it. */
-export async function listTaskActivity(db: Db, viewer: Viewer, taskKey: string): Promise<ActivityDto[]> {
+export async function listTaskActivity(
+  db: Db,
+  viewer: Viewer,
+  taskKey: string,
+): Promise<ActivityDto[]> {
   const { task } = await findTask(db, viewer, taskKey);
   const rows = await db
     .select()
     .from(activity)
-    .where(and(eq(activity.orgId, orgIdOf(viewer)), eq(activity.entityType, "task"), eq(activity.entityId, task.id)))
+    .where(
+      and(
+        eq(activity.orgId, orgIdOf(viewer)),
+        eq(activity.entityType, "task"),
+        eq(activity.entityId, task.id),
+      ),
+    )
     .orderBy(asc(activity.id));
   const view = await activityView(
     db,
@@ -38,9 +54,14 @@ export async function listTaskActivity(db: Db, viewer: Viewer, taskKey: string):
   }));
 }
 
-const isRecord = (value: unknown): value is Changes => typeof value === "object" && value !== null && !Array.isArray(value);
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
-const isShipping = (action: string) => action === "task.shipped" || action === "task.unshipped";
+const isRecord = (value: unknown): value is Changes =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+const strings = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : [];
+const isShipping = (action: string) =>
+  action === "task.shipped" || action === "task.unshipped";
 const NO_RELEASE = { releaseId: null, release: null, version: null };
 
 /**
@@ -51,7 +72,11 @@ const NO_RELEASE = { releaseId: null, release: null, version: null };
  * - a release's `repos` and `apps` keep only those in repos the viewer can see, and "release.deployed"
  *   of an app in a hidden repo reads with nulls. `appRepos` (each app label's repo) is never returned.
  */
-async function activityView(db: Db, viewer: Viewer, entries: { action: string; changes: Changes | null }[]) {
+async function activityView(
+  db: Db,
+  viewer: Viewer,
+  entries: { action: string; changes: Changes | null }[],
+) {
   const orgId = orgIdOf(viewer);
   const scope = await projectScope(db, viewer);
   const releaseIds = new Set<string>();
@@ -60,11 +85,19 @@ async function activityView(db: Db, viewer: Viewer, entries: { action: string; c
   for (const { action, changes } of entries) {
     if (!changes) continue;
     if (isShipping(action)) {
-      if (typeof changes.releaseId === "string") releaseIds.add(changes.releaseId);
-      else if (typeof changes.release === "string") releaseKeys.add(changes.release);
+      if (typeof changes.releaseId === "string")
+        releaseIds.add(changes.releaseId);
+      else if (typeof changes.release === "string")
+        releaseKeys.add(changes.release);
     }
-    if (Array.isArray(changes.releaseId)) for (const id of strings(changes.releaseId)) releaseIds.add(id);
-    if (changes.repos !== undefined || changes.apps !== undefined || action === "release.deployed") links = true;
+    if (Array.isArray(changes.releaseId))
+      for (const id of strings(changes.releaseId)) releaseIds.add(id);
+    if (
+      changes.repos !== undefined ||
+      changes.apps !== undefined ||
+      action === "release.deployed"
+    )
+      links = true;
   }
   const releases = await releasesById(db, orgId, releaseIds);
   const keysSeen = await releaseKeysInScope(db, orgId, scope, releaseKeys);
@@ -79,21 +112,38 @@ async function activityView(db: Db, viewer: Viewer, entries: { action: string; c
     if (isShipping(action)) {
       if (typeof changes.releaseId === "string") {
         const release = sees(changes.releaseId);
-        return release ? { releaseId: changes.releaseId, release: release.key, version: release.title } : NO_RELEASE;
+        return release
+          ? {
+              releaseId: changes.releaseId,
+              release: release.key,
+              version: release.title,
+            }
+          : NO_RELEASE;
       }
-      return typeof changes.release === "string" && keysSeen.has(changes.release)
-        ? { releaseId: null, release: changes.release, version: changes.version ?? null }
+      return typeof changes.release === "string" &&
+        keysSeen.has(changes.release)
+        ? {
+            releaseId: null,
+            release: changes.release,
+            version: changes.version ?? null,
+          }
         : NO_RELEASE;
     }
     const out: Changes = { ...changes };
     delete out.appRepos;
     if (Array.isArray(changes.releaseId)) {
-      out.releaseId = changes.releaseId.map((id: unknown) => (typeof id === "string" && !sees(id) ? HIDDEN_RELEASE : id));
+      out.releaseId = changes.releaseId.map((id: unknown) =>
+        typeof id === "string" && !sees(id) ? HIDDEN_RELEASE : id,
+      );
     }
     if (!seen) return out;
     if (action === "release.deployed") {
-      const visible = typeof changes.repo === "string" && seen.repos.has(changes.repo.toLowerCase());
-      return visible ? out : { ...out, app: null, repo: null, environment: null, commitSha: null };
+      const visible =
+        typeof changes.repo === "string" &&
+        seen.repos.has(changes.repo.toLowerCase());
+      return visible
+        ? out
+        : { ...out, app: null, repo: null, environment: null, commitSha: null };
     }
     const appRepos = isRecord(changes.appRepos) ? changes.appRepos : null;
     const seesApp = (label: string) => {
@@ -120,28 +170,53 @@ async function activityView(db: Db, viewer: Viewer, entries: { action: string; c
 
 /** Releases by id, deleted ones too: history names them as they are now. */
 async function releasesById(db: Db, orgId: string, ids: Set<string>) {
-  const found = new Map<string, { key: string; title: string; projectId: string }>();
+  const found = new Map<
+    string,
+    { key: string; title: string; projectId: string }
+  >();
   if (ids.size === 0) return found;
   const rows = await db
-    .select({ id: tasks.id, number: tasks.number, title: tasks.title, projectId: tasks.projectId, projectKey: projects.key })
+    .select({
+      id: tasks.id,
+      number: tasks.number,
+      title: tasks.title,
+      projectId: tasks.projectId,
+      projectKey: projects.key,
+    })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(and(eq(tasks.orgId, orgId), inArray(tasks.id, [...ids])));
-  for (const r of rows) found.set(r.id, { key: `${r.projectKey}-${r.number}`, title: r.title, projectId: r.projectId });
+  for (const r of rows)
+    found.set(r.id, {
+      key: `${r.projectKey}-${r.number}`,
+      title: r.title,
+      projectId: r.projectId,
+    });
   return found;
 }
 
 /** Of these release keys (from older entries), the ones in projects the viewer can see. */
-async function releaseKeysInScope(db: Db, orgId: string, scope: ProjectScope, keys: Set<string>): Promise<Set<string>> {
+async function releaseKeysInScope(
+  db: Db,
+  orgId: string,
+  scope: ProjectScope,
+  keys: Set<string>,
+): Promise<Set<string>> {
   if (!scope) return keys;
-  const projectKeys = [...new Set([...keys].flatMap((k) => parseTaskKey(k)?.projectKey ?? []))];
+  const projectKeys = [
+    ...new Set([...keys].flatMap((k) => parseTaskKey(k)?.projectKey ?? [])),
+  ];
   if (projectKeys.length === 0) return new Set();
   const rows = await db
     .select({ id: projects.id, key: projects.key })
     .from(projects)
     .where(and(eq(projects.orgId, orgId), inArray(projects.key, projectKeys)));
-  const visible = new Set(rows.filter((p) => inScope(scope, p.id)).map((p) => p.key));
-  return new Set([...keys].filter((k) => visible.has(parseTaskKey(k)?.projectKey ?? "")));
+  const visible = new Set(
+    rows.filter((p) => inScope(scope, p.id)).map((p) => p.key),
+  );
+  return new Set(
+    [...keys].filter((k) => visible.has(parseTaskKey(k)?.projectKey ?? "")),
+  );
 }
 
 /** The repos ("owner/name", lower case) and the names of their apps that a scoped viewer can see. */

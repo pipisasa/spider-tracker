@@ -138,11 +138,15 @@ withDb("agent invites over HTTP", () => {
     ]);
     // Out of scope is not found, filtered or not; in scope, filters work.
     for (const query of [{}, { status: ["todo"] }, { tags: ["nope"] }]) {
-      expect(await sdk.tasks.list(slug, "XY", query).catch((e: unknown) => e)).toMatchObject({ status: 404 });
+      expect(
+        await sdk.tasks.list(slug, "XY", query).catch((e: unknown) => e),
+      ).toMatchObject({ status: 404 });
     }
-    expect((await sdk.tasks.list(slug, "ST", { q: "visible", assignee: ["none"] })).items.map((t) => t.title)).toEqual([
-      "Visible",
-    ]);
+    expect(
+      (
+        await sdk.tasks.list(slug, "ST", { q: "visible", assignee: ["none"] })
+      ).items.map((t) => t.title),
+    ).toEqual(["Visible"]);
     const missing = await sdk.tasks.get(slug, "XY-1").catch((e: unknown) => e);
     expect(missing).toBeInstanceOf(SpiderApiError);
     expect(missing).toMatchObject({ status: 404 });
@@ -159,12 +163,27 @@ withDb("agent invites over HTTP", () => {
       token: accepted.token,
       fetch: (input, init) => app.request(input, init),
     });
-    const inScope = await createDocument(db, owner, { project: "ST", title: "ST notes", content: "See ST-1." });
-    const orgWide = await createDocument(db, owner, { title: "Org notes", content: "[[st-1]]" });
-    await createDocument(db, owner, { project: "XY", title: "XY notes", content: "ST-1 too." });
-    const ids = (await sdk.tasks.backlinks(slug, "ST-1")).items.map((d) => d.id);
+    const inScope = await createDocument(db, owner, {
+      project: "ST",
+      title: "ST notes",
+      content: "See ST-1.",
+    });
+    const orgWide = await createDocument(db, owner, {
+      title: "Org notes",
+      content: "[[st-1]]",
+    });
+    await createDocument(db, owner, {
+      project: "XY",
+      title: "XY notes",
+      content: "ST-1 too.",
+    });
+    const ids = (await sdk.tasks.backlinks(slug, "ST-1")).items.map(
+      (d) => d.id,
+    );
     expect(ids.sort()).toEqual([inScope.id, orgWide.id].sort());
-    expect(await sdk.tasks.backlinks(slug, "XY-1").catch((e: unknown) => e)).toMatchObject({ status: 404 });
+    expect(
+      await sdk.tasks.backlinks(slug, "XY-1").catch((e: unknown) => e),
+    ).toMatchObject({ status: 404 });
   });
 
   test("MCP tools respect the scope", async () => {
@@ -183,7 +202,14 @@ withDb("agent invites over HTTP", () => {
 
     const projects = await call("list_projects");
     expect(JSON.parse(projects.content[0]?.text ?? "{}")).toEqual({
-      items: [expect.objectContaining({ key: "ST", name: "Spider", description: null, url: expect.stringMatching(/\/projects\/ST$/) })],
+      items: [
+        expect.objectContaining({
+          key: "ST",
+          name: "Spider",
+          description: null,
+          url: expect.stringMatching(/\/projects\/ST$/),
+        }),
+      ],
     });
     const hidden = await call("list_tasks", { projectKey: "XY" });
     expect(hidden.isError).toBe(true);

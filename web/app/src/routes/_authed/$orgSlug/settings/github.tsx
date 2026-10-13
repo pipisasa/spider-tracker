@@ -29,18 +29,24 @@ import { useState } from "react";
 type Search = { connected?: string; error?: string; requested?: string };
 
 const SETUP_ERRORS: Record<string, string> = {
-  missing_installation: "GitHub didn't say which installation to connect. Try again.",
+  missing_installation:
+    "GitHub didn't say which installation to connect. Try again.",
   not_verified:
     "GitHub didn't confirm who you are. The App must ask users to authorize it during installation; check its settings, then try again.",
   no_access: "Your GitHub account can't access that installation.",
-  not_found: "GitHub doesn't know that installation any more. Try installing again.",
-  other_organization: "That GitHub installation is already connected to another organization.",
+  not_found:
+    "GitHub doesn't know that installation any more. Try installing again.",
+  other_organization:
+    "That GitHub installation is already connected to another organization.",
   conflict: "Couldn't connect the installation. Reload and try again.",
   forbidden: "Only owners and admins can connect GitHub.",
   github_unavailable: "GitHub couldn't be reached. Try again in a minute.",
 };
 
-const text = (value: unknown) => (typeof value === "string" || typeof value === "number" ? String(value) : undefined);
+const text = (value: unknown) =>
+  typeof value === "string" || typeof value === "number"
+    ? String(value)
+    : undefined;
 
 export const Route = createFileRoute("/_authed/$orgSlug/settings/github")({
   validateSearch: (search: Record<string, unknown>): Search => {
@@ -53,7 +59,8 @@ export const Route = createFileRoute("/_authed/$orgSlug/settings/github")({
     if (requested) result.requested = requested;
     return result;
   },
-  loader: ({ context, params }) => context.queryClient.ensureQueryData(githubQuery(params.orgSlug)),
+  loader: ({ context, params }) =>
+    context.queryClient.ensureQueryData(githubQuery(params.orgSlug)),
   component: GithubSettingsPage,
 });
 
@@ -61,10 +68,13 @@ function GithubSettingsPage() {
   const { orgSlug } = Route.useParams();
   const search = Route.useSearch();
   const { membership } = Route.useRouteContext();
-  const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
+  const canManage =
+    membership.actor.role === "owner" || membership.actor.role === "admin";
   const { data: github } = useSuspenseQuery(githubQuery(orgSlug));
   const start = useStartGithubInstall(orgSlug);
-  const connected = github.installations.find((i) => String(i.id) === search.connected);
+  const connected = github.installations.find(
+    (i) => String(i.id) === search.connected,
+  );
 
   function connect() {
     start.mutate(undefined, {
@@ -81,9 +91,13 @@ function GithubSettingsPage() {
       </header>
       <main className="flex max-w-3xl flex-col gap-6 px-4 py-4 md:px-6">
         <p className="text-sm text-muted-foreground">
-          Install the Spider Tracker GitHub App on a GitHub account to connect its repositories: those the organization
-          already has under{" "}
-          <Link to="/$orgSlug/settings/repos" params={{ orgSlug }} className="underline">
+          Install the Spider Tracker GitHub App on a GitHub account to connect
+          its repositories: those the organization already has under{" "}
+          <Link
+            to="/$orgSlug/settings/repos"
+            params={{ orgSlug }}
+            className="underline"
+          >
             Repos
           </Link>{" "}
           are linked, the others are added. Attach them to projects there.
@@ -91,8 +105,12 @@ function GithubSettingsPage() {
         </p>
 
         {search.error && (
-          <p role="alert" className="rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive">
-            {SETUP_ERRORS[search.error] ?? "Couldn't connect GitHub. Try again."}
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive"
+          >
+            {SETUP_ERRORS[search.error] ??
+              "Couldn't connect GitHub. Try again."}
           </p>
         )}
         {connected && (
@@ -102,20 +120,25 @@ function GithubSettingsPage() {
         )}
         {search.requested && (
           <p role="status" className="rounded-md border px-3 py-2 text-sm">
-            GitHub asked the account&apos;s owners to approve the installation. Connect again once they have.
+            GitHub asked the account&apos;s owners to approve the installation.
+            Connect again once they have.
           </p>
         )}
 
         {!github.configured ? (
           <p className="rounded-md border px-3 py-2 text-sm text-muted-foreground">
-            GitHub isn&apos;t configured on this server: it needs the GitHub App&apos;s settings (the{" "}
-            <code className="text-xs">GITHUB_APP_*</code> variables). Repos can still be added by URL under Repos.
+            GitHub isn&apos;t configured on this server: it needs the GitHub
+            App&apos;s settings (the{" "}
+            <code className="text-xs">GITHUB_APP_*</code> variables). Repos can
+            still be added by URL under Repos.
           </p>
         ) : (
           canManage && (
             <div className="flex flex-wrap items-center gap-3 rounded-md border p-3">
               <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium">Connect a GitHub account</span>
+                <span className="text-sm font-medium">
+                  Connect a GitHub account
+                </span>
                 <span className="text-xs text-muted-foreground">
                   Opens GitHub to install{" "}
                   <a
@@ -129,7 +152,11 @@ function GithubSettingsPage() {
                   and pick repositories; you come back here.
                 </span>
               </div>
-              <Button className="ml-auto" onClick={connect} disabled={start.isPending || start.isSuccess}>
+              <Button
+                className="ml-auto"
+                onClick={connect}
+                disabled={start.isPending || start.isSuccess}
+              >
                 Connect
               </Button>
             </div>
@@ -137,7 +164,9 @@ function GithubSettingsPage() {
         )}
 
         {github.installations.length === 0 && (
-          <p className="text-sm text-muted-foreground">No GitHub installations connected.</p>
+          <p className="text-sm text-muted-foreground">
+            No GitHub installations connected.
+          </p>
         )}
         {github.installations.map((installation) => (
           <InstallationCard
@@ -179,11 +208,19 @@ function InstallationCard({
         >
           {installation.account}
         </a>
-        <Badge variant="outline">{installation.accountType === "Organization" ? "organization" : "user"}</Badge>
         <Badge variant="outline">
-          {installation.repositorySelection === "all" ? "all repositories" : "selected repositories"}
+          {installation.accountType === "Organization"
+            ? "organization"
+            : "user"}
         </Badge>
-        {installation.suspended && <Badge variant="destructive">suspended</Badge>}
+        <Badge variant="outline">
+          {installation.repositorySelection === "all"
+            ? "all repositories"
+            : "selected repositories"}
+        </Badge>
+        {installation.suspended && (
+          <Badge variant="destructive">suspended</Badge>
+        )}
         {canManage && (
           <div className="ml-auto flex gap-2">
             {configured && (
@@ -196,7 +233,11 @@ function InstallationCard({
                 Sync
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setConfirm(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirm(true)}
+            >
               Disconnect
             </Button>
           </div>
@@ -205,7 +246,9 @@ function InstallationCard({
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">Repos</span>
-        {installation.repos.length === 0 && <span className="text-xs text-muted-foreground">none</span>}
+        {installation.repos.length === 0 && (
+          <span className="text-xs text-muted-foreground">none</span>
+        )}
         {installation.repos.map((repo) => (
           <Badge key={repo} variant="secondary">
             {repo}
@@ -226,10 +269,12 @@ function InstallationCard({
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect {installation.account}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Disconnect {installation.account}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Its repos stay under Repos, without the GitHub link. The App stays installed on GitHub until you
-              uninstall it there.
+              Its repos stay under Repos, without the GitHub link. The App stays
+              installed on GitHub until you uninstall it there.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -26,8 +26,17 @@ interface ReleaseRow {
   key: string;
 }
 
-async function announce(tx: Tx, ctx: ActorContext, task: { number: number; projectKey: string }) {
-  await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: task.projectKey, taskKey: `${task.projectKey}-${task.number}` });
+async function announce(
+  tx: Tx,
+  ctx: ActorContext,
+  task: { number: number; projectKey: string },
+) {
+  await publish(tx, {
+    type: "task.changed",
+    orgId: ctx.orgId,
+    projectKey: task.projectKey,
+    taskKey: `${task.projectKey}-${task.number}`,
+  });
 }
 
 /**
@@ -52,7 +61,12 @@ export async function applyReleaseTransition(
   if (from === to) return undefined;
   if (to !== "done" && from !== "done" && to !== "canceled") return undefined;
   const included = await allReleaseTasks(tx, release.id);
-  assertSeesWholeRelease(scope, release.key, included, to === "done" ? "release it" : to === "canceled" ? "cancel it" : "move it");
+  assertSeesWholeRelease(
+    scope,
+    release.key,
+    included,
+    to === "done" ? "release it" : to === "canceled" ? "cancel it" : "move it",
+  );
   const shippedIn = { releaseId: release.id };
   let shippedAt: Date | null | undefined;
 
@@ -68,10 +82,15 @@ export async function applyReleaseTransition(
     const pending = await appsNotInProduction(tx, release.id, scope);
     const shown = pending.filter((a) => a.visible);
     if (shown.length < pending.length) {
-      throw new DomainError("forbidden", `Release ${release.key} ships apps in repos you can't see that aren't deployed yet; ask a member to release it`);
+      throw new DomainError(
+        "forbidden",
+        `Release ${release.key} ships apps in repos you can't see that aren't deployed yet; ask a member to release it`,
+      );
     }
     if (pending.length > 0) {
-      const names = pending.map((a) => `${a.name} to ${a.production}`).join(", ");
+      const names = pending
+        .map((a) => `${a.name} to ${a.production}`)
+        .join(", ");
       const [first] = pending;
       throw new DomainError(
         "validation",
@@ -80,8 +99,16 @@ export async function applyReleaseTransition(
     }
     const shipping = included.filter((t) => !t.shippedAt);
     for (const task of shipping) {
-      await tx.update(tasks).set({ shippedAt: now, updatedAt: now }).where(eq(tasks.id, task.id));
-      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.shipped", changes: shippedIn });
+      await tx
+        .update(tasks)
+        .set({ shippedAt: now, updatedAt: now })
+        .where(eq(tasks.id, task.id));
+      await recordActivity(tx, ctx, {
+        entityType: "task",
+        entityId: task.id,
+        action: "task.shipped",
+        changes: shippedIn,
+      });
       await announce(tx, ctx, task);
     }
     // Shipping their code may complete the tasks' milestones (ST-96).
@@ -99,10 +126,25 @@ export async function applyReleaseTransition(
     const shipped = await tx
       .update(tasks)
       .set({ shippedAt: null, updatedAt: now })
-      .where(and(eq(tasks.releaseId, release.id), isNotNull(tasks.shippedAt), isNull(tasks.deletedAt)))
-      .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId });
+      .where(
+        and(
+          eq(tasks.releaseId, release.id),
+          isNotNull(tasks.shippedAt),
+          isNull(tasks.deletedAt),
+        ),
+      )
+      .returning({
+        id: tasks.id,
+        number: tasks.number,
+        projectId: tasks.projectId,
+      });
     for (const task of await withProjectKeys(tx, shipped)) {
-      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.unshipped", changes: shippedIn });
+      await recordActivity(tx, ctx, {
+        entityType: "task",
+        entityId: task.id,
+        action: "task.unshipped",
+        changes: shippedIn,
+      });
       await announce(tx, ctx, task);
     }
     shippedAt = null;
@@ -113,16 +155,28 @@ export async function applyReleaseTransition(
       .update(tasks)
       .set({ releaseId: null, updatedAt: now })
       .where(and(eq(tasks.releaseId, release.id), isNull(tasks.deletedAt)))
-      .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId });
+      .returning({
+        id: tasks.id,
+        number: tasks.number,
+        projectId: tasks.projectId,
+      });
     for (const task of await withProjectKeys(tx, freed)) {
-      await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes: { releaseId: [release.id, null] } });
+      await recordActivity(tx, ctx, {
+        entityType: "task",
+        entityId: task.id,
+        action: "task.updated",
+        changes: { releaseId: [release.id, null] },
+      });
       await announce(tx, ctx, task);
     }
   }
   return shippedAt;
 }
 
-async function withProjectKeys<T extends { projectId: string }>(tx: Tx, rows: T[]): Promise<(T & { projectKey: string })[]> {
+async function withProjectKeys<T extends { projectId: string }>(
+  tx: Tx,
+  rows: T[],
+): Promise<(T & { projectKey: string })[]> {
   if (rows.length === 0) return [];
   const keys = await tx
     .select({ id: projects.id, key: projects.key })
@@ -136,18 +190,38 @@ async function withProjectKeys<T extends { projectId: string }>(tx: Tx, rows: T[
  * A deleted release lets go of its tasks (shipped ones keep `shippedAt`); refused when one is
  * outside the actor's `scope`.
  */
-export async function releaseTasksOnDelete(tx: Tx, ctx: ActorContext, scope: ProjectScope, release: { id: string; key: string }) {
-  assertSeesWholeRelease(scope, release.key, await allReleaseTasks(tx, release.id), "delete it");
+export async function releaseTasksOnDelete(
+  tx: Tx,
+  ctx: ActorContext,
+  scope: ProjectScope,
+  release: { id: string; key: string },
+) {
+  assertSeesWholeRelease(
+    scope,
+    release.key,
+    await allReleaseTasks(tx, release.id),
+    "delete it",
+  );
   const releaseId = release.id;
   const now = new Date();
   const freed = await tx
     .update(tasks)
     .set({ releaseId: null, updatedAt: now })
     .where(and(eq(tasks.releaseId, releaseId), ne(tasks.id, releaseId)))
-    .returning({ id: tasks.id, number: tasks.number, projectId: tasks.projectId, deletedAt: tasks.deletedAt });
+    .returning({
+      id: tasks.id,
+      number: tasks.number,
+      projectId: tasks.projectId,
+      deletedAt: tasks.deletedAt,
+    });
   for (const task of await withProjectKeys(tx, freed)) {
     if (task.deletedAt) continue;
-    await recordActivity(tx, ctx, { entityType: "task", entityId: task.id, action: "task.updated", changes: { releaseId: [releaseId, null] } });
+    await recordActivity(tx, ctx, {
+      entityType: "task",
+      entityId: task.id,
+      action: "task.updated",
+      changes: { releaseId: [releaseId, null] },
+    });
     await announce(tx, ctx, task);
   }
 }

@@ -10,14 +10,14 @@ Deploy the **API first** and wait until Railway reports `SUCCESS` (`railway serv
 
 Deploys are **manual** (no CI/CD): build locally, upload with `wrangler pages deploy`.
 
-| Thing | Value |
-|---|---|
-| Pages project | `spider-tracker` (direct upload) |
-| Production | `--branch main` → `tracker.batele.plus` |
+| Thing             | Value                                                     |
+| ----------------- | --------------------------------------------------------- |
+| Pages project     | `spider-tracker` (direct upload)                          |
+| Production        | `--branch main` → `tracker.batele.plus`                   |
 | Build-time config | `web/app/.env.production` (committed; public values only) |
-| SPA fallback | Automatic on Pages; no `_redirects` or `404.html` needed |
-| Account ID | `237695007150b566811a4822a8c0095e` |
-| Zone | `batele.plus` |
+| SPA fallback      | Automatic on Pages; no `_redirects` or `404.html` needed  |
+| Account ID        | `237695007150b566811a4822a8c0095e`                        |
+| Zone              | `batele.plus`                                             |
 
 **Deploy:**
 
@@ -94,34 +94,34 @@ For a preview domain, add `tracker-dev.batele.plus` to the project and point its
 
 The API **deploys automatically from GitHub**: Railway builds `main` on every push that touches the API's paths. Service settings live in **`.railway/railway.ts`** (Railway infrastructure as code); change them there and run `railway config plan`, then `railway config apply --yes`.
 
-| Thing | Value |
-|---|---|
-| Workspace / project | Batele / `spider-tracker` (environment `production`) |
-| Services | `api`, `Postgres` |
-| Postgres | Railway Postgres template (`postgres-ssl:18`), private network only (no public TCP proxy) |
-| API source | GitHub `pipisasa/spider-tracker`, branch `main`; rebuilds only for `backend/api/**`, `packages/**`, `package.json`, `bun.lock`, `.railway/**` |
-| API build | Railway's default builder (Railpack): `bun install` at the repo root; no Dockerfile |
-| API deploy | pre-deploy `bun packages/db/src/migrate.ts` (migrations), start `bun backend/api/src/index.ts`, health check `/health/ready` |
-| API domain | `tracker-api.batele.plus`; no `*.up.railway.app` domain is generated |
+| Thing               | Value                                                                                                                                         |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace / project | Batele / `spider-tracker` (environment `production`)                                                                                          |
+| Services            | `api`, `Postgres`                                                                                                                             |
+| Postgres            | Railway Postgres template (`postgres-ssl:18`), private network only (no public TCP proxy)                                                     |
+| API source          | GitHub `pipisasa/spider-tracker`, branch `main`; rebuilds only for `backend/api/**`, `packages/**`, `package.json`, `bun.lock`, `.railway/**` |
+| API build           | Railway's default builder (Railpack): `bun install` at the repo root; no Dockerfile                                                           |
+| API deploy          | pre-deploy `bun packages/db/src/migrate.ts` (migrations), start `bun backend/api/src/index.ts`, health check `/health/ready`                  |
+| API domain          | `tracker-api.batele.plus`; no `*.up.railway.app` domain is generated                                                                          |
 
 **API variables:**
 
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (private `postgres.railway.internal`) |
-| `API_ORIGIN` | `https://tracker-api.batele.plus` |
-| `WEB_ORIGIN` | `https://tracker.batele.plus` |
-| `BETTER_AUTH_SECRET` | random, set with `--stdin` so it never appears in output |
-| `NODE_ENV` | `production` |
-| `TRUSTED_PROXY` | `railway` (see below) |
+| Variable             | Value                                                              |
+| -------------------- | ------------------------------------------------------------------ |
+| `DATABASE_URL`       | `${{Postgres.DATABASE_URL}}` (private `postgres.railway.internal`) |
+| `API_ORIGIN`         | `https://tracker-api.batele.plus`                                  |
+| `WEB_ORIGIN`         | `https://tracker.batele.plus`                                      |
+| `BETTER_AUTH_SECRET` | random, set with `--stdin` so it never appears in output           |
+| `NODE_ENV`           | `production`                                                       |
+| `TRUSTED_PROXY`      | `railway` (see below)                                              |
 
 **Client IP for rate limits (`TRUSTED_PROXY`).** The API's own rate limits (device codes, agent invite accepts, invitation codes) and Better Auth's (sign-in, magic links, …) key on the client IP, taken only from the proxy named in `TRUSTED_PROXY`; every other client-supplied header is ignored so a client can't get a fresh bucket per request:
 
-| Value | Client IP | Use when |
-|---|---|---|
-| `none` (default) | The TCP peer address from Bun; one shared `unknown` bucket if there is none (e.g. `app.request` in tests) | Local development, no proxy |
-| `railway` | The **right-most** `X-Forwarded-For` entry | Production: Railway's edge proxy in front of the API |
-| `cloudflare` | `CF-Connecting-IP` | Only if the API hostname is proxied by Cloudflare (orange cloud) **and** unreachable any other way |
+| Value            | Client IP                                                                                                 | Use when                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `none` (default) | The TCP peer address from Bun; one shared `unknown` bucket if there is none (e.g. `app.request` in tests) | Local development, no proxy                                                                        |
+| `railway`        | The **right-most** `X-Forwarded-For` entry                                                                | Production: Railway's edge proxy in front of the API                                               |
+| `cloudflare`     | `CF-Connecting-IP`                                                                                        | Only if the API hostname is proxied by Cloudflare (orange cloud) **and** unreachable any other way |
 
 Production uses `railway` because `tracker-api` is a DNS-only (grey cloud) record: requests reach Railway's edge directly, so `CF-Connecting-IP` is whatever the client sent, and Bun's socket address is Railway's proxy (the same for everyone). Assumption: Railway's edge appends the address that connected to it to `X-Forwarded-For` (it also sets `X-Real-IP`). The right-most entry is used rather than `X-Real-IP` because an appended entry is correct whether or not the edge drops a client-sent header, while Railway doesn't document whether it overwrites a client-sent `X-Real-IP`. Anything to the left of that entry is client-controlled and ignored. If the hostname is ever switched to a proxied (orange cloud) record, the right-most entry becomes a Cloudflare edge address: switch to `cloudflare` at the same time. Better Auth gets the same IP: `app.ts` sets a private `X-Spider-Client-IP` header to it (dropping any client-sent copy) before handing `/api/auth/*` requests to Better Auth, which reads only that header (`backend/api/src/auth.ts`). Better Auth's rate limits are on when `NODE_ENV=production`.
 
@@ -129,10 +129,10 @@ Production uses `railway` because `tracker-api` is a DNS-only (grey cloud) recor
 
 **Custom domain DNS** (in the `batele.plus` zone):
 
-| Type | Name | Value | Proxy |
-|---|---|---|---|
-| CNAME | `tracker-api` | `kbfxs9zg.up.railway.app` | DNS only (grey cloud) until the certificate is issued |
-| TXT | `_railway-verify.tracker-api` | `railway-verify=591212fea1d43b8a127e9cfa3e14bf312d375d29ba3114fdeaec3e3f2effcfb1` | — |
+| Type  | Name                          | Value                                                                             | Proxy                                                 |
+| ----- | ----------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| CNAME | `tracker-api`                 | `kbfxs9zg.up.railway.app`                                                         | DNS only (grey cloud) until the certificate is issued |
+| TXT   | `_railway-verify.tracker-api` | `railway-verify=591212fea1d43b8a127e9cfa3e14bf312d375d29ba3114fdeaec3e3f2effcfb1` | —                                                     |
 
 Check progress with `railway domain status 85cd76b1-5729-478c-9941-b52346e5840e`.
 

@@ -9,8 +9,19 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { dispatchAction, queueAction, useOpenPaletteListener, type AppAction } from "@/lib/app-events";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  dispatchAction,
+  queueAction,
+  useOpenPaletteListener,
+  type AppAction,
+} from "@/lib/app-events";
 import {
   SHORTCUTS,
   formatKeys,
@@ -54,7 +65,10 @@ const MAX_TASKS = 100;
 
 /** "⌘K" on Apple platforms, "Ctrl K" elsewhere. */
 export const paletteHint = () =>
-  typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.platform) ? "⌘K" : "Ctrl K";
+  typeof navigator !== "undefined" &&
+  /mac|iphone|ipad/i.test(navigator.platform)
+    ? "⌘K"
+    : "Ctrl K";
 
 function Hint({ id }: { id: ShortcutId }) {
   return <CommandShortcut>{formatKeys(shortcutKeys(id))}</CommandShortcut>;
@@ -73,16 +87,26 @@ export function CommandPalette({ me }: { me: MeResponse }) {
   const [pick, setPick] = useState<AppAction | null>(null);
 
   const orgSlug = params.orgSlug ?? me.memberships[0]?.organization.slug;
-  const membership = me.memberships.find((m) => m.organization.slug === orgSlug);
+  const membership = me.memberships.find(
+    (m) => m.organization.slug === orgSlug,
+  );
   const role = membership?.actor.role;
-  const currentProject = params.projectKey ?? (params.taskKey ? projectKeyOfTask(params.taskKey) : undefined);
+  const currentProject =
+    params.projectKey ??
+    (params.taskKey ? projectKeyOfTask(params.taskKey) : undefined);
 
-  const { data: projects = [] } = useQuery({ ...projectsQuery(orgSlug ?? ""), enabled: open && !!orgSlug });
+  const { data: projects = [] } = useQuery({
+    ...projectsQuery(orgSlug ?? ""),
+    enabled: open && !!orgSlug,
+  });
   const { data: tasks = [] } = useQuery({
     ...tasksQuery(orgSlug ?? "", currentProject ?? ""),
     enabled: open && !!orgSlug && !!currentProject,
   });
-  const { data: documents = [] } = useQuery({ ...documentsQuery(orgSlug ?? ""), enabled: open && !!orgSlug });
+  const { data: documents = [] } = useQuery({
+    ...documentsQuery(orgSlug ?? ""),
+    enabled: open && !!orgSlug,
+  });
 
   const openPalette = () => {
     setPick(null);
@@ -125,9 +149,13 @@ export function CommandPalette({ me }: { me: MeResponse }) {
       queueAction(action);
       return void navigate({ to: "/$orgSlug/docs", params: { orgSlug } });
     }
-    const target = projectKey ?? currentProject ?? (projects.length === 1 ? projects[0]?.key : undefined);
+    const target =
+      projectKey ??
+      currentProject ??
+      (projects.length === 1 ? projects[0]?.key : undefined);
     if (!target) {
-      if (projects.length === 0) return void toast.error("Create a project first.");
+      if (projects.length === 0)
+        return void toast.error("Create a project first.");
       setPick(action);
       setSearch("");
       return setOpen(true);
@@ -145,9 +173,11 @@ export function CommandPalette({ me }: { me: MeResponse }) {
       case "go-board":
       case "go-list":
       case "go-docs": {
-        const view = id === "go-board" ? "board" : id === "go-list" ? "list" : "docs";
+        const view =
+          id === "go-board" ? "board" : id === "go-list" ? "list" : "docs";
         if (currentProject) goProject(currentProject, view);
-        else if (orgSlug) void navigate({ to: "/$orgSlug", params: { orgSlug } });
+        else if (orgSlug)
+          void navigate({ to: "/$orgSlug", params: { orgSlug } });
         return true;
       }
       case "go-projects":
@@ -155,7 +185,9 @@ export function CommandPalette({ me }: { me: MeResponse }) {
         else void navigate({ to: "/" });
         return true;
       case "focus-search": {
-        const input = document.querySelector<HTMLInputElement>('[role="search"] input');
+        const input = document.querySelector<HTMLInputElement>(
+          '[role="search"] input',
+        );
         if (!input || input.offsetParent === null) return false;
         input.focus();
         return true;
@@ -164,18 +196,24 @@ export function CommandPalette({ me }: { me: MeResponse }) {
         setHelpOpen(true);
         return true;
       case "edit-title": {
-        const input = document.querySelector<HTMLInputElement>('input[aria-label="Title"]');
+        const input = document.querySelector<HTMLInputElement>(
+          'input[aria-label="Title"]',
+        );
         if (!input || input.readOnly) return false;
         input.focus();
         input.select();
         return true;
       }
       case "assign": {
-        const button = document.querySelector<HTMLButtonElement>('button[aria-label="Assignees"]');
-        // The task page renders its fields twice (side column and phone layout); click the visible one.
-        const visible = [...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Assignees"]')].find(
-          (b) => b.offsetParent !== null,
+        const button = document.querySelector<HTMLButtonElement>(
+          'button[aria-label="Assignees"]',
         );
+        // The task page renders its fields twice (side column and phone layout); click the visible one.
+        const visible = [
+          ...document.querySelectorAll<HTMLButtonElement>(
+            'button[aria-label="Assignees"]',
+          ),
+        ].find((b) => b.offsetParent !== null);
         const target = visible ?? button;
         if (!target) return false;
         target.click();
@@ -191,9 +229,16 @@ export function CommandPalette({ me }: { me: MeResponse }) {
 
   const typedKey = parseTaskKey(search);
   const trimmed = search.trim();
-  const shownTasks = useMemo(() => (trimmed ? tasks.slice(0, MAX_TASKS) : []), [tasks, trimmed]);
+  const shownTasks = useMemo(
+    () => (trimmed ? tasks.slice(0, MAX_TASKS) : []),
+    [tasks, trimmed],
+  );
   const goTask = (taskKey: string) => {
-    if (orgSlug) void navigate({ to: "/$orgSlug/tasks/$taskKey", params: { orgSlug, taskKey } });
+    if (orgSlug)
+      void navigate({
+        to: "/$orgSlug/tasks/$taskKey",
+        params: { orgSlug, taskKey },
+      });
   };
 
   const canManage = role === "owner" || role === "admin";
@@ -206,7 +251,11 @@ export function CommandPalette({ me }: { me: MeResponse }) {
 
   const projectItems = (onSelect: (key: string) => void) =>
     projects.map((p) => (
-      <CommandItem key={p.id} value={`project ${p.key} ${p.name}`} onSelect={() => onSelect(p.key)}>
+      <CommandItem
+        key={p.id}
+        value={`project ${p.key} ${p.name}`}
+        onSelect={() => onSelect(p.key)}
+      >
         <FolderIcon />
         <span className="truncate">{p.name}</span>
         <CommandShortcut>{p.key}</CommandShortcut>
@@ -225,12 +274,18 @@ export function CommandPalette({ me }: { me: MeResponse }) {
           <CommandInput
             value={search}
             onValueChange={setSearch}
-            placeholder={pick ? "Choose a project…" : "Search or run a command…"}
+            placeholder={
+              pick ? "Choose a project…" : "Search or run a command…"
+            }
           />
           <CommandList>
             <CommandEmpty>No results.</CommandEmpty>
             {pick ? (
-              <CommandGroup heading={pick === "new-task" ? "New task in…" : "New document in…"}>
+              <CommandGroup
+                heading={
+                  pick === "new-task" ? "New task in…" : "New document in…"
+                }
+              >
                 {projectItems((key) => {
                   close();
                   startAction(pick, key);
@@ -240,7 +295,10 @@ export function CommandPalette({ me }: { me: MeResponse }) {
               <>
                 {typedKey && !tasks.some((t) => t.key === typedKey) && (
                   <CommandGroup heading="Go to">
-                    <CommandItem value={`go to task ${typedKey}`} onSelect={run(() => goTask(typedKey))}>
+                    <CommandItem
+                      value={`go to task ${typedKey}`}
+                      onSelect={run(() => goTask(typedKey))}
+                    >
                       <CornerDownRightIcon />
                       Go to {typedKey}
                     </CommandItem>
@@ -249,8 +307,14 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                 {shownTasks.length > 0 && (
                   <CommandGroup heading={`Tasks in ${currentProject}`}>
                     {shownTasks.map((t) => (
-                      <CommandItem key={t.id} value={`task ${t.key} ${t.title}`} onSelect={run(() => goTask(t.key))}>
-                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{t.key}</span>
+                      <CommandItem
+                        key={t.id}
+                        value={`task ${t.key} ${t.title}`}
+                        onSelect={run(() => goTask(t.key))}
+                      >
+                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                          {t.key}
+                        </span>
                         <span className="truncate">{t.title}</span>
                       </CommandItem>
                     ))}
@@ -258,14 +322,20 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                 )}
                 <CommandGroup heading="Actions">
                   {canCreateTasks && (
-                    <CommandItem value="action new task create" onSelect={run(() => startAction("new-task"))}>
+                    <CommandItem
+                      value="action new task create"
+                      onSelect={run(() => startAction("new-task"))}
+                    >
                       <PlusIcon />
                       New task{currentProject ? ` in ${currentProject}` : ""}
                       <Hint id="new-task" />
                     </CommandItem>
                   )}
                   {canCreateTasks && (
-                    <CommandItem value="action new document create" onSelect={run(() => startAction("new-document"))}>
+                    <CommandItem
+                      value="action new document create"
+                      onSelect={run(() => startAction("new-document"))}
+                    >
                       <FileTextIcon />
                       New document
                     </CommandItem>
@@ -279,37 +349,58 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                     >
                       <Icon />
                       Theme: {label}
-                      {theme === value && <CommandShortcut>current</CommandShortcut>}
+                      {theme === value && (
+                        <CommandShortcut>current</CommandShortcut>
+                      )}
                     </CommandItem>
                   ))}
-                  <CommandItem value="action keyboard shortcuts help" onSelect={run(() => setHelpOpen(true))}>
+                  <CommandItem
+                    value="action keyboard shortcuts help"
+                    onSelect={run(() => setHelpOpen(true))}
+                  >
                     <KeyboardIcon />
                     Keyboard shortcuts
                     <Hint id="help" />
                   </CommandItem>
-                  <CommandItem value="action sign out log out" onSelect={run(() => void signOut())}>
+                  <CommandItem
+                    value="action sign out log out"
+                    onSelect={run(() => void signOut())}
+                  >
                     <LogOutIcon />
                     Sign out
                   </CommandItem>
                 </CommandGroup>
                 <CommandSeparator />
-                {projects.length > 0 && <CommandGroup heading="Projects">{projectItems((key) => {
-                  close();
-                  goProject(key);
-                })}</CommandGroup>}
+                {projects.length > 0 && (
+                  <CommandGroup heading="Projects">
+                    {projectItems((key) => {
+                      close();
+                      goProject(key);
+                    })}
+                  </CommandGroup>
+                )}
                 {currentProject && orgSlug && (
                   <CommandGroup heading={currentProject}>
-                    <CommandItem value={`${currentProject} board`} onSelect={run(() => goProject(currentProject, "board"))}>
+                    <CommandItem
+                      value={`${currentProject} board`}
+                      onSelect={run(() => goProject(currentProject, "board"))}
+                    >
                       <KanbanIcon />
                       Board
                       <Hint id="go-board" />
                     </CommandItem>
-                    <CommandItem value={`${currentProject} list`} onSelect={run(() => goProject(currentProject, "list"))}>
+                    <CommandItem
+                      value={`${currentProject} list`}
+                      onSelect={run(() => goProject(currentProject, "list"))}
+                    >
                       <ListIcon />
                       List
                       <Hint id="go-list" />
                     </CommandItem>
-                    <CommandItem value={`${currentProject} documents`} onSelect={run(() => goProject(currentProject, "docs"))}>
+                    <CommandItem
+                      value={`${currentProject} documents`}
+                      onSelect={run(() => goProject(currentProject, "docs"))}
+                    >
                       <FileTextIcon />
                       Documents
                       <Hint id="go-docs" />
@@ -323,12 +414,20 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                         key={d.id}
                         value={`document ${d.title} ${d.projectKey ?? ""} ${d.taskKey ?? ""} ${d.id}`}
                         onSelect={run(
-                          () => void navigate({ to: "/$orgSlug/docs/$documentId", params: { orgSlug, documentId: d.id } }),
+                          () =>
+                            void navigate({
+                              to: "/$orgSlug/docs/$documentId",
+                              params: { orgSlug, documentId: d.id },
+                            }),
                         )}
                       >
                         <FileTextIcon />
                         <span className="truncate">{d.title}</span>
-                        {(d.taskKey ?? d.projectKey) && <CommandShortcut>{d.taskKey ?? d.projectKey}</CommandShortcut>}
+                        {(d.taskKey ?? d.projectKey) && (
+                          <CommandShortcut>
+                            {d.taskKey ?? d.projectKey}
+                          </CommandShortcut>
+                        )}
                       </CommandItem>
                     ))}
                   </CommandGroup>
@@ -337,7 +436,13 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                   <CommandGroup heading="Go to">
                     <CommandItem
                       value="go home projects"
-                      onSelect={run(() => void navigate({ to: "/$orgSlug", params: { orgSlug } }))}
+                      onSelect={run(
+                        () =>
+                          void navigate({
+                            to: "/$orgSlug",
+                            params: { orgSlug },
+                          }),
+                      )}
                     >
                       <HomeIcon />
                       Projects (home)
@@ -345,14 +450,26 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                     </CommandItem>
                     <CommandItem
                       value="go docs documents all"
-                      onSelect={run(() => void navigate({ to: "/$orgSlug/docs", params: { orgSlug } }))}
+                      onSelect={run(
+                        () =>
+                          void navigate({
+                            to: "/$orgSlug/docs",
+                            params: { orgSlug },
+                          }),
+                      )}
                     >
                       <FileTextIcon />
                       All documents
                     </CommandItem>
                     <CommandItem
                       value="go settings members"
-                      onSelect={run(() => void navigate({ to: "/$orgSlug/settings/members", params: { orgSlug } }))}
+                      onSelect={run(
+                        () =>
+                          void navigate({
+                            to: "/$orgSlug/settings/members",
+                            params: { orgSlug },
+                          }),
+                      )}
                     >
                       <UsersIcon />
                       Settings: Members
@@ -360,7 +477,13 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                     {canManage && (
                       <CommandItem
                         value="go settings projects"
-                        onSelect={run(() => void navigate({ to: "/$orgSlug/settings/projects", params: { orgSlug } }))}
+                        onSelect={run(
+                          () =>
+                            void navigate({
+                              to: "/$orgSlug/settings/projects",
+                              params: { orgSlug },
+                            }),
+                        )}
                       >
                         <FolderCogIcon />
                         Settings: Projects
@@ -368,14 +491,26 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                     )}
                     <CommandItem
                       value="go settings repos"
-                      onSelect={run(() => void navigate({ to: "/$orgSlug/settings/repos", params: { orgSlug } }))}
+                      onSelect={run(
+                        () =>
+                          void navigate({
+                            to: "/$orgSlug/settings/repos",
+                            params: { orgSlug },
+                          }),
+                      )}
                     >
                       <GitBranchIcon />
                       Settings: Repos
                     </CommandItem>
                     <CommandItem
                       value="go settings github"
-                      onSelect={run(() => void navigate({ to: "/$orgSlug/settings/github", params: { orgSlug } }))}
+                      onSelect={run(
+                        () =>
+                          void navigate({
+                            to: "/$orgSlug/settings/github",
+                            params: { orgSlug },
+                          }),
+                      )}
                     >
                       <GitPullRequestIcon />
                       Settings: GitHub
@@ -383,13 +518,22 @@ export function CommandPalette({ me }: { me: MeResponse }) {
                     {canCreateTasks && (
                       <CommandItem
                         value="go settings agents"
-                        onSelect={run(() => void navigate({ to: "/$orgSlug/settings/agents", params: { orgSlug } }))}
+                        onSelect={run(
+                          () =>
+                            void navigate({
+                              to: "/$orgSlug/settings/agents",
+                              params: { orgSlug },
+                            }),
+                        )}
                       >
                         <BotIcon />
                         Settings: Agents
                       </CommandItem>
                     )}
-                    <CommandItem value="go account" onSelect={run(() => void navigate({ to: "/account" }))}>
+                    <CommandItem
+                      value="go account"
+                      onSelect={run(() => void navigate({ to: "/account" }))}
+                    >
                       <UserIcon />
                       Account
                     </CommandItem>
@@ -405,14 +549,22 @@ export function CommandPalette({ me }: { me: MeResponse }) {
   );
 }
 
-function ShortcutsHelp({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function ShortcutsHelp({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const groups = ["General", "Go to", "Task page"] as const;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Shortcuts are off while you type or while a dialog is open.</DialogDescription>
+          <DialogDescription>
+            Shortcuts are off while you type or while a dialog is open.
+          </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4 text-sm">
           <section aria-label="Command palette">
@@ -422,7 +574,9 @@ function ShortcutsHelp({ open, onOpenChange }: { open: boolean; onOpenChange: (o
           </section>
           {groups.map((group) => (
             <section key={group} aria-label={group}>
-              <h3 className="mb-1 text-xs font-medium text-muted-foreground">{group}</h3>
+              <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+                {group}
+              </h3>
               <ul className="flex flex-col gap-1">
                 {SHORTCUTS.filter((s) => s.group === group).map((s) => (
                   <ShortcutRow key={s.id} label={s.label} keys={s.keys} />
@@ -436,15 +590,25 @@ function ShortcutsHelp({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   );
 }
 
-function ShortcutRow({ label, keys }: { label: string; keys: readonly string[] }) {
+function ShortcutRow({
+  label,
+  keys,
+}: {
+  label: string;
+  keys: readonly string[];
+}) {
   return (
     <li className="flex items-center justify-between gap-3">
       <span>{label}</span>
       <span className="flex items-center gap-1">
         {keys.map((k, i) => (
           <span key={i} className="flex items-center gap-1">
-            {i > 0 && <span className="text-xs text-muted-foreground">then</span>}
-            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-xs">{k}</kbd>
+            {i > 0 && (
+              <span className="text-xs text-muted-foreground">then</span>
+            )}
+            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-xs">
+              {k}
+            </kbd>
           </span>
         ))}
       </span>

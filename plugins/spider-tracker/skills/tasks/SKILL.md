@@ -27,13 +27,16 @@ The CLI can hold several saved agents (`spider agents` lists them); `--as <handl
 ## Workflow
 
 ### Find or pick up a task
+
 - A key given by the user (`ST-12`): read it first — MCP `get_task`, CLI `spider task view ST-12 --json`.
 - Your own work: MCP `list_tasks` with `assignee: "me"`; CLI `spider task list --mine --json`.
 - Next work: list `Todo` tasks of the project (MCP `list_tasks` with `status: "todo"`; CLI `spider task list --project ST --status todo --json`, with your project's key) and take the highest priority unassigned one (1 urgent … 4 low, 0 none). Ask the user if the choice is unclear.
 - Statuses match by name (`"In Progress"`) or by category (`in_progress`); `get_project` / `spider projects` lists a project's statuses. The usual workflow is Backlog → Todo → In Progress → In Review → Done (or Canceled).
 
 ### Start it
+
 Before changing code, start the task: it assigns you and moves it to In Progress.
+
 - MCP: `start_task` with `key`.
 - CLI: `spider task start ST-12 --json`. It also **switches the git branch** of the current directory to the task's branch (creating it if needed; uncommitted changes come along), and its warnings go to stderr. `--json` reports the branch it checked out as `branch`.
 
@@ -42,14 +45,17 @@ If you work in a shared working tree (other agents or the user use the same fold
 Work on a branch named after the task: lower-case key plus a short slug of the title, e.g. `st-12-short-title`. The CLI reads the key from the current branch (`st-12-fix`, `feat/ST-12`), so inside such a branch the key can be omitted (`spider task view --json`).
 
 ### Projects
+
 If the work needs a project that doesn't exist yet, create it: MCP `create_project` with `key` (2–10 letters or digits, fixed once created) and `name`; CLI `spider project create --key OPS --name "Operations" --json`. `update_project` / `spider project update` renames it, `archive_project` / `spider project archive` archives it (`undo: true` / `--undo` restores it). Agents get this right from the person who owns them: allowed when that person is an owner or admin, otherwise `forbidden` (CLI exit 4); then ask a person to create the project. A project-scoped agent gets access to the projects it creates.
 
 ### Keep it updated
+
 - If the scope changes, update the title or description (MCP `update_task`; CLI `spider task update ST-12 --description "…" --json`). Description is Markdown.
 - Found follow-up work? Create a task instead of growing this one (MCP `create_task`; CLI `spider task create --project ST --title "…" --json`).
 - `update_task` / `--assign` **replace** the whole assignee list; use `start_task` or `assign_to_me` to add yourself without removing others.
 
 ### Talk on the task
+
 - Comments are the conversation under a task: MCP `add_comment` / `list_comments`; CLI `spider comment ST-12 "…" --json` / `spider comments ST-12 --json`. Mention people or agents with `@handle` to notify them (`list_members` shows handles).
 - Your notifications (mentions, assignments, replies, comments on your tasks) are in your inbox: MCP `get_inbox` (then `mark_inbox_read`); CLI `spider inbox --json --mark-read`. Check it when you start working and before you hand off.
 - If the session runs with the spider channel, notifications arrive as `<channel source="spider" …>` messages; answer with the channel's `reply` tool.
@@ -63,6 +69,7 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 - To publish a set of documents kept as local `.md` files, run `spider doc publish <dir> [--project ST] [--dry-run]` instead of editing them one by one: it creates or updates each file's document, writes `id` and `version` into the file's front matter, turns `[[Title]]` and relative `.md` links between the files into `[[doc:<id>]]` links, and reports a document changed in the tracker since the file's `version` as a conflict instead of overwriting it.
 
 ### Hand off
+
 - Leave a handoff comment with a **What changed** section (a `**What changed**` line or a `## What changed` heading, then the changes as a short list), followed by how it was verified and what is left open under their own bold labels or headings. The release changelog takes each task's title plus the What changed section of the latest such comment by an assignee, so write it for the people who will read the release notes.
 - When the change is committed (and tests pass), move the task to **In Review**: MCP `update_task` with `status: "In Review"`; CLI `spider task update ST-12 --status "In Review" --json`. Mention the commit hash or branch in your reply to the user.
 - When the user wants a pull request (pushing is their call: never push unasked), open it from the task's branch with `spider pr --json` (`--draft` for unfinished work, `--base <branch>`): it pushes the branch with your git, opens the PR on GitHub with the task's title, links it, and the body closes the task (`Closes ST-12`), so the task moves to In Review now and to Done on merge, by itself. Over MCP only (no push), push first and call `open_pull_request` with `key` (and `head` if the branch isn't the task's). A PR already open for the branch fails with its URL (CLI exit 2, `error.url`). Needs the project's repo connected to the GitHub App; otherwise open the PR as usual and mention the key.
@@ -70,6 +77,7 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 - If you are blocked, say so to the user and leave the task In Progress with a note in its description rather than moving it backwards silently.
 
 ### Releases and shipping
+
 - A Done task's `shipping` (MCP `get_task`, `spider task view ST-12 --json`; `Shipping:` in `spider task view`) says where its code is: `not_in_release` (finished, not shipped yet), `in_release` (in a release on its way; `release` names it and its status, e.g. "2026.10.14 · on staging"), `shipped` (its release is Released; `shippedAt` is when) or `no_code` (nothing to ship). Don't tell the user a task is live in production unless its state is `shipped`.
 - A Done task with nothing to ship (a decision, docs outside the apps, research) can be marked so: MCP `update_task` with `noCode: true`; CLI `spider task update ST-12 --no-code`.
 - Releases are tasks of kind `release`, named by their version. Only work on them when the user asks (a release owner puts Done tasks into a release, deploys and marks it Released): MCP `list_release_candidates`, `create_release`, `add_to_release`, `remove_from_release`, `get_release`; CLI `spider release candidates|create|add|remove|view|list`. Moving a release to Released (MCP `update_task` with `status: "Released"`; CLI `spider task done ST-120`) marks every included task shipped; their status stays Done.
@@ -77,26 +85,30 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 - Before releasing, from a clone of the repo: `spider release check ST-120` compares the commits since each app's last tag with the release (candidates left out, included tasks with no commits, apps changed but not in it; exit 1 on findings), and `spider release changelog ST-120 --write` (MCP `get_release_changelog` with `write: true`, not grouped by app) saves the changelog into the release's description. It never overwrites a changelog edited by hand unless forced; edit it there rather than regenerating. `spider release notes ST-120 --append` adds it to `CHANGELOG.md`, and `--app cli` prints one app's notes for its GitHub release.
 
 ### Milestones and the roadmap
+
 - A milestone is a task of kind `milestone` (Planned → Active → Ready to close → Done) with its goal and "Done when" in the description; a project's milestones by date are its roadmap: MCP `list_milestones`, `get_milestone`; CLI `spider roadmap [ST]`, `spider milestone view ST-130`. A task's `milestone` (in `get_task`, `Milestone:` in `spider task view`) says which one it belongs to; sub-tasks inherit their parent's (`inherited: true`).
 - Put a task in a milestone of its own project only when the user or the task asks: MCP `update_task` with `milestone: "ST-130"` (null takes it out), `update_tasks` for several; CLI `spider task update ST-12 --milestone ST-130`. Create milestones (MCP `create_milestone`, `spider milestone create`) only when asked.
 - When every task of a milestone is Done and all their code has shipped, the tracker moves it to Ready to close by itself (as `@spider`). Don't move a milestone to Done yourself: a person closes it after checking "Done when".
 
 ## Never put secrets in task text
-Titles and descriptions are visible to everyone in the organization and kept in history. Never paste tokens, API keys (`spt_…`), passwords, connection strings, `.env` contents or private customer data into them. Describe *where* a secret lives instead.
+
+Titles and descriptions are visible to everyone in the organization and kept in history. Never paste tokens, API keys (`spt_…`), passwords, connection strings, `.env` contents or private customer data into them. Describe _where_ a secret lives instead.
 
 ## CLI exit codes and errors
-| Code | Meaning | What to do |
-|---|---|---|
-| `0` | OK | |
-| `1` | Unexpected (network, server error) | Retry once, then report it |
-| `2` | Usage or validation (bad option, unknown status or handle) | Read the message — it lists the valid options — and fix the call |
-| `3` | Not found (task, project) | Check the key with `task list` / `projects`. If the message says you act as an agent that sees only other projects, pass `--as <your handle>` |
-| `4` | Auth or permission (not signed in, invalid key, role too low) | Check `spider agents`; if there is no saved agent, ask the user to run `spider accept-invite <code>` or `spider login` |
+
+| Code | Meaning                                                       | What to do                                                                                                                                    |
+| ---- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | OK                                                            |                                                                                                                                               |
+| `1`  | Unexpected (network, server error)                            | Retry once, then report it                                                                                                                    |
+| `2`  | Usage or validation (bad option, unknown status or handle)    | Read the message — it lists the valid options — and fix the call                                                                              |
+| `3`  | Not found (task, project)                                     | Check the key with `task list` / `projects`. If the message says you act as an agent that sees only other projects, pass `--as <your handle>` |
+| `4`  | Auth or permission (not signed in, invalid key, role too low) | Check `spider agents`; if there is no saved agent, ask the user to run `spider accept-invite <code>` or `spider login`                        |
 
 With `--json`, errors go to stderr as `{"error":{"code","message"}}`; read stderr, don't discard it. MCP tools return errors as tool results (`isError`) with the same messages.
 
 MCP results and CLI `--json` output have the same shapes: a task has `key`, `title`, `status: { name, category }`, `priority` (0–4), `assignees` (handles), `tags`, `parentKey`, `shipping` and `url`; documents have `projectKey` and `taskKey`; comments have `author` (handle); lists are `{ "items": [...] }`. If the tracker is unreachable, carry on with the code work and tell the user which tracker update is still pending.
 
 ## Reference
+
 - `spider --help` and `spider <command> --help` list every CLI command and option.
 - In the Spider Tracker repository: `docs/interfaces.md` (MCP server, CLI) and `docs/agents.md` (agents and connecting).

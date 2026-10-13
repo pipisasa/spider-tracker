@@ -36,7 +36,10 @@ export function useOpenPaletteListener(handler: () => void) {
 }
 
 /** Runs `handler` for the given actions: live ones, and one queued before this page mounted. */
-export function useAppAction(actions: readonly AppAction[], handler: (action: AppAction) => void) {
+export function useAppAction(
+  actions: readonly AppAction[],
+  handler: (action: AppAction) => void,
+) {
   const ref = useRef(handler);
   ref.current = handler;
   const wanted = actions.join(",");

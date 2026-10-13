@@ -48,7 +48,8 @@ export function threadsOf(comments: DocumentCommentDto[]): CommentThread[] {
   const threads = new Map<string, CommentThread>();
   for (const c of comments) {
     const root = rootOf(c);
-    if (root === c.id) threads.set(c.id, { root: c, replies: threads.get(c.id)?.replies ?? [] });
+    if (root === c.id)
+      threads.set(c.id, { root: c, replies: threads.get(c.id)?.replies ?? [] });
     else {
       const thread = threads.get(root);
       if (thread) thread.replies.push(c);
@@ -67,7 +68,10 @@ export interface TextPoint {
  * Where `quote` sits in text split into pieces (a node's text nodes), matched as the API matches
  * it: letters and digits only. Null when it isn't there.
  */
-export function locateQuote(pieces: string[], quote: string): { start: TextPoint; end: TextPoint } | null {
+export function locateQuote(
+  pieces: string[],
+  quote: string,
+): { start: TextPoint; end: TextPoint } | null {
   const needle = skeleton(quote);
   if (!needle || pieces.length === 0) return null;
   const starts: number[] = [];
@@ -106,7 +110,10 @@ export function findQuote(root: Node, quote: string): Range | null {
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (node instanceof Text) nodes.push(node);
   }
-  const found = locateQuote(nodes.map((n) => n.data), quote);
+  const found = locateQuote(
+    nodes.map((n) => n.data),
+    quote,
+  );
   const startNode = found && nodes[found.start.piece];
   const endNode = found && nodes[found.end.piece];
   if (!found || !startNode || !endNode) return null;
@@ -117,7 +124,9 @@ export function findQuote(root: Node, quote: string): Range | null {
 }
 
 const highlights = () =>
-  typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined"
+  typeof CSS !== "undefined" &&
+  "highlights" in CSS &&
+  typeof Highlight !== "undefined"
     ? CSS.highlights
     : null;
 
@@ -148,17 +157,26 @@ export function useQuoteHighlights(
     };
     find();
     const observer = new MutationObserver(find);
-    observer.observe(el, { childList: true, subtree: true, characterData: true });
+    observer.observe(el, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
     return () => observer.disconnect();
   }, [container, threads]);
 
   useEffect(() => {
     const registry = highlights();
     if (!registry) return;
-    const others = [...ranges.entries()].filter(([id]) => id !== active).map(([, r]) => r);
+    const others = [...ranges.entries()]
+      .filter(([id]) => id !== active)
+      .map(([, r]) => r);
     registry.set(HIGHLIGHT, new Highlight(...others));
     const current = active ? ranges.get(active) : undefined;
-    registry.set(HIGHLIGHT_ACTIVE, new Highlight(...(current ? [current] : [])));
+    registry.set(
+      HIGHLIGHT_ACTIVE,
+      new Highlight(...(current ? [current] : [])),
+    );
     return () => {
       registry.delete(HIGHLIGHT);
       registry.delete(HIGHLIGHT_ACTIVE);
@@ -171,7 +189,10 @@ export function useQuoteHighlights(
     if (!active || active === scrolledTo) return;
     const range = ranges.get(active);
     if (!range) return;
-    range.startContainer.parentElement?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    range.startContainer.parentElement?.scrollIntoView?.({
+      block: "center",
+      behavior: "smooth",
+    });
     setScrolledTo(active);
   }, [active, ranges, scrolledTo]);
 
@@ -181,7 +202,10 @@ export function useQuoteHighlights(
     if (!el) return;
     const onClick = (event: MouseEvent) => {
       if (!window.getSelection()?.isCollapsed) return;
-      const caret = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+      const caret = document.caretRangeFromPoint?.(
+        event.clientX,
+        event.clientY,
+      );
       if (!caret) return;
       for (const [id, range] of ranges) {
         if (range.isPointInRange(caret.startContainer, caret.startOffset)) {
@@ -203,19 +227,33 @@ export function SelectionCommentButton({
   container: HTMLElement | null;
   onComment: (quote: string) => void;
 }) {
-  const [at, setAt] = useState<{ top: number; left: number; quote: string } | null>(null);
+  const [at, setAt] = useState<{
+    top: number;
+    left: number;
+    quote: string;
+  } | null>(null);
 
   useEffect(() => {
     const update = () => {
       const selection = window.getSelection();
       const el = container;
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !el) return setAt(null);
+      if (
+        !selection ||
+        selection.isCollapsed ||
+        selection.rangeCount === 0 ||
+        !el
+      )
+        return setAt(null);
       const range = selection.getRangeAt(0);
       if (!el.contains(range.commonAncestorContainer)) return setAt(null);
       const quote = selection.toString().replace(/\s+/g, " ").trim();
       if (!quote || !skeleton(quote)) return setAt(null);
       const rect = range.getBoundingClientRect();
-      setAt({ top: rect.bottom + 6, left: rect.left + rect.width / 2, quote: quote.slice(0, MAX_QUOTE) });
+      setAt({
+        top: rect.bottom + 6,
+        left: rect.left + rect.width / 2,
+        quote: quote.slice(0, MAX_QUOTE),
+      });
     };
     document.addEventListener("selectionchange", update);
     window.addEventListener("scroll", update, true);
@@ -264,34 +302,39 @@ export function DocumentComments({
   active: string | null;
   onActivate: (id: string | null) => void;
 }) {
-  const { data: comments = [] } = useQuery(documentCommentsQuery(orgSlug, documentId));
+  const { data: comments = [] } = useQuery(
+    documentCommentsQuery(orgSlug, documentId),
+  );
   const { data: members = [] } = useQuery(membersQuery(orgSlug));
   const { data: actors = [] } = useQuery(actorsQuery(orgSlug));
   const add = useAddDocumentComment(orgSlug, documentId);
   const resolve = useResolveDocumentComment(orgSlug, documentId);
   const [replyTo, setReplyTo] = useState<DocumentCommentDto | null>(null);
   const [showResolved, setShowResolved] = useState(false);
-  const byId = useMemo(() => new Map([...actors, ...members].map((m) => [m.id, m])), [actors, members]);
-  const handles = useMemo(() => new Set(members.map((m) => m.handle)), [members]);
+  const byId = useMemo(
+    () => new Map([...actors, ...members].map((m) => [m.id, m])),
+    [actors, members],
+  );
+  const handles = useMemo(
+    () => new Set(members.map((m) => m.handle)),
+    [members],
+  );
   const threads = useMemo(() => threadsOf(comments), [comments]);
   const open = threads.filter((t) => !t.root.resolvedAt);
   const resolved = threads.filter((t) => t.root.resolvedAt);
 
   function send(body: string, reset: () => void, parentId?: string) {
-    add.mutate(
-      parentId ? { body, parentId } : { body, quote },
-      {
-        onSuccess: (comment) => {
-          reset();
-          setReplyTo(null);
-          if (!parentId) {
-            onClearQuote();
-            onActivate(comment.id);
-          }
-        },
-        onError: (err) => toast.error(err.message),
+    add.mutate(parentId ? { body, parentId } : { body, quote }, {
+      onSuccess: (comment) => {
+        reset();
+        setReplyTo(null);
+        if (!parentId) {
+          onClearQuote();
+          onActivate(comment.id);
+        }
       },
-    );
+      onError: (err) => toast.error(err.message),
+    });
   }
 
   function setResolved(thread: CommentThread, value: boolean) {
@@ -303,7 +346,10 @@ export function DocumentComments({
 
   const renderThread = (thread: CommentThread) => {
     const { root } = thread;
-    const replying = replyTo !== null && (replyTo.id === root.id || thread.replies.some((r) => r.id === replyTo.id));
+    const replying =
+      replyTo !== null &&
+      (replyTo.id === root.id ||
+        thread.replies.some((r) => r.id === replyTo.id));
     const resolver = root.resolvedBy ? byId.get(root.resolvedBy) : undefined;
     return (
       <li
@@ -321,13 +367,19 @@ export function DocumentComments({
             <blockquote
               className={cn(
                 "line-clamp-3 border-l-2 pl-2 text-xs text-muted-foreground",
-                root.outdated ? "border-muted-foreground/40 line-through decoration-muted-foreground/40" : "border-amber-400",
+                root.outdated
+                  ? "border-muted-foreground/40 line-through decoration-muted-foreground/40"
+                  : "border-amber-400",
               )}
             >
               {root.quote}
             </blockquote>
             {root.outdated && (
-              <Badge variant="outline" className="text-muted-foreground" title={`Commented on version ${root.documentVersion}; this text has changed since`}>
+              <Badge
+                variant="outline"
+                className="text-muted-foreground"
+                title={`Commented on version ${root.documentVersion}; this text has changed since`}
+              >
                 Outdated
               </Badge>
             )}
@@ -393,7 +445,10 @@ export function DocumentComments({
 
   return (
     <section aria-labelledby="comments-heading" className="flex flex-col gap-3">
-      <h2 id="comments-heading" className="text-sm font-medium text-muted-foreground">
+      <h2
+        id="comments-heading"
+        className="text-sm font-medium text-muted-foreground"
+      >
         Comments{open.length > 0 && ` · ${open.length} open`}
       </h2>
       {canWrite && (
@@ -403,19 +458,30 @@ export function DocumentComments({
               <blockquote className="line-clamp-4 flex-1 border-l-2 border-amber-400 pl-2 text-xs text-muted-foreground">
                 {quote}
               </blockquote>
-              <Button variant="ghost" size="icon-xs" aria-label="Comment on the whole document instead" onClick={onClearQuote}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Comment on the whole document instead"
+                onClick={onClearQuote}
+              >
                 <XIcon />
               </Button>
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">Select text in the document to comment on a fragment.</p>
+            <p className="text-xs text-muted-foreground">
+              Select text in the document to comment on a fragment.
+            </p>
           )}
           <CommentForm
             key={quote ?? ""}
             members={members}
             pending={add.isPending && !replyTo}
             label="Comment"
-            placeholder={quote ? "Comment on this fragment… (⌘↵ to send)" : "Comment on the document… type @ to mention (⌘↵ to send)"}
+            placeholder={
+              quote
+                ? "Comment on this fragment… (⌘↵ to send)"
+                : "Comment on the document… type @ to mention (⌘↵ to send)"
+            }
             autoFocus={quote !== null}
             onSubmit={(body, reset) => send(body, reset)}
           />
@@ -428,10 +494,19 @@ export function DocumentComments({
       )}
       {resolved.length > 0 && (
         <>
-          <Button variant="ghost" size="sm" className="self-start" onClick={() => setShowResolved((v) => !v)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-start"
+            onClick={() => setShowResolved((v) => !v)}
+          >
             {showResolved ? "Hide" : "Show"} {resolved.length} resolved
           </Button>
-          {showResolved && <ul className="flex flex-col gap-3">{resolved.map(renderThread)}</ul>}
+          {showResolved && (
+            <ul className="flex flex-col gap-3">
+              {resolved.map(renderThread)}
+            </ul>
+          )}
         </>
       )}
     </section>

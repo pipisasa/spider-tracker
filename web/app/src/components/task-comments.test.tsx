@@ -16,19 +16,27 @@ const tags = new Map([
 ]);
 
 test("tag edits name the added and removed tags", () => {
-  const describe = (from: string[], to: string[]) => describeActivity(update({ tagIds: [from, to] }), [], new Map(), tags);
+  const describe = (from: string[], to: string[]) =>
+    describeActivity(update({ tagIds: [from, to] }), [], new Map(), tags);
   expect(describe([], ["t1"])).toBe("added tag bug");
   expect(describe([], ["t1", "t2"])).toBe("added tags bug, ui");
   expect(describe(["t1"], ["t2"])).toBe("added tag ui, removed tag bug");
-  expect(describe(["t1", "gone"], [])).toBe("removed tag bug and 1 deleted tag");
+  expect(describe(["t1", "gone"], [])).toBe(
+    "removed tag bug and 1 deleted tag",
+  );
   expect(describe(["t1"], ["t1"])).toBe("changed tags");
 });
 
 test("date edits name the new date, or say it was removed (ST-91)", () => {
-  const describe = (changes: Record<string, unknown>) => describeActivity(update(changes), [], new Map(), tags);
+  const describe = (changes: Record<string, unknown>) =>
+    describeActivity(update(changes), [], new Map(), tags);
   // Formatted in the viewer's locale, with the year outside the current one.
-  expect(describe({ targetDate: [null, "2020-03-01"] })).toMatch(/^set the target date to .*2020/);
-  expect(describe({ startDate: ["2020-01-01", null] })).toBe("removed the start date");
+  expect(describe({ targetDate: [null, "2020-03-01"] })).toMatch(
+    /^set the target date to .*2020/,
+  );
+  expect(describe({ startDate: ["2020-01-01", null] })).toBe(
+    "removed the start date",
+  );
 });
 
 test("a move by status automation names the pull request event and who sent it (ST-85)", () => {
@@ -36,22 +44,65 @@ test("a move by status automation names the pull request event and who sent it (
     { id: "s1", name: "In Review" },
     { id: "s2", name: "Done" },
   ] as Parameters<typeof describeActivity>[1];
-  const describe = (changes: Record<string, unknown>) => describeActivity(update(changes), statuses, new Map(), tags);
-  expect(describe({ statusId: ["s1", "s2"], pullRequest: { number: 12, event: "merged", sender: "bob" } })).toBe(
-    "moved In Review → Done (pull request #12 merged by bob)",
+  const describe = (changes: Record<string, unknown>) =>
+    describeActivity(update(changes), statuses, new Map(), tags);
+  expect(
+    describe({
+      statusId: ["s1", "s2"],
+      pullRequest: { number: 12, event: "merged", sender: "bob" },
+    }),
+  ).toBe("moved In Review → Done (pull request #12 merged by bob)");
+  expect(
+    describe({
+      statusId: ["s2", "s1"],
+      pullRequest: { number: 3, event: "opened", sender: null },
+    }),
+  ).toBe("moved Done → In Review (pull request #3 opened)");
+  expect(describe({ statusId: ["s1", "s2"], pullRequest: "odd" })).toBe(
+    "moved In Review → Done",
   );
-  expect(describe({ statusId: ["s2", "s1"], pullRequest: { number: 3, event: "opened", sender: null } })).toBe(
-    "moved Done → In Review (pull request #3 opened)",
-  );
-  expect(describe({ statusId: ["s1", "s2"], pullRequest: "odd" })).toBe("moved In Review → Done");
 });
 
 test("shipping and deployments of releases the viewer can't see read without naming them (ST-93, ST-94)", () => {
-  const entry = (action: string, changes: Record<string, unknown>): ActivityDto => ({ ...update(changes), action });
+  const entry = (
+    action: string,
+    changes: Record<string, unknown>,
+  ): ActivityDto => ({ ...update(changes), action });
   const describe = (e: ActivityDto) => describeActivity(e, [], new Map(), tags);
-  expect(describe(entry("task.shipped", { releaseId: "r", release: "ST-1", version: "2026.10.13" }))).toBe("shipped in 2026.10.13");
-  expect(describe(entry("task.shipped", { releaseId: null, release: null, version: null }))).toBe("shipped in a release");
-  expect(describe(entry("release.deployed", { app: "web", environment: "prod", commitSha: "3f2c1ab9" }))).toBe("deployed web to prod at 3f2c1ab");
-  expect(describe(entry("release.deployed", { app: null, repo: null, environment: null, commitSha: null }))).toBe("deployed an app");
-  expect(describe(update({ releaseId: [null, "hidden"] }))).toBe("added it to a release");
+  expect(
+    describe(
+      entry("task.shipped", {
+        releaseId: "r",
+        release: "ST-1",
+        version: "2026.10.13",
+      }),
+    ),
+  ).toBe("shipped in 2026.10.13");
+  expect(
+    describe(
+      entry("task.shipped", { releaseId: null, release: null, version: null }),
+    ),
+  ).toBe("shipped in a release");
+  expect(
+    describe(
+      entry("release.deployed", {
+        app: "web",
+        environment: "prod",
+        commitSha: "3f2c1ab9",
+      }),
+    ),
+  ).toBe("deployed web to prod at 3f2c1ab");
+  expect(
+    describe(
+      entry("release.deployed", {
+        app: null,
+        repo: null,
+        environment: null,
+        commitSha: null,
+      }),
+    ),
+  ).toBe("deployed an app");
+  expect(describe(update({ releaseId: [null, "hidden"] }))).toBe(
+    "added it to a release",
+  );
 });

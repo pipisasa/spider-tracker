@@ -19,10 +19,26 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { documentsQuery, reposQuery, useArchiveProject, useUpdateProject } from "@/lib/work";
-import type { GitAutomationEvent, GitAutomationSettings, ProjectDto, StatusCategory } from "@repo/core/contracts";
+import {
+  documentsQuery,
+  reposQuery,
+  useArchiveProject,
+  useUpdateProject,
+} from "@/lib/work";
+import type {
+  GitAutomationEvent,
+  GitAutomationSettings,
+  ProjectDto,
+  StatusCategory,
+} from "@repo/core/contracts";
 import { DEFAULT_GIT_AUTOMATION } from "@repo/core/git-automation-rules";
 import { statusCategorySchema, updateProjectInput } from "@repo/core/schemas";
 import { useQuery } from "@tanstack/react-query";
@@ -50,7 +66,8 @@ const AUTOMATION_EVENTS: { event: GitAutomationEvent; label: string }[] = [
 ];
 
 const sameAutomation = (a: GitAutomationSettings, b: GitAutomationSettings) =>
-  a.enabled === b.enabled && AUTOMATION_EVENTS.every(({ event }) => a[event] === b[event]);
+  a.enabled === b.enabled &&
+  AUTOMATION_EVENTS.every(({ event }) => a[event] === b[event]);
 
 /** Edit name, description, rules for agents and status automation, or archive. Owners and admins only (the API enforces it). */
 export function ProjectSettingsDialog({
@@ -67,12 +84,20 @@ export function ProjectSettingsDialog({
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? "");
   const [rules, setRules] = useState(project.rulesDocumentId ?? NO_RULES);
-  const [automation, setAutomation] = useState<GitAutomationSettings>(project.gitAutomation);
+  const [automation, setAutomation] = useState<GitAutomationSettings>(
+    project.gitAutomation,
+  );
   // Only the project's own documents (not its tasks') can be its rules.
-  const { data: documents = [] } = useQuery({ ...documentsQuery(orgSlug, { project: project.key }), enabled: open });
+  const { data: documents = [] } = useQuery({
+    ...documentsQuery(orgSlug, { project: project.key }),
+    enabled: open,
+  });
   const candidates = documents.filter((d) => d.taskKey === null);
   // Its repos (ST-84): branches, commits and PRs there link to its tasks. Attached in Settings → Repos.
-  const { data: repos = [] } = useQuery({ ...reposQuery(orgSlug), enabled: open });
+  const { data: repos = [] } = useQuery({
+    ...reposQuery(orgSlug),
+    enabled: open,
+  });
   const attached = repos.filter((r) => r.projects.includes(project.key));
   const [error, setError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -94,7 +119,10 @@ export function ProjectSettingsDialog({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const automationChanged = !sameAutomation(automation, project.gitAutomation);
+    const automationChanged = !sameAutomation(
+      automation,
+      project.gitAutomation,
+    );
     const parsed = updateProjectInput.safeParse({
       name,
       description: description.trim() === "" ? null : description,
@@ -139,7 +167,9 @@ export function ProjectSettingsDialog({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="project-description">Description (Markdown)</Label>
+              <Label htmlFor="project-description">
+                Description (Markdown)
+              </Label>
               <Textarea
                 id="project-description"
                 rows={6}
@@ -164,19 +194,29 @@ export function ProjectSettingsDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                One of this project&apos;s documents. Agents working in {project.key} get it automatically and are
-                notified when it changes; only owners, admins and their agents can edit it.
+                One of this project&apos;s documents. Agents working in{" "}
+                {project.key} get it automatically and are notified when it
+                changes; only owners, admins and their agents can edit it.
               </p>
             </div>
             <div className="flex flex-col gap-2">
               <Label>Repos</Label>
               <p className="text-sm">
-                {attached.length ? attached.map((r) => r.fullName).join(", ") : <span className="text-muted-foreground">None</span>}
+                {attached.length ? (
+                  attached.map((r) => r.fullName).join(", ")
+                ) : (
+                  <span className="text-muted-foreground">None</span>
+                )}
               </p>
               <p className="text-xs text-muted-foreground">
-                Branches, commits and pull requests in these repos that name a {project.key} task link to it. Attach or
-                detach repos in{" "}
-                <Link to="/$orgSlug/settings/repos" params={{ orgSlug }} className="underline underline-offset-2" onClick={() => onOpenChange(false)}>
+                Branches, commits and pull requests in these repos that name a{" "}
+                {project.key} task link to it. Attach or detach repos in{" "}
+                <Link
+                  to="/$orgSlug/settings/repos"
+                  params={{ orgSlug }}
+                  className="underline underline-offset-2"
+                  onClick={() => onOpenChange(false)}
+                >
                   Settings → Repos
                 </Link>
                 .
@@ -201,7 +241,9 @@ export function ProjectSettingsDialog({
                   type="checkbox"
                   className="size-4 accent-primary"
                   checked={automation.enabled}
-                  onChange={(e) => setAutomation({ ...automation, enabled: e.target.checked })}
+                  onChange={(e) =>
+                    setAutomation({ ...automation, enabled: e.target.checked })
+                  }
                 />
                 Move tasks when their pull requests change
               </label>
@@ -212,21 +254,27 @@ export function ProjectSettingsDialog({
                       key={event}
                       label={label}
                       value={automation[event]}
-                      onChange={(value) => setAutomation({ ...automation, [event]: value })}
+                      onChange={(value) =>
+                        setAutomation({ ...automation, [event]: value })
+                      }
                     />
                   ))}
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                As @github, to the first status of that kind in the task&apos;s workflow. Only for pull requests that
-                name the task in their branch, title or a closing keyword (&quot;Fixes {project.key}-12&quot;); tasks
-                only move forward, and Merged waits for the task&apos;s other open pull requests.
+                As @github, to the first status of that kind in the task&apos;s
+                workflow. Only for pull requests that name the task in their
+                branch, title or a closing keyword (&quot;Fixes {project.key}
+                -12&quot;); tasks only move forward, and Merged waits for the
+                task&apos;s other open pull requests.
               </p>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 p-3">
               <p className="text-sm text-muted-foreground">
-                {project.archivedAt ? "This project is archived." : "Archive this project to retire it."}
+                {project.archivedAt
+                  ? "This project is archived."
+                  : "Archive this project to retire it."}
               </p>
               {project.archivedAt ? (
                 <Button
@@ -234,7 +282,12 @@ export function ProjectSettingsDialog({
                   variant="outline"
                   size="sm"
                   disabled={archive.isPending}
-                  onClick={() => archive.mutate({ key: project.key, archive: false }, { onSuccess: () => onOpenChange(false) })}
+                  onClick={() =>
+                    archive.mutate(
+                      { key: project.key, archive: false },
+                      { onSuccess: () => onOpenChange(false) },
+                    )
+                  }
                 >
                   Restore
                 </Button>

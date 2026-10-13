@@ -8,431 +8,431 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as AuthedRouteImport } from './routes/_authed'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
-import { Route as AuthedOrgSlugRouteImport } from './routes/_authed/$orgSlug'
-import { Route as AuthedAccountRouteImport } from './routes/_authed/account'
-import { Route as AuthedDeviceRouteImport } from './routes/_authed/device'
-import { Route as AuthedOnboardingRouteImport } from './routes/_authed/onboarding'
-import { Route as AgentInviteCodeRouteImport } from './routes/agent-invite.$code'
-import { Route as AuthedOrgSlugIndexRouteImport } from './routes/_authed/$orgSlug/index'
-import { Route as AuthedOrgSlugDocsIndexRouteImport } from './routes/_authed/$orgSlug/docs/index'
-import { Route as AuthedOrgSlugDocsDocumentIdRouteImport } from './routes/_authed/$orgSlug/docs/$documentId'
-import { Route as AuthedOrgSlugDocsGraphRouteImport } from './routes/_authed/$orgSlug/docs/graph'
-import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from './routes/_authed/$orgSlug/projects/$projectKey'
-import { Route as AuthedOrgSlugSettingsAgentsRouteImport } from './routes/_authed/$orgSlug/settings/agents'
-import { Route as AuthedOrgSlugSettingsGithubRouteImport } from './routes/_authed/$orgSlug/settings/github'
-import { Route as AuthedOrgSlugSettingsMembersRouteImport } from './routes/_authed/$orgSlug/settings/members'
-import { Route as AuthedOrgSlugSettingsProjectsRouteImport } from './routes/_authed/$orgSlug/settings/projects'
-import { Route as AuthedOrgSlugSettingsReposRouteImport } from './routes/_authed/$orgSlug/settings/repos'
-import { Route as AuthedOrgSlugTasksTaskKeyRouteImport } from './routes/_authed/$orgSlug/tasks/$taskKey'
-import { Route as AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport } from './routes/_authed/$orgSlug/settings/workflows.$projectKey'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as AuthedRouteImport } from "./routes/_authed";
+import { Route as LoginRouteImport } from "./routes/login";
+import { Route as AuthedIndexRouteImport } from "./routes/_authed/index";
+import { Route as AuthedOrgSlugRouteImport } from "./routes/_authed/$orgSlug";
+import { Route as AuthedAccountRouteImport } from "./routes/_authed/account";
+import { Route as AuthedDeviceRouteImport } from "./routes/_authed/device";
+import { Route as AuthedOnboardingRouteImport } from "./routes/_authed/onboarding";
+import { Route as AgentInviteCodeRouteImport } from "./routes/agent-invite.$code";
+import { Route as AuthedOrgSlugIndexRouteImport } from "./routes/_authed/$orgSlug/index";
+import { Route as AuthedOrgSlugDocsIndexRouteImport } from "./routes/_authed/$orgSlug/docs/index";
+import { Route as AuthedOrgSlugDocsDocumentIdRouteImport } from "./routes/_authed/$orgSlug/docs/$documentId";
+import { Route as AuthedOrgSlugDocsGraphRouteImport } from "./routes/_authed/$orgSlug/docs/graph";
+import { Route as AuthedOrgSlugProjectsProjectKeyRouteImport } from "./routes/_authed/$orgSlug/projects/$projectKey";
+import { Route as AuthedOrgSlugSettingsAgentsRouteImport } from "./routes/_authed/$orgSlug/settings/agents";
+import { Route as AuthedOrgSlugSettingsGithubRouteImport } from "./routes/_authed/$orgSlug/settings/github";
+import { Route as AuthedOrgSlugSettingsMembersRouteImport } from "./routes/_authed/$orgSlug/settings/members";
+import { Route as AuthedOrgSlugSettingsProjectsRouteImport } from "./routes/_authed/$orgSlug/settings/projects";
+import { Route as AuthedOrgSlugSettingsReposRouteImport } from "./routes/_authed/$orgSlug/settings/repos";
+import { Route as AuthedOrgSlugTasksTaskKeyRouteImport } from "./routes/_authed/$orgSlug/tasks/$taskKey";
+import { Route as AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport } from "./routes/_authed/$orgSlug/settings/workflows.$projectKey";
 
 const AuthedRoute = AuthedRouteImport.update({
-  id: '/_authed',
+  id: "/_authed",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
+  id: "/login",
+  path: "/login",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const AuthedIndexRoute = AuthedIndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => AuthedRoute,
-} as any)
+} as any);
 const AuthedOrgSlugRoute = AuthedOrgSlugRouteImport.update({
-  id: '/$orgSlug',
-  path: '/$orgSlug',
+  id: "/$orgSlug",
+  path: "/$orgSlug",
   getParentRoute: () => AuthedRoute,
-} as any)
+} as any);
 const AuthedAccountRoute = AuthedAccountRouteImport.update({
-  id: '/account',
-  path: '/account',
+  id: "/account",
+  path: "/account",
   getParentRoute: () => AuthedRoute,
-} as any)
+} as any);
 const AuthedDeviceRoute = AuthedDeviceRouteImport.update({
-  id: '/device',
-  path: '/device',
+  id: "/device",
+  path: "/device",
   getParentRoute: () => AuthedRoute,
-} as any)
+} as any);
 const AuthedOnboardingRoute = AuthedOnboardingRouteImport.update({
-  id: '/onboarding',
-  path: '/onboarding',
+  id: "/onboarding",
+  path: "/onboarding",
   getParentRoute: () => AuthedRoute,
-} as any)
+} as any);
 const AgentInviteCodeRoute = AgentInviteCodeRouteImport.update({
-  id: '/agent-invite/$code',
-  path: '/agent-invite/$code',
+  id: "/agent-invite/$code",
+  path: "/agent-invite/$code",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const AuthedOrgSlugIndexRoute = AuthedOrgSlugIndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => AuthedOrgSlugRoute,
-} as any)
+} as any);
 const AuthedOrgSlugDocsIndexRoute = AuthedOrgSlugDocsIndexRouteImport.update({
-  id: '/docs/',
-  path: '/docs/',
+  id: "/docs/",
+  path: "/docs/",
   getParentRoute: () => AuthedOrgSlugRoute,
-} as any)
+} as any);
 const AuthedOrgSlugDocsDocumentIdRoute =
   AuthedOrgSlugDocsDocumentIdRouteImport.update({
-    id: '/docs/$documentId',
-    path: '/docs/$documentId',
+    id: "/docs/$documentId",
+    path: "/docs/$documentId",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugDocsGraphRoute = AuthedOrgSlugDocsGraphRouteImport.update({
-  id: '/docs/graph',
-  path: '/docs/graph',
+  id: "/docs/graph",
+  path: "/docs/graph",
   getParentRoute: () => AuthedOrgSlugRoute,
-} as any)
+} as any);
 const AuthedOrgSlugProjectsProjectKeyRoute =
   AuthedOrgSlugProjectsProjectKeyRouteImport.update({
-    id: '/projects/$projectKey',
-    path: '/projects/$projectKey',
+    id: "/projects/$projectKey",
+    path: "/projects/$projectKey",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugSettingsAgentsRoute =
   AuthedOrgSlugSettingsAgentsRouteImport.update({
-    id: '/settings/agents',
-    path: '/settings/agents',
+    id: "/settings/agents",
+    path: "/settings/agents",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugSettingsGithubRoute =
   AuthedOrgSlugSettingsGithubRouteImport.update({
-    id: '/settings/github',
-    path: '/settings/github',
+    id: "/settings/github",
+    path: "/settings/github",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugSettingsMembersRoute =
   AuthedOrgSlugSettingsMembersRouteImport.update({
-    id: '/settings/members',
-    path: '/settings/members',
+    id: "/settings/members",
+    path: "/settings/members",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugSettingsProjectsRoute =
   AuthedOrgSlugSettingsProjectsRouteImport.update({
-    id: '/settings/projects',
-    path: '/settings/projects',
+    id: "/settings/projects",
+    path: "/settings/projects",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugSettingsReposRoute =
   AuthedOrgSlugSettingsReposRouteImport.update({
-    id: '/settings/repos',
-    path: '/settings/repos',
+    id: "/settings/repos",
+    path: "/settings/repos",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugTasksTaskKeyRoute =
   AuthedOrgSlugTasksTaskKeyRouteImport.update({
-    id: '/tasks/$taskKey',
-    path: '/tasks/$taskKey',
+    id: "/tasks/$taskKey",
+    path: "/tasks/$taskKey",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 const AuthedOrgSlugSettingsWorkflowsProjectKeyRoute =
   AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport.update({
-    id: '/settings/workflows/$projectKey',
-    path: '/settings/workflows/$projectKey',
+    id: "/settings/workflows/$projectKey",
+    path: "/settings/workflows/$projectKey",
     getParentRoute: () => AuthedOrgSlugRoute,
-  } as any)
+  } as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof AuthedIndexRoute
-  '/login': typeof LoginRoute
-  '/$orgSlug': typeof AuthedOrgSlugRouteWithChildren
-  '/account': typeof AuthedAccountRoute
-  '/device': typeof AuthedDeviceRoute
-  '/onboarding': typeof AuthedOnboardingRoute
-  '/agent-invite/$code': typeof AgentInviteCodeRoute
-  '/$orgSlug/': typeof AuthedOrgSlugIndexRoute
-  '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
-  '/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
-  '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
-  '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
-  '/$orgSlug/settings/github': typeof AuthedOrgSlugSettingsGithubRoute
-  '/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
-  '/$orgSlug/settings/projects': typeof AuthedOrgSlugSettingsProjectsRoute
-  '/$orgSlug/settings/repos': typeof AuthedOrgSlugSettingsReposRoute
-  '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
-  '/$orgSlug/docs/': typeof AuthedOrgSlugDocsIndexRoute
-  '/$orgSlug/settings/workflows/$projectKey': typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
+  "/": typeof AuthedIndexRoute;
+  "/login": typeof LoginRoute;
+  "/$orgSlug": typeof AuthedOrgSlugRouteWithChildren;
+  "/account": typeof AuthedAccountRoute;
+  "/device": typeof AuthedDeviceRoute;
+  "/onboarding": typeof AuthedOnboardingRoute;
+  "/agent-invite/$code": typeof AgentInviteCodeRoute;
+  "/$orgSlug/": typeof AuthedOrgSlugIndexRoute;
+  "/$orgSlug/docs/$documentId": typeof AuthedOrgSlugDocsDocumentIdRoute;
+  "/$orgSlug/docs/graph": typeof AuthedOrgSlugDocsGraphRoute;
+  "/$orgSlug/projects/$projectKey": typeof AuthedOrgSlugProjectsProjectKeyRoute;
+  "/$orgSlug/settings/agents": typeof AuthedOrgSlugSettingsAgentsRoute;
+  "/$orgSlug/settings/github": typeof AuthedOrgSlugSettingsGithubRoute;
+  "/$orgSlug/settings/members": typeof AuthedOrgSlugSettingsMembersRoute;
+  "/$orgSlug/settings/projects": typeof AuthedOrgSlugSettingsProjectsRoute;
+  "/$orgSlug/settings/repos": typeof AuthedOrgSlugSettingsReposRoute;
+  "/$orgSlug/tasks/$taskKey": typeof AuthedOrgSlugTasksTaskKeyRoute;
+  "/$orgSlug/docs/": typeof AuthedOrgSlugDocsIndexRoute;
+  "/$orgSlug/settings/workflows/$projectKey": typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute;
 }
 export interface FileRoutesByTo {
-  '/login': typeof LoginRoute
-  '/account': typeof AuthedAccountRoute
-  '/device': typeof AuthedDeviceRoute
-  '/onboarding': typeof AuthedOnboardingRoute
-  '/agent-invite/$code': typeof AgentInviteCodeRoute
-  '/': typeof AuthedIndexRoute
-  '/$orgSlug': typeof AuthedOrgSlugIndexRoute
-  '/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
-  '/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
-  '/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
-  '/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
-  '/$orgSlug/settings/github': typeof AuthedOrgSlugSettingsGithubRoute
-  '/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
-  '/$orgSlug/settings/projects': typeof AuthedOrgSlugSettingsProjectsRoute
-  '/$orgSlug/settings/repos': typeof AuthedOrgSlugSettingsReposRoute
-  '/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
-  '/$orgSlug/docs': typeof AuthedOrgSlugDocsIndexRoute
-  '/$orgSlug/settings/workflows/$projectKey': typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
+  "/login": typeof LoginRoute;
+  "/account": typeof AuthedAccountRoute;
+  "/device": typeof AuthedDeviceRoute;
+  "/onboarding": typeof AuthedOnboardingRoute;
+  "/agent-invite/$code": typeof AgentInviteCodeRoute;
+  "/": typeof AuthedIndexRoute;
+  "/$orgSlug": typeof AuthedOrgSlugIndexRoute;
+  "/$orgSlug/docs/$documentId": typeof AuthedOrgSlugDocsDocumentIdRoute;
+  "/$orgSlug/docs/graph": typeof AuthedOrgSlugDocsGraphRoute;
+  "/$orgSlug/projects/$projectKey": typeof AuthedOrgSlugProjectsProjectKeyRoute;
+  "/$orgSlug/settings/agents": typeof AuthedOrgSlugSettingsAgentsRoute;
+  "/$orgSlug/settings/github": typeof AuthedOrgSlugSettingsGithubRoute;
+  "/$orgSlug/settings/members": typeof AuthedOrgSlugSettingsMembersRoute;
+  "/$orgSlug/settings/projects": typeof AuthedOrgSlugSettingsProjectsRoute;
+  "/$orgSlug/settings/repos": typeof AuthedOrgSlugSettingsReposRoute;
+  "/$orgSlug/tasks/$taskKey": typeof AuthedOrgSlugTasksTaskKeyRoute;
+  "/$orgSlug/docs": typeof AuthedOrgSlugDocsIndexRoute;
+  "/$orgSlug/settings/workflows/$projectKey": typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/_authed': typeof AuthedRouteWithChildren
-  '/login': typeof LoginRoute
-  '/_authed/$orgSlug': typeof AuthedOrgSlugRouteWithChildren
-  '/_authed/account': typeof AuthedAccountRoute
-  '/_authed/device': typeof AuthedDeviceRoute
-  '/_authed/onboarding': typeof AuthedOnboardingRoute
-  '/agent-invite/$code': typeof AgentInviteCodeRoute
-  '/_authed/': typeof AuthedIndexRoute
-  '/_authed/$orgSlug/': typeof AuthedOrgSlugIndexRoute
-  '/_authed/$orgSlug/docs/$documentId': typeof AuthedOrgSlugDocsDocumentIdRoute
-  '/_authed/$orgSlug/docs/graph': typeof AuthedOrgSlugDocsGraphRoute
-  '/_authed/$orgSlug/projects/$projectKey': typeof AuthedOrgSlugProjectsProjectKeyRoute
-  '/_authed/$orgSlug/settings/agents': typeof AuthedOrgSlugSettingsAgentsRoute
-  '/_authed/$orgSlug/settings/github': typeof AuthedOrgSlugSettingsGithubRoute
-  '/_authed/$orgSlug/settings/members': typeof AuthedOrgSlugSettingsMembersRoute
-  '/_authed/$orgSlug/settings/projects': typeof AuthedOrgSlugSettingsProjectsRoute
-  '/_authed/$orgSlug/settings/repos': typeof AuthedOrgSlugSettingsReposRoute
-  '/_authed/$orgSlug/tasks/$taskKey': typeof AuthedOrgSlugTasksTaskKeyRoute
-  '/_authed/$orgSlug/docs/': typeof AuthedOrgSlugDocsIndexRoute
-  '/_authed/$orgSlug/settings/workflows/$projectKey': typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
+  __root__: typeof rootRouteImport;
+  "/_authed": typeof AuthedRouteWithChildren;
+  "/login": typeof LoginRoute;
+  "/_authed/$orgSlug": typeof AuthedOrgSlugRouteWithChildren;
+  "/_authed/account": typeof AuthedAccountRoute;
+  "/_authed/device": typeof AuthedDeviceRoute;
+  "/_authed/onboarding": typeof AuthedOnboardingRoute;
+  "/agent-invite/$code": typeof AgentInviteCodeRoute;
+  "/_authed/": typeof AuthedIndexRoute;
+  "/_authed/$orgSlug/": typeof AuthedOrgSlugIndexRoute;
+  "/_authed/$orgSlug/docs/$documentId": typeof AuthedOrgSlugDocsDocumentIdRoute;
+  "/_authed/$orgSlug/docs/graph": typeof AuthedOrgSlugDocsGraphRoute;
+  "/_authed/$orgSlug/projects/$projectKey": typeof AuthedOrgSlugProjectsProjectKeyRoute;
+  "/_authed/$orgSlug/settings/agents": typeof AuthedOrgSlugSettingsAgentsRoute;
+  "/_authed/$orgSlug/settings/github": typeof AuthedOrgSlugSettingsGithubRoute;
+  "/_authed/$orgSlug/settings/members": typeof AuthedOrgSlugSettingsMembersRoute;
+  "/_authed/$orgSlug/settings/projects": typeof AuthedOrgSlugSettingsProjectsRoute;
+  "/_authed/$orgSlug/settings/repos": typeof AuthedOrgSlugSettingsReposRoute;
+  "/_authed/$orgSlug/tasks/$taskKey": typeof AuthedOrgSlugTasksTaskKeyRoute;
+  "/_authed/$orgSlug/docs/": typeof AuthedOrgSlugDocsIndexRoute;
+  "/_authed/$orgSlug/settings/workflows/$projectKey": typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
+  fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    | '/'
-    | '/login'
-    | '/$orgSlug'
-    | '/account'
-    | '/device'
-    | '/onboarding'
-    | '/agent-invite/$code'
-    | '/$orgSlug/'
-    | '/$orgSlug/docs/$documentId'
-    | '/$orgSlug/docs/graph'
-    | '/$orgSlug/projects/$projectKey'
-    | '/$orgSlug/settings/agents'
-    | '/$orgSlug/settings/github'
-    | '/$orgSlug/settings/members'
-    | '/$orgSlug/settings/projects'
-    | '/$orgSlug/settings/repos'
-    | '/$orgSlug/tasks/$taskKey'
-    | '/$orgSlug/docs/'
-    | '/$orgSlug/settings/workflows/$projectKey'
-  fileRoutesByTo: FileRoutesByTo
+    | "/"
+    | "/login"
+    | "/$orgSlug"
+    | "/account"
+    | "/device"
+    | "/onboarding"
+    | "/agent-invite/$code"
+    | "/$orgSlug/"
+    | "/$orgSlug/docs/$documentId"
+    | "/$orgSlug/docs/graph"
+    | "/$orgSlug/projects/$projectKey"
+    | "/$orgSlug/settings/agents"
+    | "/$orgSlug/settings/github"
+    | "/$orgSlug/settings/members"
+    | "/$orgSlug/settings/projects"
+    | "/$orgSlug/settings/repos"
+    | "/$orgSlug/tasks/$taskKey"
+    | "/$orgSlug/docs/"
+    | "/$orgSlug/settings/workflows/$projectKey";
+  fileRoutesByTo: FileRoutesByTo;
   to:
-    | '/login'
-    | '/account'
-    | '/device'
-    | '/onboarding'
-    | '/agent-invite/$code'
-    | '/'
-    | '/$orgSlug'
-    | '/$orgSlug/docs/$documentId'
-    | '/$orgSlug/docs/graph'
-    | '/$orgSlug/projects/$projectKey'
-    | '/$orgSlug/settings/agents'
-    | '/$orgSlug/settings/github'
-    | '/$orgSlug/settings/members'
-    | '/$orgSlug/settings/projects'
-    | '/$orgSlug/settings/repos'
-    | '/$orgSlug/tasks/$taskKey'
-    | '/$orgSlug/docs'
-    | '/$orgSlug/settings/workflows/$projectKey'
+    | "/login"
+    | "/account"
+    | "/device"
+    | "/onboarding"
+    | "/agent-invite/$code"
+    | "/"
+    | "/$orgSlug"
+    | "/$orgSlug/docs/$documentId"
+    | "/$orgSlug/docs/graph"
+    | "/$orgSlug/projects/$projectKey"
+    | "/$orgSlug/settings/agents"
+    | "/$orgSlug/settings/github"
+    | "/$orgSlug/settings/members"
+    | "/$orgSlug/settings/projects"
+    | "/$orgSlug/settings/repos"
+    | "/$orgSlug/tasks/$taskKey"
+    | "/$orgSlug/docs"
+    | "/$orgSlug/settings/workflows/$projectKey";
   id:
-    | '__root__'
-    | '/_authed'
-    | '/login'
-    | '/_authed/$orgSlug'
-    | '/_authed/account'
-    | '/_authed/device'
-    | '/_authed/onboarding'
-    | '/agent-invite/$code'
-    | '/_authed/'
-    | '/_authed/$orgSlug/'
-    | '/_authed/$orgSlug/docs/$documentId'
-    | '/_authed/$orgSlug/docs/graph'
-    | '/_authed/$orgSlug/projects/$projectKey'
-    | '/_authed/$orgSlug/settings/agents'
-    | '/_authed/$orgSlug/settings/github'
-    | '/_authed/$orgSlug/settings/members'
-    | '/_authed/$orgSlug/settings/projects'
-    | '/_authed/$orgSlug/settings/repos'
-    | '/_authed/$orgSlug/tasks/$taskKey'
-    | '/_authed/$orgSlug/docs/'
-    | '/_authed/$orgSlug/settings/workflows/$projectKey'
-  fileRoutesById: FileRoutesById
+    | "__root__"
+    | "/_authed"
+    | "/login"
+    | "/_authed/$orgSlug"
+    | "/_authed/account"
+    | "/_authed/device"
+    | "/_authed/onboarding"
+    | "/agent-invite/$code"
+    | "/_authed/"
+    | "/_authed/$orgSlug/"
+    | "/_authed/$orgSlug/docs/$documentId"
+    | "/_authed/$orgSlug/docs/graph"
+    | "/_authed/$orgSlug/projects/$projectKey"
+    | "/_authed/$orgSlug/settings/agents"
+    | "/_authed/$orgSlug/settings/github"
+    | "/_authed/$orgSlug/settings/members"
+    | "/_authed/$orgSlug/settings/projects"
+    | "/_authed/$orgSlug/settings/repos"
+    | "/_authed/$orgSlug/tasks/$taskKey"
+    | "/_authed/$orgSlug/docs/"
+    | "/_authed/$orgSlug/settings/workflows/$projectKey";
+  fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  AuthedRoute: typeof AuthedRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  AgentInviteCodeRoute: typeof AgentInviteCodeRoute
+  AuthedRoute: typeof AuthedRouteWithChildren;
+  LoginRoute: typeof LoginRoute;
+  AgentInviteCodeRoute: typeof AgentInviteCodeRoute;
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/_authed': {
-      id: '/_authed'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AuthedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authed/': {
-      id: '/_authed/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof AuthedIndexRouteImport
-      parentRoute: typeof AuthedRoute
-    }
-    '/_authed/$orgSlug': {
-      id: '/_authed/$orgSlug'
-      path: '/$orgSlug'
-      fullPath: '/$orgSlug'
-      preLoaderRoute: typeof AuthedOrgSlugRouteImport
-      parentRoute: typeof AuthedRoute
-    }
-    '/_authed/account': {
-      id: '/_authed/account'
-      path: '/account'
-      fullPath: '/account'
-      preLoaderRoute: typeof AuthedAccountRouteImport
-      parentRoute: typeof AuthedRoute
-    }
-    '/_authed/device': {
-      id: '/_authed/device'
-      path: '/device'
-      fullPath: '/device'
-      preLoaderRoute: typeof AuthedDeviceRouteImport
-      parentRoute: typeof AuthedRoute
-    }
-    '/_authed/onboarding': {
-      id: '/_authed/onboarding'
-      path: '/onboarding'
-      fullPath: '/onboarding'
-      preLoaderRoute: typeof AuthedOnboardingRouteImport
-      parentRoute: typeof AuthedRoute
-    }
-    '/agent-invite/$code': {
-      id: '/agent-invite/$code'
-      path: '/agent-invite/$code'
-      fullPath: '/agent-invite/$code'
-      preLoaderRoute: typeof AgentInviteCodeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authed/$orgSlug/': {
-      id: '/_authed/$orgSlug/'
-      path: '/'
-      fullPath: '/$orgSlug/'
-      preLoaderRoute: typeof AuthedOrgSlugIndexRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/docs/': {
-      id: '/_authed/$orgSlug/docs/'
-      path: '/docs'
-      fullPath: '/$orgSlug/docs/'
-      preLoaderRoute: typeof AuthedOrgSlugDocsIndexRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/docs/$documentId': {
-      id: '/_authed/$orgSlug/docs/$documentId'
-      path: '/docs/$documentId'
-      fullPath: '/$orgSlug/docs/$documentId'
-      preLoaderRoute: typeof AuthedOrgSlugDocsDocumentIdRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/docs/graph': {
-      id: '/_authed/$orgSlug/docs/graph'
-      path: '/docs/graph'
-      fullPath: '/$orgSlug/docs/graph'
-      preLoaderRoute: typeof AuthedOrgSlugDocsGraphRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/projects/$projectKey': {
-      id: '/_authed/$orgSlug/projects/$projectKey'
-      path: '/projects/$projectKey'
-      fullPath: '/$orgSlug/projects/$projectKey'
-      preLoaderRoute: typeof AuthedOrgSlugProjectsProjectKeyRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/settings/agents': {
-      id: '/_authed/$orgSlug/settings/agents'
-      path: '/settings/agents'
-      fullPath: '/$orgSlug/settings/agents'
-      preLoaderRoute: typeof AuthedOrgSlugSettingsAgentsRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/settings/github': {
-      id: '/_authed/$orgSlug/settings/github'
-      path: '/settings/github'
-      fullPath: '/$orgSlug/settings/github'
-      preLoaderRoute: typeof AuthedOrgSlugSettingsGithubRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/settings/members': {
-      id: '/_authed/$orgSlug/settings/members'
-      path: '/settings/members'
-      fullPath: '/$orgSlug/settings/members'
-      preLoaderRoute: typeof AuthedOrgSlugSettingsMembersRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/settings/projects': {
-      id: '/_authed/$orgSlug/settings/projects'
-      path: '/settings/projects'
-      fullPath: '/$orgSlug/settings/projects'
-      preLoaderRoute: typeof AuthedOrgSlugSettingsProjectsRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/settings/repos': {
-      id: '/_authed/$orgSlug/settings/repos'
-      path: '/settings/repos'
-      fullPath: '/$orgSlug/settings/repos'
-      preLoaderRoute: typeof AuthedOrgSlugSettingsReposRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/tasks/$taskKey': {
-      id: '/_authed/$orgSlug/tasks/$taskKey'
-      path: '/tasks/$taskKey'
-      fullPath: '/$orgSlug/tasks/$taskKey'
-      preLoaderRoute: typeof AuthedOrgSlugTasksTaskKeyRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
-    '/_authed/$orgSlug/settings/workflows/$projectKey': {
-      id: '/_authed/$orgSlug/settings/workflows/$projectKey'
-      path: '/settings/workflows/$projectKey'
-      fullPath: '/$orgSlug/settings/workflows/$projectKey'
-      preLoaderRoute: typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport
-      parentRoute: typeof AuthedOrgSlugRoute
-    }
+    "/_authed": {
+      id: "/_authed";
+      path: "";
+      fullPath: "/";
+      preLoaderRoute: typeof AuthedRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/login": {
+      id: "/login";
+      path: "/login";
+      fullPath: "/login";
+      preLoaderRoute: typeof LoginRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/_authed/": {
+      id: "/_authed/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof AuthedIndexRouteImport;
+      parentRoute: typeof AuthedRoute;
+    };
+    "/_authed/$orgSlug": {
+      id: "/_authed/$orgSlug";
+      path: "/$orgSlug";
+      fullPath: "/$orgSlug";
+      preLoaderRoute: typeof AuthedOrgSlugRouteImport;
+      parentRoute: typeof AuthedRoute;
+    };
+    "/_authed/account": {
+      id: "/_authed/account";
+      path: "/account";
+      fullPath: "/account";
+      preLoaderRoute: typeof AuthedAccountRouteImport;
+      parentRoute: typeof AuthedRoute;
+    };
+    "/_authed/device": {
+      id: "/_authed/device";
+      path: "/device";
+      fullPath: "/device";
+      preLoaderRoute: typeof AuthedDeviceRouteImport;
+      parentRoute: typeof AuthedRoute;
+    };
+    "/_authed/onboarding": {
+      id: "/_authed/onboarding";
+      path: "/onboarding";
+      fullPath: "/onboarding";
+      preLoaderRoute: typeof AuthedOnboardingRouteImport;
+      parentRoute: typeof AuthedRoute;
+    };
+    "/agent-invite/$code": {
+      id: "/agent-invite/$code";
+      path: "/agent-invite/$code";
+      fullPath: "/agent-invite/$code";
+      preLoaderRoute: typeof AgentInviteCodeRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/_authed/$orgSlug/": {
+      id: "/_authed/$orgSlug/";
+      path: "/";
+      fullPath: "/$orgSlug/";
+      preLoaderRoute: typeof AuthedOrgSlugIndexRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/docs/": {
+      id: "/_authed/$orgSlug/docs/";
+      path: "/docs";
+      fullPath: "/$orgSlug/docs/";
+      preLoaderRoute: typeof AuthedOrgSlugDocsIndexRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/docs/$documentId": {
+      id: "/_authed/$orgSlug/docs/$documentId";
+      path: "/docs/$documentId";
+      fullPath: "/$orgSlug/docs/$documentId";
+      preLoaderRoute: typeof AuthedOrgSlugDocsDocumentIdRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/docs/graph": {
+      id: "/_authed/$orgSlug/docs/graph";
+      path: "/docs/graph";
+      fullPath: "/$orgSlug/docs/graph";
+      preLoaderRoute: typeof AuthedOrgSlugDocsGraphRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/projects/$projectKey": {
+      id: "/_authed/$orgSlug/projects/$projectKey";
+      path: "/projects/$projectKey";
+      fullPath: "/$orgSlug/projects/$projectKey";
+      preLoaderRoute: typeof AuthedOrgSlugProjectsProjectKeyRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/settings/agents": {
+      id: "/_authed/$orgSlug/settings/agents";
+      path: "/settings/agents";
+      fullPath: "/$orgSlug/settings/agents";
+      preLoaderRoute: typeof AuthedOrgSlugSettingsAgentsRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/settings/github": {
+      id: "/_authed/$orgSlug/settings/github";
+      path: "/settings/github";
+      fullPath: "/$orgSlug/settings/github";
+      preLoaderRoute: typeof AuthedOrgSlugSettingsGithubRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/settings/members": {
+      id: "/_authed/$orgSlug/settings/members";
+      path: "/settings/members";
+      fullPath: "/$orgSlug/settings/members";
+      preLoaderRoute: typeof AuthedOrgSlugSettingsMembersRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/settings/projects": {
+      id: "/_authed/$orgSlug/settings/projects";
+      path: "/settings/projects";
+      fullPath: "/$orgSlug/settings/projects";
+      preLoaderRoute: typeof AuthedOrgSlugSettingsProjectsRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/settings/repos": {
+      id: "/_authed/$orgSlug/settings/repos";
+      path: "/settings/repos";
+      fullPath: "/$orgSlug/settings/repos";
+      preLoaderRoute: typeof AuthedOrgSlugSettingsReposRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/tasks/$taskKey": {
+      id: "/_authed/$orgSlug/tasks/$taskKey";
+      path: "/tasks/$taskKey";
+      fullPath: "/$orgSlug/tasks/$taskKey";
+      preLoaderRoute: typeof AuthedOrgSlugTasksTaskKeyRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
+    "/_authed/$orgSlug/settings/workflows/$projectKey": {
+      id: "/_authed/$orgSlug/settings/workflows/$projectKey";
+      path: "/settings/workflows/$projectKey";
+      fullPath: "/$orgSlug/settings/workflows/$projectKey";
+      preLoaderRoute: typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRouteImport;
+      parentRoute: typeof AuthedOrgSlugRoute;
+    };
   }
 }
 
 interface AuthedOrgSlugRouteChildren {
-  AuthedOrgSlugIndexRoute: typeof AuthedOrgSlugIndexRoute
-  AuthedOrgSlugDocsDocumentIdRoute: typeof AuthedOrgSlugDocsDocumentIdRoute
-  AuthedOrgSlugDocsGraphRoute: typeof AuthedOrgSlugDocsGraphRoute
-  AuthedOrgSlugProjectsProjectKeyRoute: typeof AuthedOrgSlugProjectsProjectKeyRoute
-  AuthedOrgSlugSettingsAgentsRoute: typeof AuthedOrgSlugSettingsAgentsRoute
-  AuthedOrgSlugSettingsGithubRoute: typeof AuthedOrgSlugSettingsGithubRoute
-  AuthedOrgSlugSettingsMembersRoute: typeof AuthedOrgSlugSettingsMembersRoute
-  AuthedOrgSlugSettingsProjectsRoute: typeof AuthedOrgSlugSettingsProjectsRoute
-  AuthedOrgSlugSettingsReposRoute: typeof AuthedOrgSlugSettingsReposRoute
-  AuthedOrgSlugTasksTaskKeyRoute: typeof AuthedOrgSlugTasksTaskKeyRoute
-  AuthedOrgSlugDocsIndexRoute: typeof AuthedOrgSlugDocsIndexRoute
-  AuthedOrgSlugSettingsWorkflowsProjectKeyRoute: typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute
+  AuthedOrgSlugIndexRoute: typeof AuthedOrgSlugIndexRoute;
+  AuthedOrgSlugDocsDocumentIdRoute: typeof AuthedOrgSlugDocsDocumentIdRoute;
+  AuthedOrgSlugDocsGraphRoute: typeof AuthedOrgSlugDocsGraphRoute;
+  AuthedOrgSlugProjectsProjectKeyRoute: typeof AuthedOrgSlugProjectsProjectKeyRoute;
+  AuthedOrgSlugSettingsAgentsRoute: typeof AuthedOrgSlugSettingsAgentsRoute;
+  AuthedOrgSlugSettingsGithubRoute: typeof AuthedOrgSlugSettingsGithubRoute;
+  AuthedOrgSlugSettingsMembersRoute: typeof AuthedOrgSlugSettingsMembersRoute;
+  AuthedOrgSlugSettingsProjectsRoute: typeof AuthedOrgSlugSettingsProjectsRoute;
+  AuthedOrgSlugSettingsReposRoute: typeof AuthedOrgSlugSettingsReposRoute;
+  AuthedOrgSlugTasksTaskKeyRoute: typeof AuthedOrgSlugTasksTaskKeyRoute;
+  AuthedOrgSlugDocsIndexRoute: typeof AuthedOrgSlugDocsIndexRoute;
+  AuthedOrgSlugSettingsWorkflowsProjectKeyRoute: typeof AuthedOrgSlugSettingsWorkflowsProjectKeyRoute;
 }
 
 const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
@@ -449,18 +449,18 @@ const AuthedOrgSlugRouteChildren: AuthedOrgSlugRouteChildren = {
   AuthedOrgSlugDocsIndexRoute: AuthedOrgSlugDocsIndexRoute,
   AuthedOrgSlugSettingsWorkflowsProjectKeyRoute:
     AuthedOrgSlugSettingsWorkflowsProjectKeyRoute,
-}
+};
 
 const AuthedOrgSlugRouteWithChildren = AuthedOrgSlugRoute._addFileChildren(
   AuthedOrgSlugRouteChildren,
-)
+);
 
 interface AuthedRouteChildren {
-  AuthedOrgSlugRoute: typeof AuthedOrgSlugRouteWithChildren
-  AuthedAccountRoute: typeof AuthedAccountRoute
-  AuthedDeviceRoute: typeof AuthedDeviceRoute
-  AuthedOnboardingRoute: typeof AuthedOnboardingRoute
-  AuthedIndexRoute: typeof AuthedIndexRoute
+  AuthedOrgSlugRoute: typeof AuthedOrgSlugRouteWithChildren;
+  AuthedAccountRoute: typeof AuthedAccountRoute;
+  AuthedDeviceRoute: typeof AuthedDeviceRoute;
+  AuthedOnboardingRoute: typeof AuthedOnboardingRoute;
+  AuthedIndexRoute: typeof AuthedIndexRoute;
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
@@ -469,16 +469,16 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedDeviceRoute: AuthedDeviceRoute,
   AuthedOnboardingRoute: AuthedOnboardingRoute,
   AuthedIndexRoute: AuthedIndexRoute,
-}
+};
 
 const AuthedRouteWithChildren =
-  AuthedRoute._addFileChildren(AuthedRouteChildren)
+  AuthedRoute._addFileChildren(AuthedRouteChildren);
 
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
   AgentInviteCodeRoute: AgentInviteCodeRoute,
-}
+};
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+  ._addFileTypes<FileRouteTypes>();

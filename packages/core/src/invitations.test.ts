@@ -40,15 +40,13 @@ run("invitations", () => {
   let ctx: ActorContext;
 
   beforeAll(async () => {
-    await db
-      .insert(schema.user)
-      .values(
-        users.map((u) => ({
-          id: u.id,
-          name: u.name,
-          email: `${u.id}@example.com`,
-        })),
-      );
+    await db.insert(schema.user).values(
+      users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: `${u.id}@example.com`,
+      })),
+    );
     const { organization, actor } = await createOrganization(db, owner, {
       name: "Invite Org",
       slug,
@@ -122,19 +120,34 @@ run("invitations", () => {
   });
 
   test("two people with the same handle joining at once get distinct handles", async () => {
-    const codes = await Promise.all([createInvitation(db, ctx, {}), createInvitation(db, ctx, {})]);
+    const codes = await Promise.all([
+      createInvitation(db, ctx, {}),
+      createInvitation(db, ctx, {}),
+    ]);
     // Both pick "racer", then queue on the foreign-key check of the locked organization.
-    const release = await holdLock(db, sql`select 1 from organizations where id = ${ctx.orgId} for update`);
-    const joining = Promise.all(racers.map((racer, i) => acceptInvitation(db, racer, { code: codes[i]?.code ?? "" })));
+    const release = await holdLock(
+      db,
+      sql`select 1 from organizations where id = ${ctx.orgId} for update`,
+    );
+    const joining = Promise.all(
+      racers.map((racer, i) =>
+        acceptInvitation(db, racer, { code: codes[i]?.code ?? "" }),
+      ),
+    );
     const settled = settle(joining);
     await waitForLockWaiters(db, '"actors"', 2);
     await release();
     expect(await settled).toBeNull();
-    expect((await joining).map((j) => j.actor.handle).sort()).toEqual(["racer", "racer-2"]);
+    expect((await joining).map((j) => j.actor.handle).sort()).toEqual([
+      "racer",
+      "racer-2",
+    ]);
   });
 
   test("malformed invitation ids are not found", async () => {
-    await expect(revokeInvitation(db, ctx, "not-a-uuid")).rejects.toMatchObject({ code: "not_found" });
+    await expect(revokeInvitation(db, ctx, "not-a-uuid")).rejects.toMatchObject(
+      { code: "not_found" },
+    );
   });
 
   test("revoked, expired and unknown codes are refused alike", async () => {

@@ -10,12 +10,18 @@ import { run } from "./cli";
 async function acceptInviteHelp(): Promise<string> {
   let out = "";
   const write = (s: string) => (out += s);
-  await run(["accept-invite", "--help"], { env: {}, stdout: { write }, stderr: { write } });
+  await run(["accept-invite", "--help"], {
+    env: {},
+    stdout: { write },
+    stderr: { write },
+  });
   return out;
 }
 
 function acceptInviteLine(text: string): string {
-  const line = text.split("\n").find((l) => l.trim().startsWith("spider accept-invite "));
+  const line = text
+    .split("\n")
+    .find((l) => l.trim().startsWith("spider accept-invite "));
   if (!line) throw new Error("no `spider accept-invite` line");
   return line.trim();
 }
@@ -27,7 +33,10 @@ const sources = {
     origin: "https://tracker.test",
   }),
   "plugin create-agent command": readFileSync(
-    join(import.meta.dir, "../../../plugins/spider-tracker/commands/create-agent.md"),
+    join(
+      import.meta.dir,
+      "../../../plugins/spider-tracker/commands/create-agent.md",
+    ),
     "utf8",
   ),
 };
@@ -39,7 +48,8 @@ describe("accept-invite instructions", () => {
       const help = await acceptInviteHelp();
       const flags = line.match(/--[a-z][a-z-]*/g) ?? [];
       expect(flags.length).toBeGreaterThan(0);
-      for (const flag of flags) expect(help).toMatch(new RegExp(`\\s${flag}\\b`));
+      for (const flag of flags)
+        expect(help).toMatch(new RegExp(`\\s${flag}\\b`));
 
       expect(line).not.toContain('"');
       expect(line).toMatch(/^spider accept-invite '[^']+' /);
@@ -50,6 +60,7 @@ describe("accept-invite instructions", () => {
   }
 
   test("both explain how to quote a single quote", () => {
-    for (const text of Object.values(sources)) expect(text).toContain(`--name 'Don'\\''s bot'`);
+    for (const text of Object.values(sources))
+      expect(text).toContain(`--name 'Don'\\''s bot'`);
   });
 });

@@ -11,5 +11,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       <Outlet />
     </div>
   ),
-  notFoundComponent: () => <p className="p-8 text-sm text-muted-foreground">Page not found.</p>,
+  notFoundComponent: () => (
+    <p className="p-8 text-sm text-muted-foreground">Page not found.</p>
+  ),
 });

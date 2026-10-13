@@ -29,11 +29,20 @@ function AccountPage() {
         </div>
       </header>
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-muted-foreground">Your organizations</h2>
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Your organizations
+        </h2>
         <ul className="divide-y rounded-lg border">
           {me?.memberships.map(({ organization, actor }) => (
-            <li key={organization.id} className="flex items-center justify-between px-4 py-3">
-              <Link to="/$orgSlug" params={{ orgSlug: organization.slug }} className="font-medium hover:underline">
+            <li
+              key={organization.id}
+              className="flex items-center justify-between px-4 py-3"
+            >
+              <Link
+                to="/$orgSlug"
+                params={{ orgSlug: organization.slug }}
+                className="font-medium hover:underline"
+              >
                 {organization.name}
               </Link>
               <span className="text-sm text-muted-foreground">

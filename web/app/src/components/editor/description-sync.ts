@@ -28,18 +28,29 @@ export function remoteChange(input: {
   saving?: string | null;
 }): RemoteChange {
   if (norm(input.server) === norm(input.baseline)) return "none";
-  if (input.saving !== undefined && norm(input.server).trim() === norm(input.saving).trim())
+  if (
+    input.saving !== undefined &&
+    norm(input.server).trim() === norm(input.saving).trim()
+  )
     return "none";
   if (!input.dirty) return "remount";
-  return input.draft.trim() === norm(input.server).trim() ? "adopt" : "conflict";
+  return input.draft.trim() === norm(input.server).trim()
+    ? "adopt"
+    : "conflict";
 }
 
 /**
  * After a save succeeded: the baseline moves to what was saved, and the editor is
  * clean unless the user kept typing while the save was in flight.
  */
-export function afterSave(input: { saved: string | null; draft: string }): { baseline: string | null; dirty: boolean } {
-  return { baseline: input.saved, dirty: input.draft.trim() !== norm(input.saved).trim() };
+export function afterSave(input: { saved: string | null; draft: string }): {
+  baseline: string | null;
+  dirty: boolean;
+} {
+  return {
+    baseline: input.saved,
+    dirty: input.draft.trim() !== norm(input.saved).trim(),
+  };
 }
 
 /**

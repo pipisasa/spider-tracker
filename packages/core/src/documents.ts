@@ -1,6 +1,17 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import {
   assertCanManageProjects,
   assertCanWrite,
@@ -56,7 +67,14 @@ import { parseInput } from "./validate";
 // version row for every save. Edits name the version they started from (`baseVersion`),
 // so two people saving over each other get a conflict instead of a silent overwrite.
 
-const { documentLinks, documents, documentVersions, projects, statuses, tasks } = schema;
+const {
+  documentLinks,
+  documents,
+  documentVersions,
+  projects,
+  statuses,
+  tasks,
+} = schema;
 
 type DocumentRow = typeof documents.$inferSelect;
 type Scope = { projectKey: string | null; taskKey: string | null };
@@ -112,7 +130,9 @@ async function assertNotArchived(db: Db | Tx, viewer: Viewer, key: string) {
 
 /** Organization-wide documents, and those of the projects in `scope`. */
 function visibleIn(scope: ProjectScope): SQL | undefined {
-  return scope ? or(isNull(documents.projectId), inArray(documents.projectId, [...scope])) : undefined;
+  return scope
+    ? or(isNull(documents.projectId), inArray(documents.projectId, [...scope]))
+    : undefined;
 }
 
 /** Documents with their scope keys; those on deleted tasks are hidden. */
@@ -182,21 +202,38 @@ export async function findDocument(
  */
 async function guardRules(tx: Tx, ctx: ActorContext, documentId: string) {
   const project = await rulesProjectOf(tx, documentId);
-  if (project) await assertCanManageProjects(tx, ctx, `change the rules of ${project.key}`);
+  if (project)
+    await assertCanManageProjects(
+      tx,
+      ctx,
+      `change the rules of ${project.key}`,
+    );
   return project;
 }
 
 /** A rules document left its project: the project has no rules until new ones are set. */
-async function dropRules(tx: Tx, ctx: ActorContext, documentId: string, project: { id: string; key: string } | undefined) {
+async function dropRules(
+  tx: Tx,
+  ctx: ActorContext,
+  documentId: string,
+  project: { id: string; key: string } | undefined,
+) {
   if (!project) return;
-  await tx.update(projects).set({ rulesDocumentId: null }).where(eq(projects.id, project.id));
+  await tx
+    .update(projects)
+    .set({ rulesDocumentId: null })
+    .where(eq(projects.id, project.id));
   await recordActivity(tx, ctx, {
     entityType: "project",
     entityId: project.id,
     action: "project.updated",
     changes: { rulesDocumentId: [documentId, null] },
   });
-  await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+  await publish(tx, {
+    type: "project.changed",
+    orgId: ctx.orgId,
+    projectKey: project.key,
+  });
 }
 
 /** Saves through `save`; when it made a new version of a rules document, tells the project's agents. */
@@ -208,7 +245,8 @@ async function saveGuarded(
 ): Promise<DocumentDto> {
   const rulesOf = await guardRules(tx, ctx, current.id);
   const saved = await save();
-  if (rulesOf && saved.version !== current.version) await announceRulesChange(tx, ctx, rulesOf.id, current.id);
+  if (rulesOf && saved.version !== current.version)
+    await announceRulesChange(tx, ctx, rulesOf.id, current.id);
   return saved;
 }
 
@@ -217,12 +255,26 @@ async function saveGuarded(
  * `doc:<id>` document targets (ST-115), next to titles.
  */
 async function writeLinks(tx: Tx, documentId: string, content: string) {
-  await tx.delete(documentLinks).where(eq(documentLinks.documentId, documentId));
+  await tx
+    .delete(documentLinks)
+    .where(eq(documentLinks.documentId, documentId));
   const links = outgoingLinksIn(content);
   const rows = [
-    ...links.documents.map((target) => ({ documentId, kind: "document" as const, target })),
-    ...links.documentIds.map((id) => ({ documentId, kind: "document" as const, target: documentIdLink(id) })),
-    ...links.tasks.map((target) => ({ documentId, kind: "task" as const, target })),
+    ...links.documents.map((target) => ({
+      documentId,
+      kind: "document" as const,
+      target,
+    })),
+    ...links.documentIds.map((id) => ({
+      documentId,
+      kind: "document" as const,
+      target: documentIdLink(id),
+    })),
+    ...links.tasks.map((target) => ({
+      documentId,
+      kind: "task" as const,
+      target,
+    })),
   ];
   if (rows.length) await tx.insert(documentLinks).values(rows);
 }
@@ -351,8 +403,14 @@ export async function updateDocument(
 
   try {
     return await db.transaction(async (tx) => {
-      if (data.title !== undefined) await lockRenameRows(tx, ctx, id, data.title);
-      const { document: current, scope } = await findDocument(tx, ctx, id, true);
+      if (data.title !== undefined)
+        await lockRenameRows(tx, ctx, id, data.title);
+      const { document: current, scope } = await findDocument(
+        tx,
+        ctx,
+        id,
+        true,
+      );
       assertBaseVersion(current, data.baseVersion);
       const saved = await saveGuarded(tx, ctx, current, () =>
         saveVersion(tx, ctx, current, scope, {
@@ -362,12 +420,18 @@ export async function updateDocument(
         }),
       );
       if (saved.title === current.title) return saved;
-      return { ...saved, relinked: await relinkRenamed(tx, ctx, current, saved.title) };
+      return {
+        ...saved,
+        relinked: await relinkRenamed(tx, ctx, current, saved.title),
+      };
     });
   } catch (err) {
     // What the ordered lock below can't foresee (a link written after it read them).
     if (isLockConflict(err)) {
-      throw new DomainError("conflict", "The document was changed by another save at the same time. Reload it and try again");
+      throw new DomainError(
+        "conflict",
+        "The document was changed by another save at the same time. Reload it and try again",
+      );
     }
     throw err;
   }
@@ -393,7 +457,12 @@ function linkingSources(tx: Tx, renamedId: string, title: string) {
  * title in one statement, in id order. Two renames whose linking documents overlap (A links B, B
  * links A) then queue up instead of deadlocking, as they would locking their own row first.
  */
-async function lockRenameRows(tx: Tx, ctx: ActorContext, id: string, newTitle: string) {
+async function lockRenameRows(
+  tx: Tx,
+  ctx: ActorContext,
+  id: string,
+  newTitle: string,
+) {
   if (!isUuid(id)) return;
   const [row] = await tx
     .select({ title: documents.title })
@@ -405,7 +474,12 @@ async function lockRenameRows(tx: Tx, ctx: ActorContext, id: string, newTitle: s
   await tx
     .select({ id: documents.id })
     .from(documents)
-    .where(and(eq(documents.orgId, ctx.orgId), inArray(documents.id, [id, ...sources.map((s) => s.id)])))
+    .where(
+      and(
+        eq(documents.orgId, ctx.orgId),
+        inArray(documents.id, [id, ...sources.map((s) => s.id)]),
+      ),
+    )
     .orderBy(asc(documents.id))
     .for("update");
 }
@@ -435,22 +509,30 @@ async function relinkRenamed(
   // Which document a title opens depends on every live document of the organization, not on
   // what the renamer sees.
   const rows = await selectDocuments(tx, eq(documents.orgId, ctx.orgId));
-  const after: (LinkCandidate & { projectId: string | null })[] = rows.map((r) => ({
-    id: r.document.id,
-    title: r.document.title,
-    projectId: r.document.projectId,
-    projectKey: r.projectKey,
-    updatedAt: r.document.updatedAt.toISOString(),
-  }));
+  const after: (LinkCandidate & { projectId: string | null })[] = rows.map(
+    (r) => ({
+      id: r.document.id,
+      title: r.document.title,
+      projectId: r.document.projectId,
+      projectKey: r.projectKey,
+      updatedAt: r.document.updatedAt.toISOString(),
+    }),
+  );
   // As it was before the save: the renamed document's old title and its old `updatedAt`, which
   // decides between documents of the same title and rank.
   const before = after.map((d) =>
-    d.id === renamed.id ? { ...d, title: oldTitle, updatedAt: renamed.updatedAt.toISOString() } : d,
+    d.id === renamed.id
+      ? { ...d, title: oldTitle, updatedAt: renamed.updatedAt.toISOString() }
+      : d,
   );
   // A title another document has too could open that one, now or after its next save.
   const titleIsFree =
     isLinkableTitle(newTitle) &&
-    !after.some((d) => d.id !== renamed.id && normalizeTitle(d.title) === normalizeTitle(newTitle));
+    !after.some(
+      (d) =>
+        d.id !== renamed.id &&
+        normalizeTitle(d.title) === normalizeTitle(newTitle),
+    );
   const byId = new Map(after.map((d) => [d.id, d]));
   const scope = await projectScope(tx, ctx);
   let canChangeRules: boolean | undefined;
@@ -458,8 +540,13 @@ async function relinkRenamed(
   for (const { id } of sources) {
     const source = byId.get(id);
     // What findDocument lets the renamer see: organization-wide documents, and their projects'.
-    if (!source || (source.projectId !== null && !inScope(scope, source.projectId))) continue;
-    if (resolveTitle(before, oldTitle, source.projectKey)?.id !== renamed.id) continue;
+    if (
+      !source ||
+      (source.projectId !== null && !inScope(scope, source.projectId))
+    )
+      continue;
+    if (resolveTitle(before, oldTitle, source.projectKey)?.id !== renamed.id)
+      continue;
 
     let locked: Awaited<ReturnType<typeof findDocument>>;
     try {
@@ -472,7 +559,11 @@ async function relinkRenamed(
     const { document: current, scope: at } = locked;
     const rulesOf = await rulesProjectOf(tx, id);
     if (rulesOf) {
-      canChangeRules ??= await assertCanManageProjects(tx, ctx, "change rules").then(
+      canChangeRules ??= await assertCanManageProjects(
+        tx,
+        ctx,
+        "change rules",
+      ).then(
         () => true,
         () => false,
       );
@@ -485,7 +576,9 @@ async function relinkRenamed(
       titleIsFree &&
       // Raw `<`, `&` or `>` would turn into markup in an HTML document.
       !(current.format === "html" && /[<&>]/.test(newTitle));
-    const target = byTitle ? newTitle.trim().replace(/\s+/g, " ") : documentIdLink(renamed.id);
+    const target = byTitle
+      ? newTitle.trim().replace(/\s+/g, " ")
+      : documentIdLink(renamed.id);
     const content = retargetTitleLinks(current.content, oldTitle, target);
     if (content === current.content) continue;
     if (new TextEncoder().encode(content).length > MAX_DOCUMENT_BYTES) {
@@ -523,10 +616,18 @@ export async function editDocument(
 
   return db.transaction(async (tx) => {
     const { document: current, scope } = await findDocument(tx, ctx, id, true);
-    if (data.baseVersion !== undefined) assertBaseVersion(current, data.baseVersion);
-    const content = applyDocumentEdits(current.content, current.format, data.edits);
+    if (data.baseVersion !== undefined)
+      assertBaseVersion(current, data.baseVersion);
+    const content = applyDocumentEdits(
+      current.content,
+      current.format,
+      data.edits,
+    );
     if (new TextEncoder().encode(content).length > MAX_DOCUMENT_BYTES) {
-      throw new DomainError("validation", "The edited document would be over 1 MB");
+      throw new DomainError(
+        "validation",
+        "The edited document would be over 1 MB",
+      );
     }
     return saveGuarded(tx, ctx, current, () =>
       saveVersion(
@@ -535,7 +636,11 @@ export async function editDocument(
         current,
         scope,
         { title: current.title, format: current.format, content },
-        { edits: data.edits.map((e) => ("old" in e ? "replace" : "append" in e ? "append" : "section")) },
+        {
+          edits: data.edits.map((e) =>
+            "old" in e ? "replace" : "append" in e ? "append" : "section",
+          ),
+        },
       ),
     );
   });
@@ -576,7 +681,8 @@ async function saveVersion(
     .where(eq(documents.id, current.id))
     .returning();
   if (!updated) throw new Error("Failed to update document");
-  if (changed.includes("content")) await writeLinks(tx, updated.id, updated.content);
+  if (changed.includes("content"))
+    await writeLinks(tx, updated.id, updated.content);
 
   await tx.insert(documentVersions).values({
     documentId: updated.id,
@@ -669,7 +775,12 @@ export async function deleteDocument(db: Db, ctx: ActorContext, id: string) {
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
     const { document, scope } = await findDocument(tx, ctx, id);
-    await dropRules(tx, ctx, document.id, await guardRules(tx, ctx, document.id));
+    await dropRules(
+      tx,
+      ctx,
+      document.id,
+      await guardRules(tx, ctx, document.id),
+    );
     await tx
       .update(documents)
       .set({ deletedAt: new Date() })
@@ -713,12 +824,20 @@ export async function getDocumentVersion(
 ): Promise<DocumentVersionDto> {
   const { document } = await findDocument(db, viewer, id);
   const row = await findVersion(db, document.id, version);
-  return { ...toVersionSummary(row), documentId: row.documentId, content: row.content };
+  return {
+    ...toVersionSummary(row),
+    documentId: row.documentId,
+    content: row.content,
+  };
 }
 
 type VersionRow = typeof documentVersions.$inferSelect;
 
-async function findVersion(db: Db, documentId: string, version: number | string): Promise<VersionRow> {
+async function findVersion(
+  db: Db,
+  documentId: string,
+  version: number | string,
+): Promise<VersionRow> {
   const number = Number(version);
   if (!Number.isInteger(number) || number < 1)
     throw new DomainError("not_found", `Version ${version} not found`);
@@ -756,7 +875,10 @@ export async function diffDocumentVersions(
 ): Promise<DocumentDiffDto> {
   const { document } = await findDocument(db, viewer, id);
   const { from, to = document.version } = parseInput(documentDiffQuery, query);
-  const [a, b] = await Promise.all([findVersion(db, document.id, from), findVersion(db, document.id, to)]);
+  const [a, b] = await Promise.all([
+    findVersion(db, document.id, from),
+    findVersion(db, document.id, to),
+  ]);
   const lines = diffLines(a.content, b.content);
   return {
     documentId: document.id,
@@ -773,12 +895,19 @@ export async function diffDocumentVersions(
  * updated first. A title link counts when it resolves here: with several documents of the same
  * title, a link opens one of them (see resolveTitle), and only that one lists it.
  */
-export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise<DocumentSummaryDto[]> {
+export async function listBacklinks(
+  db: Db,
+  viewer: Viewer,
+  id: string,
+): Promise<DocumentSummaryDto[]> {
   const { document } = await findDocument(db, viewer, id);
   const visible = await listDocuments(db, viewer);
   const byId = documentIdLink(document.id);
   const rows = await db
-    .select({ documentId: documentLinks.documentId, target: documentLinks.target })
+    .select({
+      documentId: documentLinks.documentId,
+      target: documentLinks.target,
+    })
     .from(documentLinks)
     .where(
       and(
@@ -787,13 +916,19 @@ export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise
         sql`lower(${documentLinks.target}) in (${normalizeTitle(document.title)}, ${byId})`,
       ),
     );
-  const byIdLinks = new Set(rows.filter((r) => r.target === byId).map((r) => r.documentId));
-  const byTitleLinks = new Set(rows.filter((r) => r.target !== byId).map((r) => r.documentId));
+  const byIdLinks = new Set(
+    rows.filter((r) => r.target === byId).map((r) => r.documentId),
+  );
+  const byTitleLinks = new Set(
+    rows.filter((r) => r.target !== byId).map((r) => r.documentId),
+  );
   return visible.filter(
     (source) =>
       source.id !== document.id &&
       (byIdLinks.has(source.id) ||
-        (byTitleLinks.has(source.id) && resolveTitle(visible, document.title, source.projectKey)?.id === document.id)),
+        (byTitleLinks.has(source.id) &&
+          resolveTitle(visible, document.title, source.projectKey)?.id ===
+            document.id)),
   );
 }
 
@@ -801,13 +936,22 @@ export async function listBacklinks(db: Db, viewer: Viewer, id: string): Promise
  * The documents mentioning a task (ST-101): `[[ST-12]]` or a plain ST-12 in their content, most
  * recently updated first. The task's own documents are left out.
  */
-export async function listTaskBacklinks(db: Db, viewer: Viewer, taskKey: string): Promise<DocumentSummaryDto[]> {
+export async function listTaskBacklinks(
+  db: Db,
+  viewer: Viewer,
+  taskKey: string,
+): Promise<DocumentSummaryDto[]> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
   const mentioning = db
     .select({ id: documentLinks.documentId })
     .from(documentLinks)
     // Served by the (kind, lower(target)) index; task targets are stored as "ST-12".
-    .where(and(eq(documentLinks.kind, "task"), sql`lower(${documentLinks.target}) = ${`${projectKey}-${task.number}`.toLowerCase()}`));
+    .where(
+      and(
+        eq(documentLinks.kind, "task"),
+        sql`lower(${documentLinks.target}) = ${`${projectKey}-${task.number}`.toLowerCase()}`,
+      ),
+    );
   const rows = await selectDocuments(
     db,
     and(
@@ -825,14 +969,21 @@ export async function listTaskBacklinks(db: Db, viewer: Viewer, taskKey: string)
  * projects those documents sit in or link to, and every link. Links to tasks that don't exist
  * or are out of scope are dropped; `[[titles]]` no document has stay as unresolved targets.
  */
-export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<DocumentGraphDto> {
+export async function getDocumentGraph(
+  db: Db,
+  viewer: Viewer,
+): Promise<DocumentGraphDto> {
   const docs = await listDocuments(db, viewer);
   const byId = new Map(docs.map((d) => [d.id, d]));
   // The visible documents' links, through a join rather than a list of their ids, so a large
   // organization stays under Postgres' parameter limit; `byId` drops those on deleted tasks.
   const rows = docs.length
     ? await db
-        .select({ documentId: documentLinks.documentId, kind: documentLinks.kind, target: documentLinks.target })
+        .select({
+          documentId: documentLinks.documentId,
+          kind: documentLinks.kind,
+          target: documentLinks.target,
+        })
         .from(documentLinks)
         .innerJoin(documents, eq(documentLinks.documentId, documents.id))
         .where(
@@ -842,7 +993,11 @@ export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<Document
             visibleIn(await projectScope(db, viewer)),
           ),
         )
-        .orderBy(asc(documentLinks.documentId), asc(documentLinks.kind), asc(documentLinks.target))
+        .orderBy(
+          asc(documentLinks.documentId),
+          asc(documentLinks.kind),
+          asc(documentLinks.target),
+        )
     : [];
 
   const taskKeys = new Set<string>();
@@ -865,14 +1020,17 @@ export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<Document
     const source = byId.get(r.documentId);
     if (!source) continue;
     if (r.kind === "task") {
-      if (knownTasks.has(r.target) && r.target !== source.taskKey) add({ from: source.id, to: { type: "task", key: r.target } });
+      if (knownTasks.has(r.target) && r.target !== source.taskKey)
+        add({ from: source.id, to: { type: "task", key: r.target } });
       continue;
     }
     const target = resolveDocumentLink(docs, r.target, source.projectKey);
     if (target?.id === source.id) continue;
     add({
       from: source.id,
-      to: target ? { type: "document", id: target.id } : { type: "unresolved", title: r.target },
+      to: target
+        ? { type: "document", id: target.id }
+        : { type: "unresolved", title: r.target },
     });
   }
 
@@ -884,19 +1042,30 @@ export async function getDocumentGraph(db: Db, viewer: Viewer): Promise<Document
     ? await db
         .select({ id: projects.id, key: projects.key, name: projects.name })
         .from(projects)
-        .where(and(eq(projects.orgId, orgIdOf(viewer)), inArray(projects.key, [...projectKeys])))
+        .where(
+          and(
+            eq(projects.orgId, orgIdOf(viewer)),
+            inArray(projects.key, [...projectKeys]),
+          ),
+        )
         .orderBy(asc(projects.createdAt))
     : [];
   return {
     documents: docs,
     tasks: graphTasks,
-    projects: projectRows.filter((p) => inScope(scope, p.id)).map(({ key, name }) => ({ key, name })),
+    projects: projectRows
+      .filter((p) => inScope(scope, p.id))
+      .map(({ key, name }) => ({ key, name })),
     links,
   };
 }
 
 /** The tasks with these keys that exist, aren't deleted and are in the viewer's scope. */
-async function findGraphTasks(db: Db, viewer: Viewer, keys: string[]): Promise<DocumentGraphTaskDto[]> {
+async function findGraphTasks(
+  db: Db,
+  viewer: Viewer,
+  keys: string[],
+): Promise<DocumentGraphTaskDto[]> {
   if (!keys.length) return [];
   const taskKey = sql<string>`${projects.key} || '-' || ${tasks.number}`;
   const rows = await db
@@ -910,7 +1079,13 @@ async function findGraphTasks(db: Db, viewer: Viewer, keys: string[]): Promise<D
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .innerJoin(statuses, eq(tasks.statusId, statuses.id))
-    .where(and(eq(tasks.orgId, orgIdOf(viewer)), isNull(tasks.deletedAt), inArray(taskKey, keys)))
+    .where(
+      and(
+        eq(tasks.orgId, orgIdOf(viewer)),
+        isNull(tasks.deletedAt),
+        inArray(taskKey, keys),
+      ),
+    )
     .orderBy(asc(projects.key), asc(tasks.number));
   const scope = await projectScope(db, viewer);
   return rows

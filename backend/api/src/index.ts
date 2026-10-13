@@ -9,7 +9,12 @@ const env = loadEnv();
 const db = createDb(env.DATABASE_URL);
 const auth = createAuth(db, env, createMailer(env));
 const githubConfig = githubAppConfig(env);
-const app = createApp({ db, auth, env, github: githubConfig ? createGithubApp(githubConfig) : null });
+const app = createApp({
+  db,
+  auth,
+  env,
+  github: githubConfig ? createGithubApp(githubConfig) : null,
+});
 
 console.info(`api listening on ${env.API_ORIGIN}`);
 

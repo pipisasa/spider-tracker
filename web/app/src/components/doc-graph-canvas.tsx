@@ -33,7 +33,16 @@ const LABELLED_WHEN_CROWDED = 15;
 const MAX_ZOOM = 4;
 
 /** Distinct, theme-neutral hues per project. */
-const PALETTE = ["#6366f1", "#22c55e", "#eab308", "#ec4899", "#06b6d4", "#f97316", "#a855f7", "#14b8a6"];
+const PALETTE = [
+  "#6366f1",
+  "#22c55e",
+  "#eab308",
+  "#ec4899",
+  "#06b6d4",
+  "#f97316",
+  "#a855f7",
+  "#14b8a6",
+];
 
 function hueFor(projectKey: string | null, projects: string[]): string | null {
   if (!projectKey) return null;
@@ -49,7 +58,8 @@ export function radiusOf(node: GraphNode): number {
 /** The app's colours, read from CSS variables so the graph follows light and dark themes. */
 function themeColors() {
   const style = getComputedStyle(document.documentElement);
-  const v = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  const v = (name: string, fallback: string) =>
+    style.getPropertyValue(name).trim() || fallback;
   return {
     background: v("--background", "#fff"),
     foreground: v("--foreground", "#111"),
@@ -101,7 +111,10 @@ export function DocGraphCanvas({
     [nodes],
   );
   const projects = useMemo(
-    () => [...new Set(nodes.flatMap((n) => (n.projectKey ? [n.projectKey] : [])))].sort(),
+    () =>
+      [
+        ...new Set(nodes.flatMap((n) => (n.projectKey ? [n.projectKey] : []))),
+      ].sort(),
     [nodes],
   );
 
@@ -123,13 +136,16 @@ export function DocGraphCanvas({
     const near = focus ? adjacency.get(focus.id) : undefined;
     const query = searchRef.current.trim();
     const lit = (n: SimNode) =>
-      focus ? n.id === focus.id || (near?.has(n.id) ?? false) : !query || matchesSearch(n, query);
+      focus
+        ? n.id === focus.id || (near?.has(n.id) ?? false)
+        : !query || matchesSearch(n, query);
 
     for (const l of simLinks.current) {
       const s = l.source as SimNode;
       const t = l.target as SimNode;
       const active = focus && (s.id === focus.id || t.id === focus.id);
-      const dim = (focus && !active) || (!focus && query && !(lit(s) && lit(t)));
+      const dim =
+        (focus && !active) || (!focus && query && !(lit(s) && lit(t)));
       ctx.globalAlpha = dim ? 0.12 : active ? 0.9 : 0.45;
       ctx.strokeStyle = active ? colors.primary : colors.muted;
       ctx.lineWidth = (active ? 1.6 : 1) / Math.sqrt(k);
@@ -169,7 +185,11 @@ export function DocGraphCanvas({
         ctx.lineWidth = 3;
         ctx.stroke();
       } else {
-        ctx.fillStyle = n.kind === "task" && (n.statusCategory === "done" || n.statusCategory === "canceled") ? colors.muted : hue;
+        ctx.fillStyle =
+          n.kind === "task" &&
+          (n.statusCategory === "done" || n.statusCategory === "canceled")
+            ? colors.muted
+            : hue;
         ctx.fill();
       }
       if (focus?.id === n.id) {
@@ -188,10 +208,12 @@ export function DocGraphCanvas({
     for (const n of simNodes.current) {
       const on = lit(n);
       const highlighted = focus ? on : Boolean(query) && on;
-      const crowded = simNodes.current.length > CROWDED_NODES && k < ALL_LABELS_ZOOM;
+      const crowded =
+        simNodes.current.length > CROWDED_NODES && k < ALL_LABELS_ZOOM;
       if (!highlighted && crowded && !labelled.has(n.id)) continue;
       ctx.globalAlpha = on ? (highlighted || !crowded ? 1 : 0.75) : 0.15;
-      ctx.fillStyle = n.kind === "unresolved" ? colors.muted : colors.foreground;
+      ctx.fillStyle =
+        n.kind === "unresolved" ? colors.muted : colors.foreground;
       const text = n.label.length > 40 ? `${n.label.slice(0, 39)}…` : n.label;
       ctx.fillText(text, n.x ?? 0, (n.y ?? 0) + radiusOf(n) + 3 / k);
     }
@@ -202,7 +224,10 @@ export function DocGraphCanvas({
   const fit = (ns: SimNode[]) => {
     const { w, h } = size.current;
     if (!ns.length || !w || !h) return;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
     for (const n of ns) {
       minX = Math.min(minX, n.x ?? 0);
       minY = Math.min(minY, n.y ?? 0);
@@ -210,8 +235,19 @@ export function DocGraphCanvas({
       maxY = Math.max(maxY, n.y ?? 0);
     }
     const pad = 60;
-    const k = Math.max(MIN_ZOOM, Math.min(1, (w - pad * 2) / Math.max(1, maxX - minX), (h - pad * 2) / Math.max(1, maxY - minY)));
-    view.current = { k, x: -((minX + maxX) / 2) * k, y: -((minY + maxY) / 2) * k };
+    const k = Math.max(
+      MIN_ZOOM,
+      Math.min(
+        1,
+        (w - pad * 2) / Math.max(1, maxX - minX),
+        (h - pad * 2) / Math.max(1, maxY - minY),
+      ),
+    );
+    view.current = {
+      k,
+      x: -((minX + maxX) / 2) * k,
+      y: -((minY + maxY) / 2) * k,
+    };
   };
 
   const requestDraw = () => {
@@ -224,7 +260,10 @@ export function DocGraphCanvas({
 
   // Rebuild the simulation when the graph changes, keeping known positions.
   useEffect(() => {
-    const ns: SimNode[] = nodes.map((n) => ({ ...n, ...positions.current.get(n.id) }));
+    const ns: SimNode[] = nodes.map((n) => ({
+      ...n,
+      ...positions.current.get(n.id),
+    }));
     const byId = new Map(ns.map((n) => [n.id, n]));
     const ls: SimLink[] = edges.flatMap((e) => {
       const source = byId.get(e.source);
@@ -242,13 +281,17 @@ export function DocGraphCanvas({
           .strength((l) => (l.kind === "contains" ? 0.6 : 0.35)),
       )
       .force("charge", forceManyBody<SimNode>().strength(-260).distanceMax(600))
-      .force("collide", forceCollide<SimNode>((n) => radiusOf(n) + 14))
+      .force(
+        "collide",
+        forceCollide<SimNode>((n) => radiusOf(n) + 14),
+      )
       .force("center", forceCenter(0, 0))
       // Keeps orphans and separate clusters from drifting off.
       .force("x", forceX<SimNode>(0).strength(0.04))
       .force("y", forceY<SimNode>(0).strength(0.04))
       .on("tick", () => {
-        for (const n of ns) positions.current.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 });
+        for (const n of ns)
+          positions.current.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 });
         if (!userMoved.current) fit(ns);
         requestDraw();
       });
@@ -283,7 +326,10 @@ export function DocGraphCanvas({
     const observer = new ResizeObserver(resize);
     observer.observe(wrap);
     const theme = new MutationObserver(requestDraw);
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
+    theme.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
     return () => {
       observer.disconnect();
       theme.disconnect();
@@ -325,13 +371,24 @@ export function DocGraphCanvas({
       const px = clientX - rect.left - size.current.w / 2;
       const py = clientY - rect.top - size.current.h / 2;
       userMoved.current = true;
-      view.current = { k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k };
+      view.current = {
+        k,
+        x: px - ((px - v.x) * k) / v.k,
+        y: py - ((py - v.y) * k) / v.k,
+      };
       requestDraw();
     };
 
     // Active pointers, for pinch zoom on touch screens.
     const pointers = new Map<number, { x: number; y: number }>();
-    let drag: { node: SimNode | null; startX: number; startY: number; moved: boolean; viewX: number; viewY: number } | null = null;
+    let drag: {
+      node: SimNode | null;
+      startX: number;
+      startY: number;
+      moved: boolean;
+      viewX: number;
+      viewY: number;
+    } | null = null;
     let pinch: number | null = null;
 
     const onDown = (e: PointerEvent) => {
@@ -344,14 +401,22 @@ export function DocGraphCanvas({
         return;
       }
       const node = nodeAt(e.clientX, e.clientY);
-      drag = { node, startX: e.clientX, startY: e.clientY, moved: false, viewX: view.current.x, viewY: view.current.y };
+      drag = {
+        node,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        viewX: view.current.x,
+        viewY: view.current.y,
+      };
       if (node) {
         node.fx = node.x;
         node.fy = node.y;
       }
     };
     const onMove = (e: PointerEvent) => {
-      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.has(e.pointerId))
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch !== null && pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         if (!a || !b) return;
@@ -380,7 +445,11 @@ export function DocGraphCanvas({
         drag.node.fy = p.y;
         simRef.current?.alphaTarget(0.25).restart();
       } else {
-        view.current = { ...view.current, x: drag.viewX + dx, y: drag.viewY + dy };
+        view.current = {
+          ...view.current,
+          x: drag.viewX + dx,
+          y: drag.viewY + dy,
+        };
         canvas.style.cursor = "grabbing";
         requestDraw();
       }
@@ -439,4 +508,3 @@ export function DocGraphCanvas({
     </div>
   );
 }
-

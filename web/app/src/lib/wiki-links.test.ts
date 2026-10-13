@@ -2,7 +2,12 @@ import type { DocumentSummaryDto } from "@repo/core/contracts";
 import { describe, expect, test } from "bun:test";
 import { wikiDestination, wikiLabel, wikiSuggestions } from "./wiki-links";
 
-const doc = (id: string, title: string, projectKey: string | null, updatedAt = "2026-10-01"): DocumentSummaryDto => ({
+const doc = (
+  id: string,
+  title: string,
+  projectKey: string | null,
+  updatedAt = "2026-10-01",
+): DocumentSummaryDto => ({
   id,
   title,
   format: "md",
@@ -26,10 +31,22 @@ const docs = [
 
 describe("wikiDestination", () => {
   test("tasks, documents by title, and missing titles", () => {
-    expect(wikiDestination(docs, "st-4", "ST")).toEqual({ type: "task", key: "ST-4" });
-    expect(wikiDestination(docs, "plan#Goals", "ST")).toEqual({ type: "document", id: "3" });
-    expect(wikiDestination(docs, "Plan", "OPS")).toEqual({ type: "document", id: "2" });
-    expect(wikiDestination(docs, "Nope", "ST")).toEqual({ type: "missing", title: "Nope" });
+    expect(wikiDestination(docs, "st-4", "ST")).toEqual({
+      type: "task",
+      key: "ST-4",
+    });
+    expect(wikiDestination(docs, "plan#Goals", "ST")).toEqual({
+      type: "document",
+      id: "3",
+    });
+    expect(wikiDestination(docs, "Plan", "OPS")).toEqual({
+      type: "document",
+      id: "2",
+    });
+    expect(wikiDestination(docs, "Nope", "ST")).toEqual({
+      type: "missing",
+      title: "Nope",
+    });
   });
 
   test("[[doc:<id>]] opens the document by id, shown with its title (ST-115)", () => {
@@ -51,18 +68,26 @@ describe("wikiDestination", () => {
 
 describe("wikiSuggestions", () => {
   test("prefix matches first, one entry per title; the edited document and unlinkable titles left out", () => {
-    expect(wikiSuggestions(docs, "pla", { fromProjectKey: "ST", excludeId: "4" }).map((s) => [s.title, s.hint])).toEqual([
+    expect(
+      wikiSuggestions(docs, "pla", {
+        fromProjectKey: "ST",
+        excludeId: "4",
+      }).map((s) => [s.title, s.hint]),
+    ).toEqual([
       ["Plan", "OPS"],
       ["Release plan", "ST"],
     ]);
   });
 
   test("an empty query lists recent documents; a task key offers the task", () => {
-    expect(wikiSuggestions(docs, "", { fromProjectKey: "ST", limit: 2 }).map((s) => s.title)).toEqual([
-      "Release plan",
-      "Roadmap",
-    ]);
-    expect(wikiSuggestions(docs, "ops-12", { fromProjectKey: null })[0]).toEqual({
+    expect(
+      wikiSuggestions(docs, "", { fromProjectKey: "ST", limit: 2 }).map(
+        (s) => s.title,
+      ),
+    ).toEqual(["Release plan", "Roadmap"]);
+    expect(
+      wikiSuggestions(docs, "ops-12", { fromProjectKey: null })[0],
+    ).toEqual({
       target: "OPS-12",
       title: "OPS-12",
       hint: "Task",

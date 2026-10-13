@@ -38,7 +38,8 @@ export function AvatarStack({
 }) {
   if (actors.length === 0) return null;
   const { visible, overflow } = splitStack(actors, max);
-  const label = (a: ActorDto) => (isWorking?.(a) ? `${actorLabel(a)}, working now` : actorLabel(a));
+  const label = (a: ActorDto) =>
+    isWorking?.(a) ? `${actorLabel(a)}, working now` : actorLabel(a);
   return (
     <Tooltip>
       <TooltipTrigger asChild>

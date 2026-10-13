@@ -85,7 +85,10 @@ export const WikiLink = Node.create<WikiLinkOptions>({
   },
 
   renderText({ node }) {
-    return wikiLinkMarkdown(String(node.attrs.target), node.attrs.label as string | null);
+    return wikiLinkMarkdown(
+      String(node.attrs.target),
+      node.attrs.label as string | null,
+    );
   },
 
   addNodeView() {
@@ -104,7 +107,10 @@ export const WikiLink = Node.create<WikiLinkOptions>({
         if (href) dom.href = href;
         else dom.removeAttribute("href");
         dom.classList.toggle("wiki-link-missing", host !== null && !href);
-        if (editor.isEditable) dom.title = href ? "⌘/Ctrl-click to open in a new tab" : "No document has this title yet";
+        if (editor.isEditable)
+          dom.title = href
+            ? "⌘/Ctrl-click to open in a new tab"
+            : "No document has this title yet";
         return href;
       };
       refresh();
@@ -114,7 +120,8 @@ export const WikiLink = Node.create<WikiLinkOptions>({
         const href = refresh();
         // While editing, a plain click selects the link; opening would leave unsaved changes.
         if (!editor.isEditable) this.options.host()?.open(target);
-        else if (href && (event.metaKey || event.ctrlKey)) window.open(href, "_blank", "noopener");
+        else if (href && (event.metaKey || event.ctrlKey))
+          window.open(href, "_blank", "noopener");
       });
       return { dom };
     };
@@ -144,7 +151,11 @@ export const WikiLink = Node.create<WikiLinkOptions>({
     tokenize: (src) => {
       const match = SOURCE.exec(src);
       if (!match?.[1]?.trim()) return undefined;
-      return { type: "wikiLink", raw: match[0], ...attrsOf(match[1], match[2]) };
+      return {
+        type: "wikiLink",
+        raw: match[0],
+        ...attrsOf(match[1], match[2]),
+      };
     },
   },
   parseMarkdown: (token, helpers) =>
@@ -153,5 +164,8 @@ export const WikiLink = Node.create<WikiLinkOptions>({
       label: typeof token.label === "string" ? token.label : null,
     }),
   renderMarkdown: (node) =>
-    wikiLinkMarkdown(String(node.attrs?.target ?? ""), (node.attrs?.label as string | null | undefined) ?? null),
+    wikiLinkMarkdown(
+      String(node.attrs?.target ?? ""),
+      (node.attrs?.label as string | null | undefined) ?? null,
+    ),
 });

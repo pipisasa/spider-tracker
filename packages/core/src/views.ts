@@ -84,37 +84,54 @@ export interface TaskViewLookups {
   tags: Pick<TagDto, "id" | "name">[];
 }
 
-export function taskView(raw: TaskDto, { statuses, actors, tags }: TaskViewLookups): TaskView {
+export function taskView(
+  raw: TaskDto,
+  { statuses, actors, tags }: TaskViewLookups,
+): TaskView {
   // Servers from before tags (ST-8) don't send tagIds, nor from before kinds (ST-90) a kind.
   const task = { ...raw, kind: raw.kind ?? "task", tagIds: raw.tagIds ?? [] };
   const status = statuses.find((s) => s.id === task.statusId);
   return {
     ...task,
-    status: status ? { id: status.id, name: status.name, category: status.category } : null,
+    status: status
+      ? { id: status.id, name: status.name, category: status.category }
+      : null,
     assignees: task.assigneeIds.map((id) => actorHandle(actors, id)),
     tags: task.tagIds.map((id) => tags.find((t) => t.id === id)?.name ?? id),
   };
 }
 
-export const relationView = (r: { kind: RelationKind; task: { key: string; title: string } }): RelationView => ({
+export const relationView = (r: {
+  kind: RelationKind;
+  task: { key: string; title: string };
+}): RelationView => ({
   kind: r.kind,
   task: r.task.key,
   title: r.task.title,
 });
 
-export const commentView = (comment: CommentDto, actors: ActorRef[]): CommentView => ({
+export const commentView = (
+  comment: CommentDto,
+  actors: ActorRef[],
+): CommentView => ({
   ...comment,
   author: actorHandle(actors, comment.authorId),
 });
 
-export const documentCommentView = (comment: DocumentCommentDto, actors: ActorRef[]): DocumentCommentView => ({
+export const documentCommentView = (
+  comment: DocumentCommentDto,
+  actors: ActorRef[],
+): DocumentCommentView => ({
   ...comment,
   author: actorHandle(actors, comment.authorId),
   resolver: comment.resolvedBy ? actorHandle(actors, comment.resolvedBy) : null,
 });
 
 export function documentVersionView(
-  current: Pick<DocumentSummaryDto, "id" | "projectKey" | "taskKey" | "version" | "url">,
+  current: Pick<
+    DocumentSummaryDto,
+    "id" | "projectKey" | "taskKey" | "version" | "url"
+  >,
   old: DocumentVersionDto,
 ): DocumentVersionView {
   return {
@@ -134,13 +151,20 @@ export interface DocumentDiffView extends DocumentDiffDto {
 
 export const documentDiffView = (dto: DocumentDiffDto): DocumentDiffView => ({
   ...dto,
-  diff: formatUnifiedDiff(dto.hunks, `v${dto.from.version}`, `v${dto.to.version}`),
+  diff: formatUnifiedDiff(
+    dto.hunks,
+    `v${dto.from.version}`,
+    `v${dto.to.version}`,
+  ),
 });
 
 /** A project's rules (ST-111) from the project and its rules document, as the API's ProjectRulesDto. */
 export const projectRulesView = (
   project: Pick<ProjectDto, "key" | "name">,
-  document: Pick<DocumentDto, "id" | "title" | "format" | "version" | "updatedAt" | "content" | "url">,
+  document: Pick<
+    DocumentDto,
+    "id" | "title" | "format" | "version" | "updatedAt" | "content" | "url"
+  >,
 ): ProjectRulesDto & { url?: string } => ({
   projectKey: project.key,
   projectName: project.name,
@@ -154,12 +178,18 @@ export const projectRulesView = (
 });
 
 /** A release (ST-93) as the CLI and MCP print it: the API release plus assignee handles and tag names. */
-export interface ReleaseView extends Omit<ReleaseDto, "status" | "deployments">, Pick<TaskView, "status" | "assignees" | "tags"> {
+export interface ReleaseView
+  extends
+    Omit<ReleaseDto, "status" | "deployments">,
+    Pick<TaskView, "status" | "assignees" | "tags"> {
   /** Newest first (ST-94); empty from servers before deployments. */
   deployments: DeploymentDto[];
 }
 
-export const releaseView = (release: ReleaseDto, { actors, tags }: Omit<TaskViewLookups, "statuses">): ReleaseView => ({
+export const releaseView = (
+  release: ReleaseDto,
+  { actors, tags }: Omit<TaskViewLookups, "statuses">,
+): ReleaseView => ({
   ...release,
   ...taskView(release, { statuses: [release.status], actors, tags }),
   repos: release.repos,
@@ -169,9 +199,15 @@ export const releaseView = (release: ReleaseDto, { actors, tags }: Omit<TaskView
 });
 
 /** A milestone (ST-96) as the CLI and MCP print it: the API milestone plus assignee handles and tag names. */
-export interface MilestoneView extends Omit<MilestoneDto, "status">, Pick<TaskView, "status" | "assignees" | "tags"> {}
+export interface MilestoneView
+  extends
+    Omit<MilestoneDto, "status">,
+    Pick<TaskView, "status" | "assignees" | "tags"> {}
 
-export const milestoneView = (milestone: MilestoneDto, { actors, tags }: Omit<TaskViewLookups, "statuses">): MilestoneView => ({
+export const milestoneView = (
+  milestone: MilestoneDto,
+  { actors, tags }: Omit<TaskViewLookups, "statuses">,
+): MilestoneView => ({
   ...milestone,
   ...taskView(milestone, { statuses: [milestone.status], actors, tags }),
   progress: milestone.progress,

@@ -14,7 +14,9 @@ export function WorkingAvatars({
     <AvatarStack
       {...props}
       isWorking={(a: ActorDto) => working.includes(a.id)}
-      highlight={(a: ActorDto) => (working.includes(a.id) ? "ring-emerald-500" : undefined)}
+      highlight={(a: ActorDto) =>
+        working.includes(a.id) ? "ring-emerald-500" : undefined
+      }
     />
   );
 }

@@ -35,12 +35,27 @@ export function markdownHeadings(content: string): MarkdownHeading[] {
     const fenceMatch = FENCE.exec(line);
     if (fence) {
       const marker = fenceMatch?.[1];
-      if (marker && marker[0] === fence[0] && marker.length >= fence.length && !fenceMatch[2]?.trim()) fence = null;
-    } else if (fenceMatch?.[1] && !(fenceMatch[1][0] === "`" && fenceMatch[2]?.includes("`"))) {
+      if (
+        marker &&
+        marker[0] === fence[0] &&
+        marker.length >= fence.length &&
+        !fenceMatch[2]?.trim()
+      )
+        fence = null;
+    } else if (
+      fenceMatch?.[1] &&
+      !(fenceMatch[1][0] === "`" && fenceMatch[2]?.includes("`"))
+    ) {
       fence = fenceMatch[1];
     } else {
       const match = ATX.exec(line);
-      if (match?.[1]) headings.push({ level: match[1].length, text: headingText(match[2] ?? ""), start, end });
+      if (match?.[1])
+        headings.push({
+          level: match[1].length,
+          text: headingText(match[2] ?? ""),
+          start,
+          end,
+        });
     }
     start = end;
   }
@@ -50,20 +65,34 @@ export function markdownHeadings(content: string): MarkdownHeading[] {
 /** `"## Decisions"` names a level-2 heading; plain `"Decisions"` one of any level. */
 function parseSection(section: string): { level: number | null; text: string } {
   const match = /^(#{1,6})(?:[ \t]+(.*))?$/.exec(section.trim());
-  if (match?.[1]) return { level: match[1].length, text: headingText(match[2] ?? "") };
+  if (match?.[1])
+    return { level: match[1].length, text: headingText(match[2] ?? "") };
   return { level: null, text: headingText(section) };
 }
 
-const preview = (text: string) => JSON.stringify(text.length > 80 ? `${text.slice(0, 77)}...` : text);
+const preview = (text: string) =>
+  JSON.stringify(text.length > 80 ? `${text.slice(0, 77)}...` : text);
 
 function occurrences(content: string, fragment: string): number {
   let count = 0;
-  for (let at = content.indexOf(fragment); at !== -1; at = content.indexOf(fragment, at + fragment.length)) count++;
+  for (
+    let at = content.indexOf(fragment);
+    at !== -1;
+    at = content.indexOf(fragment, at + fragment.length)
+  )
+    count++;
   return count;
 }
 
-function replaceFragment(content: string, edit: { old: string; new: string; all?: boolean }): string {
-  if (!edit.old) throw new DomainError("validation", "old: the fragment to replace can't be empty");
+function replaceFragment(
+  content: string,
+  edit: { old: string; new: string; all?: boolean },
+): string {
+  if (!edit.old)
+    throw new DomainError(
+      "validation",
+      "old: the fragment to replace can't be empty",
+    );
   const count = occurrences(content, edit.old);
   if (count === 0) {
     throw new DomainError(
@@ -84,18 +113,39 @@ function replaceFragment(content: string, edit: { old: string; new: string; all?
 
 /** Appends on a new line. */
 function append(content: string, text: string): string {
-  if (!text) throw new DomainError("validation", "append: the text to append can't be empty");
+  if (!text)
+    throw new DomainError(
+      "validation",
+      "append: the text to append can't be empty",
+    );
   if (!content || content.endsWith("\n")) return content + text;
   return `${content}\n${text}`;
 }
 
 /** Replaces the body under a heading, up to the next heading of the same or a higher level; the heading stays. */
-function replaceSection(content: string, format: DocumentFormat, section: string, body: string): string {
-  if (format !== "md") throw new DomainError("validation", "Section edits work on Markdown documents only");
+function replaceSection(
+  content: string,
+  format: DocumentFormat,
+  section: string,
+  body: string,
+): string {
+  if (format !== "md")
+    throw new DomainError(
+      "validation",
+      "Section edits work on Markdown documents only",
+    );
   const target = parseSection(section);
-  if (!target.text) throw new DomainError("validation", 'section: name a heading, e.g. "## Decisions"');
+  if (!target.text)
+    throw new DomainError(
+      "validation",
+      'section: name a heading, e.g. "## Decisions"',
+    );
   const headings = markdownHeadings(content);
-  const matches = headings.filter((h) => h.text === target.text && (target.level === null || h.level === target.level));
+  const matches = headings.filter(
+    (h) =>
+      h.text === target.text &&
+      (target.level === null || h.level === target.level),
+  );
   if (matches.length === 0) {
     throw new DomainError(
       "conflict",
@@ -105,18 +155,24 @@ function replaceSection(content: string, format: DocumentFormat, section: string
   if (matches.length > 1) {
     throw new DomainError(
       "validation",
-      `${matches.length} sections are headed ${preview(section.trim())}${target.level === null ? ". Name the level too, e.g. \"## Decisions\"" : ""}. Edit the right one with { old, new } instead`,
+      `${matches.length} sections are headed ${preview(section.trim())}${target.level === null ? '. Name the level too, e.g. "## Decisions"' : ""}. Edit the right one with { old, new } instead`,
     );
   }
   const [heading] = matches as [MarkdownHeading];
-  const next = headings.find((h) => h.start > heading.start && h.level <= heading.level);
+  const next = headings.find(
+    (h) => h.start > heading.start && h.level <= heading.level,
+  );
   const before = content.slice(0, heading.end);
   const rest = next ? content.slice(next.start) : "";
 
   // A body that repeats the section's own heading doesn't add a second one.
   let text = body;
   const [first] = markdownHeadings(text.replace(/^(?:[ \t]*\r?\n)+/, ""));
-  if (first?.start === 0 && first.level === heading.level && first.text === heading.text) {
+  if (
+    first?.start === 0 &&
+    first.level === heading.level &&
+    first.text === heading.text
+  ) {
     text = text.replace(/^(?:[ \t]*\r?\n)+/, "").slice(first.end);
   }
   text = text.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
@@ -128,7 +184,11 @@ function replaceSection(content: string, format: DocumentFormat, section: string
  * The content after applying `edits` in order. Throws `conflict` when a fragment or section isn't
  * there (the document may have changed) and `validation` when one is ambiguous or an edit is invalid.
  */
-export function applyDocumentEdits(content: string, format: DocumentFormat, edits: DocumentEdit[]): string {
+export function applyDocumentEdits(
+  content: string,
+  format: DocumentFormat,
+  edits: DocumentEdit[],
+): string {
   return edits.reduce((text, edit, index) => {
     try {
       if ("old" in edit) return replaceFragment(text, edit);

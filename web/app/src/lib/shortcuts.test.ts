@@ -10,12 +10,15 @@ import {
   type ShortcutDef,
 } from "./shortcuts";
 
-const attrs = (map: Record<string, string>) => (name: string) => map[name] ?? null;
+const attrs = (map: Record<string, string>) => (name: string) =>
+  map[name] ?? null;
 
 describe("shortcutKey", () => {
   test("lower-cases plain keys and keeps symbols", () => {
     expect(shortcutKey({ key: "C" })).toBe("c");
-    expect(shortcutKey({ key: "?", shiftKey: true } as { key: string })).toBe("?");
+    expect(shortcutKey({ key: "?", shiftKey: true } as { key: string })).toBe(
+      "?",
+    );
   });
   test("ignores modified presses and named keys", () => {
     expect(shortcutKey({ key: "c", metaKey: true })).toBeNull();
@@ -32,7 +35,9 @@ describe("isPaletteKey", () => {
     expect(isPaletteKey({ key: "K", ctrlKey: true })).toBe(true);
     expect(isPaletteKey({ key: "k" })).toBe(false);
     expect(isPaletteKey({ key: "j", metaKey: true })).toBe(false);
-    expect(isPaletteKey({ key: "k", metaKey: true, shiftKey: true })).toBe(false);
+    expect(isPaletteKey({ key: "k", metaKey: true, shiftKey: true })).toBe(
+      false,
+    );
   });
 });
 
@@ -60,16 +65,24 @@ describe("advanceSequence", () => {
   });
   test("a key that breaks the sequence starts over", () => {
     const first = advanceSequence(EMPTY_SEQUENCE, "g", 0);
-    expect(advanceSequence(first.state, "z", 10)).toEqual({ state: EMPTY_SEQUENCE, matched: null });
+    expect(advanceSequence(first.state, "z", 10)).toEqual({
+      state: EMPTY_SEQUENCE,
+      matched: null,
+    });
     expect(advanceSequence(first.state, "c", 10).matched).toBe("new-task");
     const again = advanceSequence(first.state, "g", 10);
     expect(again.state.keys).toEqual(["g"]);
   });
   test("unknown keys do nothing", () => {
-    expect(advanceSequence(EMPTY_SEQUENCE, "x", 0)).toEqual({ state: EMPTY_SEQUENCE, matched: null });
+    expect(advanceSequence(EMPTY_SEQUENCE, "x", 0)).toEqual({
+      state: EMPTY_SEQUENCE,
+      matched: null,
+    });
   });
   test("supports custom definitions and three-key sequences", () => {
-    const defs: ShortcutDef[] = [{ id: "help", keys: ["a", "b", "c"], label: "x", group: "General" }];
+    const defs: ShortcutDef[] = [
+      { id: "help", keys: ["a", "b", "c"], label: "x", group: "General" },
+    ];
     let state = advanceSequence(EMPTY_SEQUENCE, "a", 0, defs).state;
     state = advanceSequence(state, "b", 1, defs).state;
     expect(advanceSequence(state, "c", 2, defs).matched).toBe("help");
@@ -78,21 +91,50 @@ describe("advanceSequence", () => {
 
 describe("isEditableElement", () => {
   test("text fields are editable", () => {
-    expect(isEditableElement({ tagName: "INPUT", getAttribute: attrs({}) })).toBe(true);
-    expect(isEditableElement({ tagName: "INPUT", getAttribute: attrs({ type: "search" }) })).toBe(true);
+    expect(
+      isEditableElement({ tagName: "INPUT", getAttribute: attrs({}) }),
+    ).toBe(true);
+    expect(
+      isEditableElement({
+        tagName: "INPUT",
+        getAttribute: attrs({ type: "search" }),
+      }),
+    ).toBe(true);
     expect(isEditableElement({ tagName: "TEXTAREA" })).toBe(true);
     expect(isEditableElement({ tagName: "SELECT" })).toBe(true);
   });
   test("buttons and checkboxes are not", () => {
-    expect(isEditableElement({ tagName: "INPUT", getAttribute: attrs({ type: "checkbox" }) })).toBe(false);
+    expect(
+      isEditableElement({
+        tagName: "INPUT",
+        getAttribute: attrs({ type: "checkbox" }),
+      }),
+    ).toBe(false);
     expect(isEditableElement({ tagName: "BUTTON" })).toBe(false);
     expect(isEditableElement({ tagName: "DIV" })).toBe(false);
   });
   test("contenteditable and textbox roles are editable", () => {
-    expect(isEditableElement({ tagName: "DIV", isContentEditable: true })).toBe(true);
-    expect(isEditableElement({ tagName: "DIV", getAttribute: attrs({ contenteditable: "" }) })).toBe(true);
-    expect(isEditableElement({ tagName: "DIV", getAttribute: attrs({ contenteditable: "false" }) })).toBe(false);
-    expect(isEditableElement({ tagName: "DIV", getAttribute: attrs({ role: "textbox" }) })).toBe(true);
+    expect(isEditableElement({ tagName: "DIV", isContentEditable: true })).toBe(
+      true,
+    );
+    expect(
+      isEditableElement({
+        tagName: "DIV",
+        getAttribute: attrs({ contenteditable: "" }),
+      }),
+    ).toBe(true);
+    expect(
+      isEditableElement({
+        tagName: "DIV",
+        getAttribute: attrs({ contenteditable: "false" }),
+      }),
+    ).toBe(false);
+    expect(
+      isEditableElement({
+        tagName: "DIV",
+        getAttribute: attrs({ role: "textbox" }),
+      }),
+    ).toBe(true);
   });
   test("no target is not editable", () => {
     expect(isEditableElement(null)).toBe(false);

@@ -37,7 +37,10 @@ function myers(a: Int32Array, b: Int32Array, maxEdits: number): Op[] | null {
   const at = (d: number, k: number) => trace[d]![k + d]!;
   for (let d = 0; d <= Math.min(max, maxEdits); d++) {
     for (let k = -d; k <= d; k += 2) {
-      let x = k === -d || (k !== d && v[offset + k - 1]! < v[offset + k + 1]!) ? v[offset + k + 1]! : v[offset + k - 1]! + 1;
+      let x =
+        k === -d || (k !== d && v[offset + k - 1]! < v[offset + k + 1]!)
+          ? v[offset + k + 1]!
+          : v[offset + k - 1]! + 1;
       let y = x - k;
       while (x < n && y < m && a[x] === b[y]) {
         x++;
@@ -52,7 +55,12 @@ function myers(a: Int32Array, b: Int32Array, maxEdits: number): Op[] | null {
   return null;
 }
 
-function backtrack(at: (d: number, k: number) => number, edits: number, n: number, m: number): Op[] {
+function backtrack(
+  at: (d: number, k: number) => number,
+  edits: number,
+  n: number,
+  m: number,
+): Op[] {
   const ops: Op[] = [];
   let x = n;
   let y = m;
@@ -110,19 +118,25 @@ export function diffLines(oldText: string, newText: string): DiffLineDto[] {
   const lines: DiffLineDto[] = [];
   let i = 0;
   let j = 0;
-  const context = () => lines.push({ kind: "context", text: a[i]!, oldLine: ++i, newLine: ++j });
+  const context = () =>
+    lines.push({ kind: "context", text: a[i]!, oldLine: ++i, newLine: ++j });
   while (i < start) context();
   for (const op of ops) {
     if (op === "equal") context();
-    else if (op === "delete") lines.push({ kind: "removed", text: a[i]!, oldLine: ++i, newLine: null });
-    else lines.push({ kind: "added", text: b[j]!, oldLine: null, newLine: ++j });
+    else if (op === "delete")
+      lines.push({ kind: "removed", text: a[i]!, oldLine: ++i, newLine: null });
+    else
+      lines.push({ kind: "added", text: b[j]!, oldLine: null, newLine: ++j });
   }
   while (i < a.length) context();
   return lines;
 }
 
 /** Groups the changes of a full line diff into hunks with `context` lines around them. */
-export function diffHunks(lines: DiffLineDto[], context = DIFF_CONTEXT): DiffHunkDto[] {
+export function diffHunks(
+  lines: DiffLineDto[],
+  context = DIFF_CONTEXT,
+): DiffHunkDto[] {
   const changed: number[] = [];
   lines.forEach((line, index) => {
     if (line.kind !== "context") changed.push(index);
@@ -132,7 +146,11 @@ export function diffHunks(lines: DiffLineDto[], context = DIFF_CONTEXT): DiffHun
   while (g < changed.length) {
     // Changes closer than 2 × context share a hunk.
     let last = g;
-    while (last + 1 < changed.length && changed[last + 1]! - changed[last]! - 1 <= 2 * context) last++;
+    while (
+      last + 1 < changed.length &&
+      changed[last + 1]! - changed[last]! - 1 <= 2 * context
+    )
+      last++;
     const from = Math.max(0, changed[g]! - context);
     const to = Math.min(lines.length, changed[last]! + context + 1);
     const slice = lines.slice(from, to);
@@ -157,16 +175,27 @@ export function diffHunks(lines: DiffLineDto[], context = DIFF_CONTEXT): DiffHun
   return hunks;
 }
 
-const range = (start: number, count: number) => (count === 1 ? `${start}` : `${start},${count}`);
+const range = (start: number, count: number) =>
+  count === 1 ? `${start}` : `${start},${count}`;
 
-const PREFIX: Record<DiffLineDto["kind"], string> = { context: " ", added: "+", removed: "-" };
+const PREFIX: Record<DiffLineDto["kind"], string> = {
+  context: " ",
+  added: "+",
+  removed: "-",
+};
 
 /** A unified diff (`diff -u` style), with `fromLabel` and `toLabel` on the `---`/`+++` lines; "" without hunks. */
-export function formatUnifiedDiff(hunks: DiffHunkDto[], fromLabel: string, toLabel: string): string {
+export function formatUnifiedDiff(
+  hunks: DiffHunkDto[],
+  fromLabel: string,
+  toLabel: string,
+): string {
   if (!hunks.length) return "";
   const out = [`--- ${fromLabel}`, `+++ ${toLabel}`];
   for (const hunk of hunks) {
-    out.push(`@@ -${range(hunk.oldStart, hunk.oldLines)} +${range(hunk.newStart, hunk.newLines)} @@`);
+    out.push(
+      `@@ -${range(hunk.oldStart, hunk.oldLines)} +${range(hunk.newStart, hunk.newLines)} @@`,
+    );
     for (const line of hunk.lines) out.push(`${PREFIX[line.kind]}${line.text}`);
   }
   return out.join("\n");

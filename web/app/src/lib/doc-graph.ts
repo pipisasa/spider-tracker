@@ -55,7 +55,12 @@ export function buildDocumentGraph(
   };
 
   for (const d of graph.documents)
-    add({ id: docNode(d.id), kind: "document", label: d.title, projectKey: d.projectKey });
+    add({
+      id: docNode(d.id),
+      kind: "document",
+      label: d.title,
+      projectKey: d.projectKey,
+    });
   if (filters.showTasks)
     for (const t of graph.tasks)
       add({
@@ -67,7 +72,12 @@ export function buildDocumentGraph(
       });
   if (filters.showProjects)
     for (const p of graph.projects)
-      add({ id: projectNode(p.key), kind: "project", label: p.name, projectKey: p.key });
+      add({
+        id: projectNode(p.key),
+        kind: "project",
+        label: p.name,
+        projectKey: p.key,
+      });
 
   const edges: GraphEdge[] = [];
   const seen = new Set<string>();
@@ -82,7 +92,8 @@ export function buildDocumentGraph(
   for (const link of graph.links) {
     const from = docNode(link.from);
     if (link.to.type === "document") connect(from, docNode(link.to.id), "link");
-    else if (link.to.type === "task") connect(from, taskNode(link.to.key), "link");
+    else if (link.to.type === "task")
+      connect(from, taskNode(link.to.key), "link");
     else if (filters.showUnresolved) {
       const id = missingNode(link.to.title);
       add({ id, kind: "unresolved", label: link.to.title, projectKey: null });
@@ -93,11 +104,14 @@ export function buildDocumentGraph(
   // Containment: a task's document hangs off its task (or its project when tasks are hidden).
   for (const d of graph.documents) {
     const from = docNode(d.id);
-    if (d.taskKey && filters.showTasks) connect(from, taskNode(d.taskKey), "contains");
-    else if (d.projectKey && filters.showProjects) connect(from, projectNode(d.projectKey), "contains");
+    if (d.taskKey && filters.showTasks)
+      connect(from, taskNode(d.taskKey), "contains");
+    else if (d.projectKey && filters.showProjects)
+      connect(from, projectNode(d.projectKey), "contains");
   }
   if (filters.showTasks && filters.showProjects)
-    for (const t of graph.tasks) connect(taskNode(t.key), projectNode(t.projectKey), "contains");
+    for (const t of graph.tasks)
+      connect(taskNode(t.key), projectNode(t.projectKey), "contains");
 
   for (const e of edges) {
     const s = nodes.get(e.source);
@@ -105,12 +119,16 @@ export function buildDocumentGraph(
     if (s) s.degree += 1;
     if (t) t.degree += 1;
   }
-  const kept = [...nodes.values()].filter((n) => filters.showOrphans || n.degree > 0);
+  const kept = [...nodes.values()].filter(
+    (n) => filters.showOrphans || n.degree > 0,
+  );
   return { nodes: kept, edges };
 }
 
 /** Each node's neighbours, for hover highlighting. */
-export function neighbours(edges: readonly GraphEdge[]): Map<string, Set<string>> {
+export function neighbours(
+  edges: readonly GraphEdge[],
+): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   const link = (a: string, b: string) => {
     let set = out.get(a);

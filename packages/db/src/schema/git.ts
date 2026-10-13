@@ -1,5 +1,15 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { repos } from "./repos";
 import { organizations } from "./tenancy";
 import { tasks } from "./work";
@@ -13,7 +23,9 @@ import { tasks } from "./work";
 export const pullRequests = pgTable(
   "pull_requests",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -31,13 +43,22 @@ export const pullRequests = pgTable(
     authorLogin: text("author_login"),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
-    githubUpdatedAt: timestamp("github_updated_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    githubUpdatedAt: timestamp("github_updated_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     unique("pull_requests_repo_number_key").on(t.repoId, t.number),
-    check("pull_requests_state_check", sql`${t.state} in ('open', 'closed', 'merged')`),
+    check(
+      "pull_requests_state_check",
+      sql`${t.state} in ('open', 'closed', 'merged')`,
+    ),
   ],
 );
 
@@ -49,7 +70,9 @@ export const pullRequests = pgTable(
 export const gitLinks = pgTable(
   "git_links",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -59,10 +82,16 @@ export const gitLinks = pgTable(
     repoId: uuid("repo_id")
       .notNull()
       .references(() => repos.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["branch", "commit", "pull_request"] }).notNull(),
+    kind: text("kind", {
+      enum: ["branch", "commit", "pull_request"],
+    }).notNull(),
     ref: text("ref").notNull(),
-    pullRequestId: uuid("pull_request_id").references(() => pullRequests.id, { onDelete: "cascade" }),
-    via: text("via", { enum: ["closing", "branch", "title", "body", "message"] }).notNull(),
+    pullRequestId: uuid("pull_request_id").references(() => pullRequests.id, {
+      onDelete: "cascade",
+    }),
+    via: text("via", {
+      enum: ["closing", "branch", "title", "body", "message"],
+    }).notNull(),
     // Commits: the first line of the message and the author (GitHub login, or the git name).
     title: text("title"),
     author: text("author"),
@@ -70,15 +99,28 @@ export const gitLinks = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }),
     // Branches: deleted on GitHub (the link stays).
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     unique("git_links_task_ref_key").on(t.taskId, t.repoId, t.kind, t.ref),
     index("git_links_repo_ref_idx").on(t.repoId, t.kind, t.ref),
     index("git_links_pull_request_idx").on(t.pullRequestId),
-    check("git_links_kind_check", sql`${t.kind} in ('branch', 'commit', 'pull_request')`),
-    check("git_links_via_check", sql`${t.via} in ('closing', 'branch', 'title', 'body', 'message')`),
-    check("git_links_pull_request_check", sql`(${t.kind} = 'pull_request') = (${t.pullRequestId} is not null)`),
+    check(
+      "git_links_kind_check",
+      sql`${t.kind} in ('branch', 'commit', 'pull_request')`,
+    ),
+    check(
+      "git_links_via_check",
+      sql`${t.via} in ('closing', 'branch', 'title', 'body', 'message')`,
+    ),
+    check(
+      "git_links_pull_request_check",
+      sql`(${t.kind} = 'pull_request') = (${t.pullRequestId} is not null)`,
+    ),
   ],
 );

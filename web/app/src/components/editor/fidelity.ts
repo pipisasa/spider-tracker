@@ -42,10 +42,14 @@ export function escapeMarkdownText(
     .replace(/(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, "\\_")
     // Only text that already reads like a link / reference needs its brackets escaped.
     .replace(/&(?=#?\w+;)/g, "&amp;")
-    .replace(/<(?=\/?([A-Za-z][\w-]*))/g, (m, _g, offset: number, whole: string) => {
-      const name = /^<\/?([A-Za-z][\w-]*)/.exec(whole.slice(offset))?.[1] ?? "";
-      return isKnownTag(name) ? "&lt;" : m;
-    });
+    .replace(
+      /<(?=\/?([A-Za-z][\w-]*))/g,
+      (m, _g, offset: number, whole: string) => {
+        const name =
+          /^<\/?([A-Za-z][\w-]*)/.exec(whole.slice(offset))?.[1] ?? "";
+        return isKnownTag(name) ? "&lt;" : m;
+      },
+    );
   if (/\]\s*[([:]/.test(out)) out = out.replace(/([[\]])/g, "\\$1");
   if (out.includes("~~")) out = out.replace(/~/g, "\\~");
   // Line starts that would turn the paragraph into a list, heading or quote.
@@ -65,8 +69,7 @@ export const MarkdownFidelity = Extension.create({
   onBeforeCreate() {
     // The manager has no hook for text escaping, so replace its (private) method.
     const manager = this.editor.markdown as unknown as
-      | ManagerInternals
-      | undefined;
+      ManagerInternals | undefined;
     if (!manager) return;
     // In a browser the manager parses HTML through the schema, which silently
     // drops tags it has no node or mark for (`<kbd>`, `<div>`, comments). Keep
@@ -89,9 +92,8 @@ export const MarkdownFidelity = Extension.create({
           manager.codeTypes.has(typeof m === "string" ? m : m.type),
         );
       if (inCode) return text;
-      return escapeMarkdownText(
-        text,
-        (name) => manager.getSchemaParseDomTags().has(name.toLowerCase()),
+      return escapeMarkdownText(text, (name) =>
+        manager.getSchemaParseDomTags().has(name.toLowerCase()),
       );
     };
   },

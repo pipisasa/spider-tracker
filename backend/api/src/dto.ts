@@ -27,7 +27,11 @@ export function toMembership({
   ownerId?: string | null;
 }): MembershipDto {
   return {
-    organization: { id: organization.id, slug: organization.slug, name: organization.name },
+    organization: {
+      id: organization.id,
+      slug: organization.slug,
+      name: organization.name,
+    },
     actor: toActorDto(actor, ownerId),
   };
 }

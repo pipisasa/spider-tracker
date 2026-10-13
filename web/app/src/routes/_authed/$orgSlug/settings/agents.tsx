@@ -11,7 +11,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { claudeCodePrompt, inviteLink as inviteLinkFor } from "@/lib/agent-invite-instructions";
+import {
+  claudeCodePrompt,
+  inviteLink as inviteLinkFor,
+} from "@/lib/agent-invite-instructions";
 import { apiUrl } from "@/lib/api";
 import {
   agentInvitesQuery,
@@ -25,16 +28,30 @@ import {
   useRevokeApiKey,
   useUpdateAgent,
 } from "@/lib/work";
-import type { AgentDto, AgentInviteDto, CreatedAgentInviteDto, CreatedApiKeyDto } from "@repo/core/contracts";
+import type {
+  AgentDto,
+  AgentInviteDto,
+  CreatedAgentInviteDto,
+  CreatedApiKeyDto,
+} from "@repo/core/contracts";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, KeyRoundIcon, PencilIcon, PlusIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  KeyRoundIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+  UserPlusIcon,
+} from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/$orgSlug/settings/agents")({
   beforeLoad: ({ context, params }) => {
-    if (context.membership.actor.role === "guest") throw redirect({ to: "/$orgSlug", params });
+    if (context.membership.actor.role === "guest")
+      throw redirect({ to: "/$orgSlug", params });
   },
   loader: ({ context, params }) =>
     Promise.all([
@@ -79,8 +96,9 @@ function AgentsPage() {
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">Agents</h1>
           <p className="text-sm text-muted-foreground">
-            Agents are members that act through the API with their own keys. Their changes show up under their name.
-            You manage the agents you create; owners and admins can manage every agent.
+            Agents are members that act through the API with their own keys.
+            Their changes show up under their name. You manage the agents you
+            create; owners and admins can manage every agent.
           </p>
         </div>
         <div className="ml-auto flex shrink-0 gap-2">
@@ -100,7 +118,11 @@ function AgentsPage() {
           <h2 className="text-sm font-medium">Waiting for setup</h2>
           <ul className="flex flex-col gap-2">
             {invites.map((invite) => (
-              <PendingInvite key={invite.id} orgSlug={orgSlug} invite={invite} />
+              <PendingInvite
+                key={invite.id}
+                orgSlug={orgSlug}
+                invite={invite}
+              />
             ))}
           </ul>
         </section>
@@ -121,14 +143,34 @@ function AgentsPage() {
       {others.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-medium">Other agents</h2>
-          <ul className="flex flex-col gap-4">{others.map((agent) => card(agent, true))}</ul>
+          <ul className="flex flex-col gap-4">
+            {others.map((agent) => card(agent, true))}
+          </ul>
         </section>
       )}
 
-      <InviteAgentDialog orgSlug={orgSlug} open={inviting} onClose={() => setInviting(false)} />
-      <AgentFormDialog orgSlug={orgSlug} open={creating} agent={null} onClose={() => setCreating(false)} />
-      <AgentFormDialog orgSlug={orgSlug} open={!!editing} agent={editing} onClose={() => setEditing(null)} />
-      <DeleteAgentDialog orgSlug={orgSlug} agent={deleting} onClose={() => setDeleting(null)} />
+      <InviteAgentDialog
+        orgSlug={orgSlug}
+        open={inviting}
+        onClose={() => setInviting(false)}
+      />
+      <AgentFormDialog
+        orgSlug={orgSlug}
+        open={creating}
+        agent={null}
+        onClose={() => setCreating(false)}
+      />
+      <AgentFormDialog
+        orgSlug={orgSlug}
+        open={!!editing}
+        agent={editing}
+        onClose={() => setEditing(null)}
+      />
+      <DeleteAgentDialog
+        orgSlug={orgSlug}
+        agent={deleting}
+        onClose={() => setDeleting(null)}
+      />
       <NewKeyDialog
         orgSlug={orgSlug}
         agent={newKeyFor}
@@ -138,7 +180,11 @@ function AgentsPage() {
           setCreatedKey(created);
         }}
       />
-      <CreatedKeyDialog orgSlug={orgSlug} created={createdKey} onClose={() => setCreatedKey(null)} />
+      <CreatedKeyDialog
+        orgSlug={orgSlug}
+        created={createdKey}
+        onClose={() => setCreatedKey(null)}
+      />
     </main>
   );
 }
@@ -175,7 +221,10 @@ function AgentFormDialog({
     const onError = (err: Error) => toast.error(err.message);
     if (agent) {
       update.mutate(
-        { agentId: agent.actor.id, input: { name, handle, description: description.trim() || null } },
+        {
+          agentId: agent.actor.id,
+          input: { name, handle, description: description.trim() || null },
+        },
         {
           onSuccess: (updated) => {
             toast.success(`Saved @${updated.actor.handle}`);
@@ -186,7 +235,11 @@ function AgentFormDialog({
       );
     } else {
       create.mutate(
-        { name, handle: handle.trim() || undefined, description: description.trim() || undefined },
+        {
+          name,
+          handle: handle.trim() || undefined,
+          description: description.trim() || undefined,
+        },
         {
           onSuccess: (created) => {
             toast.success(`Added @${created.actor.handle}`);
@@ -203,9 +256,13 @@ function AgentFormDialog({
       <DialogContent>
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>{agent ? `Edit ${agent.actor.name}` : "New agent"}</DialogTitle>
+            <DialogTitle>
+              {agent ? `Edit ${agent.actor.name}` : "New agent"}
+            </DialogTitle>
             <DialogDescription>
-              {agent ? "Its history keeps the new name." : "It will belong to you; then create a key for it."}
+              {agent
+                ? "Its history keeps the new name."
+                : "It will belong to you; then create a key for it."}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
@@ -237,7 +294,10 @@ function AgentFormDialog({
             />
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={pending || !name.trim() || (!!agent && !handle.trim())}>
+            <Button
+              type="submit"
+              disabled={pending || !name.trim() || (!!agent && !handle.trim())}
+            >
               {agent ? "Save" : "Create agent"}
             </Button>
           </DialogFooter>
@@ -247,7 +307,15 @@ function AgentFormDialog({
   );
 }
 
-function DeleteAgentDialog({ orgSlug, agent, onClose }: { orgSlug: string; agent: AgentDto | null; onClose: () => void }) {
+function DeleteAgentDialog({
+  orgSlug,
+  agent,
+  onClose,
+}: {
+  orgSlug: string;
+  agent: AgentDto | null;
+  onClose: () => void;
+}) {
   const remove = useDeleteAgent(orgSlug);
 
   function confirm() {
@@ -267,14 +335,19 @@ function DeleteAgentDialog({ orgSlug, agent, onClose }: { orgSlug: string; agent
         <DialogHeader>
           <DialogTitle>Delete {agent?.actor.name}?</DialogTitle>
           <DialogDescription>
-            Its keys stop working right away. Its comments, history and assignments stay under its name.
+            Its keys stop working right away. Its comments, history and
+            assignments stay under its name.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="destructive" disabled={remove.isPending} onClick={confirm}>
+          <Button
+            variant="destructive"
+            disabled={remove.isPending}
+            onClick={confirm}
+          >
             Delete agent
           </Button>
         </DialogFooter>
@@ -318,7 +391,12 @@ function AgentCard({
               <KeyRoundIcon />
               New key
             </Button>
-            <Button variant="ghost" size="icon" aria-label="Edit agent" onClick={onEdit}>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Edit agent"
+              onClick={onEdit}
+            >
               <PencilIcon />
             </Button>
             <Button
@@ -333,7 +411,9 @@ function AgentCard({
           </div>
         )}
       </div>
-      {agent.description && <p className="text-sm text-muted-foreground">{agent.description}</p>}
+      {agent.description && (
+        <p className="text-sm text-muted-foreground">{agent.description}</p>
+      )}
       <p className="text-xs text-muted-foreground">
         {!agent.projects
           ? "All projects"
@@ -347,9 +427,13 @@ function AgentCard({
             {active.map((key) => (
               <li key={key.id} className="flex items-center gap-3 px-3 py-2">
                 <span className="font-medium">{key.name}</span>
-                <code className="text-xs text-muted-foreground">{key.prefix}…</code>
+                <code className="text-xs text-muted-foreground">
+                  {key.prefix}…
+                </code>
                 <span className="ml-auto text-xs text-muted-foreground">
-                  {key.lastUsedAt ? `Used ${dateFormat.format(new Date(key.lastUsedAt))}` : "Never used"}
+                  {key.lastUsedAt
+                    ? `Used ${dateFormat.format(new Date(key.lastUsedAt))}`
+                    : "Never used"}
                 </span>
                 <Button
                   variant="ghost"
@@ -410,9 +494,17 @@ function NewKeyDialog({
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New key for {agent?.actor.name}</DialogTitle>
-            <DialogDescription>Name it after where it will be used, so you know what to revoke later.</DialogDescription>
+            <DialogDescription>
+              Name it after where it will be used, so you know what to revoke
+              later.
+            </DialogDescription>
           </DialogHeader>
-          <Input autoFocus placeholder="e.g. MacBook" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            autoFocus
+            placeholder="e.g. MacBook"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
           <DialogFooter>
             <Button type="submit" disabled={create.isPending || !name.trim()}>
               Create key
@@ -447,18 +539,31 @@ function CreatedKeyDialog({
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Copy your key now</DialogTitle>
-          <DialogDescription>It won't be shown again. Store it somewhere private, not in a repository.</DialogDescription>
+          <DialogDescription>
+            It won't be shown again. Store it somewhere private, not in a
+            repository.
+          </DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2">
-          <code className="min-w-0 flex-1 truncate rounded-md border bg-muted px-3 py-2 text-xs">{created?.secret}</code>
-          <Button variant="outline" size="icon" onClick={copy} aria-label="Copy key">
+          <code className="min-w-0 flex-1 truncate rounded-md border bg-muted px-3 py-2 text-xs">
+            {created?.secret}
+          </code>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={copy}
+            aria-label="Copy key"
+          >
             {copied ? <CheckIcon /> : <CopyIcon />}
           </Button>
         </div>
         <div className="flex flex-col gap-1 text-sm">
-          <span className="text-muted-foreground">Use it as a Bearer token:</span>
+          <span className="text-muted-foreground">
+            Use it as a Bearer token:
+          </span>
           <code className="rounded-md border bg-muted px-3 py-2 text-xs break-all">
-            curl -H "Authorization: Bearer $SPIDER_TOKEN" {apiUrl}/v1/orgs/{orgSlug}/projects
+            curl -H "Authorization: Bearer $SPIDER_TOKEN" {apiUrl}/v1/orgs/
+            {orgSlug}/projects
           </code>
         </div>
         <DialogFooter>
@@ -469,7 +574,8 @@ function CreatedKeyDialog({
   );
 }
 
-const inviteLink = (code: string) => inviteLinkFor(window.location.origin, code);
+const inviteLink = (code: string) =>
+  inviteLinkFor(window.location.origin, code);
 
 function CopyLine({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
@@ -484,8 +590,15 @@ function CopyLine({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col gap-1">
       <span className="text-xs text-muted-foreground">{label}</span>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-md border bg-muted px-3 py-2 text-xs">{value}</code>
-        <Button variant="outline" size="icon" onClick={copy} aria-label={`Copy ${label.toLowerCase()}`}>
+        <code className="min-w-0 flex-1 truncate rounded-md border bg-muted px-3 py-2 text-xs">
+          {value}
+        </code>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={copy}
+          aria-label={`Copy ${label.toLowerCase()}`}
+        >
           {copied ? <CheckIcon /> : <CopyIcon />}
         </Button>
       </div>
@@ -510,7 +623,13 @@ function CopyPromptButton({ value }: { value: string }) {
   );
 }
 
-function PendingInvite({ orgSlug, invite }: { orgSlug: string; invite: AgentInviteDto }) {
+function PendingInvite({
+  orgSlug,
+  invite,
+}: {
+  orgSlug: string;
+  invite: AgentInviteDto;
+}) {
   const revoke = useRevokeAgentInvite(orgSlug);
 
   return (
@@ -518,8 +637,10 @@ function PendingInvite({ orgSlug, invite }: { orgSlug: string; invite: AgentInvi
       <div className="flex min-w-0 flex-col">
         <code className="font-medium">{invite.code}</code>
         <span className="text-xs text-muted-foreground">
-          {invite.status === "expired" ? "Expired" : `Expires ${dateFormat.format(new Date(invite.expiresAt))}`} ·
-          Projects: {invite.projects.map((p) => p.key).join(", ")}
+          {invite.status === "expired"
+            ? "Expired"
+            : `Expires ${dateFormat.format(new Date(invite.expiresAt))}`}{" "}
+          · Projects: {invite.projects.map((p) => p.key).join(", ")}
         </span>
       </div>
       <Button
@@ -542,7 +663,15 @@ function PendingInvite({ orgSlug, invite }: { orgSlug: string; invite: AgentInvi
 
 const EXPIRY_DAYS = [1, 7, 30] as const;
 
-function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: boolean; onClose: () => void }) {
+function InviteAgentDialog({
+  orgSlug,
+  open,
+  onClose,
+}: {
+  orgSlug: string;
+  open: boolean;
+  onClose: () => void;
+}) {
   const { data: projects } = useSuspenseQuery(projectsQuery(orgSlug));
   const [selected, setSelected] = useState<string[]>([]);
   const [days, setDays] = useState<number>(1);
@@ -557,7 +686,9 @@ function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: 
   }, [open]);
 
   function toggle(key: string, checked: boolean) {
-    setSelected((current) => (checked ? [...current, key] : current.filter((k) => k !== key)));
+    setSelected((current) =>
+      checked ? [...current, key] : current.filter((k) => k !== key),
+    );
   }
 
   function submit(event: FormEvent) {
@@ -579,18 +710,24 @@ function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: 
             <DialogHeader>
               <DialogTitle>Invite code {code}</DialogTitle>
               <DialogDescription>
-                Give it to the agent. It works once, until {dateFormat.format(new Date(created.invite.expiresAt))}, and
-                the agent will see only {created.invite.projects.map((p) => p.key).join(", ")}.
+                Give it to the agent. It works once, until{" "}
+                {dateFormat.format(new Date(created.invite.expiresAt))}, and the
+                agent will see only{" "}
+                {created.invite.projects.map((p) => p.key).join(", ")}.
               </DialogDescription>
             </DialogHeader>
             <CopyPromptButton value={claudeCodePrompt(inviteLink(code))} />
             <p className="text-xs text-muted-foreground">
-              Paste this into Claude Code on the machine where the agent will run.
+              Paste this into Claude Code on the machine where the agent will
+              run.
             </p>
             <CopyLine label="Code" value={code} />
             <CopyLine label="Link" value={inviteLink(code)} />
             <CopyLine label="CLI" value={`spider accept-invite ${code}`} />
-            <CopyLine label="Claude Code" value={`/spider-tracker:create-agent ${code}`} />
+            <CopyLine
+              label="Claude Code"
+              value={`/spider-tracker:create-agent ${code}`}
+            />
             <DialogFooter>
               <Button onClick={onClose}>Done</Button>
             </DialogFooter>
@@ -600,14 +737,17 @@ function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: 
             <DialogHeader>
               <DialogTitle>Invite an agent</DialogTitle>
               <DialogDescription>
-                The agent sets itself up with a one-time code and gets its own key. It belongs to you and sees only the
-                projects you pick.
+                The agent sets itself up with a one-time code and gets its own
+                key. It belongs to you and sees only the projects you pick.
               </DialogDescription>
             </DialogHeader>
             <fieldset className="flex flex-col gap-2">
               <legend className="mb-2 text-sm font-medium">Projects</legend>
               {projects.map((project) => (
-                <label key={project.id} className="flex items-center gap-2 text-sm">
+                <label
+                  key={project.id}
+                  className="flex items-center gap-2 text-sm"
+                >
                   <input
                     type="checkbox"
                     className="size-4"
@@ -618,7 +758,11 @@ function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: 
                   <span className="text-muted-foreground">{project.name}</span>
                 </label>
               ))}
-              {projects.length === 0 && <p className="text-sm text-muted-foreground">No projects yet.</p>}
+              {projects.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  No projects yet.
+                </p>
+              )}
             </fieldset>
             <div className="flex flex-col gap-2">
               <Label>Expires after</Label>
@@ -637,7 +781,10 @@ function InviteAgentDialog({ orgSlug, open, onClose }: { orgSlug: string; open: 
               </div>
             </div>
             <DialogFooter>
-              <Button type="submit" disabled={create.isPending || selected.length === 0}>
+              <Button
+                type="submit"
+                disabled={create.isPending || selected.length === 0}
+              >
                 Create invite
               </Button>
             </DialogFooter>

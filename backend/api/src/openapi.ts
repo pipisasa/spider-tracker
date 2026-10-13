@@ -51,9 +51,17 @@ import { z } from "zod";
 
 type JsonSchema = Record<string, unknown>;
 
-const ref = (name: string): JsonSchema => ({ $ref: `#/components/schemas/${name}` });
-const nullable = (type: string, extra: JsonSchema = {}): JsonSchema => ({ type: [type, "null"], ...extra });
-const string = (extra: JsonSchema = {}): JsonSchema => ({ type: "string", ...extra });
+const ref = (name: string): JsonSchema => ({
+  $ref: `#/components/schemas/${name}`,
+});
+const nullable = (type: string, extra: JsonSchema = {}): JsonSchema => ({
+  type: [type, "null"],
+  ...extra,
+});
+const string = (extra: JsonSchema = {}): JsonSchema => ({
+  type: "string",
+  ...extra,
+});
 const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
   type: "object",
   properties,
@@ -61,13 +69,25 @@ const object = (properties: Record<string, JsonSchema>): JsonSchema => ({
 });
 /** The `url` field: the web page of a project, task or document (ST-115). */
 const webUrl = (what: string): JsonSchema =>
-  string({ format: "uri", description: `The ${what}'s page in the web app, from the server's web origin` });
+  string({
+    format: "uri",
+    description: `The ${what}'s page in the web app, from the server's web origin`,
+  });
 const automationTarget = (description: string): JsonSchema => ({
   type: ["string", "null"],
-  enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled", null],
+  enum: [
+    "backlog",
+    "todo",
+    "in_progress",
+    "in_review",
+    "done",
+    "canceled",
+    null,
+  ],
   description,
 });
-const listOf = (item: string): JsonSchema => object({ items: { type: "array", items: ref(item) } });
+const listOf = (item: string): JsonSchema =>
+  object({ items: { type: "array", items: ref(item) } });
 
 /** Request-side JSON Schema of a Zod schema, without the $schema header. */
 function fromZod(schema: z.ZodType): JsonSchema {
@@ -85,42 +105,65 @@ const schemas: Record<string, JsonSchema> = {
         message: string(),
         url: string({
           format: "uri",
-          description: "What the error is about, when it has an address: the pull request already open (409 from POST /tasks/{taskKey}/pull-request)",
+          description:
+            "What the error is about, when it has an address: the pull request already open (409 from POST /tasks/{taskKey}/pull-request)",
         }),
       },
       required: ["code", "message"],
     },
   }),
-  Organization: object({ id: string({ format: "uuid" }), slug: string(), name: string() }),
+  Organization: object({
+    id: string({ format: "uuid" }),
+    slug: string(),
+    name: string(),
+  }),
   Actor: object({
     id: string({ format: "uuid" }),
     type: string({
       enum: ["human", "agent", "integration"],
-      description: "integration: a per-organization bot such as GitHub (listed only with ?all=true)",
+      description:
+        "integration: a per-organization bot such as GitHub (listed only with ?all=true)",
     }),
     name: string(),
     handle: string(),
     avatarUrl: nullable("string"),
     role: string({ enum: ["owner", "admin", "member", "guest"] }),
     deactivated: { type: "boolean" },
-    ownerId: nullable("string", { format: "uuid", description: "For agents, the owning person's actor id; null for people" }),
+    ownerId: nullable("string", {
+      format: "uuid",
+      description: "For agents, the owning person's actor id; null for people",
+    }),
   }),
-  Membership: object({ organization: ref("Organization"), actor: ref("Actor") }),
+  Membership: object({
+    organization: ref("Organization"),
+    actor: ref("Actor"),
+  }),
   Me: object({
-    user: object({ id: string(), name: string(), email: string(), image: nullable("string") }),
+    user: object({
+      id: string(),
+      name: string(),
+      email: string(),
+      image: nullable("string"),
+    }),
     memberships: { type: "array", items: ref("Membership") },
   }),
   Status: object({
     id: string({ format: "uuid" }),
     kind: ref("TaskKind"),
     name: string(),
-    category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+    category: string({
+      enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"],
+    }),
     color: nullable("string"),
-    position: { type: "integer", description: "Board order within its kind's workflow, from 0" },
+    position: {
+      type: "integer",
+      description: "Board order within its kind's workflow, from 0",
+    },
   }),
   TaskKind: string({
     enum: ["task", "release", "milestone"],
-    description: "What a task is; each kind has its own workflow of statuses in every project",
+    description:
+      "What a task is; each kind has its own workflow of statuses in every project",
   }),
   Project: object({
     id: string({ format: "uuid" }),
@@ -130,11 +173,13 @@ const schemas: Record<string, JsonSchema> = {
     createdAt: string({ format: "date-time" }),
     archivedAt: nullable("string", {
       format: "date-time",
-      description: "Archived projects are left out of lists and refuse new tasks",
+      description:
+        "Archived projects are left out of lists and refuse new tasks",
     }),
     rulesDocumentId: nullable("string", {
       format: "uuid",
-      description: "The project's rules for agents: one of its project-level documents (set with PATCH rulesDocumentId)",
+      description:
+        "The project's rules for agents: one of its project-level documents (set with PATCH rulesDocumentId)",
     }),
     gitAutomation: ref("GitAutomation"),
     url: webUrl("project"),
@@ -142,10 +187,16 @@ const schemas: Record<string, JsonSchema> = {
   GitAutomation: {
     ...object({
       enabled: { type: "boolean" },
-      draft: automationTarget("A PR opened as or converted to a draft (default in_progress)"),
-      opened: automationTarget("A PR opened, reopened or marked ready for review (default in_review)"),
+      draft: automationTarget(
+        "A PR opened as or converted to a draft (default in_progress)",
+      ),
+      opened: automationTarget(
+        "A PR opened, reopened or marked ready for review (default in_review)",
+      ),
       merged: automationTarget("A PR merged (default done)"),
-      closed: automationTarget("A PR closed without merging (default null: no change)"),
+      closed: automationTarget(
+        "A PR closed without merging (default null: no change)",
+      ),
     }),
     description:
       "Status automation from pull request events (set with PATCH gitAutomation; null resets to the defaults). Each event names the status category " +
@@ -156,7 +207,11 @@ const schemas: Record<string, JsonSchema> = {
     allOf: [
       ref("Project"),
       object({
-        statuses: { type: "array", items: ref("Status"), description: "The workflow of kind task, in board order" },
+        statuses: {
+          type: "array",
+          items: ref("Status"),
+          description: "The workflow of kind task, in board order",
+        },
         workflows: {
           ...object({
             task: { type: "array", items: ref("Status") },
@@ -170,7 +225,10 @@ const schemas: Record<string, JsonSchema> = {
   },
   DeletedStatus: object({
     project: ref("ProjectDetail"),
-    movedTasks: { type: "integer", description: "Tasks moved to the target status (deleted ones too)" },
+    movedTasks: {
+      type: "integer",
+      description: "Tasks moved to the target status (deleted ones too)",
+    },
   }),
   Task: object({
     id: string({ format: "uuid" }),
@@ -180,15 +238,27 @@ const schemas: Record<string, JsonSchema> = {
     kind: ref("TaskKind"),
     title: string(),
     description: nullable("string"),
-    statusId: string({ format: "uuid", description: "A status of the workflow of the task's project and kind" }),
-    priority: { type: "integer", enum: [0, 1, 2, 3, 4], description: "0 none, 1 urgent, 2 high, 3 medium, 4 low" },
+    statusId: string({
+      format: "uuid",
+      description: "A status of the workflow of the task's project and kind",
+    }),
+    priority: {
+      type: "integer",
+      enum: [0, 1, 2, 3, 4],
+      description: "0 none, 1 urgent, 2 high, 3 medium, 4 low",
+    },
     parentId: nullable("string", { format: "uuid" }),
     parentKey: nullable("string", { examples: ["SPI-3"] }),
     sortKey: string(),
-    startDate: nullable("string", { format: "date", description: "Plan start, YYYY-MM-DD", examples: ["2026-10-01"] }),
+    startDate: nullable("string", {
+      format: "date",
+      description: "Plan start, YYYY-MM-DD",
+      examples: ["2026-10-01"],
+    }),
     targetDate: nullable("string", {
       format: "date",
-      description: "Plan target, YYYY-MM-DD, on or after startDate; past it (UTC) and not done or canceled = overdue",
+      description:
+        "Plan target, YYYY-MM-DD, on or after startDate; past it (UTC) and not done or canceled = overdue",
       examples: ["2026-10-31"],
     }),
     assigneeIds: { type: "array", items: string({ format: "uuid" }) },
@@ -198,27 +268,39 @@ const schemas: Record<string, JsonSchema> = {
     updatedAt: string({ format: "date-time" }),
     completedAt: nullable("string", { format: "date-time" }),
     subtasks: nullable("object", {
-      description: "Direct sub-tasks the caller can see; closed = done or canceled. Null when there are none",
+      description:
+        "Direct sub-tasks the caller can see; closed = done or canceled. Null when there are none",
       properties: { done: { type: "integer" }, total: { type: "integer" } },
       required: ["done", "total"],
       additionalProperties: false,
     }),
     releaseId: nullable("string", {
       format: "uuid",
-      description: "The release (a task of kind release) this task ships in; null when in none or in one the caller can't see",
+      description:
+        "The release (a task of kind release) this task ships in; null when in none or in one the caller can't see",
     }),
-    shippedAt: nullable("string", { format: "date-time", description: "When its release was marked Released (for a release: when it was)" }),
-    noCode: { type: "boolean", description: "Marked as having no code to ship: it never needs a release" },
+    shippedAt: nullable("string", {
+      format: "date-time",
+      description:
+        "When its release was marked Released (for a release: when it was)",
+    }),
+    noCode: {
+      type: "boolean",
+      description: "Marked as having no code to ship: it never needs a release",
+    },
     shipping: {
-      description: "Where a Done task's code is (Done means finished, not shipped); null for releases, milestones and tasks that aren't Done and in no release",
+      description:
+        "Where a Done task's code is (Done means finished, not shipped); null for releases, milestones and tasks that aren't Done and in no release",
       oneOf: [{ type: "null" }, ref("TaskShipping")],
     },
     milestoneId: nullable("string", {
       format: "uuid",
-      description: "The milestone (a task of kind milestone, same project) the task was put in itself; null when none (it may still inherit its parent's)",
+      description:
+        "The milestone (a task of kind milestone, same project) the task was put in itself; null when none (it may still inherit its parent's)",
     }),
     milestone: {
-      description: "The milestone the task belongs to: its own, else the nearest ancestor's (inherited); null when in none or in one the caller can't see",
+      description:
+        "The milestone the task belongs to: its own, else the nearest ancestor's (inherited); null when in none or in one the caller can't see",
       oneOf: [{ type: "null" }, ref("MilestoneRef")],
     },
     url: webUrl("task"),
@@ -228,20 +310,34 @@ const schemas: Record<string, JsonSchema> = {
     key: string(),
     title: string({ examples: ["Phase 4: Git and GitHub"] }),
     status: ref("StatusRef"),
-    inherited: { type: "boolean", description: "Taken from an ancestor; the task has no milestone of its own" },
+    inherited: {
+      type: "boolean",
+      description:
+        "Taken from an ancestor; the task has no milestone of its own",
+    },
   }),
   StatusRef: object({
     id: string({ format: "uuid" }),
     name: string(),
-    category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+    category: string({
+      enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"],
+    }),
   }),
   TaskShipping: object({
-    state: string({ enum: ["not_in_release", "in_release", "shipped", "no_code"] }),
+    state: string({
+      enum: ["not_in_release", "in_release", "shipped", "no_code"],
+    }),
     release: {
-      description: "The release it is in; null when in none, or in one the caller can't see",
+      description:
+        "The release it is in; null when in none, or in one the caller can't see",
       oneOf: [
         { type: "null" },
-        object({ id: string({ format: "uuid" }), key: string(), title: string({ examples: ["2026.10.13"] }), status: ref("StatusRef") }),
+        object({
+          id: string({ format: "uuid" }),
+          key: string(),
+          title: string({ examples: ["2026.10.13"] }),
+          status: ref("StatusRef"),
+        }),
       ],
     },
   }),
@@ -250,7 +346,13 @@ const schemas: Record<string, JsonSchema> = {
       ref("Task"),
       object({
         status: ref("StatusRef"),
-        repos: { type: "array", items: object({ id: string({ format: "uuid" }), fullName: string({ examples: ["pipisasa/spider-tracker"] }) }) },
+        repos: {
+          type: "array",
+          items: object({
+            id: string({ format: "uuid" }),
+            fullName: string({ examples: ["pipisasa/spider-tracker"] }),
+          }),
+        },
         apps: {
           type: "array",
           items: object({
@@ -264,7 +366,8 @@ const schemas: Record<string, JsonSchema> = {
         },
         tasks: {
           type: "array",
-          description: "The included Done tasks (a project-scoped agent: only its projects'), by project key and number",
+          description:
+            "The included Done tasks (a project-scoped agent: only its projects'), by project key and number",
           items: object({
             id: string({ format: "uuid" }),
             key: string(),
@@ -276,7 +379,11 @@ const schemas: Record<string, JsonSchema> = {
             url: webUrl("task"),
           }),
         },
-        deployments: { type: "array", description: "Its deployments, newest first (ST-94)", items: ref("Deployment") },
+        deployments: {
+          type: "array",
+          description: "Its deployments, newest first (ST-94)",
+          items: ref("Deployment"),
+        },
       }),
     ],
   },
@@ -289,11 +396,21 @@ const schemas: Record<string, JsonSchema> = {
     app: string({ examples: ["web"] }),
     repo: string({ examples: ["pipisasa/spider-tracker"] }),
     environment: string({ examples: ["staging", "prod"] }),
-    production: { type: "boolean", description: "The environment is the app's last one, its production" },
+    production: {
+      type: "boolean",
+      description: "The environment is the app's last one, its production",
+    },
     commitSha: string({ examples: ["3f2c1ab9d0e4"] }),
     deployedBy: {
       description: "Who recorded it; null once that actor is gone",
-      oneOf: [{ type: "null" }, object({ id: string({ format: "uuid" }), handle: string(), name: string() })],
+      oneOf: [
+        { type: "null" },
+        object({
+          id: string({ format: "uuid" }),
+          handle: string(),
+          name: string(),
+        }),
+      ],
     },
     source: string({ examples: ["cli", "mcp", "api", "ui"] }),
     createdAt: string({ format: "date-time" }),
@@ -304,7 +421,8 @@ const schemas: Record<string, JsonSchema> = {
     deployment: ref("Deployment"),
     release: ref("Release"),
     movedFrom: {
-      description: "The status the release left when this deployment moved it (Planned → On staging); null when it stayed",
+      description:
+        "The status the release left when this deployment moved it (Planned → On staging); null when it stayed",
       oneOf: [{ type: "null" }, ref("StatusRef")],
     },
   }),
@@ -314,16 +432,36 @@ const schemas: Record<string, JsonSchema> = {
       object({
         status: ref("StatusRef"),
         progress: object({
-          total: { type: "integer", description: "Its tasks (own and inherited by sub-tasks) that aren't canceled" },
+          total: {
+            type: "integer",
+            description:
+              "Its tasks (own and inherited by sub-tasks) that aren't canceled",
+          },
           done: { type: "integer", description: "Of those, in a done status" },
-          canceled: { type: "integer", description: "Canceled tasks, not part of total" },
-          withCode: { type: "integer", description: "Of the done ones, those with code to ship (not noCode)" },
-          shipped: { type: "integer", description: "Of the done ones with code, those whose release is Released" },
-          complete: { type: "boolean", description: "Every task done and all their code shipped (and at least one task)" },
+          canceled: {
+            type: "integer",
+            description: "Canceled tasks, not part of total",
+          },
+          withCode: {
+            type: "integer",
+            description:
+              "Of the done ones, those with code to ship (not noCode)",
+          },
+          shipped: {
+            type: "integer",
+            description:
+              "Of the done ones with code, those whose release is Released",
+          },
+          complete: {
+            type: "boolean",
+            description:
+              "Every task done and all their code shipped (and at least one task)",
+          },
         }),
         tasks: {
           type: "array",
-          description: "Its tasks the caller can see, by project key and number",
+          description:
+            "Its tasks the caller can see, by project key and number",
           items: object({
             id: string({ format: "uuid" }),
             key: string(),
@@ -331,7 +469,10 @@ const schemas: Record<string, JsonSchema> = {
             projectKey: string(),
             status: ref("StatusRef"),
             parentKey: nullable("string"),
-            inherited: { type: "boolean", description: "In the milestone through an ancestor" },
+            inherited: {
+              type: "boolean",
+              description: "In the milestone through an ancestor",
+            },
             completedAt: nullable("string", { format: "date-time" }),
             shipping: { oneOf: [{ type: "null" }, ref("TaskShipping")] },
             url: webUrl("task"),
@@ -339,14 +480,19 @@ const schemas: Record<string, JsonSchema> = {
         },
         releases: {
           type: "array",
-          description: "Releases that include its tasks: Released ones first (oldest first), then those on their way",
+          description:
+            "Releases that include its tasks: Released ones first (oldest first), then those on their way",
           items: object({
             id: string({ format: "uuid" }),
             key: string(),
             title: string({ examples: ["2026.10.13"] }),
             status: ref("StatusRef"),
             shippedAt: nullable("string", { format: "date-time" }),
-            tasks: { type: "array", items: string(), description: "Keys of the milestone's tasks it includes" },
+            tasks: {
+              type: "array",
+              items: string(),
+              description: "Keys of the milestone's tasks it includes",
+            },
           }),
         },
       }),
@@ -358,7 +504,12 @@ const schemas: Record<string, JsonSchema> = {
   UpdateReleaseInput: fromZod(updateReleaseInput),
   ReleaseTasksInput: fromZod(releaseTasksInput),
   ReleaseChangelog: object({
-    release: object({ id: string({ format: "uuid" }), key: string(), title: string(), url: webUrl("task") }),
+    release: object({
+      id: string({ format: "uuid" }),
+      key: string(),
+      title: string(),
+      url: webUrl("task"),
+    }),
     apps: {
       type: "array",
       items: object({
@@ -368,39 +519,67 @@ const schemas: Record<string, JsonSchema> = {
         tag: string({ examples: ["web-2026.10.13", "cli-v0.1.8"] }),
       }),
     },
-    grouped: { type: "boolean", description: "Entries carry the apps they touch, so markdown has a section per app" },
+    grouped: {
+      type: "boolean",
+      description:
+        "Entries carry the apps they touch, so markdown has a section per app",
+    },
     entries: {
       type: "array",
-      description: "The included tasks (a project-scoped agent: only its projects'), by project key and number",
+      description:
+        "The included tasks (a project-scoped agent: only its projects'), by project key and number",
       items: object({
         key: string(),
         title: string(),
         projectKey: string(),
         whatChanged: nullable("string", {
-          description: 'The "What changed" section of the handoff note: the latest comment with one by an assignee, else by anyone',
+          description:
+            'The "What changed" section of the handoff note: the latest comment with one by an assignee, else by anyone',
         }),
         handoff: {
-          oneOf: [object({ commentId: string({ format: "uuid" }), authorId: string({ format: "uuid" }), createdAt: string({ format: "date-time" }) }), { type: "null" }],
+          oneOf: [
+            object({
+              commentId: string({ format: "uuid" }),
+              authorId: string({ format: "uuid" }),
+              createdAt: string({ format: "date-time" }),
+            }),
+            { type: "null" },
+          ],
         },
-        apps: { type: "array", items: string(), description: "The release's apps the task touches; empty when unknown" },
+        apps: {
+          type: "array",
+          items: string(),
+          description:
+            "The release's apps the task touches; empty when unknown",
+        },
         url: webUrl("task"),
       }),
     },
-    markdown: string({ description: "The generated changelog: a ### section per app when grouped" }),
+    markdown: string({
+      description:
+        "The generated changelog: a ### section per app when grouped",
+    }),
     description: object({
       state: string({
         enum: ["missing", "current", "outdated", "edited"],
-        description: "The description's changelog block: none, the same as markdown, generated earlier, or edited by hand",
+        description:
+          "The description's changelog block: none, the same as markdown, generated earlier, or edited by hand",
       }),
       content: nullable("string"),
     }),
-    written: nullable("string", { enum: ["added", "replaced", "unchanged", null], description: "What a write did; null for a read" }),
+    written: nullable("string", {
+      enum: ["added", "replaced", "unchanged", null],
+      description: "What a write did; null for a read",
+    }),
   }),
   ReleaseChangelogInput: fromZod(releaseChangelogInput),
   Presence: object({
     taskKey: string(),
     actorId: string({ format: "uuid" }),
-    lastSeenAt: string({ format: "date-time", description: "Latest action or read by the agent on the task" }),
+    lastSeenAt: string({
+      format: "date-time",
+      description: "Latest action or read by the agent on the task",
+    }),
   }),
   Subtask: {
     allOf: [
@@ -409,7 +588,16 @@ const schemas: Record<string, JsonSchema> = {
         status: object({
           id: string({ format: "uuid" }),
           name: string(),
-          category: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+          category: string({
+            enum: [
+              "backlog",
+              "todo",
+              "in_progress",
+              "in_review",
+              "done",
+              "canceled",
+            ],
+          }),
           color: nullable("string"),
         }),
       }),
@@ -427,13 +615,28 @@ const schemas: Record<string, JsonSchema> = {
   DocumentComment: object({
     id: string({ format: "uuid" }),
     documentId: string({ format: "uuid" }),
-    parentId: nullable("string", { format: "uuid", description: "The comment replied to" }),
+    parentId: nullable("string", {
+      format: "uuid",
+      description: "The comment replied to",
+    }),
     authorId: string({ format: "uuid" }),
     body: string({ description: "Markdown; @handle mentions notify members" }),
-    quote: nullable("string", { description: "The fragment the comment is about (top-level comments); null: the whole document" }),
-    outdated: { type: "boolean", description: "The quote no longer occurs in the current content" },
-    documentVersion: { type: "integer", description: "The document's version when the comment was posted" },
-    resolvedAt: nullable("string", { format: "date-time", description: "Set when the thread was marked resolved" }),
+    quote: nullable("string", {
+      description:
+        "The fragment the comment is about (top-level comments); null: the whole document",
+    }),
+    outdated: {
+      type: "boolean",
+      description: "The quote no longer occurs in the current content",
+    },
+    documentVersion: {
+      type: "integer",
+      description: "The document's version when the comment was posted",
+    },
+    resolvedAt: nullable("string", {
+      format: "date-time",
+      description: "Set when the thread was marked resolved",
+    }),
     resolvedBy: nullable("string", { format: "uuid" }),
     createdAt: string({ format: "date-time" }),
     editedAt: nullable("string", { format: "date-time" }),
@@ -442,34 +645,85 @@ const schemas: Record<string, JsonSchema> = {
   CreateDocumentCommentInput: fromZod(createDocumentCommentInput),
   ResolveDocumentCommentInput: fromZod(resolveDocumentCommentInput),
   InboxItem: object({
-    id: { type: "integer", description: "Increasing; use as the `after` cursor" },
+    id: {
+      type: "integer",
+      description: "Increasing; use as the `after` cursor",
+    },
     kind: string({
-      enum: ["mention", "assigned", "comment", "reply", "rules", "document_mention", "document_comment", "document_reply"],
+      enum: [
+        "mention",
+        "assigned",
+        "comment",
+        "reply",
+        "rules",
+        "document_mention",
+        "document_comment",
+        "document_reply",
+      ],
       description:
         "rules: a project's rules were set or changed; document_*: a comment on a document mentions you, replies to you, or is on your document or thread. Both are returned only when asked for with `kinds`",
     }),
     createdAt: string({ format: "date-time" }),
     readAt: nullable("string", { format: "date-time" }),
-    task: { oneOf: [object({ key: string(), title: string() }), { type: "null" }], description: "Null for rules and document_* items" },
-    document: {
-      oneOf: [object({ id: string({ format: "uuid" }), title: string(), projectKey: nullable("string") }), { type: "null" }],
-      description: "For rules items the project's rules document; for document_* items the commented document (projectKey null when organization-wide)",
+    task: {
+      oneOf: [object({ key: string(), title: string() }), { type: "null" }],
+      description: "Null for rules and document_* items",
     },
-    comment: { oneOf: [object({ id: string({ format: "uuid" }), body: string() }), { type: "null" }] },
-    from: object({ id: string({ format: "uuid" }), handle: string(), name: string(), type: string({ enum: ["human", "agent"] }) }),
+    document: {
+      oneOf: [
+        object({
+          id: string({ format: "uuid" }),
+          title: string(),
+          projectKey: nullable("string"),
+        }),
+        { type: "null" },
+      ],
+      description:
+        "For rules items the project's rules document; for document_* items the commented document (projectKey null when organization-wide)",
+    },
+    comment: {
+      oneOf: [
+        object({ id: string({ format: "uuid" }), body: string() }),
+        { type: "null" },
+      ],
+    },
+    from: object({
+      id: string({ format: "uuid" }),
+      handle: string(),
+      name: string(),
+      type: string({ enum: ["human", "agent"] }),
+    }),
   }),
-  Tag: object({ id: string({ format: "uuid" }), name: string(), color: nullable("string") }),
+  Tag: object({
+    id: string({ format: "uuid" }),
+    name: string(),
+    color: nullable("string"),
+  }),
   TagList: listOf("Tag"),
   CreateTagInput: fromZod(createTagInput),
   App: object({
     id: string({ format: "uuid" }),
     repoId: string({ format: "uuid" }),
-    repo: string({ examples: ["pipisasa/spider-tracker"], description: "The repo's owner/name" }),
+    repo: string({
+      examples: ["pipisasa/spider-tracker"],
+      description: "The repo's owner/name",
+    }),
     name: string({ examples: ["web"] }),
-    path: string({ examples: ["web/app"], description: 'Its folder in the repo ("." for the whole repo)' }),
-    sharedPaths: { type: "array", items: string(), description: 'Shared packages it depends on, e.g. "packages/core"' },
+    path: string({
+      examples: ["web/app"],
+      description: 'Its folder in the repo ("." for the whole repo)',
+    }),
+    sharedPaths: {
+      type: "array",
+      items: string(),
+      description: 'Shared packages it depends on, e.g. "packages/core"',
+    },
     versioning: string({ enum: ["date", "semver"] }),
-    environments: { type: "array", items: string(), description: 'Deploy order, e.g. ["staging", "prod"]; empty for a CLI' },
+    environments: {
+      type: "array",
+      items: string(),
+      description: 'Deploy order, e.g. ["staging", "prod"]; empty for a CLI',
+    },
     createdAt: string({ format: "date-time" }),
   }),
   Repo: object({
@@ -478,26 +732,49 @@ const schemas: Record<string, JsonSchema> = {
     name: string(),
     fullName: string({ examples: ["pipisasa/spider-tracker"] }),
     defaultBranch: string(),
-    githubInstallationId: nullable("integer", { description: "Set once the GitHub App is installed on the repo; null for repos added by URL" }),
-    projects: { type: "array", items: string(), description: "Keys of the projects it is attached to (those the caller can see)" },
+    githubInstallationId: nullable("integer", {
+      description:
+        "Set once the GitHub App is installed on the repo; null for repos added by URL",
+    }),
+    projects: {
+      type: "array",
+      items: string(),
+      description:
+        "Keys of the projects it is attached to (those the caller can see)",
+    },
     apps: { type: "array", items: ref("App") },
     createdAt: string({ format: "date-time" }),
   }),
   RepoList: listOf("Repo"),
   GithubInstallation: object({
     id: { type: "integer", description: "GitHub's installation id" },
-    account: string({ description: "The GitHub user or organization the App is installed on" }),
+    account: string({
+      description: "The GitHub user or organization the App is installed on",
+    }),
     accountType: string({ enum: ["User", "Organization"] }),
     repositorySelection: string({ enum: ["all", "selected"] }),
     suspended: { type: "boolean" },
-    repos: { type: "array", items: string(), description: '"owner/name" of the repos it grants (a project-scoped agent: its projects\' only)' },
-    settingsUrl: string({ format: "uri", description: "Where the installation is configured or uninstalled on GitHub" }),
+    repos: {
+      type: "array",
+      items: string(),
+      description:
+        '"owner/name" of the repos it grants (a project-scoped agent: its projects\' only)',
+    },
+    settingsUrl: string({
+      format: "uri",
+      description:
+        "Where the installation is configured or uninstalled on GitHub",
+    }),
     connectedBy: nullable("string", { format: "uuid" }),
     createdAt: string({ format: "date-time" }),
     updatedAt: string({ format: "date-time" }),
   }),
   GithubStatus: object({
-    configured: { type: "boolean", description: "False when the server has no GITHUB_APP_* settings: install and sync answer 503" },
+    configured: {
+      type: "boolean",
+      description:
+        "False when the server has no GITHUB_APP_* settings: install and sync answer 503",
+    },
     appSlug: nullable("string"),
     installations: { type: "array", items: ref("GithubInstallation") },
   }),
@@ -507,19 +784,28 @@ const schemas: Record<string, JsonSchema> = {
     number: { type: "integer" },
     title: string(),
     url: string({ format: "uri" }),
-    state: string({ enum: ["open", "closed", "merged"], description: '"merged" is final; "closed" is closed without merging' }),
+    state: string({
+      enum: ["open", "closed", "merged"],
+      description: '"merged" is final; "closed" is closed without merging',
+    }),
     draft: { type: "boolean" },
     headBranch: string(),
     baseBranch: string(),
-    author: nullable("string", { description: "GitHub login of who opened it" }),
+    author: nullable("string", {
+      description: "GitHub login of who opened it",
+    }),
     mergedAt: nullable("string", { format: "date-time" }),
     closedAt: nullable("string", { format: "date-time" }),
-    updatedAt: string({ format: "date-time", description: "Its last change on GitHub" }),
+    updatedAt: string({
+      format: "date-time",
+      description: "Its last change on GitHub",
+    }),
     via: ref("GitLinkVia"),
   }),
   GitLinkVia: string({
     enum: ["closing", "branch", "title", "body", "message"],
-    description: 'How the task key was found, strongest first: a closing keyword ("fixes ST-12"), the branch name, the PR title, the PR body, a commit message',
+    description:
+      'How the task key was found, strongest first: a closing keyword ("fixes ST-12"), the branch name, the PR title, the PR body, a commit message',
   }),
   GitBranch: object({
     repo: string(),
@@ -533,15 +819,29 @@ const schemas: Record<string, JsonSchema> = {
     sha: string(),
     message: string({ description: "The first line" }),
     url: string({ format: "uri" }),
-    author: nullable("string", { description: "GitHub login, or the git author name" }),
+    author: nullable("string", {
+      description: "GitHub login, or the git author name",
+    }),
     committedAt: nullable("string", { format: "date-time" }),
     via: ref("GitLinkVia"),
   }),
   TaskGit: object({
     taskKey: string(),
-    pullRequests: { type: "array", items: ref("PullRequest"), description: "Recently updated first" },
-    branches: { type: "array", items: ref("GitBranch"), description: "Newest first" },
-    commits: { type: "array", items: ref("GitCommit"), description: "The latest 100, newest first" },
+    pullRequests: {
+      type: "array",
+      items: ref("PullRequest"),
+      description: "Recently updated first",
+    },
+    branches: {
+      type: "array",
+      items: ref("GitBranch"),
+      description: "Newest first",
+    },
+    commits: {
+      type: "array",
+      items: ref("GitCommit"),
+      description: "The latest 100, newest first",
+    },
   }),
   OpenPullRequestInput: fromZod(openPullRequestInput),
   OpenedPullRequest: object({
@@ -569,8 +869,15 @@ const schemas: Record<string, JsonSchema> = {
   CreateSavedViewInput: fromZod(createSavedViewInput),
   UpdateSavedViewInput: fromZod(updateSavedViewInput),
   Relation: object({
-    kind: string({ enum: ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"] }),
-    task: object({ id: string({ format: "uuid" }), key: string(), title: string(), statusId: string({ format: "uuid" }) }),
+    kind: string({
+      enum: ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by"],
+    }),
+    task: object({
+      id: string({ format: "uuid" }),
+      key: string(),
+      title: string(),
+      statusId: string({ format: "uuid" }),
+    }),
   }),
   RelationList: listOf("Relation"),
   RelationInput: fromZod(relationInput),
@@ -584,10 +891,18 @@ const schemas: Record<string, JsonSchema> = {
     id: string({ format: "uuid" }),
     title: string(),
     format: string({ enum: ["md", "html"] }),
-    projectKey: nullable("string", { description: "Null for organization-wide documents" }),
+    projectKey: nullable("string", {
+      description: "Null for organization-wide documents",
+    }),
     taskKey: nullable("string", { description: "Set for task documents" }),
-    version: { type: "integer", description: "Increases with every save; send it back as baseVersion" },
-    authorId: string({ format: "uuid", description: "Who saved the current version" }),
+    version: {
+      type: "integer",
+      description: "Increases with every save; send it back as baseVersion",
+    },
+    authorId: string({
+      format: "uuid",
+      description: "Who saved the current version",
+    }),
     createdBy: string({ format: "uuid" }),
     createdAt: string({ format: "date-time" }),
     updatedAt: string({ format: "date-time" }),
@@ -602,7 +917,13 @@ const schemas: Record<string, JsonSchema> = {
         properties: {
           relinked: {
             ...object({
-              rewritten: { type: "array", items: object({ id: string({ format: "uuid" }), title: string() }) },
+              rewritten: {
+                type: "array",
+                items: object({
+                  id: string({ format: "uuid" }),
+                  title: string(),
+                }),
+              },
               skipped: {
                 type: "array",
                 items: object({
@@ -610,7 +931,8 @@ const schemas: Record<string, JsonSchema> = {
                   title: string(),
                   reason: string({
                     enum: ["rules", "too_large"],
-                    description: "rules: a project's rules document you may not change; too_large: the rewrite would pass 1 MB",
+                    description:
+                      "rules: a project's rules document you may not change; too_large: the rewrite would pass 1 MB",
                   }),
                 }),
               },
@@ -631,14 +953,21 @@ const schemas: Record<string, JsonSchema> = {
     createdAt: string({ format: "date-time" }),
   }),
   DocumentVersion: {
-    allOf: [ref("DocumentVersionSummary"), object({ documentId: string({ format: "uuid" }), content: string() })],
+    allOf: [
+      ref("DocumentVersionSummary"),
+      object({ documentId: string({ format: "uuid" }), content: string() }),
+    ],
   },
   DocumentVersionList: listOf("DocumentVersionSummary"),
   DiffLine: object({
     kind: string({ enum: ["context", "added", "removed"] }),
     text: string(),
-    oldLine: nullable("integer", { description: "1-based line in the older version; null for added lines" }),
-    newLine: nullable("integer", { description: "1-based line in the newer version; null for removed lines" }),
+    oldLine: nullable("integer", {
+      description: "1-based line in the older version; null for added lines",
+    }),
+    newLine: nullable("integer", {
+      description: "1-based line in the newer version; null for removed lines",
+    }),
   }),
   DiffHunk: object({
     oldStart: { type: "integer" },
@@ -656,16 +985,25 @@ const schemas: Record<string, JsonSchema> = {
     hunks: {
       type: "array",
       items: ref("DiffHunk"),
-      description: "Changes with 3 lines of context, as in a unified diff; empty when the contents match",
+      description:
+        "Changes with 3 lines of context, as in a unified diff; empty when the contents match",
     },
   }),
   DocumentLink: object({
     from: string({ format: "uuid", description: "The linking document" }),
     to: {
       oneOf: [
-        object({ type: string({ const: "document" }), id: string({ format: "uuid" }) }),
+        object({
+          type: string({ const: "document" }),
+          id: string({ format: "uuid" }),
+        }),
         object({ type: string({ const: "task" }), key: string() }),
-        object({ type: string({ const: "unresolved" }), title: string({ description: "As first written; titles match case-insensitively" }) }),
+        object({
+          type: string({ const: "unresolved" }),
+          title: string({
+            description: "As first written; titles match case-insensitively",
+          }),
+        }),
       ],
     },
   }),
@@ -677,11 +1015,23 @@ const schemas: Record<string, JsonSchema> = {
         key: string(),
         title: string(),
         projectKey: string(),
-        statusCategory: string({ enum: ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] }),
+        statusCategory: string({
+          enum: [
+            "backlog",
+            "todo",
+            "in_progress",
+            "in_review",
+            "done",
+            "canceled",
+          ],
+        }),
         url: webUrl("task"),
       }),
     },
-    projects: { type: "array", items: object({ key: string(), name: string(), url: webUrl("project") }) },
+    projects: {
+      type: "array",
+      items: object({ key: string(), name: string(), url: webUrl("project") }),
+    },
     links: { type: "array", items: ref("DocumentLink") },
   }),
   CreateDocumentInput: fromZod(createDocumentInput),
@@ -690,7 +1040,10 @@ const schemas: Record<string, JsonSchema> = {
   MoveDocumentInput: fromZod(moveDocumentInput),
   Invitation: object({
     id: string({ format: "uuid" }),
-    code: string({ examples: ["ABCD-EFGH"], description: "Accepted with or without the dash, in any case" }),
+    code: string({
+      examples: ["ABCD-EFGH"],
+      description: "Accepted with or without the dash, in any case",
+    }),
     role: string({ enum: ["admin", "member", "guest"] }),
     status: string({ enum: ["active", "expired", "revoked", "used_up"] }),
     useCount: { type: "integer" },
@@ -711,23 +1064,42 @@ const schemas: Record<string, JsonSchema> = {
   ApiKey: object({
     id: string({ format: "uuid" }),
     name: string(),
-    prefix: string({ examples: ["spt_a1b2c3"], description: "First characters of the key, to recognise it" }),
+    prefix: string({
+      examples: ["spt_a1b2c3"],
+      description: "First characters of the key, to recognise it",
+    }),
     createdAt: string({ format: "date-time" }),
     lastUsedAt: nullable("string", { format: "date-time" }),
     revokedAt: nullable("string", { format: "date-time" }),
   }),
-  CreatedApiKey: object({ key: ref("ApiKey"), secret: string({ description: "Shown only once" }) }),
+  CreatedApiKey: object({
+    key: ref("ApiKey"),
+    secret: string({ description: "Shown only once" }),
+  }),
   Agent: object({
     actor: ref("Actor"),
     ownerId: string({ format: "uuid" }),
-    owner: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+    owner: object({
+      id: string({ format: "uuid" }),
+      name: string(),
+      handle: string(),
+    }),
     description: nullable("string"),
-    canManage: { type: "boolean", description: "The caller owns the agent or is an organization owner/admin" },
-    keys: { type: "array", items: ref("ApiKey"), description: "Empty unless canManage" },
+    canManage: {
+      type: "boolean",
+      description:
+        "The caller owns the agent or is an organization owner/admin",
+    },
+    keys: {
+      type: "array",
+      items: ref("ApiKey"),
+      description: "Empty unless canManage",
+    },
     projects: {
       type: ["array", "null"],
       items: ref("ProjectRef"),
-      description: "Projects the agent is limited to (empty once they are all deleted); null when it sees every project",
+      description:
+        "Projects the agent is limited to (empty once they are all deleted); null when it sees every project",
     },
   }),
   AgentList: listOf("Agent"),
@@ -739,20 +1111,34 @@ const schemas: Record<string, JsonSchema> = {
     expiresAt: string({ format: "date-time" }),
     createdAt: string({ format: "date-time" }),
     createdBy: nullable("string", { format: "uuid" }),
-    agent: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+    agent: object({
+      id: string({ format: "uuid" }),
+      name: string(),
+      handle: string(),
+    }),
     projects: { type: "array", items: ref("ProjectRef") },
   }),
   AgentInviteList: listOf("AgentInvite"),
   CreatedAgentInvite: object({
     invite: ref("AgentInvite"),
-    agent: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+    agent: object({
+      id: string({ format: "uuid" }),
+      name: string(),
+      handle: string(),
+    }),
   }),
   AcceptedAgentInvite: object({
-    token: string({ description: "The agent's API key (spt_…); shown only once" }),
+    token: string({
+      description: "The agent's API key (spt_…); shown only once",
+    }),
     actor: ref("Actor"),
     organization: ref("Organization"),
     projects: { type: "array", items: ref("ProjectRef") },
-    owner: object({ id: string({ format: "uuid" }), name: string(), handle: string() }),
+    owner: object({
+      id: string({ format: "uuid" }),
+      name: string(),
+      handle: string(),
+    }),
   }),
   CreateAgentInviteInput: fromZod(createAgentInviteInput),
   AcceptAgentInviteInput: fromZod(acceptAgentInviteInput),
@@ -772,31 +1158,63 @@ const schemas: Record<string, JsonSchema> = {
   UpdateTaskInput: fromZod(updateTaskInput),
   BulkUpdateTasksInput: fromZod(bulkUpdateTasksInput),
   BulkTaskResult: object({
-    key: string({ description: "The task's key; for an error, the key as given" }),
-    outcome: string({ enum: ["changed", "unchanged", "error"], description: 'In a dry run, "changed" means it would change' }),
-    task: { oneOf: [ref("Task"), { type: "null" }], description: "The task after the change (as it would be, in a dry run); null on error" },
+    key: string({
+      description: "The task's key; for an error, the key as given",
+    }),
+    outcome: string({
+      enum: ["changed", "unchanged", "error"],
+      description: 'In a dry run, "changed" means it would change',
+    }),
+    task: {
+      oneOf: [ref("Task"), { type: "null" }],
+      description:
+        "The task after the change (as it would be, in a dry run); null on error",
+    },
     error: nullable("object", {
-      description: 'Why this task wasn\'t changed, e.g. { code: "not_found" } for a missing or out-of-scope task',
+      description:
+        'Why this task wasn\'t changed, e.g. { code: "not_found" } for a missing or out-of-scope task',
       properties: { code: string(), message: string() },
       required: ["code", "message"],
     }),
   }),
   BulkUpdateTasksResult: object({
     dryRun: { type: "boolean" },
-    summary: object({ changed: { type: "integer" }, unchanged: { type: "integer" }, failed: { type: "integer" } }),
-    results: { type: "array", items: ref("BulkTaskResult"), description: "In the order of the keys given, or board order for a filter" },
+    summary: object({
+      changed: { type: "integer" },
+      unchanged: { type: "integer" },
+      failed: { type: "integer" },
+    }),
+    results: {
+      type: "array",
+      items: ref("BulkTaskResult"),
+      description:
+        "In the order of the keys given, or board order for a filter",
+    },
   }),
   CreateOrganizationInput: fromZod(createOrganizationInput),
-  AuthProviders: object({ providers: { type: "array", items: string({ enum: ["magic-link", "github", "batele-id"] }) } }),
+  AuthProviders: object({
+    providers: {
+      type: "array",
+      items: string({ enum: ["magic-link", "github", "batele-id"] }),
+    },
+  }),
   Activity: object({
-    id: { type: "integer", description: "Increasing; entries come oldest first" },
-    action: string({ examples: ["task.created", "task.updated", "comment.created"] }),
+    id: {
+      type: "integer",
+      description: "Increasing; entries come oldest first",
+    },
+    action: string({
+      examples: ["task.created", "task.updated", "comment.created"],
+    }),
     changes: {
       type: ["object", "null"],
       additionalProperties: true,
-      description: "For task.updated: field → [before, after] (statusId, assigneeIds, tagIds, parentId, title, priority, …)",
+      description:
+        "For task.updated: field → [before, after] (statusId, assigneeIds, tagIds, parentId, title, priority, …)",
     },
-    source: string({ enum: ["ui", "api", "mcp", "cli", "git", "agent_run", "system"] }),
+    source: string({
+      enum: ["ui", "api", "mcp", "cli", "git", "agent_run", "system"],
+    }),
     actorId: string({ format: "uuid" }),
     createdAt: string({ format: "date-time" }),
   }),
@@ -804,7 +1222,12 @@ const schemas: Record<string, JsonSchema> = {
   DeviceCodeInput: fromZod(deviceCodeInput),
   DeviceTokenInput: {
     type: "object",
-    properties: { grant_type: string({ const: "urn:ietf:params:oauth:grant-type:device_code" }), device_code: string() },
+    properties: {
+      grant_type: string({
+        const: "urn:ietf:params:oauth:grant-type:device_code",
+      }),
+      device_code: string(),
+    },
     required: ["device_code"],
   },
   DeviceCode: object({
@@ -816,14 +1239,23 @@ const schemas: Record<string, JsonSchema> = {
     interval: { type: "integer" },
   }),
   DeviceToken: object({
-    access_token: string({ description: "The device agent's API key (spt_…), returned once" }),
+    access_token: string({
+      description: "The device agent's API key (spt_…), returned once",
+    }),
     token_type: string({ enum: ["Bearer"] }),
     actor: ref("Actor"),
     organization: ref("Organization"),
   }),
   DeviceTokenError: object({
     error: string({
-      enum: ["invalid_request", "authorization_pending", "slow_down", "expired_token", "access_denied", "invalid_grant"],
+      enum: [
+        "invalid_request",
+        "authorization_pending",
+        "slow_down",
+        "expired_token",
+        "access_denied",
+        "invalid_grant",
+      ],
     }),
   }),
   DeviceRequest: object({
@@ -835,19 +1267,44 @@ const schemas: Record<string, JsonSchema> = {
   DeviceApproveInput: object({ orgSlug: string() }),
 };
 
-const json = (schema: string) => ({ content: { "application/json": { schema: ref(schema) } } });
-const ok = (description: string, schema: string) => ({ description, ...json(schema) });
+const json = (schema: string) => ({
+  content: { "application/json": { schema: ref(schema) } },
+});
+const ok = (description: string, schema: string) => ({
+  description,
+  ...json(schema),
+});
 const errors = {
   "400": { description: "Invalid input", ...json("Error") },
   "401": { description: "Missing or invalid credentials", ...json("Error") },
   "403": { description: "Not allowed", ...json("Error") },
-  "404": { description: "Not found (also for organizations you are not a member of)", ...json("Error") },
-  "409": { description: "Conflict: already exists, or a document saved since your baseVersion", ...json("Error") },
-  "429": { description: "Rate-limited (agent comment loop guards, per-IP limits on public endpoints)", ...json("Error") },
+  "404": {
+    description: "Not found (also for organizations you are not a member of)",
+    ...json("Error"),
+  },
+  "409": {
+    description:
+      "Conflict: already exists, or a document saved since your baseVersion",
+    ...json("Error"),
+  },
+  "429": {
+    description:
+      "Rate-limited (agent comment loop guards, per-IP limits on public endpoints)",
+    ...json("Error"),
+  },
 };
-const githubOff = { description: "The server has no GitHub App configured (not_configured)", ...json("Error") };
-const githubDown = { description: "GitHub couldn't be reached or refused the request (github_unavailable)", ...json("Error") };
-const rateLimited = (description: string) => ({ "429": { description, ...json("Error") } });
+const githubOff = {
+  description: "The server has no GitHub App configured (not_configured)",
+  ...json("Error"),
+};
+const githubDown = {
+  description:
+    "GitHub couldn't be reached or refused the request (github_unavailable)",
+  ...json("Error"),
+};
+const rateLimited = (description: string) => ({
+  "429": { description, ...json("Error") },
+});
 const invitationLimits = rateLimited(
   "Rate-limited: more than 20 invitation requests a minute from this client IP, or 10 from this user",
 );
@@ -860,11 +1317,17 @@ const pathParam = (name: string, description: string) => ({
 });
 const orgSlug = pathParam("orgSlug", "Organization slug");
 const projectKey = pathParam("projectKey", 'Project key, e.g. "SPI"');
-const repoOwner = pathParam("owner", 'GitHub owner of the repo, e.g. "pipisasa"');
+const repoOwner = pathParam(
+  "owner",
+  'GitHub owner of the repo, e.g. "pipisasa"',
+);
 const repoName = pathParam("name", 'Repo name, e.g. "spider-tracker"');
 const taskKey = pathParam("taskKey", 'Task key, e.g. "SPI-12"');
 const installationId = pathParam("installationId", "GitHub's installation id");
-const userCode = pathParam("userCode", 'Code shown by spider login, e.g. "WDJB-MJHT"');
+const userCode = pathParam(
+  "userCode",
+  'Code shown by spider login, e.g. "WDJB-MJHT"',
+);
 const body = (schema: string) => ({ required: true, ...json(schema) });
 /** RFC 8628 endpoints accept JSON or form-encoded bodies. */
 const jsonOrForm = (schema: string) => ({
@@ -874,10 +1337,20 @@ const jsonOrForm = (schema: string) => ({
 
 const paths = {
   "/health": {
-    get: { operationId: "health", summary: "Liveness, with the oldest supported CLI version", security: [], responses: { "200": { description: "OK" } } },
+    get: {
+      operationId: "health",
+      summary: "Liveness, with the oldest supported CLI version",
+      security: [],
+      responses: { "200": { description: "OK" } },
+    },
   },
   "/health/ready": {
-    get: { operationId: "ready", summary: "Readiness: the database answers", security: [], responses: { "200": { description: "OK" } } },
+    get: {
+      operationId: "ready",
+      summary: "Readiness: the database answers",
+      security: [],
+      responses: { "200": { description: "OK" } },
+    },
   },
   "/auth/providers": {
     get: {
@@ -890,21 +1363,30 @@ const paths = {
   "/device/code": {
     post: {
       operationId: "startDeviceAuthorization",
-      summary: "Start a spider login (RFC 8628 device authorization). Rate limited per client IP",
+      summary:
+        "Start a spider login (RFC 8628 device authorization). Rate limited per client IP",
       security: [],
       requestBody: { required: false, content: jsonOrForm("DeviceCodeInput") },
-      responses: { "200": ok("Device and user codes", "DeviceCode"), "429": errors["429"] },
+      responses: {
+        "200": ok("Device and user codes", "DeviceCode"),
+        "429": errors["429"],
+      },
     },
   },
   "/device/token": {
     post: {
       operationId: "pollDeviceToken",
-      summary: "Poll until the login is approved; then returns the device agent's API key",
+      summary:
+        "Poll until the login is approved; then returns the device agent's API key",
       security: [],
       requestBody: { required: true, content: jsonOrForm("DeviceTokenInput") },
       responses: {
         "200": ok("The device agent's key", "DeviceToken"),
-        "400": { description: "Pending, slowed down, denied, expired or invalid (RFC 8628 error)", ...json("DeviceTokenError") },
+        "400": {
+          description:
+            "Pending, slowed down, denied, expired or invalid (RFC 8628 error)",
+          ...json("DeviceTokenError"),
+        },
       },
     },
   },
@@ -916,15 +1398,31 @@ const paths = {
       security: [{ sessionCookie: [] }],
       parameters: [
         { name: "installation_id", in: "query", schema: { type: "string" } },
-        { name: "setup_action", in: "query", schema: { type: "string", enum: ["install", "update", "request"] } },
+        {
+          name: "setup_action",
+          in: "query",
+          schema: { type: "string", enum: ["install", "update", "request"] },
+        },
         { name: "state", in: "query", schema: { type: "string" } },
-        { name: "code", in: "query", schema: { type: "string" }, description: "OAuth code (Request user authorization during installation)" },
+        {
+          name: "code",
+          in: "query",
+          schema: { type: "string" },
+          description:
+            "OAuth code (Request user authorization during installation)",
+        },
       ],
       responses: {
         "302": { description: "Back to the web app" },
-        "400": { description: "Invalid, expired or already used state (a state works once)" },
+        "400": {
+          description:
+            "Invalid, expired or already used state (a state works once)",
+        },
         "401": { description: "Not signed in" },
-        "403": { description: "Started by someone else, or no longer an owner or admin" },
+        "403": {
+          description:
+            "Started by someone else, or no longer an owner or admin",
+        },
         "503": githubOff,
       },
     },
@@ -936,33 +1434,68 @@ const paths = {
         "The GitHub App's webhook (GitHub calls it; the signature is the credential). X-Hub-Signature-256 is checked over the raw body before parsing, and each X-GitHub-Delivery is handled once. Handles installation, installation_repositories and repository, and links branches, commits and pull requests to tasks from create, delete, push and pull_request (a pull_request event older than the stored PR changes nothing); ping and other events are recorded and ignored",
       security: [],
       parameters: [
-        { name: "X-GitHub-Event", in: "header", required: true, schema: { type: "string" }, description: 'e.g. "installation"' },
-        { name: "X-GitHub-Delivery", in: "header", required: true, schema: { type: "string" }, description: "The delivery's GUID" },
+        {
+          name: "X-GitHub-Event",
+          in: "header",
+          required: true,
+          schema: { type: "string" },
+          description: 'e.g. "installation"',
+        },
+        {
+          name: "X-GitHub-Delivery",
+          in: "header",
+          required: true,
+          schema: { type: "string" },
+          description: "The delivery's GUID",
+        },
         {
           name: "X-Hub-Signature-256",
           in: "header",
           required: true,
           schema: { type: "string" },
-          description: "sha256=<hex HMAC-SHA256 of the body with the webhook secret>",
+          description:
+            "sha256=<hex HMAC-SHA256 of the body with the webhook secret>",
         },
       ],
-      requestBody: { required: true, content: { "application/json": { schema: { type: "object", description: "GitHub's event payload" } } } },
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: { type: "object", description: "GitHub's event payload" },
+          },
+        },
+      },
       responses: {
         "200": {
-          description: "Handled (processed), seen before (duplicate), or nothing to do (ignored)",
+          description:
+            "Handled (processed), seen before (duplicate), or nothing to do (ignored)",
           content: {
             "application/json": {
               schema: {
                 type: "object",
                 required: ["status"],
-                properties: { status: string({ enum: ["processed", "ignored", "duplicate"] }) },
+                properties: {
+                  status: string({
+                    enum: ["processed", "ignored", "duplicate"],
+                  }),
+                },
               },
             },
           },
         },
-        "400": { description: "Missing headers, a body that isn't JSON, or a payload that doesn't match its event", ...json("Error") },
-        "401": { description: "Missing or invalid signature (unauthorized)", ...json("Error") },
-        "413": { description: "Body over 5 MiB (payload_too_large)", ...json("Error") },
+        "400": {
+          description:
+            "Missing headers, a body that isn't JSON, or a payload that doesn't match its event",
+          ...json("Error"),
+        },
+        "401": {
+          description: "Missing or invalid signature (unauthorized)",
+          ...json("Error"),
+        },
+        "413": {
+          description: "Body over 5 MiB (payload_too_large)",
+          ...json("Error"),
+        },
         "503": githubOff,
       },
     },
@@ -971,7 +1504,8 @@ const paths = {
     parameters: [userCode],
     get: {
       operationId: "getDeviceRequest",
-      summary: "A pending device login, for the approval page (browser sessions only)",
+      summary:
+        "A pending device login, for the approval page (browser sessions only)",
       responses: { "200": ok("Device request", "DeviceRequest"), ...errors },
     },
   },
@@ -979,7 +1513,8 @@ const paths = {
     parameters: [userCode],
     post: {
       operationId: "approveDevice",
-      summary: "Approve a device login for one of your organizations (owners, admins and members; browser sessions only)",
+      summary:
+        "Approve a device login for one of your organizations (owners, admins and members; browser sessions only)",
       requestBody: body("DeviceApproveInput"),
       responses: { "204": { description: "Approved" }, ...errors },
     },
@@ -995,7 +1530,8 @@ const paths = {
   "/v1/organizations": {
     post: {
       operationId: "createOrganization",
-      summary: "Create an organization; you become its owner (browser sessions only)",
+      summary:
+        "Create an organization; you become its owner (browser sessions only)",
       requestBody: body("CreateOrganizationInput"),
       responses: { "201": ok("New membership", "Membership"), ...errors },
     },
@@ -1004,9 +1540,13 @@ const paths = {
     parameters: [orgSlug],
     get: {
       operationId: "streamEvents",
-      summary: "Server-sent change events (ids and keys only; refetch through the normal routes)",
+      summary:
+        "Server-sent change events (ids and keys only; refetch through the normal routes)",
       responses: {
-        "200": { description: "SSE stream of ready, ping and change events", content: { "text/event-stream": { schema: string() } } },
+        "200": {
+          description: "SSE stream of ready, ping and change events",
+          content: { "text/event-stream": { schema: string() } },
+        },
         ...errors,
       },
     },
@@ -1021,7 +1561,8 @@ const paths = {
   "/v1/me": {
     get: {
       operationId: "me",
-      summary: "The signed-in person and their organizations (browser sessions only)",
+      summary:
+        "The signed-in person and their organizations (browser sessions only)",
       responses: { "200": ok("Current user", "Me"), ...errors },
     },
   },
@@ -1035,7 +1576,8 @@ const paths = {
           name: "all",
           in: "query",
           schema: { type: "boolean" },
-          description: "Include deactivated people and deleted agents (e.g. to name tasks' former assignees)",
+          description:
+            "Include deactivated people and deleted agents (e.g. to name tasks' former assignees)",
         },
       ],
       responses: { "200": ok("Members", "ActorList"), ...errors },
@@ -1044,29 +1586,41 @@ const paths = {
   "/v1/invitations/preview": {
     post: {
       operationId: "previewInvitation",
-      summary: "The organization and role an invitation code joins (browser sessions only)",
+      summary:
+        "The organization and role an invitation code joins (browser sessions only)",
       requestBody: body("InvitationCodeInput"),
-      responses: { "200": ok("Invitation preview", "InvitationPreview"), ...errors, ...invitationLimits },
+      responses: {
+        "200": ok("Invitation preview", "InvitationPreview"),
+        ...errors,
+        ...invitationLimits,
+      },
     },
   },
   "/v1/invitations/accept": {
     post: {
       operationId: "acceptInvitation",
-      summary: "Join an organization with an invitation code (browser sessions only)",
+      summary:
+        "Join an organization with an invitation code (browser sessions only)",
       requestBody: body("InvitationCodeInput"),
-      responses: { "201": ok("New membership", "Membership"), ...errors, ...invitationLimits },
+      responses: {
+        "201": ok("New membership", "Membership"),
+        ...errors,
+        ...invitationLimits,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/invitations": {
     parameters: [orgSlug],
     get: {
       operationId: "listInvitations",
-      summary: "Active invitation codes and recently expired or revoked ones (owners and admins)",
+      summary:
+        "Active invitation codes and recently expired or revoked ones (owners and admins)",
       responses: { "200": ok("Invitations", "InvitationList"), ...errors },
     },
     post: {
       operationId: "createInvitation",
-      summary: "Create an invitation code (owners and admins; only owners can invite admins)",
+      summary:
+        "Create an invitation code (owners and admins; only owners can invite admins)",
       requestBody: body("CreateInvitationInput"),
       responses: { "201": ok("Created invitation", "Invitation"), ...errors },
     },
@@ -1083,12 +1637,14 @@ const paths = {
     parameters: [orgSlug],
     get: {
       operationId: "listAgents",
-      summary: "Active agents with their owners; keys only for agents you can manage",
+      summary:
+        "Active agents with their owners; keys only for agents you can manage",
       responses: { "200": ok("Agents", "AgentList"), ...errors },
     },
     post: {
       operationId: "createAgent",
-      summary: "Create an agent owned by you (people with owner, admin or member role; not guests or agent keys)",
+      summary:
+        "Create an agent owned by you (people with owner, admin or member role; not guests or agent keys)",
       requestBody: body("CreateAgentInput"),
       responses: { "201": ok("Created agent", "Agent"), ...errors },
     },
@@ -1097,7 +1653,8 @@ const paths = {
     parameters: [orgSlug],
     patch: {
       operationId: "updateAgentMe",
-      summary: "An agent changes its own name, handle or description (agent API keys)",
+      summary:
+        "An agent changes its own name, handle or description (agent API keys)",
       requestBody: body("UpdateAgentInput"),
       responses: { "200": ok("Updated agent", "Agent"), ...errors },
     },
@@ -1106,14 +1663,19 @@ const paths = {
     parameters: [orgSlug],
     get: {
       operationId: "listAgentInvites",
-      summary: "Unused agent invites for agents you can manage (recently expired ones included)",
+      summary:
+        "Unused agent invites for agents you can manage (recently expired ones included)",
       responses: { "200": ok("Agent invites", "AgentInviteList"), ...errors },
     },
     post: {
       operationId: "createAgentInvite",
-      summary: "Create a pending agent limited to some projects, with a one-time setup code (people who can create agents)",
+      summary:
+        "Create a pending agent limited to some projects, with a one-time setup code (people who can create agents)",
       requestBody: body("CreateAgentInviteInput"),
-      responses: { "201": ok("Created invite", "CreatedAgentInvite"), ...errors },
+      responses: {
+        "201": ok("Created invite", "CreatedAgentInvite"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/agent-invites/{inviteId}": {
@@ -1144,13 +1706,15 @@ const paths = {
     parameters: [orgSlug, pathParam("agentId", "Agent actor id")],
     patch: {
       operationId: "updateAgent",
-      summary: "Change an agent's name, handle or description (its owner, or owners and admins)",
+      summary:
+        "Change an agent's name, handle or description (its owner, or owners and admins)",
       requestBody: body("UpdateAgentInput"),
       responses: { "200": ok("Updated agent", "Agent"), ...errors },
     },
     delete: {
       operationId: "deleteAgent",
-      summary: "Deactivate an agent and revoke its keys; its history and assignments stay",
+      summary:
+        "Deactivate an agent and revoke its keys; its history and assignments stay",
       responses: { "204": { description: "Deleted" }, ...errors },
     },
   },
@@ -1158,7 +1722,8 @@ const paths = {
     parameters: [orgSlug, pathParam("agentId", "Agent actor id")],
     post: {
       operationId: "createApiKey",
-      summary: "Issue an API key for an agent you can manage; the secret is returned only once",
+      summary:
+        "Issue an API key for an agent you can manage; the secret is returned only once",
       requestBody: body("CreateApiKeyInput"),
       responses: { "201": ok("Created key", "CreatedApiKey"), ...errors },
     },
@@ -1177,13 +1742,19 @@ const paths = {
       operationId: "listProjects",
       summary: "List projects",
       parameters: [
-        { name: "archived", in: "query", schema: { type: "boolean" }, description: "Include archived projects" },
+        {
+          name: "archived",
+          in: "query",
+          schema: { type: "boolean" },
+          description: "Include archived projects",
+        },
       ],
       responses: { "200": ok("Projects", "ProjectList"), ...errors },
     },
     post: {
       operationId: "createProject",
-      summary: "Create a project with the default workflow of every task kind (owners, admins and their agents)",
+      summary:
+        "Create a project with the default workflow of every task kind (owners, admins and their agents)",
       requestBody: body("CreateProjectInput"),
       responses: { "201": ok("Created project", "ProjectDetail"), ...errors },
     },
@@ -1207,7 +1778,8 @@ const paths = {
     parameters: [orgSlug, projectKey],
     post: {
       operationId: "archiveProject",
-      summary: "Archive a project: hidden from lists, no new tasks (owners, admins and their agents)",
+      summary:
+        "Archive a project: hidden from lists, no new tasks (owners, admins and their agents)",
       responses: { "200": ok("Archived project", "ProjectDetail"), ...errors },
     },
     delete: {
@@ -1220,30 +1792,49 @@ const paths = {
     parameters: [orgSlug, projectKey],
     post: {
       operationId: "createStatus",
-      summary: "Add a status to one kind's workflow (owners, admins and their agents)",
-      description: "Appended unless `position` is given; names are unique per workflow, case-insensitively (409). The category can't change later.",
+      summary:
+        "Add a status to one kind's workflow (owners, admins and their agents)",
+      description:
+        "Appended unless `position` is given; names are unique per workflow, case-insensitively (409). The category can't change later.",
       requestBody: body("CreateStatusInput"),
-      responses: { "201": ok("The project with its workflows", "ProjectDetail"), ...errors },
+      responses: {
+        "201": ok("The project with its workflows", "ProjectDetail"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/statuses/{statusId}": {
     parameters: [orgSlug, projectKey, pathParam("statusId", "Status id")],
     patch: {
       operationId: "updateStatus",
-      summary: "Rename, recolor or move a status within its workflow (owners, admins and their agents)",
+      summary:
+        "Rename, recolor or move a status within its workflow (owners, admins and their agents)",
       requestBody: body("UpdateStatusInput"),
-      responses: { "200": ok("The project with its workflows", "ProjectDetail"), ...errors },
+      responses: {
+        "200": ok("The project with its workflows", "ProjectDetail"),
+        ...errors,
+      },
     },
     delete: {
       operationId: "deleteStatus",
-      summary: "Delete a status after moving its tasks to another status of the same workflow (owners, admins and their agents)",
+      summary:
+        "Delete a status after moving its tasks to another status of the same workflow (owners, admins and their agents)",
       description:
         "Its tasks (deleted ones too) go to the end of `moveTo`'s column; completedAt is set or cleared when they close or reopen. " +
         "Refused (400) when the workflow would be left without an open status (not done or canceled) or without a done status.",
       parameters: [
-        { name: "moveTo", in: "query", required: true, schema: { type: "string", format: "uuid" }, description: "The status to move its tasks to" },
+        {
+          name: "moveTo",
+          in: "query",
+          required: true,
+          schema: { type: "string", format: "uuid" },
+          description: "The status to move its tasks to",
+        },
       ],
-      responses: { "200": ok("The project and how many tasks moved", "DeletedStatus"), ...errors },
+      responses: {
+        "200": ok("The project and how many tasks moved", "DeletedStatus"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/tasks": {
@@ -1256,7 +1847,13 @@ const paths = {
         "a task must carry every `tag` (or any of them with `tagMatch=any`); parameters combine with AND. " +
         "Missing or out-of-scope projects are 404s; unknown statuses, members and tags are 400s.",
       parameters: [
-        { name: "kind", in: "query", schema: ref("TaskKind"), description: "Only tasks of this kind; status names then match its workflow only" },
+        {
+          name: "kind",
+          in: "query",
+          schema: ref("TaskKind"),
+          description:
+            "Only tasks of this kind; status names then match its workflow only",
+        },
         {
           name: "status",
           in: "query",
@@ -1270,13 +1867,14 @@ const paths = {
           schema: { type: "array", items: { type: "string" } },
           description:
             'Actor id or handle (deactivated ones too), "me", "mine" (you and your agents; for an agent key, ' +
-            "its owner and the owner's agents, deleted ones too), or \"none\" for unassigned tasks",
+            'its owner and the owner\'s agents, deleted ones too), or "none" for unassigned tasks',
         },
         {
           name: "tag",
           in: "query",
           schema: { type: "array", items: { type: "string" } },
-          description: "Tag name, case-insensitive; the task must have all of them (see tagMatch)",
+          description:
+            "Tag name, case-insensitive; the task must have all of them (see tagMatch)",
         },
         {
           name: "tagMatch",
@@ -1287,16 +1885,30 @@ const paths = {
         {
           name: "priority",
           in: "query",
-          schema: { type: "array", items: { type: "integer", minimum: 0, maximum: 4 } },
+          schema: {
+            type: "array",
+            items: { type: "integer", minimum: 0, maximum: 4 },
+          },
           description: "0 none, 1 urgent, 2 high, 3 medium, 4 low",
         },
-        { name: "q", in: "query", schema: { type: "string" }, description: "Case-insensitive text in the title" },
-        { name: "parent", in: "query", schema: { type: "string" }, description: 'Direct sub-tasks of this task key, e.g. "SPI-3"' },
+        {
+          name: "q",
+          in: "query",
+          schema: { type: "string" },
+          description: "Case-insensitive text in the title",
+        },
+        {
+          name: "parent",
+          in: "query",
+          schema: { type: "string" },
+          description: 'Direct sub-tasks of this task key, e.g. "SPI-3"',
+        },
         {
           name: "overdue",
           in: "query",
           schema: { type: "boolean" },
-          description: "true: only tasks whose targetDate is before today (the server's UTC date) and whose status isn't done or canceled",
+          description:
+            "true: only tasks whose targetDate is before today (the server's UTC date) and whose status isn't done or canceled",
         },
       ],
       responses: { "200": ok("Tasks", "TaskList"), ...errors },
@@ -1314,7 +1926,10 @@ const paths = {
       operationId: "listPresence",
       summary:
         "Agents working on the project's tasks right now: they acted on a task (activity log) or read it through the API, CLI or MCP within the last 10 minutes",
-      responses: { "200": ok("Active agents per task", "PresenceList"), ...errors },
+      responses: {
+        "200": ok("Active agents per task", "PresenceList"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/views": {
@@ -1335,7 +1950,8 @@ const paths = {
     parameters: [orgSlug, projectKey, pathParam("viewId", "Saved view id")],
     patch: {
       operationId: "updateSavedView",
-      summary: "Rename or change a view (its owner, or organization owners and admins)",
+      summary:
+        "Rename or change a view (its owner, or organization owners and admins)",
       requestBody: body("UpdateSavedViewInput"),
       responses: { "200": ok("Updated view", "SavedView"), ...errors },
     },
@@ -1349,7 +1965,8 @@ const paths = {
     parameters: [orgSlug],
     post: {
       operationId: "bulkUpdateTasks",
-      summary: "Update several tasks at once, by keys or a filter (at most 100)",
+      summary:
+        "Update several tasks at once, by keys or a filter (at most 100)",
       description:
         "Pass `keys` (any projects) or `filter` (one project; the same filters as listing tasks, plus `parent`), and `set`: " +
         "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`, `startDate`, `targetDate` (null clears; start ≤ target), `noCode`, `milestoneId` (a milestone of each task's own project; null takes it out). " +
@@ -1357,7 +1974,10 @@ const paths = {
         "a task that fails (missing, out of scope, unknown status, …) is reported in `results` without stopping the others, so the response is 200. " +
         "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing.",
       requestBody: body("BulkUpdateTasksInput"),
-      responses: { "200": ok("One result per task", "BulkUpdateTasksResult"), ...errors },
+      responses: {
+        "200": ok("One result per task", "BulkUpdateTasksResult"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}": {
@@ -1381,14 +2001,26 @@ const paths = {
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/subtasks": {
     parameters: [orgSlug, taskKey],
-    get: { operationId: "listSubtasks", summary: "Direct sub-tasks of a task", responses: { "200": ok("Sub-tasks, each with its own status", "SubtaskList"), ...errors } },
+    get: {
+      operationId: "listSubtasks",
+      summary: "Direct sub-tasks of a task",
+      responses: {
+        "200": ok("Sub-tasks, each with its own status", "SubtaskList"),
+        ...errors,
+      },
+    },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/relations": {
     parameters: [orgSlug, taskKey],
-    get: { operationId: "listRelations", summary: "Links to other tasks, from this task's point of view", responses: { "200": ok("Relations", "RelationList"), ...errors } },
+    get: {
+      operationId: "listRelations",
+      summary: "Links to other tasks, from this task's point of view",
+      responses: { "200": ok("Relations", "RelationList"), ...errors },
+    },
     post: {
       operationId: "addRelation",
-      summary: "Link this task to another (blocks, blocked_by, relates, duplicates, duplicated_by)",
+      summary:
+        "Link this task to another (blocks, blocked_by, relates, duplicates, duplicated_by)",
       requestBody: body("RelationInput"),
       responses: { "201": ok("Created link", "Relation"), ...errors },
     },
@@ -1396,8 +2028,19 @@ const paths = {
       operationId: "removeRelation",
       summary: "Remove a link",
       parameters: [
-        { name: "kind", in: "query", required: true, schema: { type: "string", enum: relationKindSchema.options } },
-        { name: "task", in: "query", required: true, schema: { type: "string" }, description: "The other task's key" },
+        {
+          name: "kind",
+          in: "query",
+          required: true,
+          schema: { type: "string", enum: relationKindSchema.options },
+        },
+        {
+          name: "task",
+          in: "query",
+          required: true,
+          schema: { type: "string" },
+          description: "The other task's key",
+        },
       ],
       responses: { "204": { description: "Removed" }, ...errors },
     },
@@ -1407,7 +2050,7 @@ const paths = {
     post: {
       operationId: "markDuplicate",
       summary:
-        "Mark as a duplicate of another task in one step: link it (duplicates), move it to the project's first canceled status and comment \"Duplicate of KEY\". A repeat changes nothing; self, cycles and a second original are refused",
+        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing; self, cycles and a second original are refused',
       requestBody: body("MarkDuplicateInput"),
       responses: { "200": ok("The task, canceled", "Task"), ...errors },
     },
@@ -1440,9 +2083,16 @@ const paths = {
         "404 when head, title or body names a task, in a project attached to the repo, outside the caller's projects (ST-144)",
       requestBody: { required: false, ...json("OpenPullRequestInput") },
       responses: {
-        "201": ok("The pull request, as linked to the task", "OpenedPullRequest"),
+        "201": ok(
+          "The pull request, as linked to the task",
+          "OpenedPullRequest",
+        ),
         ...errors,
-        "409": { description: "A pull request is already open for the branch: error.url is its address", ...json("Error") },
+        "409": {
+          description:
+            "A pull request is already open for the branch: error.url is its address",
+          ...json("Error"),
+        },
         "502": githubDown,
         "503": githubOff,
       },
@@ -1452,8 +2102,12 @@ const paths = {
     parameters: [orgSlug, taskKey],
     get: {
       operationId: "listTaskBacklinks",
-      summary: "Documents mentioning the task ([[KEY-1]] or a plain KEY-1), most recently updated first; not the task's own documents",
-      responses: { "200": ok("Mentioning documents", "DocumentList"), ...errors },
+      summary:
+        "Documents mentioning the task ([[KEY-1]] or a plain KEY-1), most recently updated first; not the task's own documents",
+      responses: {
+        "200": ok("Mentioning documents", "DocumentList"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/tasks/{taskKey}/comments": {
@@ -1465,14 +2119,19 @@ const paths = {
     },
     post: {
       operationId: "addComment",
-      summary: "Comment on a task; @mentions, replies and assignees are notified",
+      summary:
+        "Comment on a task; @mentions, replies and assignees are notified",
       requestBody: body("CreateCommentInput"),
       responses: { "201": ok("Created comment", "Comment"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/tags": {
     parameters: [orgSlug],
-    get: { operationId: "listTags", summary: "The organization's tags", responses: { "200": ok("Tags", "TagList"), ...errors } },
+    get: {
+      operationId: "listTags",
+      summary: "The organization's tags",
+      responses: { "200": ok("Tags", "TagList"), ...errors },
+    },
     post: {
       operationId: "createTag",
       summary: "Create a tag",
@@ -1484,7 +2143,8 @@ const paths = {
     parameters: [orgSlug, pathParam("tagId", "Tag id")],
     delete: {
       operationId: "deleteTag",
-      summary: "Delete a tag (owners and admins); it is removed from every task",
+      summary:
+        "Delete a tag (owners and admins); it is removed from every task",
       responses: { "204": { description: "Deleted" }, ...errors },
     },
   },
@@ -1492,8 +2152,16 @@ const paths = {
     parameters: [orgSlug],
     get: {
       operationId: "listRepos",
-      summary: "The organization's repos with their apps and projects (a project-scoped agent: only its projects' repos)",
-      parameters: [{ name: "project", in: "query", schema: { type: "string" }, description: "Only the repos attached to this project key" }],
+      summary:
+        "The organization's repos with their apps and projects (a project-scoped agent: only its projects' repos)",
+      parameters: [
+        {
+          name: "project",
+          in: "query",
+          schema: { type: "string" },
+          description: "Only the repos attached to this project key",
+        },
+      ],
       responses: { "200": ok("Repos", "RepoList"), ...errors },
     },
     post: {
@@ -1506,16 +2174,22 @@ const paths = {
   },
   "/v1/orgs/{orgSlug}/repos/{owner}/{name}": {
     parameters: [orgSlug, repoOwner, repoName],
-    get: { operationId: "getRepo", summary: "A repo with its apps and projects", responses: { "200": ok("Repo", "Repo"), ...errors } },
+    get: {
+      operationId: "getRepo",
+      summary: "A repo with its apps and projects",
+      responses: { "200": ok("Repo", "Repo"), ...errors },
+    },
     patch: {
       operationId: "updateRepo",
-      summary: "Change a repo's remote (after a rename) or default branch (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
+      summary:
+        "Change a repo's remote (after a rename) or default branch (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
       requestBody: body("UpdateRepoInput"),
       responses: { "200": ok("Updated repo", "Repo"), ...errors },
     },
     delete: {
       operationId: "deleteRepo",
-      summary: "Remove a repo with its apps and project links (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
+      summary:
+        "Remove a repo with its apps and project links (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
       responses: { "204": { description: "Removed" }, ...errors },
     },
   },
@@ -1523,26 +2197,39 @@ const paths = {
     parameters: [orgSlug, repoOwner, repoName],
     post: {
       operationId: "createApp",
-      summary: "Add an app to a repo: folder, shared packages, versioning (default semver), environments in deploy order (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403). 409 if the name is taken",
+      summary:
+        "Add an app to a repo: folder, shared packages, versioning (default semver), environments in deploy order (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403). 409 if the name is taken",
       requestBody: body("CreateAppInput"),
       responses: { "201": ok("Created app", "App"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/repos/{owner}/{name}/apps/{app}": {
-    parameters: [orgSlug, repoOwner, repoName, pathParam("app", 'App name, e.g. "web"')],
+    parameters: [
+      orgSlug,
+      repoOwner,
+      repoName,
+      pathParam("app", 'App name, e.g. "web"'),
+    ],
     patch: {
       operationId: "updateApp",
-      summary: "Rename an app or change its paths, versioning or environments (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
+      summary:
+        "Rename an app or change its paths, versioning or environments (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
       requestBody: body("UpdateAppInput"),
       responses: { "200": ok("Updated app", "App"), ...errors },
     },
-    delete: { operationId: "deleteApp", summary: "Remove an app (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)", responses: { "204": { description: "Removed" }, ...errors } },
+    delete: {
+      operationId: "deleteApp",
+      summary:
+        "Remove an app (owners, admins and their agents; a project-scoped agent only when the repo is attached to none but its projects, else 403)",
+      responses: { "204": { description: "Removed" }, ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/repos": {
     parameters: [orgSlug, projectKey],
     post: {
       operationId: "attachRepo",
-      summary: "Attach a repo to the project (owners, admins and their agents); attaching it again changes nothing",
+      summary:
+        "Attach a repo to the project (owners, admins and their agents); attaching it again changes nothing",
       requestBody: body("AttachRepoInput"),
       responses: { "200": ok("The repo", "Repo"), ...errors },
     },
@@ -1551,7 +2238,8 @@ const paths = {
     parameters: [orgSlug, projectKey, repoOwner, repoName],
     delete: {
       operationId: "detachRepo",
-      summary: "Detach a repo from the project; detaching one that isn't attached changes nothing",
+      summary:
+        "Detach a repo from the project; detaching one that isn't attached changes nothing",
       responses: { "200": ok("The repo", "Repo"), ...errors },
     },
   },
@@ -1562,29 +2250,52 @@ const paths = {
       summary:
         "The project's roadmap: its milestones (tasks of kind milestone) by target date, then start date (undated last), with progress, tasks and the releases that shipped them",
       parameters: [
-        { name: "status", in: "query", schema: { type: "array", items: { type: "string" } }, description: "Status ids, names or categories of the milestone workflow; repeat for several" },
+        {
+          name: "status",
+          in: "query",
+          schema: { type: "array", items: { type: "string" } },
+          description:
+            "Status ids, names or categories of the milestone workflow; repeat for several",
+        },
       ],
       responses: { "200": ok("Milestones", "MilestoneList"), ...errors },
     },
     post: {
       operationId: "createMilestone",
-      summary: "Create a milestone: a task of kind milestone (Planned unless statusId), goal and Done when in the description. Tasks join it with PATCH /tasks/{key} { milestoneId }",
+      summary:
+        "Create a milestone: a task of kind milestone (Planned unless statusId), goal and Done when in the description. Tasks join it with PATCH /tasks/{key} { milestoneId }",
       requestBody: body("CreateMilestoneInput"),
       responses: { "201": ok("Created milestone", "Milestone"), ...errors },
     },
   },
   "/v1/orgs/{orgSlug}/milestones/{taskKey}": {
     parameters: [orgSlug, taskKey],
-    get: { operationId: "getMilestone", summary: "A milestone with its progress, tasks and releases", responses: { "200": ok("Milestone", "Milestone"), ...errors } },
+    get: {
+      operationId: "getMilestone",
+      summary: "A milestone with its progress, tasks and releases",
+      responses: { "200": ok("Milestone", "Milestone"), ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/projects/{projectKey}/releases": {
     parameters: [orgSlug, projectKey],
     get: {
       operationId: "listReleases",
-      summary: "The project's releases (tasks of kind release) in board order, with repos, apps and versions, and included tasks",
+      summary:
+        "The project's releases (tasks of kind release) in board order, with repos, apps and versions, and included tasks",
       parameters: [
-        { name: "status", in: "query", schema: { type: "array", items: { type: "string" } }, description: "Status ids, names or categories of the release workflow; repeat for several" },
-        { name: "app", in: "query", schema: { type: "string" }, description: 'Only releases shipping this app, e.g. "web"' },
+        {
+          name: "status",
+          in: "query",
+          schema: { type: "array", items: { type: "string" } },
+          description:
+            "Status ids, names or categories of the release workflow; repeat for several",
+        },
+        {
+          name: "app",
+          in: "query",
+          schema: { type: "string" },
+          description: 'Only releases shipping this app, e.g. "web"',
+        },
       ],
       responses: { "200": ok("Releases", "ReleaseList"), ...errors },
     },
@@ -1598,10 +2309,15 @@ const paths = {
   },
   "/v1/orgs/{orgSlug}/releases/{taskKey}": {
     parameters: [orgSlug, taskKey],
-    get: { operationId: "getRelease", summary: "A release with its repos, apps and included tasks", responses: { "200": ok("Release", "Release"), ...errors } },
+    get: {
+      operationId: "getRelease",
+      summary: "A release with its repos, apps and included tasks",
+      responses: { "200": ok("Release", "Release"), ...errors },
+    },
     patch: {
       operationId: "updateRelease",
-      summary: "Replace a release's repos or apps (with their versions); apps' repos stay linked. Status changes go through PATCH /tasks/{taskKey}: Released ships the included tasks",
+      summary:
+        "Replace a release's repos or apps (with their versions); apps' repos stay linked. Status changes go through PATCH /tasks/{taskKey}: Released ships the included tasks",
       requestBody: body("UpdateReleaseInput"),
       responses: { "200": ok("Updated release", "Release"), ...errors },
     },
@@ -1617,7 +2333,11 @@ const paths = {
     },
   },
   "/v1/orgs/{orgSlug}/releases/{taskKey}/tasks/{includedKey}": {
-    parameters: [orgSlug, taskKey, pathParam("includedKey", 'The included task\'s key, e.g. "SPI-3"')],
+    parameters: [
+      orgSlug,
+      taskKey,
+      pathParam("includedKey", 'The included task\'s key, e.g. "SPI-3"'),
+    ],
     delete: {
       operationId: "removeFromRelease",
       summary: "Take a task out of a release that hasn't shipped",
@@ -1637,17 +2357,31 @@ const paths = {
       summary:
         "Write the generated changelog into the release's description: replace its changelog block or append one, keeping the rest. taskApps (task key → app names) groups it by app; a block edited by hand is 409 unless force. A project-scoped agent gets 403 when the release includes tasks outside its projects",
       requestBody: body("ReleaseChangelogInput"),
-      responses: { "200": ok("Written changelog", "ReleaseChangelog"), ...errors },
+      responses: {
+        "200": ok("Written changelog", "ReleaseChangelog"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/releases/{taskKey}/deployments": {
     parameters: [orgSlug, taskKey],
     get: {
       operationId: "listDeployments",
-      summary: "The release's deployments (app × environment, commit, who, when), newest first",
+      summary:
+        "The release's deployments (app × environment, commit, who, when), newest first",
       parameters: [
-        { name: "app", in: "query", schema: { type: "string" }, description: 'Only this app, e.g. "web"' },
-        { name: "environment", in: "query", schema: { type: "string" }, description: 'Only this environment, e.g. "prod"' },
+        {
+          name: "app",
+          in: "query",
+          schema: { type: "string" },
+          description: 'Only this app, e.g. "web"',
+        },
+        {
+          name: "environment",
+          in: "query",
+          schema: { type: "string" },
+          description: 'Only this environment, e.g. "prod"',
+        },
       ],
       responses: { "200": ok("Deployments", "DeploymentList"), ...errors },
     },
@@ -1656,17 +2390,31 @@ const paths = {
       summary:
         "Record that one of the release's apps was deployed to one of the app's environments at a commit (spider release deploy). The first deployment moves a Planned release to On staging (as the @spider bot); Released stays manual and needs every app with environments deployed to its last one. A canceled release takes none",
       requestBody: body("RecordDeploymentInput"),
-      responses: { "201": ok("Recorded deployment", "RecordedDeployment"), ...errors },
+      responses: {
+        "201": ok("Recorded deployment", "RecordedDeployment"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/release-candidates": {
     parameters: [orgSlug],
     get: {
       operationId: "listReleaseCandidates",
-      summary: "Done tasks with code in no release and not shipped, most recently finished first (at most 200)",
+      summary:
+        "Done tasks with code in no release and not shipped, most recently finished first (at most 200)",
       parameters: [
-        { name: "project", in: "query", schema: { type: "string" }, description: "Only this project's tasks" },
-        { name: "release", in: "query", schema: { type: "string" }, description: "For this release (a task key)" },
+        {
+          name: "project",
+          in: "query",
+          schema: { type: "string" },
+          description: "Only this project's tasks",
+        },
+        {
+          name: "release",
+          in: "query",
+          schema: { type: "string" },
+          description: "For this release (a task key)",
+        },
       ],
       responses: { "200": ok("Candidates", "TaskList"), ...errors },
     },
@@ -1675,7 +2423,8 @@ const paths = {
     parameters: [orgSlug],
     get: {
       operationId: "getGithub",
-      summary: "Whether this server has a GitHub App, and the organization's installations (ST-82)",
+      summary:
+        "Whether this server has a GitHub App, and the organization's installations (ST-82)",
       responses: { "200": ok("GitHub status", "GithubStatus"), ...errors },
     },
   },
@@ -1685,7 +2434,11 @@ const paths = {
       operationId: "startGithubInstall",
       summary:
         "The GitHub page that installs the App, with a signed state valid for 15 minutes (owners and admins, browser sessions only). GitHub returns to /github/setup",
-      responses: { "200": ok("Install URL", "GithubInstallUrl"), ...errors, "503": githubOff },
+      responses: {
+        "200": ok("Install URL", "GithubInstallUrl"),
+        ...errors,
+        "503": githubOff,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/github/installations/{installationId}/sync": {
@@ -1694,14 +2447,20 @@ const paths = {
       operationId: "syncGithubInstallation",
       summary:
         "Fetch the installation and its repositories from GitHub again: attach repos the organization has, add new ones, release those no longer granted (owners, admins and their unscoped agents)",
-      responses: { "200": ok("The installation", "GithubInstallation"), ...errors, "502": githubDown, "503": githubOff },
+      responses: {
+        "200": ok("The installation", "GithubInstallation"),
+        ...errors,
+        "502": githubDown,
+        "503": githubOff,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/github/installations/{installationId}": {
     parameters: [orgSlug, installationId],
     delete: {
       operationId: "disconnectGithubInstallation",
-      summary: "Forget an installation; its repos stay, without it. The App stays installed on GitHub (see settingsUrl)",
+      summary:
+        "Forget an installation; its repos stay, without it. The App stays installed on GitHub (see settingsUrl)",
       responses: { "204": { description: "Disconnected" }, ...errors },
     },
   },
@@ -1711,14 +2470,25 @@ const paths = {
       operationId: "listDocuments",
       summary: "Documents without content, most recently updated first",
       parameters: [
-        { name: "project", in: "query", schema: { type: "string" }, description: "A project's documents, including its tasks'" },
-        { name: "task", in: "query", schema: { type: "string" }, description: "A task's documents" },
+        {
+          name: "project",
+          in: "query",
+          schema: { type: "string" },
+          description: "A project's documents, including its tasks'",
+        },
+        {
+          name: "task",
+          in: "query",
+          schema: { type: "string" },
+          description: "A task's documents",
+        },
       ],
       responses: { "200": ok("Documents", "DocumentList"), ...errors },
     },
     post: {
       operationId: "createDocument",
-      summary: "Create a document: organization-wide, or in a project or task (by key)",
+      summary:
+        "Create a document: organization-wide, or in a project or task (by key)",
       requestBody: body("CreateDocumentInput"),
       responses: { "201": ok("Created document", "Document"), ...errors },
     },
@@ -1734,15 +2504,26 @@ const paths = {
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}": {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
-    get: { operationId: "getDocument", summary: "A document with its content", responses: { "200": ok("Document", "Document"), ...errors } },
+    get: {
+      operationId: "getDocument",
+      summary: "A document with its content",
+      responses: { "200": ok("Document", "Document"), ...errors },
+    },
     patch: {
       operationId: "updateDocument",
       summary:
         "Save a new version; 409 if the document was saved since baseVersion. A rename rewrites [[Old title]] links in the documents linking here that you can edit (see relinked)",
       requestBody: body("UpdateDocumentInput"),
-      responses: { "200": ok("Updated document", "UpdatedDocument"), ...errors },
+      responses: {
+        "200": ok("Updated document", "UpdatedDocument"),
+        ...errors,
+      },
     },
-    delete: { operationId: "deleteDocument", summary: "Delete a document", responses: { "204": { description: "Deleted" }, ...errors } },
+    delete: {
+      operationId: "deleteDocument",
+      summary: "Delete a document",
+      responses: { "204": { description: "Deleted" }, ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/edit": {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
@@ -1758,7 +2539,8 @@ const paths = {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     post: {
       operationId: "moveDocument",
-      summary: "Move a document to a project (key), or make it organization-wide (null); keeps id and versions, detaches it from a task",
+      summary:
+        "Move a document to a project (key), or make it organization-wide (null); keeps id and versions, detaches it from a task",
       requestBody: body("MoveDocumentInput"),
       responses: { "200": ok("Moved document", "Document"), ...errors },
     },
@@ -1767,7 +2549,8 @@ const paths = {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     get: {
       operationId: "listDocumentBacklinks",
-      summary: "Documents linking here with [[its title]] or [[doc:<its id>]], most recently updated first",
+      summary:
+        "Documents linking here with [[its title]] or [[doc:<its id>]], most recently updated first",
       responses: { "200": ok("Linking documents", "DocumentList"), ...errors },
     },
   },
@@ -1780,17 +2563,37 @@ const paths = {
     },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/versions/{version}": {
-    parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("version", "Version number")],
-    get: { operationId: "getDocumentVersion", summary: "One saved version with its content", responses: { "200": ok("Version", "DocumentVersion"), ...errors } },
+    parameters: [
+      orgSlug,
+      pathParam("documentId", "Document id"),
+      pathParam("version", "Version number"),
+    ],
+    get: {
+      operationId: "getDocumentVersion",
+      summary: "One saved version with its content",
+      responses: { "200": ok("Version", "DocumentVersion"), ...errors },
+    },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/diff": {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     get: {
       operationId: "diffDocumentVersions",
-      summary: "A line diff of two saved versions; without to, against the current one. 404 for a missing version",
+      summary:
+        "A line diff of two saved versions; without to, against the current one. 404 for a missing version",
       parameters: [
-        { name: "from", in: "query", required: true, schema: { type: "integer", minimum: 1 }, description: "The older version" },
-        { name: "to", in: "query", schema: { type: "integer", minimum: 1 }, description: "The newer version; defaults to the current one" },
+        {
+          name: "from",
+          in: "query",
+          required: true,
+          schema: { type: "integer", minimum: 1 },
+          description: "The older version",
+        },
+        {
+          name: "to",
+          in: "query",
+          schema: { type: "integer", minimum: 1 },
+          description: "The newer version; defaults to the current one",
+        },
       ],
       responses: { "200": ok("Diff", "DocumentDiff"), ...errors },
     },
@@ -1799,7 +2602,8 @@ const paths = {
     parameters: [orgSlug, pathParam("documentId", "Document id")],
     get: {
       operationId: "listDocumentComments",
-      summary: "Comments on a document, oldest first, with their quotes and outdated and resolved states",
+      summary:
+        "Comments on a document, oldest first, with their quotes and outdated and resolved states",
       responses: { "200": ok("Comments", "DocumentCommentList"), ...errors },
     },
     post: {
@@ -1811,10 +2615,15 @@ const paths = {
     },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/comments/{commentId}": {
-    parameters: [orgSlug, pathParam("documentId", "Document id"), pathParam("commentId", "Comment id")],
+    parameters: [
+      orgSlug,
+      pathParam("documentId", "Document id"),
+      pathParam("commentId", "Comment id"),
+    ],
     patch: {
       operationId: "resolveDocumentComment",
-      summary: "Mark a thread (a top-level comment) resolved, or reopen it; a repeat changes nothing",
+      summary:
+        "Mark a thread (a top-level comment) resolved, or reopen it; a repeat changes nothing",
       requestBody: body("ResolveDocumentCommentInput"),
       responses: { "200": ok("Comment", "DocumentComment"), ...errors },
     },
@@ -1823,12 +2632,32 @@ const paths = {
     parameters: [orgSlug],
     get: {
       operationId: "listInbox",
-      summary: "The caller's notifications, oldest first; can wait for new items",
+      summary:
+        "The caller's notifications, oldest first; can wait for new items",
       parameters: [
-        { name: "after", in: "query", schema: { type: "integer" }, description: "Only items with a larger id" },
-        { name: "unread", in: "query", schema: { type: "boolean" }, description: "Only unread items" },
-        { name: "limit", in: "query", schema: { type: "integer", maximum: 100 } },
-        { name: "wait", in: "query", schema: { type: "integer", maximum: 25 }, description: "Seconds to wait for a new item" },
+        {
+          name: "after",
+          in: "query",
+          schema: { type: "integer" },
+          description: "Only items with a larger id",
+        },
+        {
+          name: "unread",
+          in: "query",
+          schema: { type: "boolean" },
+          description: "Only unread items",
+        },
+        {
+          name: "limit",
+          in: "query",
+          schema: { type: "integer", maximum: 100 },
+        },
+        {
+          name: "wait",
+          in: "query",
+          schema: { type: "integer", maximum: 25 },
+          description: "Seconds to wait for a new item",
+        },
         {
           name: "kinds",
           in: "query",
@@ -1844,9 +2673,13 @@ const paths = {
     parameters: [orgSlug],
     post: {
       operationId: "markInboxRead",
-      summary: "Mark items read, by ids or up to an id (only `kinds`, default the task kinds)",
+      summary:
+        "Mark items read, by ids or up to an id (only `kinds`, default the task kinds)",
       requestBody: body("MarkInboxReadInput"),
-      responses: { "200": ok("Number of items marked", "MarkedCount"), ...errors },
+      responses: {
+        "200": ok("Number of items marked", "MarkedCount"),
+        ...errors,
+      },
     },
   },
   "/v1/api-keys/current": {

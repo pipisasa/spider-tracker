@@ -1,4 +1,8 @@
-import type { MilestoneDto, StatusCategory, TaskDto } from "@repo/core/contracts";
+import type {
+  MilestoneDto,
+  StatusCategory,
+  TaskDto,
+} from "@repo/core/contracts";
 import { firstStatusOf } from "@repo/core/statuses";
 import { SpiderApiError, type SpiderClient } from "@repo/sdk";
 
@@ -87,7 +91,23 @@ Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI
 - Filters and saved views
 - Keyboard shortcuts and command palette
 - Sign-up allowlist and email delivery for magic links`,
-    tasks: ["ST-8", "ST-9", "ST-10", "ST-11", "ST-12", "ST-13", "ST-14", "ST-15", "ST-16", "ST-17", "ST-18", "ST-28", "ST-50", "ST-59", "ST-75"],
+    tasks: [
+      "ST-8",
+      "ST-9",
+      "ST-10",
+      "ST-11",
+      "ST-12",
+      "ST-13",
+      "ST-14",
+      "ST-15",
+      "ST-16",
+      "ST-17",
+      "ST-18",
+      "ST-28",
+      "ST-50",
+      "ST-59",
+      "ST-75",
+    ],
   },
   {
     number: 4,
@@ -150,22 +170,46 @@ Cloudflare Access is deferred: it would get in the way of agent access (MCP, CLI
   },
 ];
 
-export const phaseTitle = (phase: Pick<RoadmapPhase, "number" | "title">) => `Phase ${phase.number}: ${phase.title}`;
+export const phaseTitle = (phase: Pick<RoadmapPhase, "number" | "title">) =>
+  `Phase ${phase.number}: ${phase.title}`;
 
 /** The milestone's description: the phase as it reads in the doc, and where it came from. */
-export const phaseDescription = (phase: RoadmapPhase) => `${phase.body}\n\n_Imported from docs/roadmap.md (ST-96)._`;
+export const phaseDescription = (phase: RoadmapPhase) =>
+  `${phase.body}\n\n_Imported from docs/roadmap.md (ST-96)._`;
 
 export type ImportOutcome =
-  | { kind: "milestone"; phase: number; key: string | null; action: "created" | "exists" | "would create" }
-  | { kind: "task"; phase: number; key: string; action: "assigned" | "already there" | "would assign" | "missing" | "not a task" | "in another milestone"; detail?: string };
+  | {
+      kind: "milestone";
+      phase: number;
+      key: string | null;
+      action: "created" | "exists" | "would create";
+    }
+  | {
+      kind: "task";
+      phase: number;
+      key: string;
+      action:
+        | "assigned"
+        | "already there"
+        | "would assign"
+        | "missing"
+        | "not a task"
+        | "in another milestone";
+      detail?: string;
+    };
 
 export interface ImportReport {
   dryRun: boolean;
   outcomes: ImportOutcome[];
 }
 
-const phaseOf = <T extends Pick<MilestoneDto, "title">>(milestones: T[], phase: RoadmapPhase): T | undefined =>
-  milestones.find((m) => new RegExp(`^Phase ${phase.number}\\b`, "i").test(m.title.trim()));
+const phaseOf = <T extends Pick<MilestoneDto, "title">>(
+  milestones: T[],
+  phase: RoadmapPhase,
+): T | undefined =>
+  milestones.find((m) =>
+    new RegExp(`^Phase ${phase.number}\\b`, "i").test(m.title.trim()),
+  );
 
 /**
  * Creates each phase's milestone in `project` unless it exists, then puts each listed task in it.
@@ -174,7 +218,11 @@ const phaseOf = <T extends Pick<MilestoneDto, "title">>(milestones: T[], phase: 
 export async function importRoadmap(
   client: SpiderClient,
   org: string,
-  { project, dryRun, phases = ROADMAP_PHASES }: { project: string; dryRun: boolean; phases?: RoadmapPhase[] },
+  {
+    project,
+    dryRun,
+    phases = ROADMAP_PHASES,
+  }: { project: string; dryRun: boolean; phases?: RoadmapPhase[] },
 ): Promise<ImportReport> {
   const detail = await client.projects.get(org, project);
   const existing = (await client.milestones.list(org, detail.key)).items;
@@ -183,9 +231,19 @@ export async function importRoadmap(
   for (const phase of phases) {
     let milestone = phaseOf(existing, phase);
     if (milestone) {
-      outcomes.push({ kind: "milestone", phase: phase.number, key: milestone.key, action: "exists" });
+      outcomes.push({
+        kind: "milestone",
+        phase: phase.number,
+        key: milestone.key,
+        action: "exists",
+      });
     } else if (dryRun) {
-      outcomes.push({ kind: "milestone", phase: phase.number, key: null, action: "would create" });
+      outcomes.push({
+        kind: "milestone",
+        phase: phase.number,
+        key: null,
+        action: "would create",
+      });
     } else {
       const status = firstStatusOf(detail, phase.category, "milestone");
       milestone = await client.milestones.create(org, detail.key, {
@@ -194,7 +252,12 @@ export async function importRoadmap(
         statusId: status?.id,
       });
       existing.push(milestone);
-      outcomes.push({ kind: "milestone", phase: phase.number, key: milestone.key, action: "created" });
+      outcomes.push({
+        kind: "milestone",
+        phase: phase.number,
+        key: milestone.key,
+        action: "created",
+      });
     }
 
     for (const key of phase.tasks) {
@@ -203,22 +266,54 @@ export async function importRoadmap(
         task = await client.tasks.get(org, key);
       } catch (err) {
         if (err instanceof SpiderApiError && err.status === 404) {
-          outcomes.push({ kind: "task", phase: phase.number, key, action: "missing" });
+          outcomes.push({
+            kind: "task",
+            phase: phase.number,
+            key,
+            action: "missing",
+          });
           continue;
         }
         throw err;
       }
       if ((task.kind ?? "task") !== "task") {
-        outcomes.push({ kind: "task", phase: phase.number, key, action: "not a task", detail: task.kind });
+        outcomes.push({
+          kind: "task",
+          phase: phase.number,
+          key,
+          action: "not a task",
+          detail: task.kind,
+        });
       } else if (milestone && task.milestoneId === milestone.id) {
-        outcomes.push({ kind: "task", phase: phase.number, key, action: "already there" });
+        outcomes.push({
+          kind: "task",
+          phase: phase.number,
+          key,
+          action: "already there",
+        });
       } else if (task.milestoneId) {
-        outcomes.push({ kind: "task", phase: phase.number, key, action: "in another milestone", detail: task.milestone?.key ?? task.milestoneId });
+        outcomes.push({
+          kind: "task",
+          phase: phase.number,
+          key,
+          action: "in another milestone",
+          detail: task.milestone?.key ?? task.milestoneId,
+        });
       } else if (dryRun || !milestone) {
-        outcomes.push({ kind: "task", phase: phase.number, key, action: "would assign" });
+        outcomes.push({
+          kind: "task",
+          phase: phase.number,
+          key,
+          action: "would assign",
+        });
       } else {
         await client.tasks.update(org, key, { milestoneId: milestone.id });
-        outcomes.push({ kind: "task", phase: phase.number, key, action: "assigned" });
+        outcomes.push({
+          kind: "task",
+          phase: phase.number,
+          key,
+          action: "assigned",
+        });
       }
     }
   }
@@ -232,13 +327,22 @@ export function importReportLines(report: ImportReport): string {
       ? `Phase ${o.phase}: ${o.action}${o.key ? ` (${o.key})` : ""}`
       : `  ${o.key}  ${o.action}${o.detail ? ` (${o.detail})` : ""}`,
   );
-  const count = (action: string) => report.outcomes.filter((o) => o.action === action).length;
+  const count = (action: string) =>
+    report.outcomes.filter((o) => o.action === action).length;
   lines.push(
     report.dryRun
       ? `Dry run: ${count("would create")} milestones to create, ${count("would assign")} tasks to assign. Run again without --dry-run to apply.`
       : `Done: ${count("created")} milestones created, ${count("assigned")} tasks assigned, ${count("exists")} milestones and ${count("already there")} tasks already in place.`,
   );
-  const skipped = report.outcomes.filter((o) => o.action === "missing" || o.action === "not a task" || o.action === "in another milestone").length;
-  if (skipped) lines.push(`${skipped} task${skipped === 1 ? "" : "s"} skipped (missing, not a task, or already in another milestone).`);
+  const skipped = report.outcomes.filter(
+    (o) =>
+      o.action === "missing" ||
+      o.action === "not a task" ||
+      o.action === "in another milestone",
+  ).length;
+  if (skipped)
+    lines.push(
+      `${skipped} task${skipped === 1 ? "" : "s"} skipped (missing, not a task, or already in another milestone).`,
+    );
   return lines.join("\n");
 }

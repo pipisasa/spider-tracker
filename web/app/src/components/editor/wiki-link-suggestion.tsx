@@ -133,7 +133,12 @@ export const WikiLinkSuggestion = Extension.create<WikiLinkOptions>({
             typed &&
             !items.some((i) => i.target.toLowerCase() === typed.toLowerCase())
           )
-            items.push({ target: typed, title: typed, hint: null, kind: "new" });
+            items.push({
+              target: typed,
+              title: typed,
+              hint: null,
+              kind: "new",
+            });
           return items;
         },
         command: ({ editor, range, props }) =>

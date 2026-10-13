@@ -46,19 +46,19 @@ GitHub sends the App's events to `POST /webhooks/github` (`githubWebhookRoutes` 
 4. **Organization:** the payload's `installation.id` names the installation; its organization's GitHub bot makes the changes (activity source `git`). Events of installations no organization has connected (for example `installation.created`, which usually arrives before the setup callback) are recorded and ignored.
 5. **Payloads** are parsed with Zod, keeping only the fields used; a payload that doesn't match is `400` and isn't recorded.
 
-| Event | Action | Effect |
-|---|---|---|
-| `ping` | | Recorded, nothing else (`ignored`). |
-| `installation` | `created` | For an installation already connected (the setup callback came first): refreshes the account and grants the listed repos. |
-| | `deleted` | Uninstalled on GitHub: the installation is forgotten (`github.uninstalled`); its repos stay, without it. |
-| | `suspend`, `unsuspend` | Sets or clears `suspended` (`github.suspended`, `github.unsuspended`). |
-| `installation_repositories` | `added`, `removed` | Added repos the organization has get the installation, the others are added (attached to no project, default branch `main` until a `repository` edit or **Sync**… see below); removed ones lose it and keep their row (`github.repos_changed`). A change of `repository_selection` is saved. |
-| `repository` | `renamed`, `transferred` | Updates the repo's `owner/name` (`repo.updated`); ignored when the organization doesn't have the old name, or already has a row with the new one. |
-| | `edited` | A new default branch updates `default_branch`. |
-| `create` | branch | Links a branch named after a task to it ([Linking work to tasks](#linking-work-to-tasks-st-84)); tags are ignored. |
-| `delete` | branch | Marks the branch's links deleted (they stay). |
-| `push` | | Links the branch (by its name) and its commits (by their messages, and the branch's key); a push that deletes the branch marks it deleted. Tags are ignored. |
-| `pull_request` | any | Saves the pull request (unless the event is stale) and links it by its branch, title and body. |
+| Event                       | Action                   | Effect                                                                                                                                                                                                                                                                                       |
+| --------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`                      |                          | Recorded, nothing else (`ignored`).                                                                                                                                                                                                                                                          |
+| `installation`              | `created`                | For an installation already connected (the setup callback came first): refreshes the account and grants the listed repos.                                                                                                                                                                    |
+|                             | `deleted`                | Uninstalled on GitHub: the installation is forgotten (`github.uninstalled`); its repos stay, without it.                                                                                                                                                                                     |
+|                             | `suspend`, `unsuspend`   | Sets or clears `suspended` (`github.suspended`, `github.unsuspended`).                                                                                                                                                                                                                       |
+| `installation_repositories` | `added`, `removed`       | Added repos the organization has get the installation, the others are added (attached to no project, default branch `main` until a `repository` edit or **Sync**… see below); removed ones lose it and keep their row (`github.repos_changed`). A change of `repository_selection` is saved. |
+| `repository`                | `renamed`, `transferred` | Updates the repo's `owner/name` (`repo.updated`); ignored when the organization doesn't have the old name, or already has a row with the new one.                                                                                                                                            |
+|                             | `edited`                 | A new default branch updates `default_branch`.                                                                                                                                                                                                                                               |
+| `create`                    | branch                   | Links a branch named after a task to it ([Linking work to tasks](#linking-work-to-tasks-st-84)); tags are ignored.                                                                                                                                                                           |
+| `delete`                    | branch                   | Marks the branch's links deleted (they stay).                                                                                                                                                                                                                                                |
+| `push`                      |                          | Links the branch (by its name) and its commits (by their messages, and the branch's key); a push that deletes the branch marks it deleted. Tags are ignored.                                                                                                                                 |
+| `pull_request`              | any                      | Saves the pull request (unless the event is stale) and links it by its branch, title and body.                                                                                                                                                                                               |
 
 The response is `200 { "status": "processed" | "ignored" | "duplicate" }`. Other events (reviews, checks, statuses, …) are recorded and ignored until a handler exists: `githubEventHandlers` in core maps `X-GitHub-Event` to a handler that runs inside the delivery's transaction with the locked installation and the bot's context.
 
@@ -100,11 +100,11 @@ Code can't do these; until they're done the feature stays off in production.
 
 Branches, commits and pull requests link to tasks from the [webhooks](#webhooks-st-83) (`git-links.ts` in core). A key counts only when the task exists (not deleted) and **its project is attached to the repo** (Settings → Repos, `spider repo attach`); that also drops look-alikes such as `UTF-8`. Repos the organization doesn't have are ignored.
 
-| From | Linked to |
-|---|---|
-| A branch (`create`, or a `push` to it) | The task in its name (`taskKeyFromBranch`): `st-12-fix-login` → ST-12. |
-| A commit (`push`) | Every task its message names, and the branch's task when the commit is new to the repo (`distinct` isn't `false`). |
-| A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names. |
+| From                                        | Linked to                                                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| A branch (`create`, or a `push` to it)      | The task in its name (`taskKeyFromBranch`): `st-12-fix-login` → ST-12.                                             |
+| A commit (`push`)                           | Every task its message names, and the branch's task when the commit is new to the repo (`distinct` isn't `false`). |
+| A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names.                                        |
 
 Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. [Status automation](#status-automation-st-85) acts only on `closing`, `branch` and `title`.
 
@@ -144,12 +144,12 @@ Matching is syntactic: `UTF-8` and `SHA-256` look like keys. Link processing kee
 
 A `pull_request` event moves the tasks the PR is linked to, with no manual step: open a PR for `st-12-…` and ST-12 goes to In Review; merge it and ST-12 is Done. Configurable per project (`projects.git_automation`, null = the defaults); each event names a status **category**, and the task moves to the first status of that category (board order) in its own project's task workflow.
 
-| Pull request event | Setting | Default |
-|---|---|---|
-| Opened as a draft, or converted to a draft | `draft` | In Progress (`in_progress`) |
-| Opened (not a draft), reopened, or marked ready for review | `opened` | In Review (`in_review`) |
-| Merged into the repo's default branch | `merged` | Done (`done`) |
-| Closed without merging | `closed` | No change (`null`) |
+| Pull request event                                         | Setting  | Default                     |
+| ---------------------------------------------------------- | -------- | --------------------------- |
+| Opened as a draft, or converted to a draft                 | `draft`  | In Progress (`in_progress`) |
+| Opened (not a draft), reopened, or marked ready for review | `opened` | In Review (`in_review`)     |
+| Merged into the repo's default branch                      | `merged` | Done (`done`)               |
+| Closed without merging                                     | `closed` | No change (`null`)          |
 
 `enabled: false` turns it off for the project. Other actions (`edited`, `synchronize`, …) move nothing.
 

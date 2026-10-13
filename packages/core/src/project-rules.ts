@@ -1,7 +1,25 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq, exists, inArray, isNull, ne, not, notExists, or, sql } from "drizzle-orm";
-import { inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  ne,
+  not,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
+import {
+  inScope,
+  orgIdOf,
+  projectScope,
+  type ActorContext,
+  type Viewer,
+} from "./access";
 import type { ProjectRulesDto } from "./contracts";
 import { DomainError } from "./errors";
 import { notifyRulesChanged } from "./inbox";
@@ -10,7 +28,8 @@ import { notifyRulesChanged } from "./inbox";
 // (`projects.rules_document_id`). Agents get the rules in the MCP server's instructions, in
 // get_project and whoami, and an inbox item (kind `rules`) whenever they are set or saved.
 
-const { actors, agentProjects, agents, documents, inboxItems, projects } = schema;
+const { actors, agentProjects, agents, documents, inboxItems, projects } =
+  schema;
 
 /** The project whose rules this document is, if any. */
 export async function rulesProjectOf(db: Db | Tx, documentId: string) {
@@ -31,7 +50,13 @@ export async function assertRulesDocument(
   const [document] = await tx
     .select({ projectId: documents.projectId, taskId: documents.taskId })
     .from(documents)
-    .where(and(eq(documents.id, documentId), eq(documents.orgId, project.orgId), isNull(documents.deletedAt)))
+    .where(
+      and(
+        eq(documents.id, documentId),
+        eq(documents.orgId, project.orgId),
+        isNull(documents.deletedAt),
+      ),
+    )
     .limit(1);
   if (!document) throw new DomainError("not_found", "Document not found");
   if (document.projectId !== project.id || document.taskId !== null) {
@@ -47,11 +72,23 @@ export async function assertRulesDocument(
  * can see the project (scoped to it, or unscoped), except the actor; nobody for an archived project.
  * An agent that still has an unread `rules` item for the document gets no second one.
  */
-export async function announceRulesChange(tx: Tx, ctx: ActorContext, projectId: string, documentId: string) {
+export async function announceRulesChange(
+  tx: Tx,
+  ctx: ActorContext,
+  projectId: string,
+  documentId: string,
+) {
   // Archived projects' rules reach no agent (instructions, whoami), so nobody is told about them.
-  const [project] = await tx.select({ archivedAt: projects.archivedAt }).from(projects).where(eq(projects.id, projectId)).limit(1);
+  const [project] = await tx
+    .select({ archivedAt: projects.archivedAt })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
   if (!project || project.archivedAt) return;
-  const anyProjects = tx.select({ one: sql`1` }).from(agentProjects).where(eq(agentProjects.agentId, actors.id));
+  const anyProjects = tx
+    .select({ one: sql`1` })
+    .from(agentProjects)
+    .where(eq(agentProjects.agentId, actors.id));
   const recipients = await tx
     .select({ id: actors.id })
     .from(actors)
@@ -66,7 +103,12 @@ export async function announceRulesChange(tx: Tx, ctx: ActorContext, projectId: 
             tx
               .select({ one: sql`1` })
               .from(agentProjects)
-              .where(and(eq(agentProjects.agentId, actors.id), eq(agentProjects.projectId, projectId))),
+              .where(
+                and(
+                  eq(agentProjects.agentId, actors.id),
+                  eq(agentProjects.projectId, projectId),
+                ),
+              ),
           ),
           and(not(agents.scoped), notExists(anyProjects)),
         ),
@@ -94,16 +136,25 @@ export async function announceRulesChange(tx: Tx, ctx: ActorContext, projectId: 
 }
 
 /** The rules of the viewer's active projects that have them, by project key. */
-export async function listProjectRules(db: Db, viewer: Viewer, projectKey?: string): Promise<ProjectRulesDto[]> {
+export async function listProjectRules(
+  db: Db,
+  viewer: Viewer,
+  projectKey?: string,
+): Promise<ProjectRulesDto[]> {
   const scope = await projectScope(db, viewer);
   const rows = await db
-    .select({ project: { id: projects.id, key: projects.key, name: projects.name }, document: documents })
+    .select({
+      project: { id: projects.id, key: projects.key, name: projects.name },
+      document: documents,
+    })
     .from(projects)
     .innerJoin(documents, eq(documents.id, projects.rulesDocumentId))
     .where(
       and(
         eq(projects.orgId, orgIdOf(viewer)),
-        projectKey === undefined ? isNull(projects.archivedAt) : eq(projects.key, projectKey.trim().toUpperCase()),
+        projectKey === undefined
+          ? isNull(projects.archivedAt)
+          : eq(projects.key, projectKey.trim().toUpperCase()),
         isNull(documents.deletedAt),
         scope ? inArray(projects.id, [...scope]) : undefined,
       ),
@@ -124,7 +175,11 @@ export async function listProjectRules(db: Db, viewer: Viewer, projectKey?: stri
 }
 
 /** One project's rules, or null when it has none (or isn't visible). */
-export async function getProjectRules(db: Db, viewer: Viewer, projectKey: string): Promise<ProjectRulesDto | null> {
+export async function getProjectRules(
+  db: Db,
+  viewer: Viewer,
+  projectKey: string,
+): Promise<ProjectRulesDto | null> {
   const [rules] = await listProjectRules(db, viewer, projectKey);
   return rules ?? null;
 }
