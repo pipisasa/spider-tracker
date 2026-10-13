@@ -912,6 +912,8 @@ export interface DiffLineDto {
   oldLine: number | null;
   /** 1-based line number in the new text; null for removed lines. */
   newLine: number | null;
+  /** The text was cut short to fit a size budget (truncateHunks, MCP's diff_document); absent otherwise. */
+  cut?: true;
 }
 
 /** A run of changes with up to 3 lines of context around them, as in a unified diff's `@@` block. */

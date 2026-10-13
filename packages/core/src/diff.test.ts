@@ -58,7 +58,7 @@ describe("textChanges", () => {
     expect(textChanges("a", "a\r\n").lineEndingsChanged).toBe(false);
   });
 
-  test("a mixed text against an all-CRLF or all-LF one counts (ST-147)", () => {
+  test("a mixed text against an all-CRLF or all-LF one counts (ST-129)", () => {
     const mixed = "a\r\nb\nc\r\n";
     expect(textChanges(mixed, "a\r\nb\r\nc\r\n").lineEndingsChanged).toBe(true);
     expect(textChanges("a\nb\n", mixed).lineEndingsChanged).toBe(true);
@@ -283,7 +283,7 @@ describe("diffHunks and formatUnifiedDiff", () => {
     );
   });
 
-  test("truncateHunks also caps the characters, cutting a long line short (ST-147)", () => {
+  test("truncateHunks also caps the characters, cutting a long line short (ST-129)", () => {
     const hunks = diffHunks(diffLines("x".repeat(100), "y".repeat(100)));
     expect(truncateHunks(hunks, 1000, 200)).toEqual({
       hunks,
@@ -291,11 +291,25 @@ describe("diffHunks and formatUnifiedDiff", () => {
     });
     const cut = truncateHunks(hunks, 1000, 150);
     expect(cut.truncated).toBe(true);
-    expect(cut.hunks[0]?.lines.map((l) => [l.kind, l.text.length])).toEqual([
-      ["removed", 100],
-      ["added", 50],
+    expect(
+      cut.hunks[0]?.lines.map((l) => [l.kind, l.text.length, l.cut ?? false]),
+    ).toEqual([
+      ["removed", 100, false],
+      ["added", 50, true],
     ]);
     expect(cut.hunks[0]).toMatchObject({ oldLines: 1, newLines: 1 });
+    // The unified diff notes the cut line, as it notes a missing final newline (ST-129).
+    expect(
+      formatUnifiedDiff(cut.hunks, "a", "b").split("\n").slice(-2),
+    ).toEqual([`+${"y".repeat(50)}`, "\\ Line cut short"]);
+  });
+
+  test("truncateHunks doesn't split a surrogate pair (ST-129)", () => {
+    const hunks = diffHunks(diffLines("", "ab😀c"));
+    // 3 characters would end between the emoji's two halves: the cut backs off before it.
+    const cut = truncateHunks(hunks, 10, 3);
+    expect(cut.hunks[0]?.lines[0]).toMatchObject({ text: "ab", cut: true });
+    expect(truncateHunks(hunks, 10, 4).hunks[0]?.lines[0]?.text).toBe("ab😀");
   });
 
   test("pure insertions and deletions number like diff -u", () => {

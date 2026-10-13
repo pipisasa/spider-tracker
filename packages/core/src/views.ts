@@ -171,7 +171,9 @@ export function diffNotes(
       ? [`The newline at the end differs between ${versions}`]
       : []),
     ...(dto.lineEndingsChanged
-      ? [`Line endings differ between ${versions} (CRLF and LF)`]
+      ? [
+          `Line endings differ between ${versions} (all LF, all CRLF or a mix of both)`,
+        ]
       : []),
   ];
 }

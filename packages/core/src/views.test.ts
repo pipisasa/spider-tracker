@@ -170,7 +170,7 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
       }),
     ).toEqual([
       "The newline at the end differs between version 1 and 2",
-      "Line endings differ between version 1 and 2 (CRLF and LF)",
+      "Line endings differ between version 1 and 2 (all LF, all CRLF or a mix of both)",
     ]);
 
     const document = {
