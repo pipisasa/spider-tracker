@@ -135,6 +135,26 @@ export async function announceRulesChange(
   );
 }
 
+/**
+ * Marks every unread `rules` item about `documentId` read, once it stops being the project's rules
+ * (replaced, cleared, moved away or deleted) or the project is archived (ST-139). Such items are
+ * hidden from the inbox anyway; left unread, they would block a new item if the document became the
+ * rules again (announceRulesChange skips agents with an unread one) and reappear instead, with an
+ * old id that a channel's `after` cursor has already passed.
+ */
+export async function retireRulesItems(tx: Tx, documentId: string) {
+  await tx
+    .update(inboxItems)
+    .set({ readAt: new Date() })
+    .where(
+      and(
+        eq(inboxItems.kind, "rules"),
+        eq(inboxItems.documentId, documentId),
+        isNull(inboxItems.readAt),
+      ),
+    );
+}
+
 /** The rules of the viewer's active projects that have them, by project key. */
 export async function listProjectRules(
   db: Db,

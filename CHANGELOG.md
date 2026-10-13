@@ -10,6 +10,7 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 - **API, MCP, CLI (ST-131):** linking a task as a duplicate (`link_tasks`, `POST …/relations`) when it already duplicates another task is refused (`409`, as `mark_duplicate` already did); the message names the first original only when you can see its project. `mark_duplicate` / `spider task duplicate` called again with a new `comment` now posts that comment by itself instead of dropping it.
 - **API (ST-133):** two concurrent task updates that each set one date no longer fail with a `500` when together they'd put the start after the target; the second gets the usual `400`. Web: board cards show the target date (red when overdue), and the new-task dialog takes a start and a target date.
 - **API, MCP, CLI (ST-136):** deleting a status reports `movedTasks` as the number of live tasks moved; deleted tasks still move with them but are no longer counted.
+- **API, MCP, CLI, channel (ST-139):** `rules` inbox items of archived projects are no longer listed. Items dropped because the rules changed (replaced, cleared, moved, deleted) or the project was archived are marked read, so a document that becomes the rules again gets a new item that the channel delivers, instead of the old one reappearing unseen.
 
 ### MCP server (breaking: tool output shapes, ST-107)
 

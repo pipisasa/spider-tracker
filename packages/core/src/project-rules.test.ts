@@ -384,7 +384,70 @@ run("project rules for agents (ST-111)", () => {
     await updateProject(db, owner, "OLD", { rulesDocumentId: null });
     await updateProject(db, owner, "OLD", { rulesDocumentId: doc.id });
     expect(await rulesItems(old)).toEqual([]);
+    // Read or not, an archived project's rules items aren't listed (ST-139).
     const all = await listInbox(db, old, { ...allKinds });
-    expect(all.filter((i) => i.kind === "rules")).toHaveLength(1);
+    expect(all.filter((i) => i.kind === "rules")).toEqual([]);
+  });
+
+  test("an unread rules item of a project that gets archived is hidden and stays read after a restore (ST-139)", async () => {
+    await createProject(db, owner, { name: "Shelved", key: "SHV" });
+    const hand = await agentOf(member, "Shelf Hand", ["SHV"]);
+    const doc = await createDocument(db, owner, {
+      title: "Shelved rules",
+      project: "SHV",
+    });
+    await updateProject(db, owner, "SHV", { rulesDocumentId: doc.id });
+    expect(await rulesItems(hand)).toHaveLength(1);
+
+    await archiveProject(db, owner, "SHV", true);
+    expect(await rulesItems(hand)).toEqual([]);
+    await archiveProject(db, owner, "SHV", false);
+    expect(await rulesItems(hand)).toEqual([]);
+  });
+
+  test("a document that becomes the rules again is announced with a new item, past a channel's cursor (ST-139)", async () => {
+    const hand = await agentOf(member, "Cursor Hand", ["OTH"]);
+    const first = await createDocument(db, owner, {
+      title: "Rules again",
+      project: "OTH",
+    });
+    const second = await createDocument(db, owner, {
+      title: "Rules meanwhile",
+      project: "OTH",
+    });
+    await updateProject(db, owner, "OTH", { rulesDocumentId: first.id });
+    const [old] = await rulesItems(hand);
+    expect(old?.document?.id).toBe(first.id);
+
+    // The channel has delivered it (its cursor is past it) but nobody read it.
+    await updateProject(db, owner, "OTH", { rulesDocumentId: second.id });
+    const cursor = (await rulesItems(hand)).at(-1)?.id ?? 0;
+    expect(cursor).toBeGreaterThan(old?.id ?? 0);
+    await updateProject(db, owner, "OTH", { rulesDocumentId: first.id });
+
+    const fresh = await listInbox(db, hand, { ...allKinds, after: cursor });
+    expect(fresh.map((i) => [i.kind, i.document?.id])).toEqual([
+      ["rules", first.id],
+    ]);
+    // The stale item stays read; only the new one is unread.
+    expect((await rulesItems(hand)).map((i) => i.id)).toEqual(
+      fresh.map((i) => i.id),
+    );
+  });
+
+  test("deleting the rules document marks its rules items read (ST-139)", async () => {
+    const hand = await agentOf(member, "Delete Hand", ["OTH"]);
+    const doc = await createDocument(db, owner, {
+      title: "Short-lived rules",
+      project: "OTH",
+    });
+    await updateProject(db, owner, "OTH", { rulesDocumentId: doc.id });
+    expect(await rulesItems(hand)).toHaveLength(1);
+    await deleteDocument(db, owner, doc.id);
+    const [item] = await db
+      .select({ readAt: schema.inboxItems.readAt })
+      .from(schema.inboxItems)
+      .where(eq(schema.inboxItems.recipientId, hand.actorId));
+    expect(item?.readAt).not.toBeNull();
   });
 });
