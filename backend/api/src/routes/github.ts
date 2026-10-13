@@ -12,6 +12,7 @@ import {
   disconnectGithubInstallation,
   handleGithubWebhook,
   listGithubInstallations,
+  pruneGithubDeliveries,
   resolveGithubSetup,
   saveGithubInstallation,
   verifyGithubSignature,
@@ -231,16 +232,27 @@ export function githubWebhookRoutes(
   }
   const secret = webhookSecret;
 
+  // A refused delivery is lost (GitHub doesn't retry), so it is logged: its headers, never the body.
+  const refuseTooLarge = (c: Context<AppEnv>) => {
+    console.error(
+      `GitHub webhook refused: body over ${GITHUB_WEBHOOK_MAX_BYTES} bytes (delivery ${
+        c.req.header("X-GitHub-Delivery") ?? "?"
+      }, event ${c.req.header("X-GitHub-Event") ?? "?"}, content-length ${
+        c.req.header("Content-Length") ?? "none"
+      })`,
+    );
+    return c.json(tooLarge, 413);
+  };
+
   app.post(
     "/github",
     bodyLimit({
       maxSize: GITHUB_WEBHOOK_MAX_BYTES,
-      onError: (c) => c.json(tooLarge, 413),
+      onError: refuseTooLarge,
     }),
     async (c) => {
       const body = new Uint8Array(await c.req.arrayBuffer());
-      if (body.byteLength > GITHUB_WEBHOOK_MAX_BYTES)
-        return c.json(tooLarge, 413);
+      if (body.byteLength > GITHUB_WEBHOOK_MAX_BYTES) return refuseTooLarge(c);
       if (
         !verifyGithubSignature(
           secret,
@@ -271,6 +283,15 @@ export function githubWebhookRoutes(
         event,
         payload,
       });
+      // Retention (ST-138): each new delivery clears a batch of expired ones. A failure here
+      // doesn't fail the delivery, which is already handled.
+      if (status !== "duplicate") {
+        await pruneGithubDeliveries(db).catch((err: unknown) => {
+          console.error(
+            `Pruning GitHub deliveries failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
       return c.json({ status });
     },
   );

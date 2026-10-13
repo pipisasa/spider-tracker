@@ -6,7 +6,7 @@ import {
   type GithubPullRequestRequest,
   type GithubRepoData,
 } from "@repo/core";
-import { App, Octokit, RequestError } from "octokit";
+import { App, Octokit } from "octokit";
 import { z } from "zod";
 import type { GithubAppConfig } from "./env";
 
@@ -93,6 +93,14 @@ export function githubFailureOf(err: unknown): GithubFailure {
   if (url) failure.url = url;
   return failure;
 }
+
+/** A failed Octokit request's response body (read by shape, like githubFailureOf). */
+const responseDataOf = (err: unknown): unknown =>
+  recordOf(recordOf(err)?.response)?.data;
+
+/** A 4xx status: GitHub answered, and refused (anything else is GitHub being unavailable). */
+const isClientError = (status: number | undefined) =>
+  status !== undefined && status >= 400 && status < 500;
 
 /** The GithubUnavailableError for a failed request: a message and the failure's safe fields only. */
 export const githubUnavailable = (what: string, err: unknown) =>
@@ -228,7 +236,7 @@ export function createGithubApp(
         (r) => r.authentication.token,
         // An invalid or used code: the person isn't verified.
         (err: unknown) => {
-          if (err instanceof RequestError && err.status < 500) return null;
+          if (isClientError(githubFailureOf(err).status)) return null;
           if (
             err instanceof Error &&
             /bad_verification_code|incorrect or expired/i.test(err.message)
@@ -267,7 +275,7 @@ export function createGithubApp(
               data.suspended_at !== null && data.suspended_at !== undefined,
           };
         } catch (err) {
-          if (err instanceof RequestError && err.status === 404) return null;
+          if (githubFailureOf(err).status === 404) return null;
           throw err;
         }
       }),
@@ -305,10 +313,10 @@ export function createGithubApp(
         );
         return { created: true, pullRequest: toPullRequestData(data) };
       } catch (err) {
-        if (!(err instanceof RequestError) || err.status !== 422) {
+        if (githubFailureOf(err).status !== 422) {
           throw githubUnavailable("create pull request", err);
         }
-        const reasons = githubReasons(err.response?.data);
+        const reasons = githubReasons(responseDataOf(err));
         if (!/already exists/i.test(reasons))
           throw new DomainError(
             "validation",

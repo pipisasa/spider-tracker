@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+  GITHUB_DELIVERY_RETENTION_DAYS,
   GITHUB_WEBHOOK_MAX_BYTES,
   createAgent,
   createApiKey,
@@ -145,6 +146,46 @@ describe("POST /webhooks/github: signature and size (ST-83)", () => {
       error: { code: "payload_too_large" },
     });
   });
+
+  test("a chunked body (no Content-Length) over the limit is 413 too, logged without the body (ST-138)", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(0x78);
+    const chunks = Math.ceil(GITHUB_WEBHOOK_MAX_BYTES / chunk.byteLength) + 1;
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < chunks) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    let res: Response;
+    try {
+      res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-GitHub-Event": "push",
+          "X-GitHub-Delivery": "chunked-1",
+          "X-Hub-Signature-256": "sha256=00",
+        },
+        body,
+        duplex: "half",
+      } as RequestInit);
+    } finally {
+      console.error = original;
+    }
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({
+      error: { code: "payload_too_large" },
+    });
+    expect(logged).toEqual([
+      `GitHub webhook refused: body over ${GITHUB_WEBHOOK_MAX_BYTES} bytes (delivery chunked-1, event push, content-length none)`,
+    ]);
+  });
 });
 
 const withDb = databaseUrl ? describe : describe.skip;
@@ -203,6 +244,34 @@ withDb("POST /webhooks/github: deliveries (ST-83)", () => {
       .from(schema.githubDeliveries)
       .where(eq(schema.githubDeliveries.id, delivery));
     expect(row).toMatchObject({ event: "ping", result: "ignored" });
+  });
+
+  test("a new delivery prunes deliveries older than the retention (ST-138)", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const expired = newDelivery();
+    const recent = newDelivery();
+    await db.insert(schema.githubDeliveries).values([
+      {
+        id: expired,
+        event: "ping",
+        receivedAt: new Date(
+          Date.now() - (GITHUB_DELIVERY_RETENTION_DAYS + 1) * day,
+        ),
+      },
+      {
+        id: recent,
+        event: "ping",
+        receivedAt: new Date(
+          Date.now() - (GITHUB_DELIVERY_RETENTION_DAYS - 1) * day,
+        ),
+      },
+    ]);
+    expect((await post(ping)).status).toBe(200);
+    const left = await db
+      .select({ id: schema.githubDeliveries.id })
+      .from(schema.githubDeliveries)
+      .where(inArray(schema.githubDeliveries.id, [expired, recent]));
+    expect(left.map((r) => r.id)).toEqual([recent]);
   });
 
   test("missing headers and bodies that aren't JSON are 400", async () => {

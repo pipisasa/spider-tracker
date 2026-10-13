@@ -420,6 +420,17 @@ run("GitHub webhooks (ST-83)", () => {
         changes: { repository: { name: { from: "docs" } } },
       }),
     ).toBe("ignored");
+    // A repo added by URL only (no installation) isn't the installation's to rename (ST-138).
+    await createRepo(db, owner, { url: "acme/by-url" });
+    expect(
+      await deliver("repository", {
+        action: "renamed",
+        installation: { id: installationId },
+        repository: repository("acme", "by-url-2"),
+        changes: { repository: { name: { from: "by-url" } } },
+      }),
+    ).toBe("ignored");
+    expect((await getRepo(db, owner, "acme/by-url")).name).toBe("by-url");
     expect(
       await deliver("repository", {
         action: "publicized",

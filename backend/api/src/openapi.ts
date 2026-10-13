@@ -1494,7 +1494,8 @@ const paths = {
           ...json("Error"),
         },
         "413": {
-          description: "Body over 5 MiB (payload_too_large)",
+          description:
+            "Body over 25 MiB (payload_too_large); logged without the body",
           ...json("Error"),
         },
         "503": githubOff,

@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { ActorContext } from "./access";
@@ -33,8 +33,46 @@ import { repoFullName } from "./remotes";
 
 const { githubDeliveries, githubInstallations, repos } = schema;
 
-/** The largest body the endpoint reads (GitHub caps payloads at 25 MB; ours are far smaller). */
-export const GITHUB_WEBHOOK_MAX_BYTES = 5 * 1024 * 1024;
+/**
+ * The largest body the endpoint reads: GitHub's own cap (25 MB), so a large `push` isn't lost
+ * (ST-138). Bodies over it are refused with 413 and logged without the body.
+ */
+export const GITHUB_WEBHOOK_MAX_BYTES = 25 * 1024 * 1024;
+
+/** How long delivery ids are kept (ST-138): GitHub redelivers only recent deliveries. */
+export const GITHUB_DELIVERY_RETENTION_DAYS = 30;
+
+/** The most rows one prune deletes, so a backlog is cleared over several deliveries. */
+const PRUNE_BATCH = 500;
+
+/**
+ * Deletes deliveries received more than GITHUB_DELIVERY_RETENTION_DAYS ago, at most a batch
+ * (ST-138), and returns how many. Called opportunistically after each new delivery, so the table
+ * can't grow forever (deliveries of installations nobody connected included) without a scheduler.
+ * Rows another prune is deleting are skipped.
+ */
+export async function pruneGithubDeliveries(
+  db: Db,
+  {
+    now = new Date(),
+    limit = PRUNE_BATCH,
+  }: { now?: Date; limit?: number } = {},
+): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - GITHUB_DELIVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const stale = db
+    .select({ id: githubDeliveries.id })
+    .from(githubDeliveries)
+    .where(lt(githubDeliveries.receivedAt, cutoff))
+    .limit(limit)
+    .for("update", { skipLocked: true });
+  const deleted = await db
+    .delete(githubDeliveries)
+    .where(inArray(githubDeliveries.id, stale))
+    .returning({ id: githubDeliveries.id });
+  return deleted.length;
+}
 
 /**
  * Whether `signature` (X-Hub-Signature-256: `sha256=<hex>`) is the HMAC-SHA256 of the raw body
@@ -286,7 +324,7 @@ const handleInstallationRepositories: GithubEventHandler = async (tx, e) => {
   return true;
 };
 
-/** repository: renamed or transferred (owner/name), edited (the default branch). */
+/** repository: renamed or transferred (owner/name), edited (the default branch), for the installation's repos. */
 const handleRepository: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(repositoryPayload, "repository", e.payload);
   const { repository, changes } = data;
@@ -321,10 +359,14 @@ const handleRepository: GithubEventHandler = async (tx, e) => {
       sql`lower(${repos.owner}) = ${r.owner.toLowerCase()}`,
       sql`lower(${repos.name}) = ${r.name.toLowerCase()}`,
     );
+  // Only the installation's own repos: a repo added by URL, or granted by another installation,
+  // isn't this installation's to rename (ST-138). The name check below stays organization-wide.
   const [current] = await tx
     .select()
     .from(repos)
-    .where(byName(previous))
+    .where(
+      and(byName(previous), eq(repos.githubInstallationId, e.installation.id)),
+    )
     .for("update")
     .limit(1);
   if (!current) return false;
