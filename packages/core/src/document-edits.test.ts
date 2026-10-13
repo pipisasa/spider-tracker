@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 import { applyDocumentEdits, markdownHeadings } from "./document-edits";
 import { documentEditSchema, MAX_DOCUMENT_BYTES } from "./schemas";
 
@@ -222,7 +223,7 @@ describe("applyDocumentEdits: section bodies", () => {
     ).toBe("## A\n\n### Sub\n\nx\n\n```\n# not a heading\n```\n");
   });
 
-  test("a body that leaves a code fence open is refused (ST-147)", () => {
+  test("a body that leaves a code fence open is refused (ST-123)", () => {
     for (const content of ["x\n\n```ts\nconst a = 1;", "~~~\ncode\n```"]) {
       expect(
         errorOf(() =>
@@ -234,10 +235,35 @@ describe("applyDocumentEdits: section bodies", () => {
       });
     }
   });
+
+  test("a fence closes only on a line of its character, at least as long, with nothing after (ST-123)", () => {
+    // Four backticks aren't closed by three, nor by a line with an info string after them.
+    for (const content of [
+      "````md\n```\nnot closed\n```",
+      "```\ncode\n``` ts",
+    ]) {
+      const fence = content.split(/[a-z\n]/)[0] ?? "";
+      expect(
+        errorOf(() =>
+          applyDocumentEdits(plan, "md", [{ section: "## Next", content }]),
+        ),
+      ).toMatchObject({
+        code: "validation",
+        message: expect.stringContaining(
+          `Close it with a line of at least ${fence.length} backticks (${fence})`,
+        ),
+      });
+    }
+    expect(
+      applyDocumentEdits(plan, "md", [
+        { section: "## Next", content: "~~~~\n~~~\n~~~~~" },
+      ]),
+    ).toContain("~~~~\n~~~\n~~~~~");
+  });
 });
 
 describe("documentEditSchema", () => {
-  test("texts are limited in UTF-8 bytes, not characters (ST-147)", () => {
+  test("texts are limited in UTF-8 bytes, not characters (ST-123)", () => {
     const fits = "é".repeat(MAX_DOCUMENT_BYTES / 2);
     expect(documentEditSchema.safeParse({ append: fits }).success).toBe(true);
     for (const edit of [
@@ -246,6 +272,12 @@ describe("documentEditSchema", () => {
       { section: "## A", content: `${fits}é` },
     ])
       expect(documentEditSchema.safeParse(edit).success).toBe(false);
+  });
+
+  test("texts keep maxLength in the JSON schema (OpenAPI, MCP)", () => {
+    expect(
+      JSON.stringify(z.toJSONSchema(documentEditSchema, { io: "input" })),
+    ).toContain(`"maxLength":${MAX_DOCUMENT_BYTES}`);
   });
 });
 

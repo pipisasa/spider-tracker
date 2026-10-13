@@ -1915,7 +1915,7 @@ function createMcpServer(
     "edit_document",
     {
       description:
-        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
+        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). A section's new content may not contain a heading of the same or a higher level (it would end the section; repeating the section's own heading first is dropped), nor leave a code fence open (close a ``` or ~~~ fence with a line of the same character, at least as long, with nothing after it). Each text is at most 1 MB in UTF-8. Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
       inputSchema: {
         id: z.string().describe("Document id"),
         baseVersion: z
