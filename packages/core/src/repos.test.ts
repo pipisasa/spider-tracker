@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createAgent } from "./agents";
 import { createOrganization } from "./organizations";
@@ -282,7 +282,8 @@ run("repos and apps (ST-92)", () => {
           eq(schema.activity.entityType, "repo"),
           eq(schema.activity.entityId, repo.id),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(log.map((l) => l.action)).toEqual([
       "repo.created",
       "repo.attached",
@@ -507,7 +508,8 @@ run("repos and apps (ST-92)", () => {
           eq(schema.activity.entityType, "app"),
           eq(schema.activity.entityId, site.id),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(log.map((l) => l.action)).toEqual([
       "app.created",
       "app.updated",
