@@ -90,6 +90,8 @@ Done means finished, not shipped; releases ship Done tasks.
 
 ### Opening pull requests (ST-87)
 
+- **Safer `spider pr` (ST-144, behavior change):** it never pushes the origin's default branch (or `--base`) and pushes only the task's own branch (one whose name has its key); `--any-branch` pushes another branch. Both refusals exit 2 before pushing. A project-scoped agent can no longer name tasks outside its projects in the PR's branch, title or body (`404`, before GitHub is asked), and opening a PR moves only its own task at once; other tasks it names are linked.
+
 - CLI: new `spider pr [key] [--draft] [--base <branch>] [--no-push] [--repo owner/name]` (also `spider task pr`): pushes the current branch with your own git, then opens its pull request on GitHub as the Spider Tracker App and links it to the task (default: the branch's task). The title is the task's (`<title> (KEY)`) and the body closes it (`Closes KEY`), so the task moves to In Review now and to Done on merge. `--json` prints `{ taskKey, pullRequest }`; a PR already open for the branch exits 2 with its URL (`error.url` in `--json` errors).
 - MCP: new tool `open_pull_request` for a branch already pushed, returning the same JSON as `spider pr --json`.
 - API: `POST /v1/orgs/{org}/tasks/{key}/pull-request` `{ repo?, head?, base?, title?, body?, draft? }` → `201 { taskKey, pullRequest }`; `409` with `error.url` when a PR is already open for the branch, `400` for no or ambiguous repo or GitHub's refusal, `502` GitHub unavailable, `503` without the App. Error bodies may now carry `error.url`. SDK: `tasks.openPullRequest`, and `SpiderApiError.url`.
@@ -103,6 +105,8 @@ Done means finished, not shipped; releases ship Done tasks.
 - Safer automation (review follow-up): a merge moves a task only when the PR's base is the repo's default branch (a stacked PR or a merge into a release or feature branch moves nothing); PRs from forks, or by authors who aren't an owner, member or collaborator of the repo (bots excepted), still link but never move tasks; archived projects aren't automated; the activity entry names the pull request, the event and who sent it (`changes.pullRequest` `{ number, event, sender }`, e.g. who merged).
 
 ### Branches, commits and pull requests on tasks (ST-84)
+
+- **Merges of main into a task branch (ST-143, fix):** a push's commits that GitHub marks `distinct: false` (already on another branch, such as main's commits in "Merge branch 'main' into st-12-…") are no longer linked to the branch's task; keys in their messages still link. `GET …/tasks/{key}/git`, MCP `get_task_git` and `spider task git` show only links in repos attached to the task's project (links of a detached repo are kept and come back when it is attached again).
 
 - GitHub `create`, `delete`, `push` and `pull_request` webhooks link branches named after a task, commits that mention it (or were pushed to its branch) and pull requests that name it in their branch, title or body. Only keys of tasks in projects attached to the repo count. Each link says how it was found (`via`: `closing`, `branch`, `title`, `body`, `message`). A `pull_request` event older than the stored PR changes nothing, and a merged PR stays merged. Subscribe the GitHub App to Create, Delete, Push and Pull request ([git-integration.md](docs/git-integration.md#linking-work-to-tasks-st-84)).
 - API: `GET /v1/orgs/{org}/tasks/{key}/git` → `TaskGitDto` `{ taskKey, pullRequests, branches, commits }`. SDK: `tasks.git(org, key)`. A new realtime event `task.git` announces changes.

@@ -100,15 +100,18 @@ Code can't do these; until they're done the feature stays off in production.
 
 Branches, commits and pull requests link to tasks from the [webhooks](#webhooks-st-83) (`git-links.ts` in core). A key counts only when the task exists (not deleted) and **its project is attached to the repo** (Settings → Repos, `spider repo attach`); that also drops look-alikes such as `UTF-8`. Repos the organization doesn't have are ignored.
 
-| From                                        | Linked to                                                                   |
-| ------------------------------------------- | --------------------------------------------------------------------------- |
-| A branch (`create`, or a `push` to it)      | The task in its name (`taskKeyFromBranch`): `st-12-fix-login` → ST-12.      |
-| A commit (`push`)                           | Every task its message names, and the branch's task.                        |
-| A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names. |
+| From                                        | Linked to                                                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| A branch (`create`, or a `push` to it)      | The task in its name (`taskKeyFromBranch`): `st-12-fix-login` → ST-12.                                             |
+| A commit (`push`)                           | Every task its message names, and the branch's task when the commit is new to the repo (`distinct` isn't `false`). |
+| A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names.                                        |
 
 Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. [Status automation](#status-automation-st-85) acts only on `closing`, `branch` and `title`.
 
+- **Merges into a task branch (ST-143):** a push lists every commit of its `before..after` range, so merging `main` into `st-12-…` lists main's commits too. GitHub marks those `distinct: false` (already pushed to another branch), and the branch's key links only distinct commits, so main's work isn't linked to ST-12; keys in those commits' own messages still link them.
+- **Force pushes:** commits of the history a force push replaced stay linked (their GitHub URLs may stop working once GitHub drops them).
 - **Branches** stay linked when deleted on GitHub (`delete`, or a `push` with `deleted`); they are shown as deleted, and live again if pushed again.
+- **Detached repos:** links are kept when a repo is detached from a project, but a task shows only the links in repos attached to its project (`getTaskGit`); attaching the repo again shows them again.
 - **Pull requests** are stored in `pull_requests` (only those that link to a task). Their links follow the latest title, body and branch: an edit that drops a key removes that task's link. The state is `open` (with `draft`), `closed` (without merging) or `merged`.
 - **Out of order:** GitHub doesn't guarantee delivery order. An event whose `pull_request.updated_at` is older than the stored PR's changes nothing (`ignored`); `merged` is final; with the same `updated_at` the state never goes back (closed stays closed until a later reopen).
 - Each change publishes `task.git` (realtime), so an open task page refreshes its Development panel.
@@ -168,14 +171,15 @@ Settings: `PATCH /v1/orgs/:org/projects/:key` with `gitAutomation` (only the fie
 
 `spider pr` opens the task's pull request without leaving the terminal; the API opens it on GitHub as the App, so it works the same for people and agents.
 
-1. **Push** (CLI only): `git push --set-upstream origin <current branch>` with the person's own git and credentials (the injected `git` runner, `pushBranch` in `backend/cli/src/git.ts`). `--no-push` skips it for a branch already pushed. A failed push stops before the API (exit 1).
+1. **Push** (CLI only): `git push --set-upstream origin <current branch>` with the person's own git and credentials (the injected `git` runner, `pushBranch` in `backend/cli/src/git.ts`). `--no-push` skips it for a branch already pushed. A failed push stops before the API (exit 1). It never pushes the origin's default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`; `main` and `master` when git doesn't know it) or the `--base` branch, and pushes only a branch whose key is the task's (`taskKeyFromBranch`) unless `--any-branch` is given; otherwise it exits 2 before pushing (ST-144).
 2. **Open:** `POST /v1/orgs/:org/tasks/:key/pull-request` (`openTaskPullRequest` in `packages/core/src/pull-request-open.ts`). The API's GitHub port (`createPullRequest` in `backend/api/src/github.ts`) calls `POST /repos/{owner}/{repo}/pulls` with the repo's installation token.
-3. **Link at once:** the answer is saved with the webhook code (`savePullRequest` in `git-links.ts`) as an `opened` event from the @github bot, so the task's Development panel shows it and [status automation](#status-automation-st-85) moves the task (In Review, or In Progress for a draft) right away. GitHub's own `pull_request` event arrives later and changes nothing more.
+3. **Link at once:** the answer is saved with the webhook code (`savePullRequest` in `git-links.ts`) as an `opened` event from the @github bot, so the task's Development panel shows it and [status automation](#status-automation-st-85) moves the task (In Review, or In Progress for a draft) right away. Only the task asked for moves now (`automateOnly`); other tasks the PR names are linked, and GitHub's own `pull_request` event, arriving later, may move them like any PR's.
 
 Rules:
 
-- **Task:** the key given, or the current branch's (CLI). Guests can't; a scoped agent only in its projects (`404` otherwise).
-- **Repo:** one of the repos attached to the task's project: the one named (`repo`; the CLI sends the folder's `origin` remote, or `--repo owner/name`), or the only one. None attached, several without a name, or one not attached is `400`. The repo must be granted to a connected, unsuspended installation (`400` otherwise).
+- **Task:** the key given, or the current branch's (CLI). Guests can't (`403`); a scoped agent only in its projects (`404` otherwise).
+- **Other keys (ST-144):** every task the head branch, title or body names (`pullRequestKeys`) in a project attached to the repo is linked, and moved by GitHub's later events, as the @github bot. So each must be in the caller's projects: otherwise the request is `404`, with a message that names no key, before GitHub is asked. Keys that aren't tasks of attached projects ("UTF-8") don't count.
+- **Repo:** one of the repos attached to the task's project: the one named (`repo`; the CLI sends the folder's `origin` remote, or `--repo owner/name`), or the only one. None attached, several without a name, or one not attached is `400`; so without `--repo`, the CLI's `origin` remote must be attached to the project, even when it has only one repo. The repo must be granted to a connected, unsuspended installation of the same organization (`400` otherwise).
 - **Branches:** `head` defaults to the CLI's current branch, else the task's branch (`branchNameFor`); `base` to the repo's default branch. `head` equal to `base` is `400`.
 - **Title and body:** the title defaults to `<task title> (KEY)`; the body to a link to the task. The body always closes the task: `Closes KEY` is appended unless it already has a closing keyword for it, so merging the PR moves the task to Done.
 - **Already open:** a PR open for the head branch is `409 conflict` with `error.url` (the PR's address; in the message too). It is found in `pull_requests` first, without asking GitHub; when only GitHub knows it (its 422 "A pull request already exists"), it is fetched, linked when it names the task (as `edited`: nothing moves) and reported the same way.

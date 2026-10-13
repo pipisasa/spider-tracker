@@ -110,3 +110,21 @@ export function pushBranch(
   if (result.exitCode !== 0)
     throw new Error(result.stderr.trim() || `git push origin ${branch} failed`);
 }
+
+/**
+ * The origin remote's default branch ("main" from `refs/remotes/origin/HEAD`), or null when git
+ * doesn't know it (a clone that never set it).
+ */
+export function originDefaultBranch(
+  cwd: string,
+  git: GitRunner = runGit,
+): string | null {
+  const result = git(
+    ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    cwd,
+  );
+  const ref = result.exitCode === 0 ? result.stdout.trim() : "";
+  return ref.startsWith("origin/") && ref.length > "origin/".length
+    ? ref.slice("origin/".length)
+    : null;
+}

@@ -1,7 +1,12 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq } from "drizzle-orm";
-import { assertCanWrite, type ActorContext } from "./access";
+import {
+  assertCanWrite,
+  inScope,
+  projectScope,
+  type ActorContext,
+} from "./access";
 import type { OpenedPullRequestDto } from "./contracts";
 import { DomainError } from "./errors";
 import { branchNameFor, closingKeysIn } from "./git";
@@ -9,6 +14,7 @@ import {
   pullRequestKeys,
   pullRequestUrl,
   savePullRequest,
+  tasksOfKeys,
   toPullRequestDto,
   type PullRequestData,
 } from "./git-links";
@@ -26,6 +32,10 @@ import { parseInput } from "./validate";
 // The repo is one of those attached to the task's project: the one named (the CLI passes its
 // origin remote), or the only one. The title and body come from the task; the body always closes
 // the task ("Closes ST-12"), so merging the PR moves it to Done.
+//
+// Every task the head, title and body name in a project attached to the repo is linked, and GitHub's
+// own events may move it later; so each must be in the caller's project scope (ST-144), or the
+// request is refused before GitHub is asked. The synthetic event moves only the task asked for.
 //
 // Core never calls GitHub: the API passes `create`, its GitHub port's createPullRequest.
 
@@ -191,6 +201,27 @@ async function installationOf(db: Db, repo: RepoRow): Promise<number> {
 }
 
 /**
+ * Refuses (as not found, naming no key) a pull request whose head, title or body names a task in
+ * a project attached to the repo that the caller can't see.
+ */
+async function assertKeysInScope(
+  db: Db,
+  ctx: ActorContext,
+  repo: RepoRow,
+  pr: { title: string; body: string; headBranch: string },
+) {
+  const scope = await projectScope(db, ctx);
+  if (!scope) return;
+  const named = await tasksOfKeys(db, repo, pullRequestKeys(pr).keys());
+  if ([...named.values()].some((t) => !inScope(scope, t.projectId))) {
+    throw new DomainError(
+      "not_found",
+      "The branch, title or body names a task that wasn't found in your projects",
+    );
+  }
+}
+
+/**
  * Opens a pull request for a task on GitHub and links it to the task (`POST /tasks/:key/pull-request`).
  * A pull request already open for the branch is a conflict whose `url` is that PR (it is linked too
  * when it names the task). Guests can't; scoped agents only in their projects.
@@ -240,26 +271,35 @@ export async function openTaskPullRequest(
     .limit(1);
   if (known) throw exists(known.number);
 
+  const title = data.title ?? pullRequestTitleFor(key, task.title);
+  const body = pullRequestBodyFor(key, {
+    body: data.body,
+    taskUrl: taskUrl?.(key),
+  });
+  await assertKeysInScope(db, ctx, repo, { title, body, headBranch: head });
+
   const { created, pullRequest } = await create({
     installationId,
     owner: repo.owner,
     name: repo.name,
     head,
     base,
-    title: data.title ?? pullRequestTitleFor(key, task.title),
-    body: pullRequestBodyFor(key, { body: data.body, taskUrl: taskUrl?.(key) }),
+    title,
+    body,
     draft: data.draft ?? false,
   });
 
   // As if GitHub's event had arrived: "opened" moves the task (as the @github bot); one that was
   // already open is only linked ("edited" moves nothing). It is trusted: the head is a branch of
   // this repo (a branch name, never "fork:branch") and the actor may write to the task; GitHub's
-  // later events for it come from the App's bot, also trusted (trustedPullRequest).
+  // later events for it come from the App's bot, also trusted (trustedPullRequest). Only the
+  // task asked for moves now.
   const saved = pullRequestData(pullRequest);
   const origin = {
     defaultBranch: repo.defaultBranch,
     trusted: true,
     sender: pullRequest.author,
+    automateOnly: task.id,
   };
   await db.transaction(async (tx) =>
     savePullRequest(
@@ -283,13 +323,27 @@ export async function openTaskPullRequest(
       ),
     )
     .limit(1);
-  if (!row) throw new Error("Failed to save the pull request");
+  const via = pullRequestKeys(saved).get(key) ?? "body";
+  if (row)
+    return { taskKey: key, pullRequest: toPullRequestDto(repo, row, via) };
+  // GitHub opened it but it wasn't kept (a newer event already stored, or it names no task here):
+  // still answer with the pull request GitHub returned, never a 500.
   return {
     taskKey: key,
-    pullRequest: toPullRequestDto(
-      repo,
-      row,
-      pullRequestKeys(saved).get(key) ?? "body",
-    ),
+    pullRequest: {
+      repo: repoFullName(repo),
+      number: saved.number,
+      title: saved.title,
+      url: pullRequestUrl(repo, saved.number),
+      state: saved.state,
+      draft: saved.draft,
+      headBranch: saved.headBranch,
+      baseBranch: saved.baseBranch,
+      author: saved.author,
+      mergedAt: saved.mergedAt?.toISOString() ?? null,
+      closedAt: saved.closedAt?.toISOString() ?? null,
+      updatedAt: saved.updatedAt.toISOString(),
+      via,
+    },
   };
 }
