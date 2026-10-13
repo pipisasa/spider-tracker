@@ -79,11 +79,13 @@ describe("status automation rules (ST-85)", () => {
     ).toBe("draft");
   });
 
-  test("trusted pull requests: same repo, and an owner, member, collaborator or bot", () => {
+  test("trusted pull requests: same repo, and an owner, member, collaborator or our own App's bot", () => {
     const same = {
       baseRepo: "acme/web",
       headRepo: "acme/web",
       authorType: "User",
+      authorLogin: "ann",
+      appSlug: "spider-tracker",
     };
     for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
       expect(
@@ -123,22 +125,35 @@ describe("status automation rules (ST-85)", () => {
         authorAssociation: "MEMBER",
       }),
     ).toBe(false);
-    // A bot (an App installed on the repo, like Spider Tracker's own for `spider pr`), from the repo only.
-    expect(
-      trustedPullRequest({
-        ...same,
-        authorType: "Bot",
-        authorAssociation: "NONE",
-      }),
-    ).toBe(true);
-    expect(
-      trustedPullRequest({
-        ...same,
-        headRepo: "mallory/web",
-        authorType: "Bot",
-        authorAssociation: "NONE",
-      }),
-    ).toBe(false);
+    // Our own App's bot (opening PRs for `spider pr`), from the repo only; any case.
+    const ours = {
+      ...same,
+      authorType: "Bot",
+      authorLogin: "Spider-Tracker[bot]",
+      authorAssociation: "NONE",
+    };
+    expect(trustedPullRequest(ours)).toBe(true);
+    expect(trustedPullRequest({ ...ours, headRepo: "mallory/web" })).toBe(
+      false,
+    );
+    // Other bots never (ST-141), whatever their association; without our slug, no bot.
+    for (const login of [
+      "dependabot[bot]",
+      "renovate[bot]",
+      "spider-tracker",
+    ]) {
+      for (const association of ["NONE", "MEMBER"]) {
+        expect(
+          trustedPullRequest({
+            ...ours,
+            authorLogin: login,
+            authorAssociation: association,
+          }),
+        ).toBe(false);
+      }
+    }
+    expect(trustedPullRequest({ ...ours, appSlug: null })).toBe(false);
+    expect(trustedPullRequest({ ...ours, authorLogin: null })).toBe(false);
   });
 
   test("defaults: draft → In Progress, opened → In Review, merged → Done, closed → nothing", () => {
@@ -302,6 +317,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
       deliveryId,
       event,
       payload: { installation: { id: installationId }, ...payload },
+      appSlug: "spider-tracker",
     });
   };
   /** A PR's head branch, in the repo itself (not a fork). */
@@ -368,7 +384,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
     for (let i = 1; i <= 8; i++)
       await createTask(db, owner, "ST", { title: `Task ${i}` });
     await createTask(db, owner, "ST", { title: "M1", kind: "milestone" });
-    for (let i = 10; i <= 16; i++)
+    for (let i = 10; i <= 17; i++)
       await createTask(db, owner, "ST", { title: `Task ${i}` });
     await createTask(db, owner, "OFF", { title: "Off task" });
     await updateProject(db, owner, "OFF", {
@@ -621,6 +637,17 @@ run("status automation from GitHub pull requests (ST-85)", () => {
       author_association: "NONE",
     });
     expect(await statusOf("ST-16")).toBe("In Review");
+
+    // Another App's bot isn't (ST-141): Dependabot's body quotes upstream "Fixes" lines. It links.
+    await pr("opened", {
+      number: 31,
+      head: head("dependabot/npm/left-pad-2"),
+      title: "Bump left-pad",
+      body: "Release notes: Fixes ST-17",
+      user: { login: "dependabot[bot]", type: "Bot" },
+      author_association: "MEMBER",
+    });
+    expect(await statusOf("ST-17")).toBe("Todo");
   });
 
   test("the activity names the PR, the event and who merged", async () => {

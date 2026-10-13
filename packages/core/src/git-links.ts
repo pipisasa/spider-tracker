@@ -770,6 +770,8 @@ export const handlePullRequest: GithubEventHandler = async (tx, e) => {
       headRepo: pr.head.repo?.full_name ?? null,
       authorAssociation: pr.author_association ?? null,
       authorType: pr.user?.type ?? null,
+      authorLogin: pr.user?.login ?? null,
+      appSlug: e.appSlug,
     }),
     sender: data.sender?.login ?? null,
   };

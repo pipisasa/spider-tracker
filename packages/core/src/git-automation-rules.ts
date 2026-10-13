@@ -53,26 +53,44 @@ export interface PullRequestSource {
   authorAssociation: string | null;
   /** The PR author's account type ("User", "Bot", …). */
   authorType: string | null;
+  /** The PR author's login, e.g. "spider-tracker[bot]". */
+  authorLogin: string | null;
+  /** Our own GitHub App's slug (GITHUB_APP_SLUG, passed in by the API); null trusts no bot. */
+  appSlug: string | null;
 }
+
+/** The login GitHub gives a GitHub App's bot user. */
+export const appBotLogin = (slug: string) => `${slug}[bot]`;
 
 /**
  * Whether a pull request from a webhook may move tasks: its head branch is in the base repo (not
- * a fork), and its author is an owner, member or collaborator of the repo, or a bot (a GitHub App
- * installed on the repo, such as Spider Tracker's own App opening PRs for `spider pr`, ST-87; its
- * association is often NONE). Others still link to tasks, but never move them.
+ * a fork), and its author is an owner, member or collaborator of the repo, or our own App's bot
+ * (`<slug>[bot]`, opening PRs for `spider pr`, ST-87; its association is often NONE). Other bots
+ * (Dependabot, Renovate, …) are never trusted, whatever their association: their PR bodies quote
+ * upstream release notes, whose "Fixes API-12" would otherwise close our API-12 on merge (ST-141).
+ * Untrusted PRs still link to tasks, but never move them. Trust depends on the author only: a
+ * maintainer merging an outside contributor's PR doesn't make it trusted, so the task is moved by
+ * hand (a deliberate choice, see docs/git-integration.md).
  */
 export function trustedPullRequest({
   baseRepo,
   headRepo,
   authorAssociation,
   authorType,
+  authorLogin,
+  appSlug,
 }: PullRequestSource): boolean {
   if (headRepo === null || headRepo.toLowerCase() !== baseRepo.toLowerCase())
     return false;
+  if (authorType === "Bot")
+    return (
+      appSlug !== null &&
+      authorLogin !== null &&
+      authorLogin.toLowerCase() === appBotLogin(appSlug).toLowerCase()
+    );
   return (
-    authorType === "Bot" ||
-    (authorAssociation !== null &&
-      TRUSTED_AUTHOR_ASSOCIATIONS.includes(authorAssociation))
+    authorAssociation !== null &&
+    TRUSTED_AUTHOR_ASSOCIATIONS.includes(authorAssociation)
   );
 }
 

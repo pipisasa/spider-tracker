@@ -190,6 +190,8 @@ export interface GithubEvent {
   installation: InstallationRow;
   /** The organization's GitHub bot. */
   ctx: ActorContext;
+  /** Our GitHub App's slug: its bot's pull requests are trusted (ST-141). */
+  appSlug: string | null;
 }
 
 /** Handles one event inside the delivery's transaction; true when it changed something. */
@@ -441,7 +443,14 @@ export async function handleGithubWebhook(
     deliveryId,
     event,
     payload,
-  }: { deliveryId: string; event: string; payload: unknown },
+    appSlug = null,
+  }: {
+    deliveryId: string;
+    event: string;
+    payload: unknown;
+    /** Our GitHub App's slug (from the API's config); without it no bot's PR moves tasks. */
+    appSlug?: string | null;
+  },
 ): Promise<GithubWebhookResult> {
   if (!deliveryIdPattern.test(deliveryId))
     throw new DomainError("validation", "Invalid X-GitHub-Delivery");
@@ -480,6 +489,7 @@ export async function handleGithubWebhook(
       payload,
       installation,
       ctx,
+      appSlug,
     });
     await tx
       .update(githubDeliveries)

@@ -18,7 +18,8 @@ import { applyTaskUpdate } from "./tasks";
 // - Only ordinary tasks (kind "task") of projects that aren't archived move; releases and
 //   milestones never do.
 // - Only trusted pull requests move tasks: not from a fork, and by an owner, member or collaborator
-//   of the repo, or a bot (trustedPullRequest). Others still link.
+//   of the repo, or our own App's bot; other bots never (trustedPullRequest, ST-141). Others still
+//   link. Trust is the author's, not the merger's: an outside contributor's merged PR moves nothing.
 // - A merge counts only into the repo's default branch; a merge into another branch (a stacked
 //   PR, a release or feature branch) moves nothing. Opened, ready and draft events count whatever
 //   the base.

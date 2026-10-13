@@ -231,6 +231,7 @@ export function githubWebhookRoutes(
     return app;
   }
   const secret = webhookSecret;
+  const appSlug = github.slug;
 
   // A refused delivery is lost (GitHub doesn't retry), so it is logged: its headers, never the body.
   const refuseTooLarge = (c: Context<AppEnv>) => {
@@ -282,6 +283,7 @@ export function githubWebhookRoutes(
         deliveryId,
         event,
         payload,
+        appSlug,
       });
       // Retention (ST-138): each new delivery clears a batch of expired ones. A failure here
       // doesn't fail the delivery, which is already handled.
