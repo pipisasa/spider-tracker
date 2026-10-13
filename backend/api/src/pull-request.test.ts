@@ -24,6 +24,13 @@ import { loadEnv } from "./env";
 import { createFakeGithub } from "./github-fake";
 import type { Mailer } from "./mailer";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 // POST /tasks/:key/pull-request and the MCP open_pull_request tool (ST-87), against a fake GitHub.
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -92,8 +99,8 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
   const stamp = Date.now();
   const slug = `gh-pr-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 870;
-  const otherInstallationId = stamp + 871;
+  const installationId = uniqueInstallationId();
+  const otherInstallationId = uniqueInstallationId();
   const otherSlug = `gh-pr-other-${stamp}`;
   const otherUserId = `test-${crypto.randomUUID()}`;
   const repoName = `app-${stamp}`;

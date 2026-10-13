@@ -17,6 +17,13 @@ import { createGithubApp } from "./github";
 import { createFakeGithub } from "./github-fake";
 import type { Mailer } from "./mailer";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
 const baseEnv = {
@@ -210,7 +217,7 @@ withDb("GitHub install flow (ST-82)", () => {
     `gh-member-${stamp}@example.com`,
     `gh-other-${stamp}@example.com`,
   ];
-  const installationId = stamp;
+  const installationId = uniqueInstallationId();
   let owner = "";
   let member = "";
   let otherOwner = "";

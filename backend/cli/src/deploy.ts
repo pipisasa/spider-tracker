@@ -1,3 +1,4 @@
+import type { ReleaseDto } from "@repo/core/contracts";
 import { parseTaskKey } from "@repo/core/schemas";
 import type { GitRunner } from "./git";
 import type { Writer } from "./cli";
@@ -58,8 +59,14 @@ export interface DeployOptions {
   /** Runs the deploy command with inherited output; resolves to its exit code. */
   spawn: (cmd: string[], cwd: string) => Promise<number>;
   git: GitRunner;
-  /** Runs `spider <argv>` (the CLI's run) and resolves to its exit code. */
-  spider: (argv: string[]) => Promise<number>;
+  /**
+   * Runs `spider <argv>` (the CLI's run) and resolves to its exit code; with `capture`, its stdout
+   * is returned instead of printed (the preflight reads `release view --json`).
+   */
+  spider: (
+    argv: string[],
+    capture?: boolean,
+  ) => Promise<{ code: number; stdout: string }>;
   /** Whether a file exists, relative to `cwd`. */
   exists: (path: string) => boolean;
   stdout: Writer;
@@ -119,9 +126,58 @@ function parseArgs(argv: string[]): DeployArgs {
 }
 
 /**
+ * Before a deploy with --release (ST-142): reads the release (`spider release view <key> --json`) and
+ * checks the app is in it with the environment among its environments, so bad credentials, a wrong
+ * key or an app without that environment stop the deploy instead of leaving it unrecorded. Returns
+ * the problem, or null.
+ */
+async function preflight(
+  options: DeployOptions,
+  args: DeployArgs & { release: string },
+): Promise<string | null> {
+  const view = await options.spider(
+    [
+      "release",
+      "view",
+      args.release,
+      "--json",
+      ...(args.as ? ["--as", args.as] : []),
+    ],
+    true,
+  );
+  if (view.code !== 0)
+    return `Can't read release ${args.release} (spider exited ${view.code}); nothing deployed. Check the key and that you're signed in (--as <agent>)`;
+  let release: Pick<ReleaseDto, "key" | "apps">;
+  try {
+    release = JSON.parse(view.stdout) as Pick<ReleaseDto, "key" | "apps">;
+  } catch {
+    return `Can't read release ${args.release}: spider release view didn't answer JSON; nothing deployed`;
+  }
+  const apps = (release.apps ?? []).filter((a) => a.name === args.app);
+  if (apps.length === 0)
+    return `Release ${args.release} doesn't include the ${args.app} app; add it first (spider release update ${args.release} --app ${args.app}=<version>); nothing deployed`;
+  if (!apps.some((a) => a.environments.includes(args.env))) {
+    const envs = [...new Set(apps.flatMap((a) => a.environments))];
+    return `The ${args.app} app has no "${args.env}" environment (${envs.length ? envs.join(", ") : "none"}), so it can't be recorded on ${args.release}; nothing deployed`;
+  }
+  return null;
+}
+
+/** Untracked files `railway up` would upload with the API (it uploads the working tree). */
+function untrackedFiles(options: DeployOptions): string[] {
+  const status = options.git(["status", "--porcelain"], options.cwd);
+  if (status.exitCode !== 0) return [];
+  return status.stdout
+    .split("\n")
+    .filter((line) => line.startsWith("?? "))
+    .map((line) => line.slice(3));
+}
+
+/**
  * Deploys an app to an environment and, with --release, records the deployment on that release.
- * Exit codes: 0 deployed (and recorded), 2 usage, the deploy's own code when it fails (nothing is
- * recorded), 1 deployed but not recorded (the message says how to record it by hand).
+ * Exit codes: 0 deployed (and recorded), 2 usage or a failed preflight (nothing deployed), the
+ * deploy's own code when it fails (nothing is recorded), 1 deployed but not recorded (the message
+ * says how to record it by hand).
  */
 export async function deploy(options: DeployOptions): Promise<number> {
   const { cwd, git, stdout, stderr } = options;
@@ -146,6 +202,24 @@ export async function deploy(options: DeployOptions): Promise<number> {
       `${required} is missing: the ${args.env} build needs it. See "Staging" in docs/deployment.md\n`,
     );
     return 2;
+  }
+
+  if (args.release) {
+    const problem = await preflight(options, {
+      ...args,
+      release: args.release,
+    });
+    if (problem) {
+      stderr.write(`${problem}\n`);
+      return 2;
+    }
+  }
+  if (args.app === "api") {
+    const untracked = untrackedFiles(options);
+    if (untracked.length)
+      stderr.write(
+        `Warning: railway up uploads untracked files too (${untracked.length}: ${untracked.slice(0, 5).join(", ")}${untracked.length > 5 ? ", …" : ""}); commit, ignore or remove them\n`,
+      );
   }
 
   // The commit is read before deploying, so it names what was built.
@@ -197,7 +271,7 @@ export async function deploy(options: DeployOptions): Promise<number> {
     commit,
     ...(args.as ? ["--as", args.as] : []),
   ];
-  const recorded = await options.spider(record);
+  const recorded = (await options.spider(record)).code;
   if (recorded !== 0) {
     stderr.write(
       `Deployed ${args.app} to ${args.env}, but couldn't record it on ${args.release}. Record it with:\n  bun run spider ${record.join(" ")}\n`,

@@ -22,6 +22,13 @@ import { loadEnv } from "./env";
 import { createFakeGithub } from "./github-fake";
 import type { Mailer } from "./mailer";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const SECRET = "webhook-secret";
 
@@ -219,7 +226,7 @@ withDb("POST /webhooks/github: deliveries (ST-83)", () => {
   const stamp = Date.now();
   const slug = `gh-hook-api-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 200;
+  const installationId = uniqueInstallationId();
   let owner: ActorContext;
 
   beforeAll(async () => {
@@ -352,7 +359,7 @@ withDb("GitHub links on tasks (ST-84)", () => {
   const stamp = Date.now();
   const slug = `gh-links-api-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 300;
+  const installationId = uniqueInstallationId();
   let token = "";
 
   beforeAll(async () => {
@@ -475,7 +482,7 @@ withDb("status automation from signed pull_request events (ST-85)", () => {
   const stamp = Date.now();
   const slug = `gh-auto-api-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 400;
+  const installationId = uniqueInstallationId();
   let token = "";
 
   beforeAll(async () => {

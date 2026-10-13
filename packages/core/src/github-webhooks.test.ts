@@ -16,6 +16,13 @@ import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { createRepo, getRepo, listRepos } from "./repos";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 const SECRET = "webhook-secret";
 const sign = (body: string, secret = SECRET) =>
   `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
@@ -74,8 +81,8 @@ run("GitHub webhooks (ST-83)", () => {
   const stamp = Date.now();
   const slug = `gh-hooks-${stamp}`;
   // GitHub ids are global: unique per run (and apart from github.test.ts's).
-  const installationId = stamp + 100;
-  const unknownInstallationId = stamp + 101;
+  const installationId = uniqueInstallationId();
+  const unknownInstallationId = uniqueInstallationId();
   let owner: ActorContext;
   let n = 0;
   const deliveries: string[] = [];

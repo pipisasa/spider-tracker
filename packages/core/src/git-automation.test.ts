@@ -24,6 +24,13 @@ import {
 import { attachRepo, createRepo, detachRepo } from "./repos";
 import { createTask, getTask, updateTask } from "./tasks";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 describe("status automation rules (ST-85)", () => {
   const settings: GitAutomationSettings = DEFAULT_GIT_AUTOMATION;
 
@@ -304,7 +311,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
   const userId = `test-${crypto.randomUUID()}`;
   const stamp = Date.now();
   const slug = `git-auto-${stamp}`;
-  const installationId = stamp + 400;
+  const installationId = uniqueInstallationId();
   let owner: ActorContext;
   let n = 0;
   const deliveries: string[] = [];

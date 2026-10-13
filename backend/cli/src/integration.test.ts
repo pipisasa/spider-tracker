@@ -28,6 +28,13 @@ import { createClient } from "@repo/sdk";
 import { run } from "./cli";
 import type { Store } from "./credentials";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 // Runs the CLI against the real API app (no network), with a fresh org, project and agent key.
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -2776,7 +2783,7 @@ withDb("spider CLI against the API", () => {
       role: "owner",
       source: "ui",
     };
-    const installationId = stamp + 400;
+    const installationId = uniqueInstallationId();
     await saveGithubInstallation(db, owner, {
       installation: {
         id: installationId,

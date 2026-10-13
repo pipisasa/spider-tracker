@@ -30,13 +30,18 @@ const code = await deploy({
       stdin: "inherit",
     }).exited,
   git: runGit,
-  spider: (argv) =>
-    run(argv, {
+  spider: async (argv, capture) => {
+    let captured = "";
+    const code = await run(argv, {
       env: process.env,
-      stdout: process.stdout,
+      stdout: capture
+        ? { write: (s: string) => ((captured += s), true) }
+        : process.stdout,
       stderr: process.stderr,
       cwd: root,
-    }),
+    });
+    return { code, stdout: captured };
+  },
   exists: (path) => existsSync(join(root, path)),
   stdout: process.stdout,
   stderr: process.stderr,
