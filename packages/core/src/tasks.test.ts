@@ -712,6 +712,61 @@ run("projects and tasks", () => {
     });
   });
 
+  test("bulk update checks assignees, tags and the parent once, the parent's cycle per task", async () => {
+    await createProject(db, ctx, { name: "Bulk once", key: "BKO" });
+    const one = await createTask(db, ctx, "BKO", { title: "One" });
+    const two = await createTask(db, ctx, "BKO", { title: "Two" });
+    const keys = [one.key, two.key];
+    const unknown = "00000000-0000-7000-8000-000000000000";
+
+    for (const set of [
+      { assigneeIds: [ctx.actorId, unknown] },
+      { tagIds: [unknown] },
+      { parentId: unknown },
+    ]) {
+      // One error for the request, not one per task; nothing is written.
+      await expect(updateTasks(db, ctx, { keys, set })).rejects.toMatchObject({
+        code: "validation",
+      });
+    }
+    expect(
+      (await listTaskActivity(db, ctx.orgId, one.key)).map((e) => e.action),
+    ).toEqual(["task.created"]);
+
+    // The parent is checked against each task too: it can't be its own parent.
+    const result = await updateTasks(db, ctx, {
+      keys,
+      set: { parentId: one.id },
+    });
+    expect(
+      result.results.map((r) => [r.key, r.outcome, r.error?.message ?? null]),
+    ).toEqual([
+      [one.key, "error", "A task can't be its own parent"],
+      [two.key, "changed", null],
+    ]);
+
+    // A deactivated agent already assigned may stay assigned; it can't be newly assigned.
+    const bot = await createAgent(db, ctx, {
+      name: "Retired bot",
+      handle: `retired-${Date.now()}`,
+    });
+    await updateTask(db, ctx, one.key, { assigneeIds: [bot.actor.id] });
+    await db
+      .update(schema.actors)
+      .set({ deactivatedAt: new Date() })
+      .where(eq(schema.actors.id, bot.actor.id));
+    const kept = await updateTasks(db, ctx, {
+      keys,
+      set: { assigneeIds: [bot.actor.id] },
+    });
+    expect(
+      kept.results.map((r) => [r.key, r.outcome, r.error?.code ?? null]),
+    ).toEqual([
+      [one.key, "unchanged", null],
+      [two.key, "error", "validation"],
+    ]);
+  });
+
   test("start and target dates: set, cleared, kept in order, recorded; overdue lists open tasks past their target", async () => {
     const project = await createProject(db, ctx, { name: "Dates", key: "DAT" });
     const done = project.statuses.find((s) => s.category === "done")?.id ?? "";

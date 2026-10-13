@@ -363,7 +363,7 @@ async function withProgress(
   return dtos.map((t) => ({ ...t, subtasks: byParent.get(t.id) ?? null }));
 }
 
-async function assertTagsInOrg(tx: Tx, orgId: string, tagIds: string[]) {
+async function assertTagsInOrg(tx: Db | Tx, orgId: string, tagIds: string[]) {
   if (tagIds.length === 0) return;
   const rows = await tx
     .select({ id: tags.id })
@@ -1224,6 +1224,45 @@ export async function applyTaskUpdate(
   };
 }
 
+/**
+ * Checks the parts of a bulk change that don't depend on the task once, so a bad id fails the
+ * request instead of every task: the assignees and tags must be the organization's, and the parent
+ * must exist in the agent's scope. Per-task rules (an added assignee must be active, the parent
+ * can't be the task or one of its sub-tasks) are still checked by applyTaskUpdate.
+ */
+async function assertBulkChanges(
+  db: Db,
+  ctx: ActorContext,
+  changes: Pick<UpdateTaskInput, "assigneeIds" | "tagIds" | "parentId">,
+) {
+  if (changes.tagIds)
+    await assertTagsInOrg(db, ctx.orgId, [...new Set(changes.tagIds)]);
+  if (changes.assigneeIds && changes.assigneeIds.length > 0) {
+    const unique = [...new Set(changes.assigneeIds)];
+    // Deactivated members pass here: one already assigned to a task may stay assigned (ST-38).
+    const rows = await db
+      .select({ id: actors.id })
+      .from(actors)
+      .where(
+        and(
+          eq(actors.orgId, ctx.orgId),
+          inArray(actors.id, unique),
+          ne(actors.type, "integration"),
+        ),
+      );
+    if (rows.length !== unique.length)
+      throw new DomainError(
+        "validation",
+        "Assignees must be members of this organization",
+      );
+  }
+  const { parentId } = changes;
+  if (parentId) {
+    const scope = await projectScope(db, ctx);
+    await db.transaction((tx) => assertParent(tx, ctx.orgId, scope, parentId));
+  }
+}
+
 /** Thrown inside a dry run's transaction to roll it back once the outcome is known. */
 const rollback = Symbol("dry run");
 
@@ -1253,6 +1292,7 @@ export async function updateTasks(
     dryRun = false,
   } = parseInput(bulkUpdateTasksInput, input);
   const { status, ...changes } = set;
+  await assertBulkChanges(db, ctx, changes);
 
   let targets: string[];
   if (keys) {

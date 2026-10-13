@@ -1972,7 +1972,8 @@ const paths = {
         "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`, `startDate`, `targetDate` (null clears; start ≤ target), `noCode`, `milestoneId` (a milestone of each task's own project; null takes it out). " +
         "Each task is updated on its own with the same permission and agent-scope checks as PATCH /tasks/{taskKey}; " +
         "a task that fails (missing, out of scope, unknown status, …) is reported in `results` without stopping the others, so the response is 200. " +
-        "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing.",
+        "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing; " +
+        "so is an assignee or tag that isn't the organization's, or a parent that doesn't exist in the caller's scope (checked once, before any task).",
       requestBody: body("BulkUpdateTasksInput"),
       responses: {
         "200": ok("One result per task", "BulkUpdateTasksResult"),

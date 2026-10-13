@@ -4,6 +4,10 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 
 ## Unreleased
 
+### Review follow-ups
+
+- **API, MCP, CLI (ST-122):** bulk updates (`update_tasks`, `PATCH …/tasks`, multi-key `spider task update`) check `set.assigneeIds`, `set.tagIds` and the parent once: an unknown or other organization's id, or a parent outside the agent's projects, fails the request (`400 validation`, CLI exit 2) with one error instead of one per task, and nothing changes. A deactivated agent already assigned still stays assigned. Plugin: the `tasks` skill mentions `update_tasks` and multi-key `spider task update`.
+
 ### MCP server (breaking: tool output shapes, ST-107)
 
 MCP tools now return the same JSON as the CLI's `--json` output, built from the API DTOs ([interfaces.md](docs/interfaces.md#cli-and-mcp-output)). Tool inputs are unchanged. Scripts or prompts that read the old fields need these changes:
