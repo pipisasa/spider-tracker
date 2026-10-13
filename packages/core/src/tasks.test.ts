@@ -841,8 +841,8 @@ run("projects and tasks", () => {
     const child = await createTask(db, ctx, "LCK", { title: "Child" });
     const first = await createTask(db, ctx, "LCK", { title: "First parent" });
     const second = await createTask(db, ctx, "LCK", { title: "Second" });
-    // The date-and-parent update queues on the row first. The parent-only update used to take the
-    // org's parent lock and then wait for the row, so once the row was free each waited on the other.
+    // The date-and-parent update takes the org's parent lock and queues on the row. The parent-only
+    // update used to take the row's lock first; now it queues on the parent lock, behind the first.
     const release = await holdLock(
       db,
       sql`select 1 from tasks where id = ${child.id} for no key update`,
@@ -857,7 +857,7 @@ run("projects and tasks", () => {
     const moved = settle(
       updateTask(db, ctx, child.key, { parentId: second.id }),
     );
-    await waitForLockWaiters(db, '"tasks"', 2);
+    await waitForLockWaiters(db, ['"tasks"', "pg_advisory_xact_lock"], 2);
     await release();
     expect(await dated).toBeNull();
     expect(await moved).toBeNull();

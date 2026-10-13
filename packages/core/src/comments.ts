@@ -16,6 +16,9 @@ const { actors, comments, taskAssignees } = schema;
 /** Loop guard: an agent posts at most this many comments per task (or document) per minute. */
 export const AGENT_COMMENT_LIMIT = { perMinute: 5 };
 
+/** The window AGENT_COMMENT_LIMIT counts comments in. */
+export const COMMENT_RATE_WINDOW_MS = 60_000;
+
 /** Handles mentioned as @handle (not inside emails such as a@b.com). */
 export function parseMentions(body: string): string[] {
   const handles = new Set<string>();
@@ -67,7 +70,7 @@ export async function assertCommentRate(
       and(
         subject,
         eq(comments.authorId, ctx.actorId),
-        gt(comments.createdAt, new Date(Date.now() - 60_000)),
+        gt(comments.createdAt, new Date(Date.now() - COMMENT_RATE_WINDOW_MS)),
       ),
     );
   if (recent.length >= AGENT_COMMENT_LIMIT.perMinute) {
