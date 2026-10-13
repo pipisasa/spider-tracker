@@ -842,7 +842,7 @@ const errors = {
   "401": { description: "Missing or invalid credentials", ...json("Error") },
   "403": { description: "Not allowed", ...json("Error") },
   "404": { description: "Not found (also for organizations you are not a member of)", ...json("Error") },
-  "409": { description: "Conflict: already exists, or a document saved since your baseVersion", ...json("Error") },
+  "409": { description: "Conflict: already exists, a document saved since your baseVersion, or a release moved while your change waited", ...json("Error") },
   "429": { description: "Rate-limited (agent comment loop guards, per-IP limits on public endpoints)", ...json("Error") },
 };
 const githubOff = { description: "The server has no GitHub App configured (not_configured)", ...json("Error") };

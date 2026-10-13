@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createDb, schema } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { createDb, schema, type Tx } from "@repo/db";
+import { eq, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { listTaskActivity } from "./activity-feed";
 import { createAgent } from "./agents";
@@ -384,6 +384,64 @@ run("releases (ST-93)", () => {
     expect((await getTask(db, owner, st.key)).shippedAt).not.toBeNull();
   });
 
+  /**
+   * Runs `action` while another transaction holds the release row locked (as addToRelease does)
+   * and makes `change` inside it; that transaction commits once `action` is blocked behind it.
+   */
+  const whileReleaseLocked = async <T>(releaseId: string, change: (tx: Tx) => Promise<unknown>, action: () => Promise<T>) => {
+    let letGo = () => {};
+    const gate = new Promise<void>((resolve) => (letGo = resolve));
+    let held: (pid: number) => void = () => {};
+    const holding = new Promise<number>((resolve) => (held = resolve));
+    const holder = db.transaction(async (tx) => {
+      await tx.select({ id: schema.tasks.id }).from(schema.tasks).where(eq(schema.tasks.id, releaseId)).for("update");
+      await change(tx);
+      const [row] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      held(Number(row?.pid));
+      await gate;
+    });
+    const pid = await holding;
+    const outcome = action().then(
+      (value) => ({ value, error: null }),
+      (error: unknown) => ({ value: null, error: error instanceof Error ? error.message : String(error) }),
+    );
+    for (let waited = 0; ; waited += 10) {
+      const [row] = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_stat_activity where ${pid}::int = any(pg_blocking_pids(pid))`);
+      if (Number(row?.n) > 0) break;
+      if (waited > 5000) throw new Error("The action never waited for the lock");
+      await Bun.sleep(10);
+    }
+    letGo();
+    await holder;
+    return outcome;
+  };
+
+  test("a release transition locks the release first: a task added meanwhile is checked, and a status changed meanwhile is a conflict (ST-140)", async () => {
+    const ops = await doneTask("OPS", "Ops work (race)");
+    const st = await doneTask("ST", "Spider work (race)");
+    const release = await createRelease(db, owner, "OPS", { title: "ops-race", tasks: [ops.key] });
+    // An owner adds an ST task while the OPS agent cancels: the cancel waits, then sees it and is refused.
+    const canceled = await whileReleaseLocked(
+      release.id,
+      (tx) => tx.update(schema.tasks).set({ releaseId: release.id }).where(eq(schema.tasks.id, st.id)),
+      () => moveAs(opsAgent, release.key, "OPS", "Canceled"),
+    );
+    expect(canceled.error).toBe(`Release ${release.key} ${HIDDEN} to cancel it`);
+    for (const key of [st.key, ops.key]) expect((await getTask(db, owner, key)).releaseId).toBe(release.id);
+    expect((await getRelease(db, owner, release.key)).status.name).toBe("Planned");
+
+    // A move that read the release before another one changed it doesn't act on the old status.
+    const own = await createRelease(db, opsAgent, "OPS", { title: "ops-race-own", tasks: [(await doneTask("OPS", "Own (race)")).key] });
+    const onStaging = await statusOf("OPS", "release", "On staging");
+    const late = await whileReleaseLocked(
+      own.id,
+      (tx) => tx.update(schema.tasks).set({ statusId: onStaging }).where(eq(schema.tasks.id, own.id)),
+      () => moveAs(opsAgent, own.key, "OPS", "Canceled"),
+    );
+    expect(late.error).toBe(`Release ${own.key} changed meanwhile; try again`);
+    expect((await getRelease(db, owner, own.key)).status.name).toBe("On staging");
+  });
+
   test("shipping activity names the release only to viewers who can see it; hidden release ids read as hidden", async () => {
     const hidden = await doneTask("ST", "Hidden release work");
     const mine = await doneTask("OPS", "Mine, in an ST release");
@@ -475,6 +533,24 @@ run("releases (ST-93)", () => {
     expect((await listTaskActivity(db, owner, release.key)).at(-1)?.changes).toEqual({
       repos: [["pipisasa/ops", "pipisasa/site", "pipisasa/spider-tracker"], ["pipisasa/site", "pipisasa/spider-tracker"]],
       apps: [["runbook 2026.10.22", "web 2026.10.22"], ["web 2026.10.22"]],
+    });
+
+    // An older entry (no appRepos) can't tell the visible "web" from the hidden one: a scoped
+    // viewer gets none of its app labels, even with a "web" app of its own (ST-140).
+    await createApp(db, owner, "pipisasa/ops", { name: "web", path: "web", versioning: "date" });
+    await db.insert(schema.activity).values({
+      orgId: owner.orgId,
+      actorId: owner.actorId,
+      entityType: "task",
+      entityId: release.id,
+      action: "task.updated",
+      changes: { repos: [[], ["pipisasa/ops", "pipisasa/spider-tracker"]], apps: [[], ["runbook 2026.10.24", "web 2026.10.24"]] },
+      source: "ui",
+    });
+    expect((await listTaskActivity(db, opsAgent, release.key)).at(-1)?.changes).toEqual({ repos: [[], ["pipisasa/ops"]] });
+    expect((await listTaskActivity(db, owner, release.key)).at(-1)?.changes).toEqual({
+      repos: [[], ["pipisasa/ops", "pipisasa/spider-tracker"]],
+      apps: [[], ["runbook 2026.10.24", "web 2026.10.24"]],
     });
   });
 
