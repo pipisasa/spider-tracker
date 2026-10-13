@@ -782,26 +782,38 @@ run("releases (ST-93)", () => {
       held(Number(row?.pid));
       await gate;
     });
-    const pid = await holding;
-    const outcome = action().then(
-      (value) => ({ value, error: null }),
-      (error: unknown) => ({
-        value: null,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
-    for (let waited = 0; ; waited += 10) {
-      const [row] = await db.execute<{ n: number }>(
-        sql`select count(*)::int as n from pg_stat_activity where ${pid}::int = any(pg_blocking_pids(pid))`,
+    // Always let the holder go and wait for it (ST-145): a failed wait mustn't leave its
+    // transaction open, holding the lock for the tests that follow.
+    try {
+      // A holder that fails before holding the lock fails the test instead of hanging it.
+      const pid = await Promise.race([
+        holding,
+        holder.then(() => {
+          throw new Error("The holder ended without holding the lock");
+        }),
+      ]);
+      const outcome = action().then(
+        (value) => ({ value, error: null }),
+        (error: unknown) => ({
+          value: null,
+          error: error instanceof Error ? error.message : String(error),
+        }),
       );
-      if (Number(row?.n) > 0) break;
-      if (waited > 5000)
-        throw new Error("The action never waited for the lock");
-      await Bun.sleep(10);
+      for (let waited = 0; ; waited += 10) {
+        const [row] = await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from pg_stat_activity where ${pid}::int = any(pg_blocking_pids(pid))`,
+        );
+        if (Number(row?.n) > 0) break;
+        if (waited > 2000)
+          throw new Error("The action never waited for the lock");
+        await Bun.sleep(10);
+      }
+      letGo();
+      return await outcome;
+    } finally {
+      letGo();
+      await holder.catch(() => {});
     }
-    letGo();
-    await holder;
-    return outcome;
   };
 
   test("a release transition locks the release first: a task added meanwhile is checked, and a status changed meanwhile is a conflict (ST-140)", async () => {
@@ -848,6 +860,29 @@ run("releases (ST-93)", () => {
     expect(late.error).toBe(`Release ${own.key} changed meanwhile; try again`);
     expect((await getRelease(db, owner, own.key)).status.name).toBe(
       "On staging",
+    );
+
+    // A plain move (Planned → On staging, nothing to ship) takes the lock too, so it can't overwrite
+    // a Released set meanwhile (ST-145).
+    const plain = await createRelease(db, opsAgent, "OPS", {
+      title: "ops-race-plain",
+      tasks: [(await doneTask("OPS", "Plain (race)")).key],
+    });
+    const released = await statusOf("OPS", "release", "Released");
+    const overwrite = await whileReleaseLocked(
+      plain.id,
+      (tx) =>
+        tx
+          .update(schema.tasks)
+          .set({ statusId: released })
+          .where(eq(schema.tasks.id, plain.id)),
+      () => moveAs(opsAgent, plain.key, "OPS", "On staging"),
+    );
+    expect(overwrite.error).toBe(
+      `Release ${plain.key} changed meanwhile; try again`,
+    );
+    expect((await getRelease(db, owner, plain.key)).status.name).toBe(
+      "Released",
     );
   });
 

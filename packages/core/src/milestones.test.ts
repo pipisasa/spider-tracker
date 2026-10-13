@@ -502,4 +502,25 @@ run("milestones (ST-96)", () => {
     });
     expect(await statusName(m.key)).toBe("Active");
   });
+
+  test("a sub-task created already closed settles the milestone it inherits (ST-145)", async () => {
+    const m = await createMilestone(db, owner, "ST", { title: "Inherited" });
+    const parent = await createTask(db, owner, "ST", {
+      title: "Parent in it",
+      milestoneId: m.id,
+    });
+    await updateTask(db, owner, parent.key, {
+      statusId: await statusOf("ST", "task", "Done"),
+      noCode: true,
+    });
+    expect(await statusName(m.key)).toBe("Ready to close");
+    await move(m.key, "Active", "milestone");
+    // No milestoneId of its own: the parent's is settled.
+    await createTask(db, owner, "ST", {
+      title: "Dropped sub-task",
+      parentId: parent.id,
+      statusId: await statusOf("ST", "task", "Canceled"),
+    });
+    expect(await statusName(m.key)).toBe("Ready to close");
+  });
 });

@@ -670,9 +670,12 @@ export async function createTaskIn(
     projectKey: project.key,
     taskKey: `${project.key}-${task.number}`,
   });
-  // A task created already closed may complete its milestone (ST-96).
-  if (task.milestoneId)
-    await settleMilestones(tx, ctx.orgId, [task.milestoneId]);
+  // A task created already closed may complete its milestone (ST-96): its own, or for a sub-task
+  // the one it inherits from its parent (ST-145).
+  if (kind === "task" && (task.milestoneId || task.parentId)) {
+    const milestone = (await effectiveMilestones(tx, [task.id])).get(task.id);
+    await settleMilestones(tx, ctx.orgId, [milestone?.milestoneId]);
+  }
   const links =
     (await linksByTask(tx, scope, [task.id])).get(task.id) ?? emptyLinks();
   return toTaskDto(task, project.key, { ...links, assigneeIds, tagIds });

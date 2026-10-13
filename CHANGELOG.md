@@ -11,6 +11,7 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 - **API (ST-133):** two concurrent task updates that each set one date no longer fail with a `500` when together they'd put the start after the target; the second gets the usual `400`. Web: board cards show the target date (red when overdue), and the new-task dialog takes a start and a target date.
 - **API, MCP, CLI (ST-136):** deleting a status reports `movedTasks` as the number of live tasks moved; deleted tasks still move with them but are no longer counted.
 - **API, MCP, CLI, channel (ST-139):** `rules` inbox items of archived projects are no longer listed. Items dropped because the rules changed (replaced, cleared, moved, deleted) or the project was archived are marked read, so a document that becomes the rules again gets a new item that the channel delivers, instead of the old one reappearing unseen.
+- **API, MCP, CLI (ST-145):** every move of a release now locks it and checks its status first, not only releasing, unreleasing and canceling: a plain move (Planned → On staging) that waited behind a concurrent Released is refused (`409`, "changed meanwhile; try again") instead of overwriting it. A sub-task created already closed under a parent in a milestone now moves that milestone to Ready to close when it completes it.
 
 ### MCP server (breaking: tool output shapes, ST-107)
 
