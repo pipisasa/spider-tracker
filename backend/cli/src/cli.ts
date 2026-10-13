@@ -1838,6 +1838,19 @@ function buildProgram(
       throw usageError(
         `Which agents? Name them or use --all: spider claude <agent>… --tmux ${session}`,
       );
+    // Each window starts like a single spider claude: an unknown saved mode would fail there, so
+    // refuse here first, before any window opens (and in --dry-run too). ST-125.
+    if (!opts.permissionMode) {
+      for (const agent of agents) {
+        try {
+          permissionModeFor(undefined, claudeArgs, agent.saved.permissionMode);
+        } catch (err) {
+          if (err instanceof InvalidSavedModeError)
+            throw usageError(invalidSavedModeMessage(agent.ref, err.value));
+          throw err;
+        }
+      }
+    }
     const tmux = options.tmux ?? runTmux;
     const installed = tmuxVersion(tmux) !== null;
     if (!installed && !opts.dryRun)
@@ -2065,7 +2078,7 @@ function buildProgram(
           stderr.write(
             "missing" in hook
               ? `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`
-              : `Warning: a ${hook.event} hook in ${hook.settings} names "${hook.quotedTilde}" in quotes, where the shell doesn't expand ~; Claude Code will report a hook error. Use $HOME or an absolute path.\n`,
+              : `Warning: a ${hook.event} hook in ${hook.settings} names "${hook.quotedTilde}" with the ~ quoted or escaped, which the shell doesn't expand; Claude Code will report a hook error. Use $HOME or an absolute path.\n`,
           );
         }
         try {

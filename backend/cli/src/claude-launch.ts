@@ -169,89 +169,102 @@ function commandHooks(settings: unknown): { event: string; command: string }[] {
 
 const SCRIPT = /\.(?:c?js|mjs|ts|sh|py)$/;
 
-/** A word of a hook command, as a shell splits it, and how it starts. */
-interface HookWord {
-  /** The word with its quotes removed (adjacent quoted and unquoted parts joined). */
-  text: string;
-  /** The quote its first character was in: null when it starts unquoted. */
-  startQuote: '"' | "'" | null;
-  /** Its first part (before any quote changes), with how it was quoted. */
-  head: string;
+/** A character of a hook word: quoted or backslash-escaped characters are literal to the shell. */
+interface WordChar {
+  char: string;
+  quote: '"' | "'" | null;
+  escaped: boolean;
 }
 
 /**
- * Splits a hook command into words as a POSIX shell does (ST-125): quotes don't end a word, so
- * `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` is one word; a backslash escapes the next character
- * outside single quotes. Operators (`&&`, `;`, `|`) count as words when spaced, which is enough here.
+ * Splits a hook command into words as a POSIX shell does (ST-125), keeping how each character was
+ * quoted: quotes don't end a word, so `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` is one word; a
+ * backslash escapes the next character outside single quotes (in double quotes only `"`, `\`, `$`
+ * and a backtick). Operators (`&&`, `;`, `|`) count as words when spaced, which is enough here.
  */
-function hookWords(command: string): HookWord[] {
-  const words: HookWord[] = [];
+function hookWords(command: string): WordChar[][] {
+  const words: WordChar[][] = [];
   let quote: '"' | "'" | null = null;
-  let current: HookWord | null = null;
-  let inHead = true;
-  const add = (char: string) => {
-    current ??= { text: "", startQuote: quote, head: "" };
-    current.text += char;
-    if (inHead) current.head += char;
-  };
-  const end = () => {
-    if (current) words.push(current);
-    current = null;
-    inHead = true;
+  let current: WordChar[] | null = null;
+  const add = (char: string, escaped = false) => {
+    current ??= [];
+    current.push({ char, quote, escaped });
   };
   for (let i = 0; i < command.length; i++) {
     const char = command[i]!;
     if (quote === "'") {
-      if (char === "'") {
-        quote = null;
-        inHead = false;
-      } else add(char);
-    } else if (quote === '"') {
-      if (char === '"') {
-        quote = null;
-        inHead = false;
-      } else if (char === "\\" && /["\\$`]/.test(command[i + 1] ?? ""))
-        add(command[++i]!);
+      if (char === "'") quote = null;
       else add(char);
-    } else if (/\s/.test(char)) end();
-    else if (char === "'" || char === '"') {
-      if (current) inHead = false;
-      else current = { text: "", startQuote: char, head: "" };
+    } else if (quote === '"') {
+      if (char === '"') quote = null;
+      else if (char === "\\" && /["\\$`]/.test(command[i + 1] ?? ""))
+        add(command[++i]!, true);
+      else add(char);
+    } else if (/\s/.test(char)) {
+      if (current) words.push(current);
+      current = null;
+    } else if (char === "'" || char === '"') {
+      current ??= [];
       quote = char;
-    } else if (char === "\\" && i + 1 < command.length) add(command[++i]!);
+    } else if (char === "\\" && i + 1 < command.length)
+      add(command[++i]!, true);
     else add(char);
   }
-  end();
+  if (current) words.push(current);
   return words;
 }
 
+const textOf = (word: WordChar[]) => word.map((c) => c.char).join("");
+
+/** `~/` at the start, both characters unquoted and unescaped: the only `~` a shell expands. */
+const expandsTilde = (word: WordChar[]) =>
+  word.length >= 2 &&
+  word[0]!.char === "~" &&
+  word[1]!.char === "/" &&
+  word.slice(0, 2).every((c) => c.quote === null && !c.escaped);
+
 const HOME_PREFIX = /^(?:\$HOME|\$\{HOME\})(?=\/)/;
+
+/** `$HOME/` or `${HOME}/` at the start, none of it single-quoted or escaped. */
+function homePrefixLength(word: WordChar[]): number {
+  const match = HOME_PREFIX.exec(textOf(word));
+  if (!match) return 0;
+  const prefix = word.slice(0, match[0].length);
+  return prefix.every((c) => c.quote !== "'" && !c.escaped)
+    ? match[0].length
+    : 0;
+}
 
 /**
  * Script files a hook command runs by path (`node "/x/hook.js"`, `~/hooks/a.sh`), expanded as the
- * shell does: `~` only when the word starts unquoted, `$HOME` / `${HOME}` when it starts unquoted or
- * in double quotes, nothing in single quotes. Other variables aren't expanded, so such words
- * (`"$CLAUDE_PROJECT_DIR"/…`) aren't checked.
+ * shell does: `~/` only unquoted and unescaped, `$HOME` / `${HOME}` unquoted or in double quotes
+ * and unescaped; `\~/a.sh`, `~"/a.sh"`, `'~/a.sh'` and `\$HOME/a.sh` stay literal. Other variables
+ * aren't expanded, so such words (`"$CLAUDE_PROJECT_DIR"/…`) aren't checked.
  */
 export function hookScripts(command: string, env: Env): string[] {
   const home = env.HOME;
   return hookWords(command)
-    .map(({ text, startQuote }) => {
-      if (!home || startQuote === "'") return text;
-      const tilde = startQuote === null ? text.replace(/^~(?=\/)/, home) : text;
-      return tilde.replace(HOME_PREFIX, home);
+    .map((word) => {
+      const text = textOf(word);
+      if (!home) return text;
+      if (expandsTilde(word)) return `${home}${text.slice(1)}`;
+      const length = homePrefixLength(word);
+      return length ? `${home}${text.slice(length)}` : text;
     })
     .filter((w) => isAbsolute(w) && SCRIPT.test(w));
 }
 
-/** Scripts named as a quoted `~/…`: the shell doesn't expand `~` in quotes, so they name no file. */
+/**
+ * Scripts named as `~/…` with the `~` or its `/` quoted or escaped: the shell leaves them as is,
+ * so they name no file.
+ */
 export const quotedTildeWords = (command: string): string[] =>
   hookWords(command)
-    .filter(
-      (w) =>
-        w.startQuote !== null && w.text.startsWith("~/") && SCRIPT.test(w.text),
-    )
-    .map((w) => w.text);
+    .filter((word) => {
+      const text = textOf(word);
+      return text.startsWith("~/") && SCRIPT.test(text) && !expandsTilde(word);
+    })
+    .map(textOf);
 
 /**
  * A hook that will fail: its script is `missing`, or it names a script as a quoted `~/…`

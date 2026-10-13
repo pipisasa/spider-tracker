@@ -177,8 +177,19 @@ describe("hooks", () => {
     expect(hookScripts("/opt/my\\ hooks/a.sh", env)).toEqual([
       "/opt/my hooks/a.sh",
     ]);
-    // A word starting quoted keeps its ~, even when the rest isn't quoted.
-    expect(hookScripts('node "~"/q.js', env)).toEqual([]);
+    // A ~ or $ that is quoted or escaped, or a quoted / after ~, stays literal, as in bash.
+    for (const literal of [
+      'node "~"/q.js',
+      "node \\~/q.js",
+      'node ~"/q.js"',
+      "node ~'/q.js'",
+      "node \\$HOME/q.js",
+      "node '$HOME'/q.js",
+    ])
+      expect(hookScripts(literal, env)).toEqual([]);
+    expect(
+      quotedTildeWords("node \\~/a.js ~'/b.js' ~/c.js \"~/d.txt\""),
+    ).toEqual(["~/a.js", "~/b.js"]);
     expect(quotedTildeWords('node "~/q.js" "~/notes.txt" ~/u.js')).toEqual([
       "~/q.js",
     ]);
