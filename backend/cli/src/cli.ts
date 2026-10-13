@@ -4529,7 +4529,7 @@ function buildProgram(
     task
       .command("duplicate")
       .description(
-        "mark as a duplicate in one step: link it (duplicates), cancel it and comment; a repeat changes nothing",
+        "mark as a duplicate in one step: link it (duplicates), cancel it and comment; a repeat changes nothing but posts a new --comment",
       )
       .argument("[key]", "the duplicate (default: the current branch's task)")
       .requiredOption("--of <key>", "the original task, e.g. ST-9")

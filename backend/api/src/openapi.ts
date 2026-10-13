@@ -227,7 +227,8 @@ const schemas: Record<string, JsonSchema> = {
     project: ref("ProjectDetail"),
     movedTasks: {
       type: "integer",
-      description: "Tasks moved to the target status (deleted ones too)",
+      description:
+        "Live tasks moved to the target status; deleted ones move too but aren't counted",
     },
   }),
   Task: object({
@@ -1972,7 +1973,8 @@ const paths = {
         "`status` (id, name or category, matched in each task's own project), `priority`, `assigneeIds`, `tagIds` (both replace the lists), `parentId`, `startDate`, `targetDate` (null clears; start ≤ target), `noCode`, `milestoneId` (a milestone of each task's own project; null takes it out). " +
         "Each task is updated on its own with the same permission and agent-scope checks as PATCH /tasks/{taskKey}; " +
         "a task that fails (missing, out of scope, unknown status, …) is reported in `results` without stopping the others, so the response is 200. " +
-        "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing.",
+        "`dryRun: true` reports the outcomes without changing anything. More than 100 keys, or a filter matching more than 100 tasks, is a 400 and changes nothing; " +
+        "so is an assignee or tag that isn't the organization's, or a parent that doesn't exist in the caller's scope (checked once, before any task).",
       requestBody: body("BulkUpdateTasksInput"),
       responses: {
         "200": ok("One result per task", "BulkUpdateTasksResult"),
@@ -2021,6 +2023,8 @@ const paths = {
       operationId: "addRelation",
       summary:
         "Link this task to another (blocks, blocked_by, relates, duplicates, duplicated_by)",
+      description:
+        "Refused: an existing link (409), two tasks blocking each other (400), a cycle of duplicates (400) and a second original for a duplicate (409; unlink the first).",
       requestBody: body("RelationInput"),
       responses: { "201": ok("Created link", "Relation"), ...errors },
     },
@@ -2050,7 +2054,7 @@ const paths = {
     post: {
       operationId: "markDuplicate",
       summary:
-        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing; self, cycles and a second original are refused',
+        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing (a `comment` given again is posted by itself); self, cycles and a second original (409) are refused',
       requestBody: body("MarkDuplicateInput"),
       responses: { "200": ok("The task, canceled", "Task"), ...errors },
     },

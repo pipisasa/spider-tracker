@@ -50,7 +50,11 @@ import {
   retargetTitleLinks,
   type LinkCandidate,
 } from "./links";
-import { announceRulesChange, rulesProjectOf } from "./project-rules";
+import {
+  announceRulesChange,
+  retireRulesItems,
+  rulesProjectOf,
+} from "./project-rules";
 import {
   createDocumentInput,
   documentDiffQuery,
@@ -229,6 +233,7 @@ async function dropRules(
     action: "project.updated",
     changes: { rulesDocumentId: [documentId, null] },
   });
+  await retireRulesItems(tx, documentId);
   await publish(tx, {
     type: "project.changed",
     orgId: ctx.orgId,

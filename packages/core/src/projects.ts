@@ -19,7 +19,11 @@ import type {
   TaskKind,
 } from "./contracts";
 import { DomainError } from "./errors";
-import { announceRulesChange, assertRulesDocument } from "./project-rules";
+import {
+  announceRulesChange,
+  assertRulesDocument,
+  retireRulesItems,
+} from "./project-rules";
 import { gitAutomationOf } from "./git-automation-rules";
 import { TASK_KINDS, createProjectInput, updateProjectInput } from "./schemas";
 import { parseInput } from "./validate";
@@ -305,6 +309,8 @@ export async function updateProject(
       action: "project.updated",
       changes,
     });
+    if (changes.rulesDocumentId && current.rulesDocumentId)
+      await retireRulesItems(tx, current.rulesDocumentId);
     if (changes.rulesDocumentId && project.rulesDocumentId) {
       await announceRulesChange(tx, ctx, project.id, project.rulesDocumentId);
     }
@@ -341,6 +347,9 @@ export async function archiveProject(
       .where(eq(projects.id, current.id))
       .returning();
     if (!project) throw new Error("Failed to archive project");
+    // Archived projects' rules reach no agent; restoring one doesn't announce them again.
+    if (archived && project.rulesDocumentId)
+      await retireRulesItems(tx, project.rulesDocumentId);
     await recordActivity(tx, ctx, {
       entityType: "project",
       entityId: project.id,

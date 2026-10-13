@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { DomainError } from "./errors";
 import { createAgent, deleteAgent } from "./agents";
@@ -14,6 +14,7 @@ import {
 } from "./projects";
 import { listTaskActivity } from "./activity-feed";
 import { createTag } from "./tags";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 import { MAX_BULK_TASKS, todayUtc } from "./schemas";
 import {
   createTask,
@@ -709,6 +710,89 @@ run("projects and tasks", () => {
       }),
     ).rejects.toMatchObject({
       code: "not_found",
+    });
+  });
+
+  test("bulk update checks assignees, tags and the parent once, the parent's cycle per task", async () => {
+    await createProject(db, ctx, { name: "Bulk once", key: "BKO" });
+    const one = await createTask(db, ctx, "BKO", { title: "One" });
+    const two = await createTask(db, ctx, "BKO", { title: "Two" });
+    const keys = [one.key, two.key];
+    const unknown = "00000000-0000-7000-8000-000000000000";
+
+    for (const set of [
+      { assigneeIds: [ctx.actorId, unknown] },
+      { tagIds: [unknown] },
+      { parentId: unknown },
+    ]) {
+      // One error for the request, not one per task; nothing is written.
+      await expect(updateTasks(db, ctx, { keys, set })).rejects.toMatchObject({
+        code: "validation",
+      });
+    }
+    expect(
+      (await listTaskActivity(db, ctx.orgId, one.key)).map((e) => e.action),
+    ).toEqual(["task.created"]);
+
+    // The parent is checked against each task too: it can't be its own parent.
+    const result = await updateTasks(db, ctx, {
+      keys,
+      set: { parentId: one.id },
+    });
+    expect(
+      result.results.map((r) => [r.key, r.outcome, r.error?.message ?? null]),
+    ).toEqual([
+      [one.key, "error", "A task can't be its own parent"],
+      [two.key, "changed", null],
+    ]);
+
+    // A deactivated agent already assigned may stay assigned; it can't be newly assigned.
+    const bot = await createAgent(db, ctx, {
+      name: "Retired bot",
+      handle: `retired-${Date.now()}`,
+    });
+    await updateTask(db, ctx, one.key, { assigneeIds: [bot.actor.id] });
+    await db
+      .update(schema.actors)
+      .set({ deactivatedAt: new Date() })
+      .where(eq(schema.actors.id, bot.actor.id));
+    const kept = await updateTasks(db, ctx, {
+      keys,
+      set: { assigneeIds: [bot.actor.id] },
+    });
+    expect(
+      kept.results.map((r) => [r.key, r.outcome, r.error?.code ?? null]),
+    ).toEqual([
+      [one.key, "unchanged", null],
+      [two.key, "error", "validation"],
+    ]);
+  });
+
+  test("two concurrent updates each setting one date: the second sees the first and fails validation, not the constraint", async () => {
+    await createProject(db, ctx, { name: "Date race", key: "DRC" });
+    const raced = await createTask(db, ctx, "DRC", { title: "Raced" });
+    // Both updates wait on the task's row; each alone keeps the dates in order.
+    const release = await holdLock(
+      db,
+      sql`select 1 from tasks where id = ${raced.id} for no key update`,
+    );
+    const first = settle(
+      updateTask(db, ctx, raced.key, { targetDate: "2020-01-10" }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 1);
+    const second = settle(
+      updateTask(db, ctx, raced.key, { startDate: "2020-02-01" }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 2);
+    await release();
+    expect(await first).toBeNull();
+    expect(await second).toMatchObject({
+      code: "validation",
+      message: "The start date must be on or before the target date",
+    });
+    expect(await getTask(db, ctx, raced.key)).toMatchObject({
+      startDate: null,
+      targetDate: "2020-01-10",
     });
   });
 

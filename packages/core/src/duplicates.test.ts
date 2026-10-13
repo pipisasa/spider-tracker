@@ -70,7 +70,7 @@ run("marking duplicates (ST-114)", () => {
     await db.$client.end();
   });
 
-  test("one call links, cancels and comments; a repeat changes nothing", async () => {
+  test("one call links, cancels and comments; a repeat changes nothing but posts a new comment", async () => {
     const [copy, original] = [await task("Subset"), await task("Original")];
     const marked = await markDuplicate(db, ctx, copy.toLowerCase(), {
       of: original,
@@ -85,14 +85,19 @@ run("marking duplicates (ST-114)", () => {
     ]);
 
     const activity = (await listTaskActivity(db, ctx, copy)).length;
-    const again = await markDuplicate(db, ctx, copy, {
-      of: original,
-      comment: "Again",
-    });
+    const again = await markDuplicate(db, ctx, copy, { of: original });
     expect(again.updatedAt).toBe(marked.updatedAt);
     expect(await comments(copy)).toHaveLength(1);
     expect(await links(copy)).toEqual([`duplicates ${original}`]);
     expect((await listTaskActivity(db, ctx, copy)).length).toBe(activity);
+
+    // A comment given again isn't dropped: it is posted by itself (ST-131).
+    await markDuplicate(db, ctx, copy, { of: original, comment: "Again" });
+    expect(await comments(copy)).toEqual([
+      `Duplicate of ${original}: Original\n\nSame as the original`,
+      "Again",
+    ]);
+    expect(await links(copy)).toEqual([`duplicates ${original}`]);
   });
 
   test("completes a half-done mark: an existing link, or an already canceled task", async () => {
@@ -173,6 +178,57 @@ run("marking duplicates (ST-114)", () => {
     await expect(
       markDuplicate(db, ctx, a, { of: "DUP-999" }),
     ).rejects.toMatchObject({ code: "not_found" });
+    // A plain link can't add a second original either, from either side (ST-131).
+    await expect(
+      addRelation(db, ctx, a, { kind: "duplicates", task: e }),
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: `${a} is already a duplicate of ${b}; unlink that first`,
+    });
+    await expect(
+      addRelation(db, ctx, e, { kind: "duplicated_by", task: a }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(await links(a)).toEqual([`duplicates ${b}`]);
+  });
+
+  test("the original may be in another project; one outside an agent's projects is not found and nothing is written", async () => {
+    await createProject(db, ctx, { name: "Other dups", key: "DUO" });
+    await createProject(db, ctx, { name: "Hidden dups", key: "DUH" });
+    const other = (await createTask(db, ctx, "DUO", { title: "Elsewhere" }))
+      .key;
+    const hidden = (await createTask(db, ctx, "DUH", { title: "Secret" })).key;
+
+    const copy = await task("Cross-project copy");
+    expect(await markDuplicate(db, ctx, copy, { of: other })).toMatchObject({
+      statusId: canceledId,
+    });
+    expect(await links(other)).toEqual([`duplicated_by ${copy}`]);
+    expect(await comments(copy)).toEqual([`Duplicate of ${other}: Elsewhere`]);
+
+    // An agent scoped to DUP and DUO doesn't see DUH.
+    const scoped = await createAgent(db, ctx, { name: "Scoped dup bot" });
+    for (const key of ["DUP", "DUO"])
+      await db.insert(schema.agentProjects).values({
+        agentId: scoped.actor.id,
+        projectId: (await getProject(db, ctx, key)).id,
+      });
+    const scopedCtx: ActorContext = { ...agent, actorId: scoped.actor.id };
+    const mine = await task("Scoped copy");
+    await expect(
+      markDuplicate(db, scopedCtx, mine, { of: hidden }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(await links(mine)).toEqual([]);
+    expect(await comments(mine)).toEqual([]);
+    expect((await getTask(db, ctx, mine)).statusId).not.toBe(canceledId);
+
+    // Already a duplicate of a hidden task: the 409 doesn't name it.
+    await markDuplicate(db, ctx, mine, { of: hidden });
+    const conflict = await markDuplicate(db, scopedCtx, mine, {
+      of: other,
+    }).catch((err: unknown) => err);
+    expect(conflict).toMatchObject({ code: "conflict" });
+    expect(String(conflict)).not.toContain(hidden);
+    expect(await links(mine)).toEqual([`duplicates ${hidden}`]);
   });
 
   test("the comment counts toward an agent's per-minute limit; over it, nothing changes", async () => {

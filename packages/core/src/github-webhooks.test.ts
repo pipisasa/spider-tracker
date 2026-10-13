@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { createHmac } from "node:crypto";
 import type { ActorContext } from "./access";
 import { listGithubInstallations, saveGithubInstallation } from "./github";
@@ -97,7 +97,8 @@ run("GitHub webhooks (ST-83)", () => {
           eq(schema.activity.orgId, owner.orgId),
           eq(schema.activity.action, action),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     return rows;
   }
 
@@ -286,7 +287,8 @@ run("GitHub webhooks (ST-83)", () => {
           eq(schema.activity.action, "repo.created"),
           eq(schema.activity.actorId, bot?.id ?? ""),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(created?.changes).toMatchObject({
       repo: "acme/api",
       githubInstallationId: installationId,

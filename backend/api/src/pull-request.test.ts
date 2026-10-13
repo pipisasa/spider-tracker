@@ -656,7 +656,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
           eq(schema.activity.action, "task.updated"),
         ),
       )
-      .orderBy(desc(schema.activity.createdAt))
+      .orderBy(desc(schema.activity.id))
       .limit(1);
     expect(move?.changes).toMatchObject({
       pullRequest: { number: 1, event: "merged", sender: "ann" },

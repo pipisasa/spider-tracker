@@ -53,6 +53,7 @@ If the work needs a project that doesn't exist yet, create it: MCP `create_proje
 - If the scope changes, update the title or description (MCP `update_task`; CLI `spider task update ST-12 --description "…" --json`). Description is Markdown.
 - Found follow-up work? Create a task instead of growing this one (MCP `create_task`; CLI `spider task create --project ST --title "…" --json`).
 - `update_task` / `--assign` **replace** the whole assignee list; use `start_task` or `assign_to_me` to add yourself without removing others.
+- Several tasks at once (a status, priority, assignees, tags, parent, dates or milestone for all of them): MCP `update_tasks` with `keys` (any projects) or a `filter` in one project, at most 100; CLI `spider task update ST-2 ST-3 --set-status Todo --json`, or `spider task update --project ST --status backlog --set-priority 2 --yes --json` for a filter (without `--yes` it only lists what would change). Pass `dryRun: true` / `--dry-run` to check first. Each task reports `changed`, `unchanged` or `error` (with the reason), and one failing doesn't stop the others; an unknown assignee, tag or parent fails the whole request before anything changes.
 
 ### Talk on the task
 

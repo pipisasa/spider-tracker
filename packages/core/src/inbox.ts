@@ -159,11 +159,15 @@ export async function listInbox(
             isNull(documents.deletedAt),
           ),
         ),
-        // A `rules` item only while its document is still the project's rules (ST-128): not after
-        // the rules were replaced or cleared, or the document moved away or was deleted.
+        // A `rules` item only while its document is still the rules of a live project (ST-128,
+        // ST-139): not after the rules were replaced or cleared, the document moved away or was
+        // deleted, or the project was archived.
         or(
           ne(inboxItems.kind, "rules"),
-          eq(projects.rulesDocumentId, inboxItems.documentId),
+          and(
+            eq(projects.rulesDocumentId, inboxItems.documentId),
+            isNull(projects.archivedAt),
+          ),
         ),
         // Organization-wide documents are visible to every member, scoped agents included.
         scope
