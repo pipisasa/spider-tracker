@@ -69,6 +69,11 @@ function readableMarkdown(content: string, label: WikiLabel): string {
   );
 }
 
+/** Private-use characters around a code run's index while the Markdown around it is read. */
+const CODE_OPEN = "\uE000";
+const CODE_CLOSE = "\uE001";
+const CODE_PLACEHOLDER = /\uE000(\d+)\uE001/g;
+
 /**
  * The text a reader sees, roughly: tags, link targets and wiki-link targets dropped, entities
  * decoded. Markdown code (fences, spans, <pre>/<code>) shows as written, so it stays raw (ST-134).
@@ -85,18 +90,33 @@ function readableText(
         .replace(/<[^>]*>/g, " "),
     );
   }
-  // maskCode blanks code out with spaces: runs that differ from the content are code.
+  // maskCode blanks code out with spaces: characters that differ from the content are code.
+  // Each run of them becomes an opaque placeholder (no `]`, `)`, `|`, `<` or `&`), so links
+  // whose label holds code still match as a whole; the raw code goes back in afterwards.
   const masked = maskCode(content);
-  let out = "";
-  const inCode = (at: number) => masked[at] !== content[at];
-  let start = 0;
-  for (let i = 1; i <= content.length; i++) {
-    if (i < content.length && inCode(i) === inCode(start)) continue;
-    const run = content.slice(start, i);
-    out += inCode(start) ? ` ${run} ` : readableMarkdown(run, label);
-    start = i;
+  const code: string[] = [];
+  let marked = "";
+  for (let i = 0; i < content.length;) {
+    if (masked[i] === content[i]) {
+      const char = content[i] ?? "";
+      // Stray placeholder characters in the text can't pass for a placeholder.
+      marked += char === CODE_OPEN || char === CODE_CLOSE ? " " : char;
+      i++;
+      continue;
+    }
+    let end = i;
+    while (end < content.length && masked[end] !== content[end]) end++;
+    marked += `${CODE_OPEN}${code.length}${CODE_CLOSE}`;
+    code.push(content.slice(i, end));
+    i = end;
   }
-  return out;
+  return readableMarkdown(marked, label).replace(
+    CODE_PLACEHOLDER,
+    (whole, index: string) => {
+      const raw = code[Number(index)];
+      return raw === undefined ? whole : ` ${raw} `;
+    },
+  );
 }
 
 /** Letters and digits only, lower-cased: the comparable skeleton of a text. */
