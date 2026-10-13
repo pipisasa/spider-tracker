@@ -2238,7 +2238,7 @@ function createMcpServer(
         limit: z.number().int().min(1).max(100).optional(),
       },
     },
-    ({ unread_only, after, wait_seconds, limit }) =>
+    ({ unread_only, after, wait_seconds, limit }, extra) =>
       run(async () => {
         const query = {
           unread: unread_only ?? true,
@@ -2259,8 +2259,17 @@ function createMcpServer(
         let items: Awaited<ReturnType<typeof listInbox>>;
         try {
           items = await listInbox(db, ctx, query);
-          while (watch && items.length === 0 && Date.now() < deadline) {
-            await watch.next(Math.min(5000, deadline - Date.now()));
+          // A cancelled request (or a closed connection) stops waiting.
+          while (
+            watch &&
+            items.length === 0 &&
+            Date.now() < deadline &&
+            !extra.signal.aborted
+          ) {
+            await watch.next(
+              Math.min(5000, deadline - Date.now()),
+              extra.signal,
+            );
             items = await listInbox(db, ctx, query);
           }
         } finally {

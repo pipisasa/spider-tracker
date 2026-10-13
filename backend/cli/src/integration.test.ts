@@ -853,7 +853,12 @@ withDb("spider CLI against the API", () => {
     ).toBeLessThan(300);
 
     stop.abort();
-    await pumping;
+    await Promise.race([
+      pumping,
+      Bun.sleep(1000).then(() => {
+        throw new Error("pump did not stop on abort");
+      }),
+    ]);
     await session.close();
 
     // `spider inbox --mark-read` marks the document items it listed too (ST-128).

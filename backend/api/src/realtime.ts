@@ -37,7 +37,13 @@ export function createRealtime(db: Db) {
     /** Calls `fn` for every event until the returned function is called. */
     async subscribe(fn: (event: OrgEvent) => void) {
       subscribers.add(fn);
-      await listen();
+      try {
+        await listen();
+      } catch (err) {
+        // A failed LISTEN leaves no subscriber behind (the caller never gets its unsubscribe).
+        subscribers.delete(fn);
+        throw err;
+      }
       return () => void subscribers.delete(fn);
     },
 
