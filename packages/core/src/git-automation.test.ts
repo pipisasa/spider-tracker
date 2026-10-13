@@ -680,15 +680,30 @@ run("status automation from GitHub pull requests (ST-85)", () => {
     expect(await statusOf("ST-16")).toBe("In Review");
 
     // Another App's bot isn't (ST-141): Dependabot's body quotes upstream "Fixes" lines. It links.
-    await pr("opened", {
+    const dependabot = {
       number: 31,
       head: head("dependabot/npm/left-pad-2"),
       title: "Bump left-pad",
       body: "Release notes: Fixes ST-17",
       user: { login: "dependabot[bot]", type: "Bot" },
       author_association: "MEMBER",
+    };
+    await pr("opened", dependabot);
+    expect(await statusOf("ST-17")).toBe("Todo");
+    expect((await getTaskGit(db, owner, "ST-17")).pullRequests).toMatchObject([
+      { number: 31, via: "closing" },
+    ]);
+    // Its merge into the default branch moves nothing either.
+    await pr("closed", {
+      ...dependabot,
+      state: "closed",
+      merged: true,
+      merged_at: "2026-10-12T11:00:00Z",
     });
     expect(await statusOf("ST-17")).toBe("Todo");
+    expect((await getTaskGit(db, owner, "ST-17")).pullRequests).toMatchObject([
+      { number: 31, state: "merged" },
+    ]);
   });
 
   test("the activity names the PR, the event and who merged", async () => {

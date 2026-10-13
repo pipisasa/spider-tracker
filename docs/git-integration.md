@@ -14,7 +14,7 @@ One GitHub App serves the whole server; each organization installs it on the Git
 
 ### Server settings
 
-`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`: **all or none** (the API refuses to start with only some; empty counts as unset). The private key is the PEM or its base64 encoding (one line; escaped `\n` newlines also work). Read only in `backend/api/src/env.ts` (`githubAppConfig`).
+`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`: **all or none** (the API refuses to start with only some; empty counts as unset). `GITHUB_APP_SLUG` must be the App's slug exactly as in `github.com/apps/<slug>`: besides the install URL, status automation trusts only PRs by `<slug>[bot]` (ST-141), so a wrong slug makes PRs opened by `spider pr` stop moving tasks on GitHub's later events (merged → Done). The private key is the PEM or its base64 encoding (one line; escaped `\n` newlines also work). Read only in `backend/api/src/env.ts` (`githubAppConfig`).
 
 With none set the feature is off: `GET /github` answers `configured: false` and Settings → GitHub says GitHub isn't configured; `POST /github/install`, `POST …/sync` and the `/github/setup` callback answer `503 not_configured`. Repos can still be added by URL (ST-92), and existing installations can still be listed and disconnected.
 
