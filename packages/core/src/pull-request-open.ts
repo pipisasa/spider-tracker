@@ -227,6 +227,8 @@ async function assertKeysInScope(
     .where(
       and(
         eq(projectRepos.repoId, repo.id),
+        // A second safeguard: a repo's projects are always its organization's.
+        eq(projects.orgId, repo.orgId),
         inArray(projects.key, [...projectKeys]),
       ),
     );

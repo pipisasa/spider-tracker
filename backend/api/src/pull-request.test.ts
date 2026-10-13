@@ -539,6 +539,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
 
   test("a pull request GitHub opened but that isn't kept is still answered, as the same DTO (ST-146)", async () => {
     // GitHub answers with a PR that names no task here (so it isn't saved): the fallback DTO.
+    let number = -1;
     const odd = createApp({
       db,
       auth: createAuth(db, env, mailer),
@@ -547,6 +548,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
         ...github,
         async createPullRequest(request) {
           const result = await github.createPullRequest(request);
+          number = result.pullRequest.number;
           return {
             ...result,
             pullRequest: {
@@ -562,14 +564,11 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
     const opened = await sdk(odd).tasks.openPullRequest(slug, "SPI-6", {
       head: "spi-6-not-kept",
     });
-    const number = github.pullRequests.get(
-      `acme/${repoName}`.toLowerCase(),
-    )?.length;
     expect(opened).toEqual({
       taskKey: "SPI-6",
       pullRequest: {
         repo: `acme/${repoName}`,
-        number: number ?? -1,
+        number,
         title: "Unrelated",
         url: `https://github.com/acme/${repoName}/pull/${number}`,
         state: "open",

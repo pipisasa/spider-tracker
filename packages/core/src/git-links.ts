@@ -114,7 +114,6 @@ export const pullRequestUrl = (
   number: number,
 ) => `${repoUrl(repo)}/pull/${number}`;
 
-/** A saved pull request as the API shows it, with how it names the task. */
 /** What a pull request DTO is built from: a saved row, or the same fields of one not saved. */
 export type PullRequestDtoSource = Pick<
   PullRequestRow,
@@ -130,6 +129,7 @@ export type PullRequestDtoSource = Pick<
   | "githubUpdatedAt"
 >;
 
+/** A pull request (saved, or as GitHub answered) as the API shows it, with how it names the task. */
 export function toPullRequestDto(
   repo: { owner: string; name: string },
   pr: PullRequestDtoSource,
