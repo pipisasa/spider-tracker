@@ -26,6 +26,14 @@ function headingText(raw: string): string {
 
 /** The ATX headings (`# …` to `###### …`) of Markdown text, fenced code excluded. */
 export function markdownHeadings(content: string): MarkdownHeading[] {
+  return scanMarkdown(content).headings;
+}
+
+/** The headings of Markdown text, and whether a code fence is still open at its end. */
+function scanMarkdown(content: string): {
+  headings: MarkdownHeading[];
+  openFence: boolean;
+} {
   const headings: MarkdownHeading[] = [];
   let fence: string | null = null;
   let start = 0;
@@ -59,7 +67,7 @@ export function markdownHeadings(content: string): MarkdownHeading[] {
     }
     start = end;
   }
-  return headings;
+  return { headings, openFence: fence !== null };
 }
 
 /** `"## Decisions"` names a level-2 heading; plain `"Decisions"` one of any level. */
@@ -126,7 +134,7 @@ function append(content: string, text: string): string {
  * Replaces the body under a heading, up to the next heading of the same or a higher level; the
  * heading stays. The body takes the document's line endings (CRLF when the document uses them),
  * and may not contain a heading of the section's level or higher: that would end the section
- * early and split it in two.
+ * early and split it in two. Nor may it leave a code fence open, which would swallow what follows.
  */
 function replaceSection(
   content: string,
@@ -182,7 +190,14 @@ function replaceSection(
     text = text.slice(first.end);
   }
   text = text.replace(/^(?:[ \t]*\n)+/, "").trimEnd();
-  const breaking = markdownHeadings(text).find((h) => h.level <= heading.level);
+  const scanned = scanMarkdown(text);
+  // An unclosed fence would turn the rest of the document, its headings included, into code.
+  if (scanned.openFence)
+    throw new DomainError(
+      "validation",
+      `The new body of ${preview(section.trim())} leaves a code fence open. Close it with a matching \`\`\` or ~~~ line`,
+    );
+  const breaking = scanned.headings.find((h) => h.level <= heading.level);
   if (breaking) {
     throw new DomainError(
       "validation",

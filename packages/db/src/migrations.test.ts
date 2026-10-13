@@ -118,4 +118,76 @@ run("migration data fixes", () => {
       expect(clash).toMatchObject({ code: "23505" });
     });
   });
+
+  test("0030 marks read the rules items whose document is no longer a live project's rules", async () => {
+    await inScratchSchema(async (tx) => {
+      // The columns 0030 reads, without foreign keys.
+      await tx.unsafe(`
+        create table "projects" (
+          "id" uuid primary key,
+          "rules_document_id" uuid,
+          "archived_at" timestamp with time zone
+        );
+        create table "documents" (
+          "id" uuid primary key,
+          "project_id" uuid,
+          "deleted_at" timestamp with time zone
+        );
+        create table "inbox_items" (
+          "id" bigint primary key,
+          "kind" text not null,
+          "document_id" uuid,
+          "read_at" timestamp with time zone
+        );`);
+
+      const id = (n: number) => `00000000-0000-7000-8000-00000000000${n}`;
+      const [live, archived, cleared] = [id(1), id(2), id(3)];
+      const [rules, archivedRules, former, deleted, moved] = [
+        id(4),
+        id(5),
+        id(6),
+        id(7),
+        id(8),
+      ];
+      await tx`
+        insert into "projects" ("id", "rules_document_id", "archived_at") values
+          (${live}, ${rules}, null),
+          (${archived}, ${archivedRules}, now()),
+          (${cleared}, null, null)`;
+      // Stale: archived project's rules, a replaced rules document, a deleted one, one in a
+      // project without rules. Left alone: the live rules, read items and other kinds.
+      await tx`
+        insert into "documents" ("id", "project_id", "deleted_at") values
+          (${rules}, ${live}, null),
+          (${archivedRules}, ${archived}, null),
+          (${former}, ${live}, null),
+          (${deleted}, ${cleared}, now()),
+          (${moved}, ${cleared}, null)`;
+      await tx`
+        insert into "inbox_items" ("id", "kind", "document_id", "read_at") values
+          (1, 'rules', ${rules}, null),
+          (2, 'rules', ${archivedRules}, null),
+          (3, 'rules', ${former}, null),
+          (4, 'rules', ${deleted}, null),
+          (5, 'rules', ${moved}, null),
+          (6, 'rules', ${former}, '2026-01-01T00:00:00Z'),
+          (7, 'document_comment', ${former}, null)`;
+
+      for (const statement of statements("0030_")) await tx.unsafe(statement);
+
+      const items = await tx<{ id: string; read_at: Date | null }[]>`
+        select "id", "read_at" from "inbox_items" order by "id"`;
+      expect(items.map((i) => [Number(i.id), i.read_at !== null])).toEqual([
+        [1, false],
+        [2, true],
+        [3, true],
+        [4, true],
+        [5, true],
+        [6, true],
+        [7, false],
+      ]);
+      // An item already read keeps its time.
+      expect(items[5]?.read_at?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    });
+  });
 });

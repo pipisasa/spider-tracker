@@ -194,6 +194,8 @@ const RULES_INSTRUCTIONS_CHARS = 12_000;
 
 /** diff_document returns at most this many hunk lines, so a long diff doesn't flood the context (ST-129). */
 const MCP_DIFF_MAX_LINES = 200;
+/** …and at most this many characters of line text, so one huge line can't flood it either. */
+const MCP_DIFF_MAX_CHARS = 50_000;
 
 /**
  * The server's instructions (ST-111): the rules of the agent's projects, so a new session has
@@ -1708,7 +1710,7 @@ function createMcpServer(
     "mark_duplicate",
     {
       description:
-        'Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment "Duplicate of KEY". Calling it again changes nothing (a comment given again is posted by itself); a task can\'t duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).',
+        'Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment "Duplicate of KEY". Calling it again changes nothing (a comment given again is posted by itself, unless it repeats your latest comment); a task can\'t duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).',
       inputSchema: {
         key: z.string().describe('The duplicate, e.g. "ST-12"'),
         of: z.string().describe('The original task, e.g. "ST-9"'),
@@ -1773,7 +1775,7 @@ function createMcpServer(
   server.registerTool(
     "diff_document",
     {
-      description: `What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit \`to\` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version. Long diffs are cut at ${MCP_DIFF_MAX_LINES} lines (truncated: true).`,
+      description: `What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit \`to\` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version. Long diffs are cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_CHARS} characters (truncated: true).`,
       inputSchema: {
         id: z.string().describe("Document id"),
         from: z.number().int().positive().describe("The older version number"),
@@ -1787,14 +1789,19 @@ function createMcpServer(
     },
     ({ id, from, to }) =>
       run(async () => {
-        // DocumentDiffView, as `spider doc diff --json`, cut at MCP_DIFF_MAX_LINES hunk lines.
+        // DocumentDiffView, as `spider doc diff --json`, cut at MCP_DIFF_MAX_LINES hunk lines or
+        // MCP_DIFF_MAX_CHARS characters.
         const diff = await diffDocumentVersions(db, ctx, id, { from, to });
-        const cut = truncateHunks(diff.hunks, MCP_DIFF_MAX_LINES);
+        const cut = truncateHunks(
+          diff.hunks,
+          MCP_DIFF_MAX_LINES,
+          MCP_DIFF_MAX_CHARS,
+        );
         if (!cut.truncated) return documentDiffView(diff);
         return {
           ...documentDiffView({ ...diff, hunks: cut.hunks }),
           truncated: true,
-          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
+          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_CHARS} characters; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
         };
       }),
   );

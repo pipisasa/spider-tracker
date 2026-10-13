@@ -609,13 +609,13 @@ export const updateDocumentInput = z.object({
 
 export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
 
-const editText = z.string().max(MAX_DOCUMENT_BYTES, "At most 1 MB");
+const editText = documentContent;
 
 /**
  * One partial edit of a document's content (ST-116): replace a fragment (`old` must occur
  * exactly once, or pass `all`), `append` to the end, or replace a Markdown `section`'s body
- * (the text under the heading up to the next heading of the same or a higher level). Each text
- * is capped at MAX_DOCUMENT_BYTES characters (the saved result is checked in bytes).
+ * (the text under the heading up to the next heading of the same or a higher level). Each text,
+ * like the saved result, is at most MAX_DOCUMENT_BYTES in UTF-8.
  */
 export const documentEditSchema = z.union(
   [

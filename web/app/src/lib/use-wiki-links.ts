@@ -1,10 +1,14 @@
 import type { WikiLinkHost } from "@/components/editor/wiki-link";
 import { documentsQuery, useCreateDocument } from "@/lib/work";
 import { useQuery } from "@tanstack/react-query";
+import type { DocumentSummaryDto } from "@repo/core/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { wikiDestination, wikiLabel, wikiSuggestions } from "./wiki-links";
+
+/** One empty list while the documents load, so the memo below doesn't change on every render. */
+const NO_DOCUMENTS: DocumentSummaryDto[] = [];
 
 /**
  * Resolves, opens and suggests `[[links]]` written in a document (ST-100). Opening a title no
@@ -20,7 +24,7 @@ export function useWikiLinks({
   from: { id: string; projectKey: string | null };
   canWrite: boolean;
 }): WikiLinkHost {
-  const { data: documents = [] } = useQuery(documentsQuery(orgSlug));
+  const { data: documents = NO_DOCUMENTS } = useQuery(documentsQuery(orgSlug));
   const navigate = useNavigate();
   // `mutate` is stable; the mutation object isn't.
   const createDocument = useCreateDocument(orgSlug).mutate;

@@ -98,7 +98,7 @@ async function assertSingleOriginal(
     "conflict",
     visible
       ? `${duplicateKey} is already a duplicate of ${elsewhere.projectKey}-${elsewhere.number}; unlink that first`
-      : `${duplicateKey} is already a duplicate of a task in a project you can't see`,
+      : `${duplicateKey} is already a duplicate of a task in a project you can't see; ask a member to unlink it`,
   );
 }
 

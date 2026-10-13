@@ -6,6 +6,7 @@
 // Browser-safe: no database imports.
 
 import type { DocumentFormat } from "./contracts";
+import { maskCode } from "./links";
 
 /**
  * The text an unlabelled `[[target]]` shows, when it isn't the target itself: a `[[doc:<id>]]`
@@ -50,19 +51,8 @@ function decodeEntities(text: string): string {
   );
 }
 
-/** The text a reader sees, roughly: tags, link targets and wiki-link targets dropped, entities decoded. */
-function readableText(
-  content: string,
-  format: DocumentFormat,
-  label: WikiLabel = () => null,
-): string {
-  if (format === "html") {
-    return decodeEntities(
-      content
-        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-        .replace(/<[^>]*>/g, " "),
-    );
-  }
+/** Markdown outside code: links shown by their labels, `[[…]]` by what they show, tags dropped. */
+function readableMarkdown(content: string, label: WikiLabel): string {
   return decodeEntities(
     content
       // ![alt](src) and [label](href): only the alt text and label show.
@@ -77,6 +67,36 @@ function readableText(
       // <https://autolinks> and inline HTML tags (skipped when rendered).
       .replace(/<[^>\n]*>/g, " "),
   );
+}
+
+/**
+ * The text a reader sees, roughly: tags, link targets and wiki-link targets dropped, entities
+ * decoded. Markdown code (fences, spans, <pre>/<code>) shows as written, so it stays raw (ST-134).
+ */
+function readableText(
+  content: string,
+  format: DocumentFormat,
+  label: WikiLabel = () => null,
+): string {
+  if (format === "html") {
+    return decodeEntities(
+      content
+        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+        .replace(/<[^>]*>/g, " "),
+    );
+  }
+  // maskCode blanks code out with spaces: runs that differ from the content are code.
+  const masked = maskCode(content);
+  let out = "";
+  const inCode = (at: number) => masked[at] !== content[at];
+  let start = 0;
+  for (let i = 1; i <= content.length; i++) {
+    if (i < content.length && inCode(i) === inCode(start)) continue;
+    const run = content.slice(start, i);
+    out += inCode(start) ? ` ${run} ` : readableMarkdown(run, label);
+    start = i;
+  }
+  return out;
 }
 
 /** Letters and digits only, lower-cased: the comparable skeleton of a text. */
@@ -129,10 +149,12 @@ export function quoteOccursInSkeleton(
   document: DocumentSkeleton,
   quote: string,
 ): boolean {
-  const needle = skeleton(quote);
+  // A quote may be copied from the source (`caf&eacute;`) or the rendered page (`café`); in code,
+  // where entities show as written, the source form is what a reader sees.
+  const needles = [skeleton(decodeEntities(quote)), skeleton(quote)];
   // A quote of only punctuation or symbols: compare it as written.
-  if (!needle) return document.content.includes(quote.trim());
-  return document.skeleton.includes(needle);
+  if (needles.every((n) => !n)) return document.content.includes(quote.trim());
+  return needles.some((n) => n !== "" && document.skeleton.includes(n));
 }
 
 /** Whether `quote` (as a reader sees it) still occurs in a document's content. */

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyDocumentEdits, markdownHeadings } from "./document-edits";
+import { documentEditSchema, MAX_DOCUMENT_BYTES } from "./schemas";
 
 const plan = [
   "# Plan",
@@ -219,6 +220,32 @@ describe("applyDocumentEdits: section bodies", () => {
         },
       ]),
     ).toBe("## A\n\n### Sub\n\nx\n\n```\n# not a heading\n```\n");
+  });
+
+  test("a body that leaves a code fence open is refused (ST-147)", () => {
+    for (const content of ["x\n\n```ts\nconst a = 1;", "~~~\ncode\n```"]) {
+      expect(
+        errorOf(() =>
+          applyDocumentEdits(plan, "md", [{ section: "## Next", content }]),
+        ),
+      ).toMatchObject({
+        code: "validation",
+        message: expect.stringContaining("leaves a code fence open"),
+      });
+    }
+  });
+});
+
+describe("documentEditSchema", () => {
+  test("texts are limited in UTF-8 bytes, not characters (ST-147)", () => {
+    const fits = "é".repeat(MAX_DOCUMENT_BYTES / 2);
+    expect(documentEditSchema.safeParse({ append: fits }).success).toBe(true);
+    for (const edit of [
+      { append: `${fits}é` },
+      { old: "a", new: `${fits}é` },
+      { section: "## A", content: `${fits}é` },
+    ])
+      expect(documentEditSchema.safeParse(edit).success).toBe(false);
   });
 });
 

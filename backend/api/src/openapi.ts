@@ -2076,7 +2076,7 @@ const paths = {
     post: {
       operationId: "markDuplicate",
       summary:
-        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing (a `comment` given again is posted by itself); self, cycles and a second original (409) are refused',
+        "Mark as a duplicate of another task in one step: link it (duplicates), move it to the project's first canceled status and comment \"Duplicate of KEY\". A repeat changes nothing (a `comment` given again is posted by itself, unless it repeats the caller's latest comment); self, cycles and a second original (409) are refused",
       requestBody: body("MarkDuplicateInput"),
       responses: { "200": ok("The task, canceled", "Task"), ...errors },
     },

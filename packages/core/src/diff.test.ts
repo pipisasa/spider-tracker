@@ -57,6 +57,14 @@ describe("textChanges", () => {
     });
     expect(textChanges("a", "a\r\n").lineEndingsChanged).toBe(false);
   });
+
+  test("a mixed text against an all-CRLF or all-LF one counts (ST-147)", () => {
+    const mixed = "a\r\nb\nc\r\n";
+    expect(textChanges(mixed, "a\r\nb\r\nc\r\n").lineEndingsChanged).toBe(true);
+    expect(textChanges("a\nb\n", mixed).lineEndingsChanged).toBe(true);
+    expect(textChanges(mixed, "x\r\ny\nz\n").lineEndingsChanged).toBe(false);
+    expect(textChanges("a\r\n", "a\r\nb\r\n").lineEndingsChanged).toBe(false);
+  });
 });
 
 describe("diffLines", () => {
@@ -273,6 +281,21 @@ describe("diffHunks and formatUnifiedDiff", () => {
     expect(last.oldLines).toBe(
       last.lines.filter((l) => l.kind !== "added").length,
     );
+  });
+
+  test("truncateHunks also caps the characters, cutting a long line short (ST-147)", () => {
+    const hunks = diffHunks(diffLines("x".repeat(100), "y".repeat(100)));
+    expect(truncateHunks(hunks, 1000, 200)).toEqual({
+      hunks,
+      truncated: false,
+    });
+    const cut = truncateHunks(hunks, 1000, 150);
+    expect(cut.truncated).toBe(true);
+    expect(cut.hunks[0]?.lines.map((l) => [l.kind, l.text.length])).toEqual([
+      ["removed", 100],
+      ["added", 50],
+    ]);
+    expect(cut.hunks[0]).toMatchObject({ oldLines: 1, newLines: 1 });
   });
 
   test("pure insertions and deletions number like diff -u", () => {

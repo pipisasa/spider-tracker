@@ -104,10 +104,13 @@ describe("front matter", () => {
       fields: {},
       body: "---\ntitle: T\nSome prose here\n---\nRest",
     });
-    // A one-line `Word: text` paragraph between rules (ST-132), or a heading first, isn't either.
+    // A one-line `Word: text` paragraph between rules (ST-132) isn't either, nor are comments
+    // followed by a blank line or by prose.
     for (const raw of [
       "---\n\nNote: read this first.\n\n---\n\nRest\n",
-      "---\n# Notes\ntitle: T\n---\nRest\n",
+      "---\n# notes\n\ntitle: T\n---\nRest\n",
+      "---\n# Notes\nSome prose\n---\nRest\n",
+      "---\n# Notes\n---\nRest\n",
     ])
       expect(parseFrontMatter(raw)).toEqual({ fields: {}, body: raw });
     // Written back, the rule stays part of the body, below a new block.
@@ -121,13 +124,22 @@ describe("front matter", () => {
 
   test("comments, blank lines and nested YAML values still make front matter", () => {
     const raw =
-      "---\ntitle: T\n# notes\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody";
+      "---\n# notes\ntitle: T\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody";
     expect(parseFrontMatter(raw)).toEqual({
       fields: { title: "T" },
       body: "Body",
     });
     // A nested line before any key isn't YAML front matter.
     expect(parseFrontMatter("---\n  indented\n---\nBody").fields).toEqual({});
+    // Comments first (ST-132): the keys are read and written back in place, without a second block.
+    const published = `---\n# notes\n# more\nid: ${A}\nversion: 3\n---\nBody`;
+    expect(parseFrontMatter(published)).toEqual({
+      fields: { id: A, version: "3" },
+      body: "Body",
+    });
+    expect(setFrontMatter(published, { version: "4" })).toBe(
+      `---\n# notes\n# more\nid: ${A}\nversion: 4\n---\nBody`,
+    );
   });
 
   test("a leading BOM is ignored when reading and kept, once, when writing back", () => {
@@ -470,6 +482,45 @@ describe("publishDocuments", () => {
       conflict: 0,
       failed: 2,
     });
+  });
+
+  test("a published file whose front matter opens with a comment updates its document, not a new one (ST-132)", async () => {
+    const raw = `---\n# notes\nid: ${A}\nversion: 3\n---\n\nEdited`;
+    const written: string[] = [];
+    let created = false;
+    const response = await publishDocuments({
+      client: fakeClient({
+        get: async () => dto(A, 3, "a", "Before"),
+        create: async () => {
+          created = true;
+          return dto(B, 1, "a", "Edited");
+        },
+        update: async (id, input) => dto(id, 4, "a", input.content),
+      }),
+      org: "o",
+      docs: [parseSourceDoc("a.md", raw)],
+      dryRun: false,
+      save: async (_doc, text) => {
+        written.push(text);
+      },
+    });
+    expect(created).toBe(false);
+    expect(response.results[0]).toMatchObject({
+      status: "updated",
+      id: A,
+      version: 4,
+    });
+    // One block, the comment kept.
+    const hash = sourceHash({ title: "a", body: "Edited" });
+    expect(written).toEqual([
+      `---\n# notes\nid: ${A}\nversion: 4\nhash: ${hash}\n---\n\nEdited`,
+    ]);
+  });
+
+  test("the hash ignores line endings", () => {
+    expect(sourceHash({ title: "a", body: "x\r\ny\r\n" })).toBe(
+      sourceHash({ title: "a", body: "x\ny\n" }),
+    );
   });
 
   test("a file unchanged since its publish is unchanged (tracker newer), not a conflict (ST-132)", async () => {

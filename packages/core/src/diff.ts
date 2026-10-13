@@ -31,17 +31,27 @@ export interface TextChanges {
   lineEndingsChanged: boolean;
 }
 
+/** A text's line endings: all LF, all CRLF, or a mix (null without line breaks). */
+function lineEndings(text: string): "lf" | "crlf" | "mixed" | null {
+  const all = text.split("\n").length - 1;
+  if (all === 0) return null;
+  const crlf = text.split("\r\n").length - 1;
+  return crlf === 0 ? "lf" : crlf === all ? "crlf" : "mixed";
+}
+
+/**
+ * `lineEndingsChanged` compares the style of each text's line endings (all LF, all CRLF or mixed),
+ * so a mixed text against an all-CRLF one counts; two mixed texts don't.
+ */
 export function textChanges(oldText: string, newText: string): TextChanges {
-  const crlf = (text: string) => text.includes("\r\n");
+  const before = lineEndings(oldText);
+  const after = lineEndings(newText);
   return {
     trailingNewlineChanged:
       oldText !== "" &&
       newText !== "" &&
       oldText.endsWith("\n") !== newText.endsWith("\n"),
-    lineEndingsChanged:
-      oldText.includes("\n") &&
-      newText.includes("\n") &&
-      crlf(oldText) !== crlf(newText),
+    lineEndingsChanged: before !== null && after !== null && before !== after,
   };
 }
 
@@ -278,30 +288,44 @@ function hunkOf(
 }
 
 /**
- * The first hunks up to `maxLines` lines in all, cutting the last one short when needed;
- * `truncated` says whether anything was left out. For outputs with a size budget (MCP).
+ * The first hunks up to `maxLines` lines and `maxChars` characters of line text in all, cutting
+ * the last hunk (and, past `maxChars`, its last line's text) short when needed; `truncated` says
+ * whether anything was left out. For outputs with a size budget (MCP).
  */
 export function truncateHunks(
   hunks: DiffHunkDto[],
   maxLines: number,
+  maxChars = Infinity,
 ): { hunks: DiffHunkDto[]; truncated: boolean } {
   const kept: DiffHunkDto[] = [];
-  let left = maxLines;
+  let linesLeft = maxLines;
+  let charsLeft = maxChars;
   for (const hunk of hunks) {
-    if (left <= 0) return { hunks: kept, truncated: true };
-    if (hunk.lines.length <= left) {
+    const lines: DiffLineDto[] = [];
+    for (const line of hunk.lines) {
+      if (linesLeft <= 0 || charsLeft <= 0) break;
+      const text =
+        line.text.length > charsLeft
+          ? line.text.slice(0, charsLeft)
+          : line.text;
+      lines.push(text === line.text ? line : { ...line, text });
+      linesLeft -= 1;
+      charsLeft -= line.text.length;
+    }
+    const whole =
+      lines.length === hunk.lines.length && lines.at(-1) === hunk.lines.at(-1);
+    if (whole) {
       kept.push(hunk);
-      left -= hunk.lines.length;
       continue;
     }
-    const cut = hunk.lines.slice(0, left);
-    kept.push(
-      hunkOf(
-        cut,
-        hunk.oldLines ? hunk.oldStart - 1 : hunk.oldStart,
-        hunk.newLines ? hunk.newStart - 1 : hunk.newStart,
-      ),
-    );
+    if (lines.length > 0)
+      kept.push(
+        hunkOf(
+          lines,
+          hunk.oldLines ? hunk.oldStart - 1 : hunk.oldStart,
+          hunk.newLines ? hunk.newStart - 1 : hunk.newStart,
+        ),
+      );
     return { hunks: kept, truncated: true };
   }
   return { hunks: kept, truncated: false };

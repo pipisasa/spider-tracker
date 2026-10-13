@@ -947,6 +947,32 @@ withDb("MCP server", () => {
     );
   });
 
+  test("diff_document: a diff of one huge line is cut at 50,000 characters (ST-147)", async () => {
+    const doc = (
+      await call(client, "create_document", {
+        title: "One long line",
+        content: "a".repeat(60_000),
+      })
+    ).json() as { id: string };
+    await call(client, "update_document", {
+      id: doc.id,
+      baseVersion: 1,
+      content: "b".repeat(60_000),
+    });
+    const diff = (
+      await call(client, "diff_document", { id: doc.id, from: 1 })
+    ).json() as {
+      added: number;
+      removed: number;
+      truncated?: boolean;
+      hunks: { lines: { kind: string; text: string }[] }[];
+    };
+    expect(diff).toMatchObject({ added: 1, removed: 1, truncated: true });
+    expect(
+      diff.hunks.flatMap((h) => h.lines.map((l) => [l.kind, l.text.length])),
+    ).toEqual([["removed", 50_000]]);
+  });
+
   test("statuses can be given by category, like the CLI", async () => {
     const moved = await call(client, "update_task", {
       key: "SPI-1",
