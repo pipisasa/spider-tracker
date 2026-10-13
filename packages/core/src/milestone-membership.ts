@@ -17,7 +17,9 @@ import { publish } from "./events";
 // sub-task without one belongs to its nearest ancestor's milestone. That inheritance is computed
 // on read (recursive queries below), never stored, so re-parenting a task or changing a parent's
 // milestone moves its whole subtree with no copies to keep in step. Only tasks of kind "task" are
-// members, and the walk only passes through such tasks.
+// members, and the walk only passes through such tasks of the same project: a sub-task whose parent
+// is in another project never inherits that parent's milestone, so a milestone never reaches
+// outside its own project (and a scoped actor can't settle a milestone it can't see).
 
 const { projects, statuses, tasks } = schema;
 
@@ -48,12 +50,12 @@ export async function effectiveMilestones(
     milestone_id: string;
     depth: number;
   }>(sql`
-    with recursive up(origin, parent_id, milestone_id, depth) as (
-      select t.id, t.parent_id, t.milestone_id, 0 from tasks t
+    with recursive up(origin, project_id, parent_id, milestone_id, depth) as (
+      select t.id, t.project_id, t.parent_id, t.milestone_id, 0 from tasks t
       where t.id in (${uuidList(taskIds)}) and t.kind = 'task'
       union all
-      select up.origin, p.parent_id, p.milestone_id, up.depth + 1 from up
-      join tasks p on p.id = up.parent_id and p.deleted_at is null and p.kind = 'task'
+      select up.origin, up.project_id, p.parent_id, p.milestone_id, up.depth + 1 from up
+      join tasks p on p.id = up.parent_id and p.deleted_at is null and p.kind = 'task' and p.project_id = up.project_id
       where up.milestone_id is null and up.depth < ${MAX_DEPTH}
     )
     select origin, milestone_id, depth from up where milestone_id is not null
@@ -86,13 +88,14 @@ export async function milestoneMembers(
     milestone_id: string;
     depth: number;
   }>(sql`
-    with recursive member(id, milestone_id, depth) as (
-      select t.id, t.milestone_id, 0 from tasks t
+    with recursive member(id, project_id, milestone_id, depth) as (
+      select t.id, t.project_id, t.milestone_id, 0 from tasks t
       where t.milestone_id in (${uuidList(milestoneIds)}) and t.deleted_at is null and t.kind = 'task'
       union all
-      select c.id, m.milestone_id, m.depth + 1 from tasks c
+      select c.id, c.project_id, m.milestone_id, m.depth + 1 from tasks c
       join member m on c.parent_id = m.id
-      where c.milestone_id is null and c.deleted_at is null and c.kind = 'task' and m.depth < ${MAX_DEPTH}
+      where c.milestone_id is null and c.deleted_at is null and c.kind = 'task' and c.project_id = m.project_id
+        and m.depth < ${MAX_DEPTH}
     )
     select id, milestone_id, depth from member
   `);
