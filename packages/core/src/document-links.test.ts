@@ -208,6 +208,22 @@ run("document links, backlinks and the graph (ST-100)", () => {
     expect((await listBacklinks(db, ctx, target.id)).map((d) => d.id)).toEqual([
       source.id,
     ]);
+
+    // A row stored as written before targets were lower-cased still counts as a link by id,
+    // even when the target's title would open another document from the source's project.
+    await createDocument(db, ctx, { project: "OPS", title: "Architecture v2" });
+    const legacy = await createDocument(db, ctx, {
+      project: "OPS",
+      title: "Legacy",
+    });
+    await db.insert(schema.documentLinks).values({
+      documentId: legacy.id,
+      kind: "document",
+      target: `DOC:${target.id.toUpperCase()}`,
+    });
+    expect(
+      (await listBacklinks(db, ctx, target.id)).map((d) => d.id).sort(),
+    ).toEqual([source.id, legacy.id].sort());
   });
 
   test("scoped agents see only their projects in the graph and backlinks", async () => {
@@ -251,5 +267,44 @@ run("document links, backlinks and the graph (ST-100)", () => {
     await expect(listBacklinks(db, agent, hidden.id)).rejects.toMatchObject({
       code: "not_found",
     });
+  });
+
+  test("a scoped agent's rename doesn't lock documents outside its projects (ST-127)", async () => {
+    const target = await createDocument(db, ctx, {
+      project: "WEB",
+      title: "Lock target",
+    });
+    const outside = await createDocument(db, ctx, {
+      project: "OPS",
+      title: "Lock outside",
+      content: "[[Lock target]]",
+    });
+    const { invite } = await createAgentInvite(db, ctx, {
+      projectKeys: ["WEB"],
+    });
+    const { actor } = await acceptAgentInvite(db, { code: invite.code });
+    const agent: ActorContext = {
+      orgId: ctx.orgId,
+      actorId: actor.id,
+      role: "member",
+      source: "api",
+    };
+
+    // Someone holds the out-of-scope linking document; the rename must not wait for it.
+    const outcome = await db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.documents.id })
+        .from(schema.documents)
+        .where(eq(schema.documents.id, outside.id))
+        .for("update");
+      return Promise.race([
+        updateDocument(db, agent, target.id, {
+          baseVersion: 1,
+          title: "Lock target renamed",
+        }).then(() => "saved"),
+        Bun.sleep(3000).then(() => "blocked"),
+      ]);
+    });
+    expect(outcome).toBe("saved");
   });
 });

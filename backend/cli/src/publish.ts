@@ -12,13 +12,18 @@ import {
 } from "@repo/core/links";
 import { MAX_DOCUMENT_BYTES } from "@repo/core/schemas";
 import { SpiderApiError, type SpiderClient } from "@repo/sdk";
+import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, posix, relative, isAbsolute } from "node:path";
 
-/** The front matter keys publish reads; `id` and `version` are written back after a publish. */
+/**
+ * The front matter keys publish reads; `id`, `version` and `hash` (of the title and body as last
+ * published, ST-132) are written back after a publish.
+ */
 export interface FrontMatter {
   id?: string;
   version?: string;
+  hash?: string;
   title?: string;
   project?: string;
   task?: string;
@@ -27,6 +32,7 @@ export interface FrontMatter {
 const FRONT_MATTER_KEYS = [
   "id",
   "version",
+  "hash",
   "title",
   "project",
   "task",
@@ -39,22 +45,30 @@ const FRONT_MATTER =
 /** A UTF-8 byte order mark: hidden from parsing, kept when a file is written back. */
 const BOM = "\uFEFF";
 
-/** A YAML `key: value` line (the value may be empty or nested below). */
-const KEY_LINE = /^([A-Za-z_][\w-]*)\s*:(.*)$/;
+/** A YAML `key: value` line, the key bare or quoted (`"title": X`); the value may be empty or nested below. */
+const KEY_LINE = /^(["']?)([A-Za-z_][\w-]*)\1\s*:(.*)$/;
+
+/** A `key: value` line's key (unquoted) and raw value, or null for any other line. */
+function keyLine(line: string): { key: string; value: string } | null {
+  const match = KEY_LINE.exec(line);
+  return match ? { key: match[2] ?? "", value: match[3] ?? "" } : null;
+}
 
 /**
- * The front matter block at the start of `text` (no BOM), or null. A block counts only when every
- * non-blank line is a `key: value` line, a YAML comment, or (after a key) an indented or `- item`
- * line of a nested value; so a file that opens with a horizontal rule and a paragraph is all body.
+ * The front matter block at the start of `text` (no BOM), or null. A block counts only when its
+ * first line is a `key: value` line and every other non-blank line is one too, a YAML comment, or
+ * an indented or `- item` line of a nested value. So a file that opens with a horizontal rule and
+ * a paragraph is all body, even a one-line `Word: text` paragraph after a blank line.
  */
 function matchFrontMatter(text: string): RegExpExecArray | null {
   const match = text.startsWith("---") ? FRONT_MATTER.exec(text) : null;
   if (!match || match.index !== 0) return null;
-  let afterKey = false;
-  for (const line of (match[1] ?? "").split(/\r?\n/)) {
-    if (!line.trim() || /^\s*#/.test(line)) continue;
-    if (KEY_LINE.test(line)) afterKey = true;
-    else if (!(afterKey && /^(?:\s|-(?:\s|$))/.test(line))) return null;
+  const lines = (match[1] ?? "").split(/\r?\n/);
+  // The block ends with a line break, so the last element is "" (an empty block has only that).
+  if (lines.length > 1 && !keyLine(lines[0] ?? "")) return null;
+  for (const line of lines) {
+    if (!line.trim() || /^\s*#/.test(line) || keyLine(line)) continue;
+    if (!/^(?:\s|-(?:\s|$))/.test(line)) return null;
   }
   return match;
 }
@@ -81,10 +95,10 @@ export function parseFrontMatter(raw: string): {
   if (!match) return { fields: {}, body: text };
   const fields: FrontMatter = {};
   for (const line of (match[1] ?? "").split(/\r?\n/)) {
-    const kv = KEY_LINE.exec(line);
+    const kv = keyLine(line);
     if (!kv) continue;
-    const key = (kv[1] ?? "").toLowerCase();
-    const value = unquote(kv[2] ?? "");
+    const key = kv.key.toLowerCase();
+    const value = unquote(kv.value);
     const known = FRONT_MATTER_KEYS.find((k) => k === key);
     if (known && value !== "") fields[known] = value;
   }
@@ -115,8 +129,8 @@ export function setFrontMatter(
   // The block ends with a line break, so the last split element is "".
   if (lines.at(-1) === "") lines.pop();
   for (const [key, value] of entries) {
-    const index = lines.findIndex((line) =>
-      new RegExp(`^${key}\\s*:`, "i").test(line),
+    const index = lines.findIndex(
+      (line) => keyLine(line)?.key.toLowerCase() === key.toLowerCase(),
     );
     if (index >= 0) lines[index] = `${key}: ${value}`;
     else lines.push(`${key}: ${value}`);
@@ -148,11 +162,24 @@ export interface SourceDoc {
   id: string | null;
   /** The document version the file was last published as (`version:` in its front matter). */
   version: number | null;
+  /** `hash:` from the front matter: sourceHash of the file when it was last published. */
+  hash: string | null;
   /** `title:` from the front matter, or the file name without `.md`. */
   title: string;
   project: string | null;
   task: string | null;
   body: string;
+}
+
+/**
+ * A short hash of a file's title and body as written (front matter and resolved links aside): it
+ * tells whether the file changed since it was last published.
+ */
+export function sourceHash(doc: Pick<SourceDoc, "title" | "body">): string {
+  return createHash("sha256")
+    .update(`${doc.title.trim()}\n${doc.body}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 /** Parses one file; throws a message for an `id` or `version` that can't be right. */
@@ -173,6 +200,7 @@ export function parseSourceDoc(path: string, raw: string): SourceDoc {
     raw,
     id,
     version,
+    hash: fields.hash ?? null,
     title: fields.title ?? posix.basename(path).replace(/\.md$/i, ""),
     project: fields.project?.toUpperCase() ?? null,
     task: fields.task?.toUpperCase() ?? null,
@@ -411,6 +439,11 @@ export interface PublishResult {
   url?: string;
   /** Why a file is a conflict or failed. */
   message?: string;
+  /**
+   * `unchanged` only: the file is as last published but the document has newer versions in the
+   * tracker (ST-132). Nothing is saved; `version` is the tracker's.
+   */
+  trackerNewer?: boolean;
   /** Links left as written. */
   warnings?: string[];
 }
@@ -497,8 +530,10 @@ export async function publishDocuments(
     saved: DocumentDto,
   ): Promise<string | null> => {
     const updates: Record<string, string> = {};
+    const hash = sourceHash(doc);
     if (doc.id !== saved.id) updates.id = saved.id;
     if (doc.version !== saved.version) updates.version = String(saved.version);
+    if (doc.hash !== hash) updates.hash = hash;
     if (!Object.keys(updates).length) return null;
     const raw = setFrontMatter(doc.raw, updates);
     try {
@@ -509,6 +544,7 @@ export async function publishDocuments(
     doc.raw = raw;
     doc.id = saved.id;
     doc.version = saved.version;
+    doc.hash = hash;
     return null;
   };
 
@@ -630,6 +666,16 @@ export async function publishDocuments(
       }
       continue;
     }
+    // The file is as last published and only the tracker moved on: nothing to publish (ST-132).
+    if (
+      doc.version !== null &&
+      doc.version < remote.version &&
+      doc.hash === sourceHash(doc)
+    ) {
+      result.trackerNewer = true;
+      result.message = `The tracker has newer versions (${doc.version} → ${remote.version}) and this file hasn't changed since it was published: to update the file, copy the document's content (spider doc view ${doc.id}) and set version: ${remote.version}`;
+      continue;
+    }
     if (doc.version === null || doc.version !== remote.version) {
       result.status = "conflict";
       result.message =
@@ -693,11 +739,13 @@ export function publishLines({
   const skipped = warnings.map((w) => `warning: ${w}`);
   if (!results.length)
     return [...skipped, "No .md files to publish"].join("\n");
-  const label = (status: PublishStatus) =>
+  const label = ({ status, trackerNewer }: PublishResult) =>
     dryRun && (status === "created" || status === "updated")
       ? `would ${status === "created" ? "create" : "update"}`
-      : status;
-  const labelWidth = Math.max(...results.map((r) => label(r.status).length));
+      : trackerNewer
+        ? `${status} (tracker newer)`
+        : status;
+  const labelWidth = Math.max(...results.map((r) => label(r).length));
   const fileWidth = Math.max(...results.map((r) => r.file.length));
   const lines: string[] = [...skipped];
   for (const r of results) {
@@ -705,7 +753,7 @@ export function publishLines({
       ? `  (${r.id}${r.version ? `, v${r.version}` : ""})`
       : "";
     lines.push(
-      `${label(r.status).padEnd(labelWidth)}  ${r.file.padEnd(fileWidth)}  ${r.title}${where}`,
+      `${label(r).padEnd(labelWidth)}  ${r.file.padEnd(fileWidth)}  ${r.title}${where}`,
     );
     if (r.message) lines.push(`  ${r.message}`);
     for (const w of r.warnings ?? []) lines.push(`  warning: ${w}`);

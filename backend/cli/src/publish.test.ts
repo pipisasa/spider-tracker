@@ -21,6 +21,7 @@ import {
   readSourceFolder,
   resolveLinks,
   setFrontMatter,
+  sourceHash,
   type SourceDoc,
 } from "./publish";
 
@@ -34,6 +35,20 @@ describe("front matter", () => {
       fields: { title: "Plan: v2", id: A, version: "3", project: "st" },
       body: "# Plan\n",
     });
+  });
+
+  test("quoted keys are keys too (ST-132)", () => {
+    const raw = `---\n"title": Plan\n'id': ${A}\nversion: 2\n---\nBody`;
+    expect(parseFrontMatter(raw).fields).toEqual({
+      title: "Plan",
+      id: A,
+      version: "2",
+    });
+    expect(setFrontMatter(raw, { id: B })).toBe(
+      `---\n"title": Plan\nid: ${B}\nversion: 2\n---\nBody`,
+    );
+    // Mismatched quotes aren't a key.
+    expect(parseFrontMatter(`---\n"title': Plan\n---\n`).fields).toEqual({});
   });
 
   test("unquoted values lose a trailing # comment", () => {
@@ -89,6 +104,12 @@ describe("front matter", () => {
       fields: {},
       body: "---\ntitle: T\nSome prose here\n---\nRest",
     });
+    // A one-line `Word: text` paragraph between rules (ST-132), or a heading first, isn't either.
+    for (const raw of [
+      "---\n\nNote: read this first.\n\n---\n\nRest\n",
+      "---\n# Notes\ntitle: T\n---\nRest\n",
+    ])
+      expect(parseFrontMatter(raw)).toEqual({ fields: {}, body: raw });
     // Written back, the rule stays part of the body, below a new block.
     const written = setFrontMatter("---\n\nIntro\n\n---\n\nRest\n", { id: A });
     expect(written).toBe(`---\nid: ${A}\n---\n\n---\n\nIntro\n\n---\n\nRest\n`);
@@ -100,7 +121,7 @@ describe("front matter", () => {
 
   test("comments, blank lines and nested YAML values still make front matter", () => {
     const raw =
-      "---\n# notes\ntitle: T\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody";
+      "---\ntitle: T\n# notes\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody";
     expect(parseFrontMatter(raw)).toEqual({
       fields: { title: "T" },
       body: "Body",
@@ -262,6 +283,29 @@ test("publishLines: one line per file, messages and warnings, then the counts", 
       "Dry run: 1 to create, 0 to update, 0 unchanged, 1 conflict, 0 failed; nothing was changed.",
     ].join("\n"),
   );
+});
+
+test("publishLines: a file only the tracker changed reads unchanged (tracker newer) (ST-132)", () => {
+  const text = publishLines({
+    dryRun: false,
+    results: [
+      {
+        file: "a.md",
+        status: "unchanged",
+        id: A,
+        title: "A",
+        version: 3,
+        trackerNewer: true,
+      },
+      { file: "b.md", status: "updated", id: B, title: "B", version: 2 },
+    ],
+    warnings: [],
+    summary: { created: 0, updated: 1, unchanged: 1, conflict: 0, failed: 0 },
+  });
+  expect(text.split("\n").slice(0, 2)).toEqual([
+    `unchanged (tracker newer)  a.md  A  (${A}, v3)`,
+    `updated                    b.md  B  (${B}, v2)`,
+  ]);
 });
 
 describe("readSourceFolder", () => {
@@ -426,6 +470,61 @@ describe("publishDocuments", () => {
       conflict: 0,
       failed: 2,
     });
+  });
+
+  test("a file unchanged since its publish is unchanged (tracker newer), not a conflict (ST-132)", async () => {
+    const created = parseSourceDoc("a.md", "Mine");
+    const written: string[] = [];
+    await publishDocuments({
+      client: fakeClient({
+        create: async (input) => dto(A, 1, input.title, input.content),
+      }),
+      org: "o",
+      docs: [created],
+      dryRun: false,
+      save: async (_doc, raw) => {
+        written.push(raw);
+      },
+    });
+    const hash = sourceHash({ title: "a", body: "Mine" });
+    expect(written).toEqual([
+      `---\nid: ${A}\nversion: 1\nhash: ${hash}\n---\n\nMine`,
+    ]);
+
+    const publishAgainst = async (raw: string) => {
+      let updated = false;
+      const response = await publishDocuments({
+        client: fakeClient({
+          get: async () => dto(A, 3, "a", "Mine, edited in the tracker"),
+          update: async () => {
+            updated = true;
+            return dto(A, 4, "a", "x");
+          },
+        }),
+        org: "o",
+        docs: [parseSourceDoc("a.md", raw)],
+        dryRun: false,
+        save: () => Promise.reject(new Error("no write expected")),
+      });
+      return { result: response.results[0], updated };
+    };
+    const same = await publishAgainst(written[0] ?? "");
+    expect(same.updated).toBe(false);
+    expect(same.result).toMatchObject({
+      status: "unchanged",
+      trackerNewer: true,
+      version: 3,
+    });
+    expect(same.result?.message).toContain("newer versions (1 → 3)");
+    // Edited locally, or without a hash: a conflict as before.
+    for (const raw of [
+      `${written[0]}, mine too`,
+      `---\nid: ${A}\nversion: 1\n---\n\nMine`,
+    ]) {
+      const edited = await publishAgainst(raw);
+      expect(edited.updated).toBe(false);
+      expect(edited.result).toMatchObject({ status: "conflict" });
+    }
   });
 
   test("reads at most 8 documents at a time", async () => {

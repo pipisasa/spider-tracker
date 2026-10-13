@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { DiffLineDto } from "./contracts";
-import { diffHunks, diffLines, formatUnifiedDiff, splitLines } from "./diff";
+import {
+  diffHunks,
+  diffLines,
+  formatUnifiedDiff,
+  range,
+  splitLines,
+  textChanges,
+  truncateHunks,
+} from "./diff";
 
 /** The diff as `diff -u` body lines, without line numbers. */
 const marks = (lines: DiffLineDto[]) =>
@@ -23,6 +31,31 @@ describe("splitLines", () => {
     expect(splitLines("a")).toEqual(["a"]);
     expect(splitLines("a\n")).toEqual(["a"]);
     expect(splitLines("a\n\nb")).toEqual(["a", "", "b"]);
+  });
+
+  test("CRLF line endings read as LF (ST-129)", () => {
+    expect(splitLines("a\r\nb\r\n")).toEqual(["a", "b"]);
+    expect(splitLines("a\r\n\r\nb")).toEqual(["a", "", "b"]);
+  });
+});
+
+describe("textChanges", () => {
+  test("a final newline added or removed", () => {
+    expect(textChanges("a\n", "a")).toEqual({
+      trailingNewlineChanged: true,
+      lineEndingsChanged: false,
+    });
+    expect(textChanges("a", "a\nb\n").trailingNewlineChanged).toBe(true);
+    expect(textChanges("", "a\n").trailingNewlineChanged).toBe(false);
+    expect(textChanges("a\n", "b\n").trailingNewlineChanged).toBe(false);
+  });
+
+  test("line endings switched between CRLF and LF", () => {
+    expect(textChanges("a\r\nb\r\n", "a\nb\n")).toEqual({
+      trailingNewlineChanged: false,
+      lineEndingsChanged: true,
+    });
+    expect(textChanges("a", "a\r\n").lineEndingsChanged).toBe(false);
   });
 });
 
@@ -123,6 +156,48 @@ describe("diffLines", () => {
   });
 });
 
+describe("diffLines on long documents (ST-129)", () => {
+  test("a CRLF and an LF version of the same text have no changes", () => {
+    const lf = "# Plan\n\nOne.\nTwo.\n";
+    const lines = diffLines(lf.replace(/\n/g, "\r\n"), lf);
+    expect(lines.every((l) => l.kind === "context")).toBe(true);
+    expect(diffHunks(lines)).toEqual([]);
+  });
+
+  test("a thousand scattered one-line edits stay one-line edits", () => {
+    const old = Array.from({ length: 100_000 }, (_, i) => `line ${i}`);
+    const edited = old.map((line, i) =>
+      i % 100 === 50 ? `${line} edited` : line,
+    );
+    const started = performance.now();
+    const lines = diffLines(old.join("\n"), edited.join("\n"));
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(lines.filter((l) => l.kind === "removed")).toHaveLength(1000);
+    expect(lines.filter((l) => l.kind === "added")).toHaveLength(1000);
+    expect(sides(lines)).toEqual({ old, new: edited });
+    const hunks = diffHunks(lines);
+    expect(hunks).toHaveLength(1000);
+    expect(hunks[1]).toMatchObject({
+      oldStart: 148,
+      oldLines: 7,
+      newStart: 148,
+      newLines: 7,
+    });
+  });
+
+  test("scattered edits among repeated lines still rebuild both texts", () => {
+    const old = Array.from({ length: 6000 }, (_, i) =>
+      i % 3 === 0 ? "" : `p${i % 7}-${Math.floor(i / 3)}`,
+    );
+    const edited = old.flatMap((line, i) =>
+      i % 50 === 0 ? [line, `new ${i}`] : i % 77 === 0 ? [] : [line],
+    );
+    const lines = diffLines(old.join("\n"), edited.join("\n"));
+    expect(sides(lines)).toEqual({ old, new: edited });
+    expect(lines.filter((l) => l.kind !== "context").length).toBeLessThan(400);
+  });
+});
+
 describe("diffHunks and formatUnifiedDiff", () => {
   const old = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
 
@@ -177,6 +252,27 @@ describe("diffHunks and formatUnifiedDiff", () => {
       newStart: 2,
       newLines: 13,
     });
+  });
+
+  test("range writes start,count, or just start for one line", () => {
+    expect(range(3, 1)).toBe("3");
+    expect(range(3, 2)).toBe("3,2");
+    expect(range(0, 0)).toBe("0,0");
+  });
+
+  test("truncateHunks keeps whole hunks, then cuts the last one short", () => {
+    const edited = old.map((line, i) => (i % 10 === 0 ? `${line}!` : line));
+    const hunks = diffHunks(diffLines(old.join("\n"), edited.join("\n")));
+    expect(truncateHunks(hunks, 1000)).toEqual({ hunks, truncated: false });
+    const total = hunks.reduce((n, h) => n + h.lines.length, 0);
+    const cut = truncateHunks(hunks, total - 3);
+    expect(cut.truncated).toBe(true);
+    const last = cut.hunks.at(-1)!;
+    expect(last.lines).toHaveLength(hunks.at(-1)!.lines.length - 3);
+    expect(last.oldStart).toBe(hunks.at(-1)!.oldStart);
+    expect(last.oldLines).toBe(
+      last.lines.filter((l) => l.kind !== "added").length,
+    );
   });
 
   test("pure insertions and deletions number like diff -u", () => {

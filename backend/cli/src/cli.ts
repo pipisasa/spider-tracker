@@ -51,6 +51,7 @@ import {
   actorHandle,
   commentView,
   documentCommentView,
+  diffNotes,
   documentDiffView,
   documentVersionView,
   projectRulesView,
@@ -4776,12 +4777,17 @@ function buildProgram(
           label(diff.from),
           label(diff.to),
         );
-        if (text) return text;
+        // A changed final newline or line endings don't show as lines (ST-129).
+        const notes = diffNotes(diff);
+        if (text) return [text, ...notes.map((n) => `\\ ${n}`)].join("\n");
         const renamed =
           diff.from.title !== diff.to.title
             ? ` (title: ${diff.from.title} → ${diff.to.title})`
             : "";
-        return `No changes in content between version ${diff.from.version} and ${diff.to.version}${renamed}`;
+        return [
+          `No changes in content between version ${diff.from.version} and ${diff.to.version}${renamed}`,
+          ...notes,
+        ].join("\n");
       });
     },
   );
@@ -5034,14 +5040,12 @@ function buildProgram(
     const { sdk, org } = conn();
     const client = await sdk();
     const slug = await org();
-    const before =
-      baseVersion ?? (await client.documents.get(slug, id)).version;
     const saved = await client.documents.edit(slug, id, {
       baseVersion,
       edits: [edit],
     });
     output(opts, saved, () =>
-      saved.version === before
+      !saved.changed
         ? `No changes to ${saved.title}`
         : `Saved ${saved.title} as version ${saved.version}`,
     );

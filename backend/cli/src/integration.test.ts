@@ -1821,6 +1821,16 @@ withDb("spider CLI against the API", () => {
     expect((await spider("doc", "diff", id, "--from", "3")).stdout).toBe(
       "No changes in content between version 3 and 3\n",
     );
+    // The append left no final newline: said under the diff (ST-129).
+    expect(json).toMatchObject({
+      trailingNewlineChanged: true,
+      lineEndingsChanged: false,
+    });
+    expect(
+      (await spider("doc", "diff", id, "--from", "2", "--to", "3")).stdout,
+    ).toEndWith(
+      "+three\n\\ The newline at the end differs between version 2 and 3\n",
+    );
 
     expect((await spider("doc", "diff", id, "--from", "9")).code).toBe(3);
     expect((await spider("doc", "diff", id, "--from", "x")).code).toBe(2);
@@ -2012,9 +2022,11 @@ withDb("spider CLI against the API", () => {
       id: idIn("index"),
       version: 2,
     });
-    // Ids and versions are written back; the links in the files stay as written.
-    expect(read("index")).toStartWith(
-      `---\ntitle: Index\nproject: SPI\nid: ${idIn("index")}\nversion: 2\n---\n\n# Index\n\n- [[Doc 1]]\n`,
+    // Ids, versions and content hashes are written back; the links in the files stay as written.
+    expect(read("index")).toMatch(
+      new RegExp(
+        `^---\ntitle: Index\nproject: SPI\nid: ${idIn("index")}\nversion: 2\nhash: [0-9a-f]{16}\n---\n\n# Index\n\n- \\[\\[Doc 1\\]\\]\n`,
+      ),
     );
     const index = (await spider("doc", "view", idIn("index"), "--json")).json();
     expect(index).toMatchObject({
@@ -2103,6 +2115,25 @@ withDb("spider CLI against the API", () => {
       cp1251,
     );
     rmSync(join(dir, "legacy.md"));
+
+    // Changed in the tracker only: the file is as published, so not a conflict (ST-132).
+    const doc5 = idIn("5");
+    await spider("doc", "edit", doc5, "--append", "--text", "Tracker only.");
+    const newer = await spider("doc", "publish", "publish");
+    expect(newer.code).toBe(0);
+    expect(newer.stdout).toContain(
+      `unchanged (tracker newer)  specs/doc-5.md   Doc 5  (${doc5}, v3)\n  The tracker has newer versions (2 → 3)`,
+    );
+    expect(newer.stdout).toEndWith(
+      "0 created, 0 updated, 30 unchanged, 0 conflicts, 0 failed\n",
+    );
+    expect(versionIn("5")).toBe(2);
+    // Once the file changes too, it is a conflict again.
+    writeFileSync(file("5"), `${read("5")}Mine.\n`);
+    expect((await publish()).report.results).toContainEqual(
+      expect.objectContaining({ file: "specs/doc-5.md", status: "conflict" }),
+    );
+    writeFileSync(file("5"), read("5").replace("Mine.\n", ""));
 
     expect((await spider("doc", "publish", "missing")).code).toBe(2);
     writeFileSync(join(dir, "bad.md"), "---\nid: D31\n---\n");

@@ -3,7 +3,13 @@ import { createDb, schema } from "@repo/db";
 import { and, eq } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createAgent } from "./agents";
-import { quoteOccursIn, skeleton, skeletonIndex } from "./anchors";
+import {
+  documentSkeleton,
+  quoteOccursIn,
+  quoteOccursInSkeleton,
+  skeleton,
+  skeletonIndex,
+} from "./anchors";
 import { AGENT_COMMENT_LIMIT } from "./comments";
 import {
   addDocumentComment,
@@ -15,6 +21,7 @@ import { listInbox, markInboxRead } from "./inbox";
 import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { INBOX_KINDS } from "./schemas";
+import { createTask, deleteTask } from "./tasks";
 
 describe("quoteOccursIn", () => {
   test("matches the text a reader sees, ignoring markup, link targets, punctuation and whitespace", () => {
@@ -45,6 +52,32 @@ describe("quoteOccursIn", () => {
     expect(
       text.slice(offsets[at], (offsets[at + "ittoday".length - 1] ?? 0) + 1),
     ).toBe("it**, Today");
+  });
+
+  test("Markdown entities read as the characters they show (ST-134)", () => {
+    const md = "Caf&eacute; &amp; bar &copy; 2026&nbsp;Acme &#8212; &#x41;BC";
+    expect(quoteOccursIn(md, "md", "Café & bar © 2026 Acme — ABC")).toBe(true);
+    expect(quoteOccursIn(md, "md", "copy")).toBe(false);
+  });
+
+  test("[[doc:<id>]] matches the title it shows; a labelled link its label (ST-134)", () => {
+    const id = "01a13118-ef01-7aa0-bf37-10e38fb20956";
+    const md = `See [[doc:${id}]] and [[doc:${id}#Dates|the dates]] now.`;
+    const label = (target: string) =>
+      target.split("#")[0] === `doc:${id}` ? "Q3 Roadmap" : null;
+    expect(quoteOccursIn(md, "md", "See Q3 Roadmap and the dates", label)).toBe(
+      true,
+    );
+    // Without a title (a document the reader can't see) the target shows, as in the web app.
+    expect(quoteOccursIn(md, "md", "See Q3 Roadmap")).toBe(false);
+    expect(quoteOccursIn(md, "md", `See doc:${id} and`)).toBe(true);
+  });
+
+  test("a document skeleton is built once for many quotes", () => {
+    const doc = documentSkeleton("We ship **the API** first.", "md");
+    expect(quoteOccursInSkeleton(doc, "the API first")).toBe(true);
+    expect(quoteOccursInSkeleton(doc, "the UI")).toBe(false);
+    expect(quoteOccursInSkeleton(doc, "**")).toBe(true);
   });
 
   test("a quote of only symbols is compared as written", () => {
@@ -270,6 +303,78 @@ run("document comments", () => {
     ).toMatchObject({ resolvedAt: null, resolvedBy: null });
   });
 
+  test("a reply to a resolved thread reopens it (ST-134)", async () => {
+    const root = await addDocumentComment(db, owner, docId, {
+      body: "Is this settled?",
+    });
+    await resolveDocumentComment(db, owner, docId, root.id, { resolved: true });
+    const reply = await addDocumentComment(db, alpha, docId, {
+      body: "Not quite",
+      parentId: root.id,
+    });
+    const thread = (await listDocumentComments(db, owner, docId)).filter(
+      (c) => c.id === root.id || c.parentId === root.id,
+    );
+    expect(thread.find((c) => c.id === root.id)).toMatchObject({
+      resolvedAt: null,
+      resolvedBy: null,
+    });
+    expect(thread.map((c) => c.id)).toContain(reply.id);
+    const reopened = await db
+      .select()
+      .from(schema.activity)
+      .where(
+        and(
+          eq(schema.activity.entityId, docId),
+          eq(schema.activity.action, "comment.reopened"),
+        ),
+      );
+    expect(reopened.map((a) => a.changes)).toContainEqual({
+      commentId: root.id,
+      replyId: reply.id,
+    });
+    // A reply to an open thread changes nothing.
+    await addDocumentComment(db, owner, docId, {
+      body: "Now it is",
+      parentId: reply.id,
+    });
+    expect(
+      (await listDocumentComments(db, owner, docId)).find(
+        (c) => c.id === root.id,
+      )?.resolvedAt,
+    ).toBeNull();
+  });
+
+  test("a quote across a [[doc:<id>]] link matches the title it shows (ST-134)", async () => {
+    const target = await createDocument(db, owner, {
+      title: "Q3 Roadmap",
+      project: "SPI",
+    });
+    const doc = await createDocument(db, owner, {
+      title: "Linking",
+      project: "SPI",
+      content: `Dates are in [[doc:${target.id}]] &mdash; ask first.`,
+    });
+    const comment = await addDocumentComment(db, owner, doc.id, {
+      body: "Which dates?",
+      quote: "Dates are in Q3 Roadmap — ask",
+    });
+    expect(comment).toMatchObject({ outdated: false });
+    expect((await listDocumentComments(db, owner, doc.id))[0]).toMatchObject({
+      id: comment.id,
+      outdated: false,
+    });
+    await expect(
+      addDocumentComment(db, owner, doc.id, {
+        body: "?",
+        quote: "Dates are in Q4",
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringContaining("select a shorter part"),
+    });
+  });
+
   test("permissions and scope: guests can't write, scoped agents only see their projects' documents", async () => {
     const guest: ActorContext = { ...owner, role: "guest" };
     await expect(
@@ -337,6 +442,22 @@ run("document comments", () => {
         (i) => i.document?.id === doc.id,
       ),
     ).toBe(false);
+  });
+
+  test("a deleted task hides its documents' inbox items (ST-134)", async () => {
+    const task = await createTask(db, owner, "SPI", { title: "Has a doc" });
+    const doc = await createDocument(db, owner, {
+      title: "Task doc",
+      task: task.key,
+    });
+    await addDocumentComment(db, alpha, doc.id, { body: "On the task doc" });
+    const has = async () =>
+      (await listInbox(db, owner, ALL_KINDS)).some(
+        (i) => i.document?.id === doc.id,
+      );
+    expect(await has()).toBe(true);
+    await deleteTask(db, owner, task.key);
+    expect(await has()).toBe(false);
   });
 
   test("marking read up to an id leaves document items alone unless their kinds are named (ST-128)", async () => {

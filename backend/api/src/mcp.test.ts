@@ -833,6 +833,7 @@ withDb("MCP server", () => {
     expect(edited.json()).toMatchObject({
       id: doc.id,
       version: 2,
+      changed: true,
       authorId: agentIds[0],
     });
     const sectioned = await call(client, "edit_document", {
@@ -863,6 +864,12 @@ withDb("MCP server", () => {
     });
     expect(stale.isError).toBe(true);
     expect(stale.text).toContain("version 3");
+    // The core schema, with its limit of 100 edits.
+    const tooMany = await call(client, "edit_document", {
+      id: doc.id,
+      edits: Array.from({ length: 101 }, () => ({ append: "x" })),
+    });
+    expect(tooMany.isError).toBe(true);
   });
 
   test("diff_document: a unified diff between versions, or against the current one (ST-117)", async () => {
@@ -904,6 +911,40 @@ withDb("MCP server", () => {
       (await call(otherClient, "diff_document", { id: doc.id, from: 1 }))
         .isError,
     ).toBe(true);
+  });
+
+  test("diff_document: a long diff is cut at 200 lines with truncated (ST-129)", async () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `line ${i}`);
+    const doc = (
+      await call(client, "create_document", {
+        title: "Long diff",
+        content: lines.join("\n"),
+      })
+    ).json() as { id: string };
+    await call(client, "update_document", {
+      id: doc.id,
+      baseVersion: 1,
+      content: lines.map((l) => `${l}!`).join("\r\n"),
+    });
+    const diff = (
+      await call(client, "diff_document", { id: doc.id, from: 1 })
+    ).json() as {
+      added: number;
+      truncated?: boolean;
+      note?: string;
+      lineEndingsChanged: boolean;
+      hunks: { lines: unknown[] }[];
+    };
+    expect(diff).toMatchObject({
+      added: 500,
+      truncated: true,
+      lineEndingsChanged: true,
+      trailingNewlineChanged: false,
+    });
+    expect(diff.hunks.flatMap((h) => h.lines)).toHaveLength(200);
+    expect(diff.note).toContain(
+      `spider doc diff ${doc.id} --from 1 --to 2 --json`,
+    );
   });
 
   test("statuses can be given by category, like the CLI", async () => {
@@ -1152,7 +1193,9 @@ withDb("MCP server", () => {
     });
     expect(bad).toMatchObject({
       isError: true,
-      text: "The quoted text isn't in the document's current version",
+      text: expect.stringContaining(
+        "The quoted text isn't in the document's current version.",
+      ),
     });
 
     await addDocumentComment(db, owner, doc.id, {

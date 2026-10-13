@@ -8,19 +8,112 @@ export const DIFF_CONTEXT = 3;
 /**
  * Past this many differing lines Myers' search is cut short and the differing middle is shown
  * as removed, then added: still a correct diff, just not the shortest. Bounds time and memory
- * (the search keeps about MAX_EDITS² numbers) on unrelated 1 MB texts.
+ * (the search keeps about MAX_EDITS² numbers) on unrelated 1 MB texts. It applies to each
+ * stretch between lines that occur once in both texts (see uniqueAnchors), so many small
+ * changes scattered over a long document still diff line by line.
  */
 const MAX_EDITS = 2000;
 
-/** "a\nb\n" → ["a", "b"]; a missing final newline doesn't count as a change of its own. */
+/**
+ * "a\nb\n" → ["a", "b"]; a missing final newline doesn't count as a change of its own, and
+ * CRLF line endings read as LF (see textChanges for both).
+ */
 export function splitLines(text: string): string[] {
   if (text === "") return [];
-  const lines = text.split("\n");
+  const lines = text.split(/\r?\n/);
   if (lines[lines.length - 1] === "") lines.pop();
   return lines;
 }
 
+/** What a line diff doesn't show: a final newline added or removed, CRLF line endings switched to LF or back. */
+export interface TextChanges {
+  trailingNewlineChanged: boolean;
+  lineEndingsChanged: boolean;
+}
+
+export function textChanges(oldText: string, newText: string): TextChanges {
+  const crlf = (text: string) => text.includes("\r\n");
+  return {
+    trailingNewlineChanged:
+      oldText !== "" &&
+      newText !== "" &&
+      oldText.endsWith("\n") !== newText.endsWith("\n"),
+    lineEndingsChanged:
+      oldText.includes("\n") &&
+      newText.includes("\n") &&
+      crlf(oldText) !== crlf(newText),
+  };
+}
+
 type Op = "equal" | "insert" | "delete";
+
+/**
+ * The pairs (i, j) with a[i] === b[j] where that value occurs once in `a` and once in `b`, as the
+ * longest chain increasing in both i and j (patience diff's anchors). Lines matched this way are
+ * kept as unchanged, and the stretches between them diffed on their own.
+ */
+function uniqueAnchors(a: Int32Array, b: Int32Array): [number, number][] {
+  const inA = new Map<number, number>();
+  a.forEach((id, i) => inA.set(id, inA.has(id) ? -1 : i));
+  const inB = new Map<number, number>();
+  b.forEach((id, j) => inB.set(id, inB.has(id) ? -1 : j));
+  const pairs: [number, number][] = [];
+  b.forEach((id, j) => {
+    const i = inA.get(id);
+    if (i !== undefined && i >= 0 && inB.get(id) === j) pairs.push([i, j]);
+  });
+  // Longest increasing subsequence of i (pairs are in j order), by patience sorting.
+  const tails: number[] = [];
+  const prev = new Int32Array(pairs.length).fill(-1);
+  pairs.forEach(([i], p) => {
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pairs[tails[mid]!]![0] < i) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) prev[p] = tails[lo - 1]!;
+    tails[lo] = p;
+  });
+  const chain: [number, number][] = [];
+  for (let p = tails[tails.length - 1] ?? -1; p !== -1; p = prev[p]!)
+    chain.push(pairs[p]!);
+  return chain.reverse();
+}
+
+/** The shortest edit script, or removed-then-added past MAX_EDITS. */
+function diffStretch(a: Int32Array, b: Int32Array): Op[] {
+  return (
+    myers(a, b, MAX_EDITS) ?? [
+      ...Array.from(a, (): Op => "delete"),
+      ...Array.from(b, (): Op => "insert"),
+    ]
+  );
+}
+
+/**
+ * Small differences get Myers' shortest diff. Larger ones are split at the lines both texts have
+ * once (uniqueAnchors) first, so the search stays bounded per stretch instead of giving up on the
+ * whole document.
+ */
+function diffMiddle(a: Int32Array, b: Int32Array): Op[] {
+  if (a.length + b.length <= MAX_EDITS) return diffStretch(a, b);
+  const ops: Op[] = [];
+  let i = 0;
+  let j = 0;
+  for (const [ai, bj] of [
+    ...uniqueAnchors(a, b),
+    [a.length, b.length] as [number, number],
+  ]) {
+    for (const op of diffStretch(a.subarray(i, ai), b.subarray(j, bj)))
+      ops.push(op);
+    if (ai < a.length) ops.push("equal");
+    i = ai + 1;
+    j = bj + 1;
+  }
+  return ops;
+}
 
 /**
  * Myers' O(ND) diff of two integer sequences: the shortest edit script, as one op per element
@@ -108,12 +201,10 @@ export function diffLines(oldText: string, newText: string): DiffLineDto[] {
       if (id === undefined) ids.set(line, (id = ids.size));
       return id;
     });
-  const midA = a.slice(start, endA);
-  const midB = b.slice(start, endB);
-  const ops: Op[] = myers(idsOf(midA), idsOf(midB), MAX_EDITS) ?? [
-    ...midA.map((): Op => "delete"),
-    ...midB.map((): Op => "insert"),
-  ];
+  const ops = diffMiddle(
+    idsOf(a.slice(start, endA)),
+    idsOf(b.slice(start, endB)),
+  );
 
   const lines: DiffLineDto[] = [];
   let i = 0;
@@ -142,6 +233,10 @@ export function diffHunks(
     if (line.kind !== "context") changed.push(index);
   });
   const hunks: DiffHunkDto[] = [];
+  // Lines of each text before the current position, advanced once over the whole diff.
+  let scanned = 0;
+  let oldBefore = 0;
+  let newBefore = 0;
   let g = 0;
   while (g < changed.length) {
     // Changes closer than 2 × context share a hunk.
@@ -153,29 +248,67 @@ export function diffHunks(
       last++;
     const from = Math.max(0, changed[g]! - context);
     const to = Math.min(lines.length, changed[last]! + context + 1);
-    const slice = lines.slice(from, to);
-    // Lines of each text before the hunk: what's numbered before its first line.
-    let oldBefore = 0;
-    let newBefore = 0;
-    for (const line of lines.slice(0, from)) {
+    for (; scanned < from; scanned++) {
+      const line = lines[scanned]!;
       if (line.oldLine !== null) oldBefore = line.oldLine;
       if (line.newLine !== null) newBefore = line.newLine;
     }
-    const oldLines = slice.filter((l) => l.kind !== "added").length;
-    const newLines = slice.filter((l) => l.kind !== "removed").length;
-    hunks.push({
-      oldStart: oldLines ? oldBefore + 1 : oldBefore,
-      oldLines,
-      newStart: newLines ? newBefore + 1 : newBefore,
-      newLines,
-      lines: slice,
-    });
+    const slice = lines.slice(from, to);
+    hunks.push(hunkOf(slice, oldBefore, newBefore));
     g = last + 1;
   }
   return hunks;
 }
 
-const range = (start: number, count: number) =>
+/** A hunk of `lines`, after `oldBefore` and `newBefore` lines of each text. */
+function hunkOf(
+  lines: DiffLineDto[],
+  oldBefore: number,
+  newBefore: number,
+): DiffHunkDto {
+  const oldLines = lines.filter((l) => l.kind !== "added").length;
+  const newLines = lines.filter((l) => l.kind !== "removed").length;
+  return {
+    oldStart: oldLines ? oldBefore + 1 : oldBefore,
+    oldLines,
+    newStart: newLines ? newBefore + 1 : newBefore,
+    newLines,
+    lines,
+  };
+}
+
+/**
+ * The first hunks up to `maxLines` lines in all, cutting the last one short when needed;
+ * `truncated` says whether anything was left out. For outputs with a size budget (MCP).
+ */
+export function truncateHunks(
+  hunks: DiffHunkDto[],
+  maxLines: number,
+): { hunks: DiffHunkDto[]; truncated: boolean } {
+  const kept: DiffHunkDto[] = [];
+  let left = maxLines;
+  for (const hunk of hunks) {
+    if (left <= 0) return { hunks: kept, truncated: true };
+    if (hunk.lines.length <= left) {
+      kept.push(hunk);
+      left -= hunk.lines.length;
+      continue;
+    }
+    const cut = hunk.lines.slice(0, left);
+    kept.push(
+      hunkOf(
+        cut,
+        hunk.oldLines ? hunk.oldStart - 1 : hunk.oldStart,
+        hunk.newLines ? hunk.newStart - 1 : hunk.newStart,
+      ),
+    );
+    return { hunks: kept, truncated: true };
+  }
+  return { hunks: kept, truncated: false };
+}
+
+/** A unified diff header's `start,count` (just `start` for one line), as `diff -u` writes it. */
+export const range = (start: number, count: number) =>
   count === 1 ? `${start}` : `${start},${count}`;
 
 const PREFIX: Record<DiffLineDto["kind"], string> = {

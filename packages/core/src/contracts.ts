@@ -849,6 +849,11 @@ export interface UpdatedDocumentDto extends DocumentDto {
   relinked?: RelinkedDocumentsDto;
 }
 
+/** The result of partial edits (ST-116): `changed` is false when the edits left the content as it was (no new version). */
+export interface EditedDocumentDto extends DocumentDto {
+  changed: boolean;
+}
+
 /** Where a document link leads: a document, a task, or a title no document has (yet). */
 export type DocumentLinkTarget =
   | { type: "document"; id: string }
@@ -928,6 +933,10 @@ export interface DocumentDiffDto {
   removed: number;
   /** Empty when the contents match (the title or format may still differ). */
   hunks: DiffHunkDto[];
+  /** One version ends with a newline and the other doesn't; the lines don't show it (ST-129). */
+  trailingNewlineChanged: boolean;
+  /** One version has CRLF line endings and the other LF; lines compare without them (ST-129). */
+  lineEndingsChanged: boolean;
 }
 
 export type InvitationStatus = "active" | "expired" | "revoked" | "used_up";

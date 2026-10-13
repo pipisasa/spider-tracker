@@ -609,20 +609,33 @@ export const updateDocumentInput = z.object({
 
 export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
 
+const editText = z.string().max(MAX_DOCUMENT_BYTES, "At most 1 MB");
+
 /**
  * One partial edit of a document's content (ST-116): replace a fragment (`old` must occur
  * exactly once, or pass `all`), `append` to the end, or replace a Markdown `section`'s body
- * (the text under the heading up to the next heading of the same or a higher level).
+ * (the text under the heading up to the next heading of the same or a higher level). Each text
+ * is capped at MAX_DOCUMENT_BYTES characters (the saved result is checked in bytes).
  */
 export const documentEditSchema = z.union(
   [
     z.strictObject({
-      old: z.string(),
-      new: z.string(),
-      all: z.boolean().optional(),
+      old: editText.describe("Exact text to replace"),
+      new: editText.describe("Replacement text"),
+      all: z.boolean().optional().describe("Replace every occurrence"),
     }),
-    z.strictObject({ append: z.string() }),
-    z.strictObject({ section: z.string(), content: z.string() }),
+    z.strictObject({
+      append: editText.describe("Text added at the end, on a new line"),
+    }),
+    z.strictObject({
+      section: z
+        .string()
+        .max(1000, "At most 1000 characters")
+        .describe('Heading of the section, e.g. "## Decisions"'),
+      content: editText.describe(
+        "The section's new body, without the heading; it can't contain a heading of the same or a higher level",
+      ),
+    }),
   ],
   {
     error:

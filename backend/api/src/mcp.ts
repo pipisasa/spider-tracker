@@ -34,7 +34,9 @@ import {
   createDocument,
   diffDocumentVersions,
   editDocument,
+  documentEditSchema,
   documentDiffView,
+  truncateHunks,
   getDocument,
   getDocumentGraph,
   getDocumentVersion,
@@ -189,6 +191,9 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 
 /** Rules longer than this are cut in the server instructions; get_project has them in full. */
 const RULES_INSTRUCTIONS_CHARS = 12_000;
+
+/** diff_document returns at most this many hunk lines, so a long diff doesn't flood the context (ST-129). */
+const MCP_DIFF_MAX_LINES = 200;
 
 /**
  * The server's instructions (ST-111): the rules of the agent's projects, so a new session has
@@ -1768,8 +1773,7 @@ function createMcpServer(
   server.registerTool(
     "diff_document",
     {
-      description:
-        "What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit `to` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version.",
+      description: `What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit \`to\` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version. Long diffs are cut at ${MCP_DIFF_MAX_LINES} lines (truncated: true).`,
       inputSchema: {
         id: z.string().describe("Document id"),
         from: z.number().int().positive().describe("The older version number"),
@@ -1783,10 +1787,15 @@ function createMcpServer(
     },
     ({ id, from, to }) =>
       run(async () => {
-        // DocumentDiffView, as `spider doc diff --json`.
-        return documentDiffView(
-          await diffDocumentVersions(db, ctx, id, { from, to }),
-        );
+        // DocumentDiffView, as `spider doc diff --json`, cut at MCP_DIFF_MAX_LINES hunk lines.
+        const diff = await diffDocumentVersions(db, ctx, id, { from, to });
+        const cut = truncateHunks(diff.hunks, MCP_DIFF_MAX_LINES);
+        if (!cut.truncated) return documentDiffView(diff);
+        return {
+          ...documentDiffView({ ...diff, hunks: cut.hunks }),
+          truncated: true,
+          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
+        };
       }),
   );
 
@@ -1909,32 +1918,10 @@ function createMcpServer(
           .optional()
           .describe("The version you read; omit to edit the current version"),
         edits: z
-          .array(
-            z.union([
-              z.strictObject({
-                old: z.string().describe("Exact text to replace"),
-                new: z.string().describe("Replacement text"),
-                all: z
-                  .boolean()
-                  .optional()
-                  .describe("Replace every occurrence"),
-              }),
-              z.strictObject({
-                append: z
-                  .string()
-                  .describe("Text added at the end, on a new line"),
-              }),
-              z.strictObject({
-                section: z
-                  .string()
-                  .describe('Heading of the section, e.g. "## Decisions"'),
-                content: z
-                  .string()
-                  .describe("The section's new body, without the heading"),
-              }),
-            ]),
-          )
-          .min(1),
+          .array(documentEditSchema)
+          .min(1)
+          .max(100)
+          .describe("At most 100 edits, applied in order"),
       },
     },
     ({ id, baseVersion, edits }) =>
