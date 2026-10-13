@@ -79,12 +79,18 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
   const slug = `gh-pr-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
   const installationId = stamp + 870;
+  const otherInstallationId = stamp + 871;
+  const otherSlug = `gh-pr-other-${stamp}`;
+  const otherUserId = `test-${crypto.randomUUID()}`;
   const repoName = `app-${stamp}`;
   let owner: ActorContext;
   let token = "";
+  let scopedToken = "";
+  let guestToken = "";
   const deliveries: string[] = [];
 
-  const sdk = (target = app) => createClient({ baseUrl: env.API_ORIGIN, token, source: "cli", fetch: (input, init) => target.request(input, init) });
+  const sdk = (target = app, as?: string) =>
+    createClient({ baseUrl: env.API_ORIGIN, token: as ?? token, source: "cli", fetch: (input, init) => target.request(input, init) });
   const statusOf = async (key: string) => {
     const [, number] = key.split("-");
     const [row] = await db
@@ -111,6 +117,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
     await createProject(db, owner, { name: "Spider", key: "SPI" });
     await createProject(db, owner, { name: "Two repos", key: "TWO" });
     await createProject(db, owner, { name: "No repo", key: "NOR" });
+    await createProject(db, owner, { name: "Foreign", key: "FOR" });
     await saveGithubInstallation(db, owner, {
       installation: { id: installationId, account: "acme", accountType: "Organization", repositorySelection: "selected", suspended: false },
       repositories: [
@@ -127,20 +134,51 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       ["SPI", "Draft it first"],
       ["SPI", "Known elsewhere"],
       ["SPI", "Refused"],
+      ["SPI", "Scoped"],
       ["TWO", "Pick a repo"],
+      ["TWO", "Out of scope"],
       ["NOR", "Nowhere to go"],
+      ["FOR", "Another org's installation"],
     ] as const) {
       await createTask(db, owner, project, { title });
     }
     const agent = await createAgent(db, owner, { name: "PR Bot" });
     token = (await createApiKey(db, owner, agent.actor.id, { name: "test" })).secret;
+
+    // An agent scoped to SPI, and a guest (an agent whose role is guest).
+    const scoped = await createAgent(db, owner, { name: "Scoped PR Bot" });
+    await db.update(schema.agents).set({ scoped: true }).where(eq(schema.agents.actorId, scoped.actor.id));
+    const [spi] = await db
+      .select({ id: schema.projects.id })
+      .from(schema.projects)
+      .where(and(eq(schema.projects.orgId, owner.orgId), eq(schema.projects.key, "SPI")));
+    await db.insert(schema.agentProjects).values({ agentId: scoped.actor.id, projectId: spi!.id });
+    scopedToken = (await createApiKey(db, owner, scoped.actor.id, { name: "test" })).secret;
+    const guest = await createAgent(db, owner, { name: "Guest PR Bot" });
+    guestToken = (await createApiKey(db, owner, guest.actor.id, { name: "test" })).secret;
+    await db.update(schema.actors).set({ role: "guest" }).where(eq(schema.actors.id, guest.actor.id));
+
+    // A repo whose installation belongs to another organization.
+    await db.insert(schema.user).values({ id: otherUserId, name: "Other", email: `${otherUserId}@example.com` });
+    const other = await createOrganization(db, { id: otherUserId, name: "Other", email: "x@example.com" }, { name: "Other Org", slug: otherSlug });
+    await saveGithubInstallation(
+      db,
+      { orgId: other.organization.id, actorId: other.actor.id, role: "owner", source: "ui" },
+      {
+        installation: { id: otherInstallationId, account: "evil", accountType: "Organization", repositorySelection: "selected", suspended: false },
+        repositories: [],
+      },
+    );
+    const foreign = await createRepo(db, owner, { url: `acme/${repoName}-foreign` });
+    await db.update(schema.repos).set({ githubInstallationId: otherInstallationId }).where(eq(schema.repos.id, foreign.id));
+    await attachRepo(db, owner, "FOR", { repo: `acme/${repoName}-foreign` });
   });
 
   afterAll(async () => {
     await db.delete(schema.githubDeliveries).where(inArray(schema.githubDeliveries.id, deliveries));
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
-    await db.delete(schema.user).where(eq(schema.user.id, userId));
-    await db.delete(schema.githubInstallations).where(eq(schema.githubInstallations.id, installationId));
+    await db.delete(schema.organizations).where(inArray(schema.organizations.slug, [slug, otherSlug]));
+    await db.delete(schema.user).where(inArray(schema.user.id, [userId, otherUserId]));
+    await db.delete(schema.githubInstallations).where(inArray(schema.githubInstallations.id, [installationId, otherInstallationId]));
   });
 
   test("without the App: 503 not_configured", async () => {
@@ -282,6 +320,45 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
     expect((await apiError(sdk().tasks.openPullRequest(slug, "SPI-4", { head: "bad..branch" }))).status).toBe(400);
     expect((await apiError(sdk().tasks.openPullRequest(slug, "SPI-4", { head: "main" }))).message).toContain("is the base branch");
     expect((await apiError(sdk().tasks.openPullRequest(slug, "SPI-99"))).status).toBe(404);
+  });
+
+  test("access: a guest is 403, an agent scoped out of the task's project 404, another org's installation 400", async () => {
+    const asked = github.pullRequestRequests.length;
+    const guest = await apiError(sdk(app, guestToken).tasks.openPullRequest(slug, "SPI-5"));
+    expect(guest.status).toBe(403);
+    const outOfScope = await apiError(sdk(app, scopedToken).tasks.openPullRequest(slug, "TWO-2"));
+    expect(outOfScope.status).toBe(404);
+    const foreign = await apiError(sdk().tasks.openPullRequest(slug, "FOR-1"));
+    expect(foreign.status).toBe(400);
+    expect(foreign.message).toContain("The GitHub App has no access");
+    expect(github.pullRequestRequests.length).toBe(asked);
+  });
+
+  test("a scoped agent can't link or move a task outside its projects through the branch, title or body (ST-144)", async () => {
+    const asked = github.pullRequestRequests.length;
+    for (const input of [{ body: "Closes TWO-2" }, { title: "Scoped (TWO-2)" }, { head: "two-2-out-of-scope" }, { body: "See two-2" }]) {
+      const err = await apiError(sdk(app, scopedToken).tasks.openPullRequest(slug, "SPI-5", input));
+      expect(err.status).toBe(404);
+      expect(err.message).not.toContain("TWO");
+    }
+    expect(github.pullRequestRequests.length).toBe(asked);
+    expect(await statusOf("TWO-2")).toBe("todo");
+    expect((await sdk().tasks.git(slug, "TWO-2")).pullRequests).toEqual([]);
+
+    // Keys of its own projects, and look-alikes that aren't tasks here, are fine.
+    const opened = await sdk(app, scopedToken).tasks.openPullRequest(slug, "SPI-5", { head: "spi-5-scoped", body: "After SPI-3; UTF-8 safe" });
+    expect(opened.pullRequest).toMatchObject({ headBranch: "spi-5-scoped", via: "closing" });
+    expect(await statusOf("SPI-5")).toBe("in_review");
+  });
+
+  test("only the task asked for moves at once; others it names (in scope) are linked", async () => {
+    const opened = await sdk().tasks.openPullRequest(slug, "TWO-2", { repo: `acme/${repoName}`, head: "two-2-with-spi", body: "Also fixes SPI-3" });
+    expect(opened.pullRequest.via).toBe("closing");
+    expect(await statusOf("TWO-2")).toBe("in_review");
+    expect(await statusOf("SPI-3")).toBe("todo");
+    expect((await sdk().tasks.git(slug, "SPI-3")).pullRequests).toContainEqual(
+      expect.objectContaining({ number: opened.pullRequest.number, via: "closing" }),
+    );
   });
 
   test("MCP open_pull_request returns what the API does (as spider pr --json)", async () => {

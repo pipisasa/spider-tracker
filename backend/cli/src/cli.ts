@@ -106,6 +106,7 @@ import {
   currentBranch,
   isDirty,
   isRepo,
+  originDefaultBranch,
   originUrl,
   pushBranch,
   remoteRepo,
@@ -2532,8 +2533,9 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
   });
 
   // Pushes the branch with the person's own git, then the API opens the pull request as the
-  // GitHub App and links it to the task (ST-87).
-  type PrOptions = JsonOption & { draft?: boolean; base?: string; push: boolean; repo?: string };
+  // GitHub App and links it to the task (ST-87). It never pushes the default (or base) branch, and
+  // pushes only the task's own branch unless --any-branch (ST-144).
+  type PrOptions = JsonOption & { draft?: boolean; base?: string; push: boolean; repo?: string; anyBranch?: boolean };
   const openPullRequest = async (key: string | undefined, opts: PrOptions) => {
     const resolved = taskKey(key, cwd, git);
     const inRepo = isRepo(cwd, git);
@@ -2556,6 +2558,18 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
     const notes: string[] = [];
     if (opts.push && head) {
       if (!originUrl(cwd, git)) throw usageError("This repository has no origin remote: push the branch yourself and pass --no-push");
+      const originDefault = originDefaultBranch(cwd, git);
+      const protectedBranches = [...(opts.base !== undefined ? [opts.base] : []), ...(originDefault ? [originDefault] : ["main", "master"])];
+      if (protectedBranches.includes(head)) {
+        throw usageError(
+          `Not pushing ${head}: it is the ${head === opts.base ? "base" : "default"} branch. Check out the task's branch (spider start ${resolved}) and run spider pr there`,
+        );
+      }
+      if (!opts.anyBranch && taskKeyFromBranch(head) !== resolved) {
+        throw usageError(
+          `Not pushing ${head}: it isn't a branch of ${resolved} (${resolved.toLowerCase()}-…). Check out the task's branch (spider start ${resolved}), pass --any-branch to push this one, or --no-push`,
+        );
+      }
       try {
         pushBranch(cwd, head, git);
       } catch (err) {
@@ -2589,7 +2603,11 @@ function buildProgram(options: RunOptions, cwd: string, argv: string[], json = f
         .option("--draft", "open it as a draft")
         .option("--base <branch>", "the branch to merge into (default: the repo's default branch)")
         .option("--no-push", "don't push: open the PR for a branch already pushed")
-        .option("--repo <owner/name>", "the repo, when the project has several (default: the origin remote)"),
+        .option("--any-branch", "push the current branch even when its name has no key of the task (never the default or base branch)")
+        .option(
+          "--repo <owner/name>",
+          "the repo, when the project has several (default: the origin remote, which must then be attached to the task's project)",
+        ),
     ).action(openPullRequest);
 
   prCommand(task.command("pr"));

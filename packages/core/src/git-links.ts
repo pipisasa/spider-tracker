@@ -100,6 +100,7 @@ export function toPullRequestDto(repo: { owner: string; name: string }, pr: Pull
 export interface LinkedTask {
   id: string;
   key: string;
+  projectId: string;
   projectKey: string;
 }
 
@@ -115,7 +116,7 @@ async function findRepoByName(tx: Tx, orgId: string, owner: string, name: string
 }
 
 /** The tasks `keys` name, by key; only tasks (not deleted) of projects attached to `repo`. */
-async function tasksOfKeys(tx: Tx, repo: RepoRow, keys: Iterable<string>): Promise<Map<string, LinkedTask>> {
+export async function tasksOfKeys(tx: Db | Tx, repo: RepoRow, keys: Iterable<string>): Promise<Map<string, LinkedTask>> {
   const numbersByProject = new Map<string, number[]>();
   for (const key of keys) {
     const parsed = parseTaskKey(key);
@@ -129,23 +130,25 @@ async function tasksOfKeys(tx: Tx, repo: RepoRow, keys: Iterable<string>): Promi
     if (condition) conditions.push(condition);
   }
   const rows = await tx
-    .select({ id: tasks.id, number: tasks.number, projectKey: projects.key })
+    .select({ id: tasks.id, number: tasks.number, projectId: tasks.projectId, projectKey: projects.key })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .innerJoin(projectRepos, and(eq(projectRepos.projectId, projects.id), eq(projectRepos.repoId, repo.id)))
     .where(and(eq(projects.orgId, repo.orgId), isNull(tasks.deletedAt), or(...conditions)));
-  return new Map(rows.map((r) => [`${r.projectKey}-${r.number}`, { id: r.id, key: `${r.projectKey}-${r.number}`, projectKey: r.projectKey }]));
+  return new Map(
+    rows.map((r) => [`${r.projectKey}-${r.number}`, { id: r.id, key: `${r.projectKey}-${r.number}`, projectId: r.projectId, projectKey: r.projectKey }]),
+  );
 }
 
 /** The keys of tasks by id (for events about links that were removed or changed). */
 async function tasksByIds(tx: Tx, ids: string[]): Promise<LinkedTask[]> {
   if (ids.length === 0) return [];
   const rows = await tx
-    .select({ id: tasks.id, number: tasks.number, projectKey: projects.key })
+    .select({ id: tasks.id, number: tasks.number, projectId: tasks.projectId, projectKey: projects.key })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(inArray(tasks.id, [...new Set(ids)]));
-  return rows.map((r) => ({ id: r.id, key: `${r.projectKey}-${r.number}`, projectKey: r.projectKey }));
+  return rows.map((r) => ({ id: r.id, key: `${r.projectKey}-${r.number}`, projectId: r.projectId, projectKey: r.projectKey }));
 }
 
 async function announce(tx: Tx, orgId: string, linked: Iterable<LinkedTask>) {
@@ -261,6 +264,11 @@ export interface PullRequestOrigin {
   trusted: boolean;
   /** The GitHub login whose action sent the event (who merged, for a merge), kept in the activity. */
   sender: string | null;
+  /**
+   * Only this task (by id) may move: a PR Spider Tracker opens for a task (ST-87, ST-144) moves
+   * that task alone right away, whatever else its branch, title or body name.
+   */
+  automateOnly?: string;
 }
 
 /**
@@ -390,7 +398,8 @@ export async function savePullRequest(
   }
 
   await announce(tx, ctx.orgId, [...linked.map((l) => l.task), ...(await tasksByIds(tx, removed.map((l) => l.taskId)))]);
-  await automatePullRequest(tx, ctx, { action, pullRequest, previous: previous ?? null, tasks: linked, origin });
+  const automated = origin.automateOnly === undefined ? linked : linked.filter((l) => l.task.id === origin.automateOnly);
+  await automatePullRequest(tx, ctx, { action, pullRequest, previous: previous ?? null, tasks: automated, origin });
   return true;
 }
 

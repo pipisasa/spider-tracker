@@ -1436,7 +1436,8 @@ const paths = {
       summary:
         "Open the task's pull request on GitHub as the App (installation token) for a branch already pushed, and link it to the task at once (ST-87). " +
         "The repo is the one named, or the only one attached to the task's project; head defaults to the task's branch, base to the repo's default branch. " +
-        'The title defaults to "<task title> (KEY)"; the body always closes the task ("Closes KEY"), so status automation moves it',
+        'The title defaults to "<task title> (KEY)"; the body always closes the task ("Closes KEY"), so status automation moves it (only this task moves at once). ' +
+        "404 when head, title or body names a task, in a project attached to the repo, outside the caller's projects (ST-144)",
       requestBody: { required: false, ...json("OpenPullRequestInput") },
       responses: {
         "201": ok("The pull request, as linked to the task", "OpenedPullRequest"),

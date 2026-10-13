@@ -356,8 +356,17 @@ describe("spider pr (ST-87)", () => {
     },
   };
 
-  /** git for `spider pr`: a repo on `branch` with an origin remote; push succeeds unless `failPush`. */
-  function prGit({ repo = true, branch = "st-1-write-the-cli", origin = "git@github.com:acme/app.git" as string | null, failPush = false } = {}) {
+  /**
+   * git for `spider pr`: a repo on `branch` with an origin remote whose default branch is
+   * `originHead` (unknown when null); push succeeds unless `failPush`.
+   */
+  function prGit({
+    repo = true,
+    branch = "st-1-write-the-cli",
+    origin = "git@github.com:acme/app.git" as string | null,
+    originHead = null as string | null,
+    failPush = false,
+  } = {}) {
     const calls: string[] = [];
     const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
     const fail = (stderr = "") => ({ exitCode: 128, stdout: "", stderr });
@@ -369,6 +378,9 @@ describe("spider pr (ST-87)", () => {
       if (command === "rev-parse --is-inside-work-tree") return ok("true\n");
       if (command === "branch --show-current") return ok(branch ? `${branch}\n` : "");
       if (command === "remote get-url origin") return origin ? ok(`${origin}\n`) : fail("error: No such remote 'origin'");
+      if (command === "symbolic-ref --short refs/remotes/origin/HEAD") {
+        return originHead ? ok(`origin/${originHead}\n`) : fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref");
+      }
       if (args[0] === "push") return failPush ? fail("fatal: Authentication failed") : ok();
       return fail(`unexpected git ${command}`);
     };
@@ -437,6 +449,48 @@ describe("spider pr (ST-87)", () => {
     expect(noOrigin.code).toBe(2);
     expect(noOrigin.stderr).toContain("no origin remote");
     expect(api.bodies).toEqual([]);
+  });
+
+  test("never pushes the origin's default branch or the base, whatever --any-branch says (ST-144)", async () => {
+    const api = prApi();
+    const pushed = (calls: string[]) => calls.some((c) => c.startsWith("push"));
+    for (const [options, argv] of [
+      [{ branch: "trunk", originHead: "trunk" }, ["pr", "ST-1", "--any-branch"]],
+      [{ branch: "main" }, ["pr", "ST-1"]],
+      [{ branch: "master" }, ["pr", "ST-1", "--any-branch"]],
+      [{ branch: "st-1-write-the-cli" }, ["pr", "--base", "st-1-write-the-cli"]],
+    ] as const) {
+      const { git, calls } = prGit(options);
+      const result = await cli([...argv], { git, fetch: api.fetch, cwd: "/work" });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain(`Not pushing ${options.branch}`);
+      expect(pushed(calls)).toBe(false);
+    }
+    // A known default other than main: main is then an ordinary branch (pushed with --any-branch).
+    const { git, calls } = prGit({ branch: "main", originHead: "trunk" });
+    expect((await cli(["pr", "ST-1", "--any-branch"], { git, fetch: api.fetch, cwd: "/work" })).code).toBe(0);
+    expect(calls).toContain("push --set-upstream origin main");
+    expect(api.bodies).toEqual([{ repo: "acme/app", head: "main" }]);
+  });
+
+  test("pushes only the task's own branch, unless --any-branch (ST-144)", async () => {
+    const api = prApi();
+    const other = prGit({ branch: "st-2-something-else" });
+    const refused = await cli(["pr", "ST-1"], { git: other.git, fetch: api.fetch, cwd: "/work" });
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("Not pushing st-2-something-else: it isn't a branch of ST-1");
+    expect(other.calls.some((c) => c.startsWith("push"))).toBe(false);
+    const plain = prGit({ branch: "feature-x" });
+    expect((await cli(["pr", "ST-1"], { git: plain.git, fetch: api.fetch, cwd: "/work" })).code).toBe(2);
+    expect(api.bodies).toEqual([]);
+
+    const anyBranch = prGit({ branch: "feature-x", originHead: "main" });
+    expect((await cli(["pr", "ST-1", "--any-branch"], { git: anyBranch.git, fetch: api.fetch, cwd: "/work" })).code).toBe(0);
+    expect(anyBranch.calls).toContain("push --set-upstream origin feature-x");
+    // The key is matched case-insensitively, as the branch's task.
+    const upper = prGit({ branch: "ST-1-Write" });
+    expect((await cli(["pr", "st-1"], { git: upper.git, fetch: api.fetch, cwd: "/work" })).code).toBe(0);
+    expect(upper.calls).toContain("push --set-upstream origin ST-1-Write");
   });
 
   test("a PR already open: exit 2 with its URL, in --json as error.url", async () => {
