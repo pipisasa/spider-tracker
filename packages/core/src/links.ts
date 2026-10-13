@@ -21,7 +21,10 @@ export function normalizeTitle(title: string): string {
 }
 
 /** Splits `[[target#heading|label]]`'s inside into its parts; null when the target is empty. */
-export function parseWikiLink(inner: string, label?: string | null): WikiLink | null {
+export function parseWikiLink(
+  inner: string,
+  label?: string | null,
+): WikiLink | null {
   const target = (inner.split("#")[0] ?? "").trim();
   if (!target) return null;
   const shown = label?.trim();
@@ -42,7 +45,10 @@ function withoutCode(text: string): string {
 
 /** The same code blanked out with spaces instead, so offsets into the text still hold. */
 export function maskCode(text: string): string {
-  return CODE.reduce((rest, code) => rest.replace(code, (match) => match.replace(/[^\n]/g, " ")), text);
+  return CODE.reduce(
+    (rest, code) => rest.replace(code, (match) => match.replace(/[^\n]/g, " ")),
+    text,
+  );
 }
 
 /**
@@ -50,7 +56,12 @@ export function maskCode(text: string): string {
  * (they end the link or start a label or heading), or reads as a task key or a `doc:<id>`.
  */
 export function isLinkableTitle(title: string): boolean {
-  return title.trim() !== "" && !/[[\]|#\n]/.test(title) && !taskKeyTarget(title) && !documentIdTarget(title);
+  return (
+    title.trim() !== "" &&
+    !/[[\]|#\n]/.test(title) &&
+    !taskKeyTarget(title) &&
+    !documentIdTarget(title)
+  );
 }
 
 /**
@@ -58,7 +69,11 @@ export function isLinkableTitle(title: string): boolean {
  * `|label`) leading to `newTarget` instead: a new title or a `doc:<id>` (ST-101). Links in code
  * stay as written.
  */
-export function retargetTitleLinks(content: string, oldTitle: string, newTarget: string): string {
+export function retargetTitleLinks(
+  content: string,
+  oldTitle: string,
+  newTarget: string,
+): string {
   const wanted = normalizeTitle(oldTitle);
   let out = "";
   let last = 0;
@@ -66,7 +81,12 @@ export function retargetTitleLinks(content: string, oldTitle: string, newTarget:
     const inner = match[1] ?? "";
     const hash = inner.indexOf("#");
     const target = hash < 0 ? inner : inner.slice(0, hash);
-    if (normalizeTitle(target) !== wanted || taskKeyTarget(target) || documentIdTarget(target)) continue;
+    if (
+      normalizeTitle(target) !== wanted ||
+      taskKeyTarget(target) ||
+      documentIdTarget(target)
+    )
+      continue;
     // What follows the target as written: `#heading`, then `|label]]` or `]]`.
     const end = match.index + match[0].length;
     const rest = content.slice(match.index + 2 + target.length, end);
@@ -140,7 +160,8 @@ export function outgoingLinksIn(content: string): OutgoingLinks {
     else if (id) documentIds.add(id);
     else {
       const key = normalizeTitle(link.target);
-      if (!documents.has(key)) documents.set(key, link.target.replace(/\s+/g, " "));
+      if (!documents.has(key))
+        documents.set(key, link.target.replace(/\s+/g, " "));
     }
   }
   // Plain mentions, outside wiki links (a document titled "ST-1 notes" isn't a mention).
@@ -175,8 +196,12 @@ export function resolveTitle<T extends LinkCandidate>(
   let bestRank = -1;
   for (const doc of candidates) {
     if (normalizeTitle(doc.title) !== wanted) continue;
-    const rank = doc.projectKey === fromProjectKey ? 2 : doc.projectKey === null ? 1 : 0;
-    if (rank > bestRank || (rank === bestRank && best && doc.updatedAt > best.updatedAt)) {
+    const rank =
+      doc.projectKey === fromProjectKey ? 2 : doc.projectKey === null ? 1 : 0;
+    if (
+      rank > bestRank ||
+      (rank === bestRank && best && doc.updatedAt > best.updatedAt)
+    ) {
       best = doc;
       bestRank = rank;
     }

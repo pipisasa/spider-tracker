@@ -2,7 +2,14 @@
 // links between the files turned into tracker links. Parsing, front matter and link resolution
 // are pure functions; `publishDocuments` drives the API through the SDK.
 import type { DocumentDto } from "@repo/core/contracts";
-import { WIKI_LINK, documentIdLink, documentIdTarget, maskCode, normalizeTitle, taskKeyTarget } from "@repo/core/links";
+import {
+  WIKI_LINK,
+  documentIdLink,
+  documentIdTarget,
+  maskCode,
+  normalizeTitle,
+  taskKeyTarget,
+} from "@repo/core/links";
 import { MAX_DOCUMENT_BYTES } from "@repo/core/schemas";
 import { SpiderApiError, type SpiderClient } from "@repo/sdk";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
@@ -17,10 +24,17 @@ export interface FrontMatter {
   task?: string;
 }
 
-const FRONT_MATTER_KEYS = ["id", "version", "title", "project", "task"] as const;
+const FRONT_MATTER_KEYS = [
+  "id",
+  "version",
+  "title",
+  "project",
+  "task",
+] as const;
 
 /** `---` on the first line, `key: value` lines, then `---` (or `...`) on a line of its own. */
-const FRONT_MATTER = /^---[^\S\n]*\r?\n([\s\S]*?)^(?:---|\.\.\.)[^\S\n]*(?:\r?\n|$)/m;
+const FRONT_MATTER =
+  /^---[^\S\n]*\r?\n([\s\S]*?)^(?:---|\.\.\.)[^\S\n]*(?:\r?\n|$)/m;
 
 /** A UTF-8 byte order mark: hidden from parsing, kept when a file is written back. */
 const BOM = "\uFEFF";
@@ -48,7 +62,8 @@ function matchFrontMatter(text: string): RegExpExecArray | null {
 /** A value without its quotes, or without a trailing ` # comment` when unquoted. */
 const unquote = (value: string) => {
   const v = value.trim();
-  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0]) return v.slice(1, -1);
+  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0])
+    return v.slice(1, -1);
   return v.replace(/(?:^|\s+)#.*$/, "");
 };
 
@@ -57,7 +72,10 @@ const unquote = (value: string) => {
  * but not read) and the document's content, without the blank lines after the front matter.
  * A leading BOM is dropped.
  */
-export function parseFrontMatter(raw: string): { fields: FrontMatter; body: string } {
+export function parseFrontMatter(raw: string): {
+  fields: FrontMatter;
+  body: string;
+} {
   const text = raw.startsWith(BOM) ? raw.slice(BOM.length) : raw;
   const match = matchFrontMatter(text);
   if (!match) return { fields: {}, body: text };
@@ -70,7 +88,10 @@ export function parseFrontMatter(raw: string): { fields: FrontMatter; body: stri
     const known = FRONT_MATTER_KEYS.find((k) => k === key);
     if (known && value !== "") fields[known] = value;
   }
-  return { fields, body: text.slice(match[0].length).replace(/^(?:[^\S\n]*\r?\n)+/, "") };
+  return {
+    fields,
+    body: text.slice(match[0].length).replace(/^(?:[^\S\n]*\r?\n)+/, ""),
+  };
 }
 
 /**
@@ -78,7 +99,10 @@ export function parseFrontMatter(raw: string): { fields: FrontMatter; body: stri
  * is added at the end, and a file without front matter gets one. Everything else stays as written,
  * a leading BOM included.
  */
-export function setFrontMatter(raw: string, updates: Record<string, string>): string {
+export function setFrontMatter(
+  raw: string,
+  updates: Record<string, string>,
+): string {
   const bom = raw.startsWith(BOM) ? BOM : "";
   const text = raw.slice(bom.length);
   const match = matchFrontMatter(text);
@@ -91,7 +115,9 @@ export function setFrontMatter(raw: string, updates: Record<string, string>): st
   // The block ends with a line break, so the last split element is "".
   if (lines.at(-1) === "") lines.pop();
   for (const [key, value] of entries) {
-    const index = lines.findIndex((line) => new RegExp(`^${key}\\s*:`, "i").test(line));
+    const index = lines.findIndex((line) =>
+      new RegExp(`^${key}\\s*:`, "i").test(line),
+    );
     if (index >= 0) lines[index] = `${key}: ${value}`;
     else lines.push(`${key}: ${value}`);
   }
@@ -105,7 +131,9 @@ export function setFrontMatter(raw: string, updates: Record<string, string>): st
 /** A file's bytes as text, or null when they aren't valid UTF-8 (a leading BOM is kept). */
 export function decodeUtf8(bytes: Uint8Array): string | null {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
   } catch {
     return null;
   }
@@ -130,11 +158,15 @@ export interface SourceDoc {
 /** Parses one file; throws a message for an `id` or `version` that can't be right. */
 export function parseSourceDoc(path: string, raw: string): SourceDoc {
   const { fields, body } = parseFrontMatter(raw);
-  const id = fields.id === undefined ? null : documentIdTarget(`doc:${fields.id}`);
-  if (fields.id !== undefined && !id) throw new Error(`${path}: id "${fields.id}" isn't a document id`);
+  const id =
+    fields.id === undefined ? null : documentIdTarget(`doc:${fields.id}`);
+  if (fields.id !== undefined && !id)
+    throw new Error(`${path}: id "${fields.id}" isn't a document id`);
   const version = fields.version === undefined ? null : Number(fields.version);
   if (version !== null && (!Number.isInteger(version) || version < 1)) {
-    throw new Error(`${path}: version "${fields.version}" isn't a positive integer`);
+    throw new Error(
+      `${path}: version "${fields.version}" isn't a positive integer`,
+    );
   }
   return {
     path,
@@ -167,11 +199,24 @@ export async function readSourceFolder(root: string): Promise<SourceFolder> {
   const realRoot = await realpath(root);
   const paths = (await readdir(root, { recursive: true }))
     .map((p) => p.split("\\").join("/"))
-    .filter((p) => /\.md$/i.test(p) && !p.split("/").some((part) => part.startsWith(".") || part === "node_modules"))
+    .filter(
+      (p) =>
+        /\.md$/i.test(p) &&
+        !p
+          .split("/")
+          .some((part) => part.startsWith(".") || part === "node_modules"),
+    )
     .sort();
   const folder: SourceFolder = { docs: [], failed: [], warnings: [] };
   const fail = (path: string, message: string) =>
-    folder.failed.push({ file: path, status: "failed", id: null, title: posix.basename(path).replace(/\.md$/i, ""), version: null, message });
+    folder.failed.push({
+      file: path,
+      status: "failed",
+      id: null,
+      title: posix.basename(path).replace(/\.md$/i, ""),
+      version: null,
+      message,
+    });
   for (const path of paths) {
     const file = join(root, path);
     const info = await lstat(file);
@@ -183,16 +228,24 @@ export async function readSourceFolder(root: string): Promise<SourceFolder> {
     // A symbolic link to a folder on the way leads outside `root`.
     const inside = relative(realRoot, await realpath(file));
     if (inside.startsWith("..") || isAbsolute(inside)) {
-      folder.warnings.push(`${path} is outside the folder (through a symbolic link); skipped`);
+      folder.warnings.push(
+        `${path} is outside the folder (through a symbolic link); skipped`,
+      );
       continue;
     }
     if (info.size > MAX_DOCUMENT_BYTES) {
-      fail(path, `${Math.ceil(info.size / 1000)} KB is more than a document can hold (1 MB); not published`);
+      fail(
+        path,
+        `${Math.ceil(info.size / 1000)} KB is more than a document can hold (1 MB); not published`,
+      );
       continue;
     }
     const raw = decodeUtf8(await readFile(file));
     if (raw === null) {
-      fail(path, "Not UTF-8 text; not published, and the file wasn't changed. Save it as UTF-8 and publish again");
+      fail(
+        path,
+        "Not UTF-8 text; not published, and the file wasn't changed. Save it as UTF-8 and publish again",
+      );
       continue;
     }
     folder.docs.push(parseSourceDoc(path, raw));
@@ -233,7 +286,8 @@ export function linkIndex(docs: readonly SourceDoc[]): LinkIndex {
 }
 
 /** `[text](path.md)`, `[text](path.md#heading)` or `[text](<path with spaces.md>)`; not images. */
-const MARKDOWN_LINK = /(!?)\[([^[\]\n]*)\]\(\s*(<[^<>\n]+>|[^()\s]+)(?:\s+"[^"\n]*")?\s*\)/g;
+const MARKDOWN_LINK =
+  /(!?)\[([^[\]\n]*)\]\(\s*(<[^<>\n]+>|[^()\s]+)(?:\s+"[^"\n]*")?\s*\)/g;
 
 /**
  * `doc.body` with links to the folder's files as `[[doc:<id>]]` links (ST-115), which survive
@@ -243,7 +297,11 @@ const MARKDOWN_LINK = /(!?)\[([^[\]\n]*)\]\(\s*(<[^<>\n]+>|[^()\s]+)(?:\s+"[^"\n
  * document id, null while it has none yet, or false when it has none and won't get one in this
  * publish (its document is gone, or it failed): links to it stay as written, with a warning.
  */
-export function resolveLinks(doc: SourceDoc, index: LinkIndex, idOf: (doc: SourceDoc) => string | null | false): ResolvedContent {
+export function resolveLinks(
+  doc: SourceDoc,
+  index: LinkIndex,
+  idOf: (doc: SourceDoc) => string | null | false,
+): ResolvedContent {
   const text = doc.body;
   const masked = maskCode(text);
   const pending: string[] = [];
@@ -271,20 +329,31 @@ export function resolveLinks(doc: SourceDoc, index: LinkIndex, idOf: (doc: Sourc
     const found = index.byTitle.get(normalizeTitle(name));
     if (!found?.length) continue;
     if (found.length > 1) {
-      warnings.push(`[[${name.trim()}]] matches ${found.map((d) => d.path).join(", ")}; linked to ${found[0]?.path}`);
+      warnings.push(
+        `[[${name.trim()}]] matches ${found.map((d) => d.path).join(", ")}; linked to ${found[0]?.path}`,
+      );
     }
     const to = found[0];
     const link = to && target(to);
     if (!link) continue;
     // What follows the name as written: `#heading`, then `|label]]` or `]]`.
-    edits.push({ start, end, with: `[[${link}${text.slice(start + 2 + name.length, end)}` });
+    edits.push({
+      start,
+      end,
+      with: `[[${link}${text.slice(start + 2 + name.length, end)}`,
+    });
   }
 
   for (const match of masked.matchAll(MARKDOWN_LINK)) {
     if (match[1]) continue;
     const href = (match[3] ?? "").replace(/^<|>$/g, "");
     // Absolute URLs (any scheme), site-absolute paths and in-page anchors aren't files of the folder.
-    if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("/") || href.startsWith("#")) continue;
+    if (
+      /^[a-z][a-z\d+.-]*:/i.test(href) ||
+      href.startsWith("/") ||
+      href.startsWith("#")
+    )
+      continue;
     const hash = href.indexOf("#");
     const file = hash < 0 ? href : href.slice(0, hash);
     if (!/\.md$/i.test(file)) continue;
@@ -305,8 +374,14 @@ export function resolveLinks(doc: SourceDoc, index: LinkIndex, idOf: (doc: Sourc
     const start = match.index;
     const end = start + match[0].length;
     const heading = hash < 0 ? "" : href.slice(hash);
-    const label = (/^\[([^[\]\n]*)\]/.exec(text.slice(start, end))?.[1] ?? "").trim();
-    edits.push({ start, end, with: `[[${link}${heading}${label ? `|${label}` : ""}]]` });
+    const label = (
+      /^\[([^[\]\n]*)\]/.exec(text.slice(start, end))?.[1] ?? ""
+    ).trim();
+    edits.push({
+      start,
+      end,
+      with: `[[${link}${heading}${label ? `|${label}` : ""}]]`,
+    });
   }
 
   edits.sort((a, b) => a.start - b.start);
@@ -321,7 +396,8 @@ export function resolveLinks(doc: SourceDoc, index: LinkIndex, idOf: (doc: Sourc
 }
 
 /** What happened to one file; in a dry run, what would. */
-export type PublishStatus = "created" | "updated" | "unchanged" | "conflict" | "failed";
+export type PublishStatus =
+  "created" | "updated" | "unchanged" | "conflict" | "failed";
 
 export interface PublishResult {
   /** Relative to the folder. */
@@ -362,14 +438,20 @@ export interface PublishOptions {
   save: (doc: SourceDoc, raw: string) => Promise<void>;
 }
 
-const apiMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
-const isConflict = (err: unknown) => err instanceof SpiderApiError && err.status === 409;
+const apiMessage = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
+const isConflict = (err: unknown) =>
+  err instanceof SpiderApiError && err.status === 409;
 
 /** How many documents are read from the API at a time. */
 const READ_CONCURRENCY = 8;
 
 /** Runs `fn` on every item, at most `limit` at a time. */
-async function forEachLimit<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function forEachLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
   let next = 0;
   const worker = async () => {
     while (next < items.length) {
@@ -377,7 +459,9 @@ async function forEachLimit<T>(items: readonly T[], limit: number, fn: (item: T)
       await fn(item);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
 }
 
 /**
@@ -386,20 +470,32 @@ async function forEachLimit<T>(items: readonly T[], limit: number, fn: (item: T)
  * every link to a file of the folder as `[[doc:<id>]]`. An update is based on the file's `version`:
  * when the document changed since, the file is a conflict and nothing is overwritten.
  */
-export async function publishDocuments(options: PublishOptions): Promise<PublishResponse> {
+export async function publishDocuments(
+  options: PublishOptions,
+): Promise<PublishResponse> {
   const { client, org, docs, dryRun } = options;
   const index = linkIndex(docs);
   const ids = new Map<SourceDoc, string>();
   for (const doc of docs) if (doc.id) ids.set(doc, doc.id);
   // Files without a document that won't get one in this run: links to them stay as written.
   const dead = new Set<SourceDoc>();
-  const idOf = (doc: SourceDoc) => (dead.has(doc) ? false : (ids.get(doc) ?? null));
+  const idOf = (doc: SourceDoc) =>
+    dead.has(doc) ? false : (ids.get(doc) ?? null);
   const results = new Map<SourceDoc, PublishResult>();
-  const base = (doc: SourceDoc): PublishResult => ({ file: doc.path, status: "unchanged", id: doc.id, title: doc.title, version: doc.version });
+  const base = (doc: SourceDoc): PublishResult => ({
+    file: doc.path,
+    status: "unchanged",
+    id: doc.id,
+    title: doc.title,
+    version: doc.version,
+  });
 
   // The files' front matter, kept current as `id` and `version` are written back. Returns why the
   // file couldn't be written, or null; the document is saved either way.
-  const record = async (doc: SourceDoc, saved: DocumentDto): Promise<string | null> => {
+  const record = async (
+    doc: SourceDoc,
+    saved: DocumentDto,
+  ): Promise<string | null> => {
     const updates: Record<string, string> = {};
     if (doc.id !== saved.id) updates.id = saved.id;
     if (doc.version !== saved.version) updates.version = String(saved.version);
@@ -444,7 +540,11 @@ export async function publishDocuments(options: PublishOptions): Promise<Publish
   // 2. New documents, with the links that can be resolved so far.
   const unfinished: { doc: SourceDoc; content: string }[] = [];
   for (const doc of docs.filter((d) => !d.id)) {
-    const scope = doc.task ? { task: doc.task } : (doc.project ?? options.project) ? { project: doc.project ?? options.project } : {};
+    const scope = doc.task
+      ? { task: doc.task }
+      : (doc.project ?? options.project)
+        ? { project: doc.project ?? options.project }
+        : {};
     if (dryRun) {
       results.set(doc, { ...base(doc), status: "created" });
       continue;
@@ -452,10 +552,19 @@ export async function publishDocuments(options: PublishOptions): Promise<Publish
     const resolved = resolveLinks(doc, index, idOf);
     let created: DocumentDto;
     try {
-      created = await client.documents.create(org, { title: doc.title, format: "md", content: resolved.content, ...scope });
+      created = await client.documents.create(org, {
+        title: doc.title,
+        format: "md",
+        content: resolved.content,
+        ...scope,
+      });
     } catch (err) {
       dead.add(doc);
-      results.set(doc, { ...base(doc), status: "failed", message: apiMessage(err) });
+      results.set(doc, {
+        ...base(doc),
+        status: "failed",
+        message: apiMessage(err),
+      });
       continue;
     }
     ids.set(doc, created.id);
@@ -469,16 +578,26 @@ export async function publishDocuments(options: PublishOptions): Promise<Publish
       ...(unrecorded ? { message: unrecorded } : {}),
     });
     // Without its id in the file, a second save would be based on nothing: links wait for a rerun.
-    if (resolved.pending.length && !unrecorded) unfinished.push({ doc, content: resolved.content });
+    if (resolved.pending.length && !unrecorded)
+      unfinished.push({ doc, content: resolved.content });
   }
 
   // 3. Content: links to the new documents for those created in step 2, then the existing ones.
   for (const { doc, content } of unfinished) {
     const resolved = resolveLinks(doc, index, idOf);
     const result = results.get(doc);
-    if (!result || doc.version === null || !doc.id || resolved.content === content) continue;
+    if (
+      !result ||
+      doc.version === null ||
+      !doc.id ||
+      resolved.content === content
+    )
+      continue;
     try {
-      const saved = await client.documents.update(org, doc.id, { baseVersion: doc.version, content: resolved.content });
+      const saved = await client.documents.update(org, doc.id, {
+        baseVersion: doc.version,
+        content: resolved.content,
+      });
       result.version = saved.version;
       const unrecorded = await record(doc, saved);
       if (unrecorded) result.message = unrecorded;
@@ -492,9 +611,17 @@ export async function publishDocuments(options: PublishOptions): Promise<Publish
     const remote = current.get(doc);
     if (!remote || !doc.id) continue;
     const resolved = resolveLinks(doc, index, idOf);
-    const result: PublishResult = { ...base(doc), version: remote.version, url: remote.url };
+    const result: PublishResult = {
+      ...base(doc),
+      version: remote.version,
+      url: remote.url,
+    };
     results.set(doc, result);
-    const same = !resolved.pending.length && remote.content === resolved.content && remote.title === doc.title.trim() && remote.format === "md";
+    const same =
+      !resolved.pending.length &&
+      remote.content === resolved.content &&
+      remote.title === doc.title.trim() &&
+      remote.format === "md";
     if (same) {
       // Up to date; a version saved since with the same text is taken as the file's base from now on.
       if (!dryRun) {
@@ -535,28 +662,51 @@ export async function publishDocuments(options: PublishOptions): Promise<Publish
   // Warnings, from the final resolution (a dry run's new documents have no id: their links count as resolved).
   const ordered = docs.map((doc) => {
     const result = results.get(doc) ?? base(doc);
-    const placeholder = (d: SourceDoc) => (dead.has(d) ? false : (ids.get(d) ?? "00000000-0000-7000-8000-000000000000"));
+    const placeholder = (d: SourceDoc) =>
+      dead.has(d)
+        ? false
+        : (ids.get(d) ?? "00000000-0000-7000-8000-000000000000");
     const { warnings } = resolveLinks(doc, index, placeholder);
     return warnings.length ? { ...result, warnings } : result;
   });
-  const all = [...ordered, ...(options.failed ?? [])].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
-  const summary: Record<PublishStatus, number> = { created: 0, updated: 0, unchanged: 0, conflict: 0, failed: 0 };
+  const all = [...ordered, ...(options.failed ?? [])].sort((a, b) =>
+    a.file < b.file ? -1 : a.file > b.file ? 1 : 0,
+  );
+  const summary: Record<PublishStatus, number> = {
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    conflict: 0,
+    failed: 0,
+  };
   for (const r of all) summary[r.status] += 1;
   return { dryRun, results: all, warnings: options.warnings ?? [], summary };
 }
 
 /** The report, one line per file (and its warnings), then the counts. */
-export function publishLines({ dryRun, results, warnings, summary }: PublishResponse): string {
+export function publishLines({
+  dryRun,
+  results,
+  warnings,
+  summary,
+}: PublishResponse): string {
   const skipped = warnings.map((w) => `warning: ${w}`);
-  if (!results.length) return [...skipped, "No .md files to publish"].join("\n");
+  if (!results.length)
+    return [...skipped, "No .md files to publish"].join("\n");
   const label = (status: PublishStatus) =>
-    dryRun && (status === "created" || status === "updated") ? `would ${status === "created" ? "create" : "update"}` : status;
+    dryRun && (status === "created" || status === "updated")
+      ? `would ${status === "created" ? "create" : "update"}`
+      : status;
   const labelWidth = Math.max(...results.map((r) => label(r.status).length));
   const fileWidth = Math.max(...results.map((r) => r.file.length));
   const lines: string[] = [...skipped];
   for (const r of results) {
-    const where = r.id ? `  (${r.id}${r.version ? `, v${r.version}` : ""})` : "";
-    lines.push(`${label(r.status).padEnd(labelWidth)}  ${r.file.padEnd(fileWidth)}  ${r.title}${where}`);
+    const where = r.id
+      ? `  (${r.id}${r.version ? `, v${r.version}` : ""})`
+      : "";
+    lines.push(
+      `${label(r.status).padEnd(labelWidth)}  ${r.file.padEnd(fileWidth)}  ${r.title}${where}`,
+    );
     if (r.message) lines.push(`  ${r.message}`);
     for (const w of r.warnings ?? []) lines.push(`  warning: ${w}`);
   }

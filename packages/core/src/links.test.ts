@@ -14,7 +14,9 @@ import {
 
 describe("wikiLinksIn", () => {
   test("reads targets, labels and heading parts", () => {
-    expect(wikiLinksIn("See [[Plan]], [[Plan v2|the plan]] and [[Spec#Goals]].")).toEqual([
+    expect(
+      wikiLinksIn("See [[Plan]], [[Plan v2|the plan]] and [[Spec#Goals]]."),
+    ).toEqual([
       { target: "Plan", label: null },
       { target: "Plan v2", label: "the plan" },
       { target: "Spec", label: null },
@@ -22,18 +24,25 @@ describe("wikiLinksIn", () => {
   });
 
   test("skips empty, broken and code links", () => {
-    const text = "[[ ]] [[a\nb]] [single] `[[Inline]]`\n\n```md\n[[Fenced]]\n```\n<code>[[Html]]</code> [[Real]]";
+    const text =
+      "[[ ]] [[a\nb]] [single] `[[Inline]]`\n\n```md\n[[Fenced]]\n```\n<code>[[Html]]</code> [[Real]]";
     expect(wikiLinksIn(text).map((l) => l.target)).toEqual(["Real"]);
   });
 
   test("an unclosed fence hides the rest", () => {
-    expect(wikiLinksIn("[[A]]\n```\n[[B]]")).toEqual([{ target: "A", label: null }]);
+    expect(wikiLinksIn("[[A]]\n```\n[[B]]")).toEqual([
+      { target: "A", label: null },
+    ]);
   });
 });
 
 describe("outgoingLinksIn", () => {
   test("splits documents from tasks and drops repeats", () => {
-    expect(outgoingLinksIn("[[Roadmap]] [[roadmap ]] [[st-12]] mentions ST-12 and OPS-3; [[ST-1 notes]]")).toEqual({
+    expect(
+      outgoingLinksIn(
+        "[[Roadmap]] [[roadmap ]] [[st-12]] mentions ST-12 and OPS-3; [[ST-1 notes]]",
+      ),
+    ).toEqual({
       documents: ["Roadmap", "ST-1 notes"],
       documentIds: [],
       tasks: ["ST-12", "OPS-3"],
@@ -41,7 +50,11 @@ describe("outgoingLinksIn", () => {
   });
 
   test("ignores task keys in code", () => {
-    expect(outgoingLinksIn("`ST-4` and\n```\nST-5\n```")).toEqual({ documents: [], documentIds: [], tasks: [] });
+    expect(outgoingLinksIn("`ST-4` and\n```\nST-5\n```")).toEqual({
+      documents: [],
+      documentIds: [],
+      tasks: [],
+    });
   });
 });
 
@@ -56,7 +69,12 @@ describe("resolveTitle", () => {
     { id: "ops", title: "Notes", projectKey: "OPS", updatedAt: "2026-10-03" },
     { id: "org", title: "notes", projectKey: null, updatedAt: "2026-10-01" },
     { id: "st-old", title: "Notes", projectKey: "ST", updatedAt: "2026-10-01" },
-    { id: "st-new", title: "Notes ", projectKey: "ST", updatedAt: "2026-10-02" },
+    {
+      id: "st-new",
+      title: "Notes ",
+      projectKey: "ST",
+      updatedAt: "2026-10-02",
+    },
   ];
 
   test("prefers the same project, then the organization, then the newest", () => {
@@ -80,7 +98,11 @@ describe("links by id (ST-115)", () => {
   });
 
   test("outgoingLinksIn lists ids apart from titles, once each", () => {
-    expect(outgoingLinksIn(`[[doc:${ID}|Spec]] [[doc:${ID.toUpperCase()}#Goals]] [[doc:x]]`)).toEqual({
+    expect(
+      outgoingLinksIn(
+        `[[doc:${ID}|Spec]] [[doc:${ID.toUpperCase()}#Goals]] [[doc:x]]`,
+      ),
+    ).toEqual({
       documents: ["doc:x"],
       documentIds: [ID],
       tasks: [],
@@ -94,28 +116,50 @@ describe("links by id (ST-115)", () => {
     ];
     expect(resolveDocumentLink(docs, `doc:${ID}`, null)?.title).toBe("Spec");
     expect(resolveDocumentLink(docs, "plan", "ST")?.id).toBe("other");
-    expect(resolveDocumentLink(docs, "doc:00000000-0000-7000-8000-000000000000", null)).toBeNull();
+    expect(
+      resolveDocumentLink(
+        docs,
+        "doc:00000000-0000-7000-8000-000000000000",
+        null,
+      ),
+    ).toBeNull();
   });
 });
 
 describe("retargetTitleLinks (ST-101)", () => {
   test("rewrites the title in any case or spacing, keeping headings and labels", () => {
-    const text = "[[Old]] [[ old  #Intro]] [[OLD|label]] [[Old#A|b]] [[Older]] [[doc:x]]";
-    expect(retargetTitleLinks(text, "Old", "New")).toBe("[[New]] [[New#Intro]] [[New|label]] [[New#A|b]] [[Older]] [[doc:x]]");
+    const text =
+      "[[Old]] [[ old  #Intro]] [[OLD|label]] [[Old#A|b]] [[Older]] [[doc:x]]";
+    expect(retargetTitleLinks(text, "Old", "New")).toBe(
+      "[[New]] [[New#Intro]] [[New|label]] [[New#A|b]] [[Older]] [[doc:x]]",
+    );
   });
 
   test("leaves code alone and returns the same text without matches", () => {
     const text = "`[[Old]]`\n```\n[[Old]]\n```\n<code>[[Old]]</code> [[Old]]";
-    expect(retargetTitleLinks(text, "Old", "doc:1")).toBe("`[[Old]]`\n```\n[[Old]]\n```\n<code>[[Old]]</code> [[doc:1]]");
+    expect(retargetTitleLinks(text, "Old", "doc:1")).toBe(
+      "`[[Old]]`\n```\n[[Old]]\n```\n<code>[[Old]]</code> [[doc:1]]",
+    );
     expect(retargetTitleLinks("[[Other]]", "Old", "New")).toBe("[[Other]]");
   });
 });
 
 describe("isLinkableTitle", () => {
   test("rejects titles a [[link]] can't name", () => {
-    expect(["Plan", "Plan v2 (draft)"].map(isLinkableTitle)).toEqual([true, true]);
-    expect(["", "  ", "A | B", "C#", "[x]", "ST-12", "doc:01a1217e-7dd6-7d02-9d7c-45929504ed9f"].map(isLinkableTitle)).toEqual(
-      Array(7).fill(false),
-    );
+    expect(["Plan", "Plan v2 (draft)"].map(isLinkableTitle)).toEqual([
+      true,
+      true,
+    ]);
+    expect(
+      [
+        "",
+        "  ",
+        "A | B",
+        "C#",
+        "[x]",
+        "ST-12",
+        "doc:01a1217e-7dd6-7d02-9d7c-45929504ed9f",
+      ].map(isLinkableTitle),
+    ).toEqual(Array(7).fill(false));
   });
 });

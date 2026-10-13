@@ -252,14 +252,12 @@ export async function readStore(
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
       return emptyStore();
     const code =
-      error instanceof Error && "code" in error && typeof error.code === "string"
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string"
         ? error.code
         : "read failed";
     throw unreadable(path, `it can't be read (${code})`);
@@ -276,8 +274,7 @@ export async function readStore(
   if ("version" in parsed) {
     if (parsed.version !== 2) {
       const version =
-        typeof parsed.version === "number" ||
-        typeof parsed.version === "string"
+        typeof parsed.version === "number" || typeof parsed.version === "string"
           ? ` ${parsed.version}`
           : "";
       throw unreadable(
@@ -391,8 +388,11 @@ export function putAgent(
   const savedOrg = (saved.orgs[org.slug] ??= { name: org.name, agents: {} });
   savedOrg.name = org.name;
   // A new key for the same agent keeps its local settings.
-  const permissionMode = agent.permissionMode ?? savedOrg.agents[agent.actor.handle]?.permissionMode;
-  savedOrg.agents[agent.actor.handle] = permissionMode ? { ...agent, permissionMode } : agent;
+  const permissionMode =
+    agent.permissionMode ?? savedOrg.agents[agent.actor.handle]?.permissionMode;
+  savedOrg.agents[agent.actor.handle] = permissionMode
+    ? { ...agent, permissionMode }
+    : agent;
   return refOf({ server: serverKey, org: org.slug, agent: agent.actor.handle });
 }
 

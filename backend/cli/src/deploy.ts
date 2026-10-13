@@ -22,12 +22,22 @@ export const DEPLOY_COMMANDS: Record<DeployApp, Record<string, string[]>> = {
   api: {
     // Railway: upload the working tree to the api service (the API also deploys from GitHub on push).
     prod: ["railway", "up", "--service", "api", "--detach"],
-    staging: ["railway", "up", "--service", "api", "--environment", "staging", "--detach"],
+    staging: [
+      "railway",
+      "up",
+      "--service",
+      "api",
+      "--environment",
+      "staging",
+      "--detach",
+    ],
   },
 };
 
 /** Files a deploy needs that aren't committed, by app and environment (relative to the root). */
-export const DEPLOY_REQUIRES: Partial<Record<DeployApp, Record<string, string>>> = {
+export const DEPLOY_REQUIRES: Partial<
+  Record<DeployApp, Record<string, string>>
+> = {
   web: { staging: "web/app/.env.staging" },
 };
 
@@ -74,20 +84,31 @@ function parseArgs(argv: string[]): DeployArgs {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? "";
     const known = ["--env", "--release", "--commit", "--as"];
-    const [name, inline] = arg.includes("=") ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)] : [arg, undefined];
+    const [name, inline] = arg.includes("=")
+      ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)]
+      : [arg, undefined];
     if (known.includes(name)) {
       const value = inline ?? args[++i];
-      if (!value || value.startsWith("-")) throw new UsageError(`${name} needs a value`);
+      if (!value || value.startsWith("-"))
+        throw new UsageError(`${name} needs a value`);
       flags[name.slice(2)] = value.trim();
-    } else if (arg.startsWith("-")) throw new UsageError(`Unknown option ${arg}`);
+    } else if (arg.startsWith("-"))
+      throw new UsageError(`Unknown option ${arg}`);
     else positional.push(arg);
   }
   const [app, ...rest] = positional;
   if (!app) throw new UsageError("Name the app to deploy: web or api");
   if (rest.length) throw new UsageError(`Unexpected argument ${rest[0]}`);
-  if (!(DEPLOY_APPS as readonly string[]).includes(app)) throw new UsageError(`Unknown app "${app}"; this script deploys ${DEPLOY_APPS.join(" and ")}`);
-  const release = flags.release === undefined ? undefined : parseTaskKey(flags.release);
-  if (flags.release !== undefined && !release) throw new UsageError(`Invalid --release "${flags.release}". Expected a task key like ST-120`);
+  if (!(DEPLOY_APPS as readonly string[]).includes(app))
+    throw new UsageError(
+      `Unknown app "${app}"; this script deploys ${DEPLOY_APPS.join(" and ")}`,
+    );
+  const release =
+    flags.release === undefined ? undefined : parseTaskKey(flags.release);
+  if (flags.release !== undefined && !release)
+    throw new UsageError(
+      `Invalid --release "${flags.release}". Expected a task key like ST-120`,
+    );
   return {
     app: app as DeployApp,
     env: (flags.env ?? "prod").toLowerCase(),
@@ -114,12 +135,16 @@ export async function deploy(options: DeployOptions): Promise<number> {
   }
   const command = DEPLOY_COMMANDS[args.app][args.env];
   if (!command) {
-    stderr.write(`${args.app} has no "${args.env}" deploy; environments: ${Object.keys(DEPLOY_COMMANDS[args.app]).join(", ")}\n`);
+    stderr.write(
+      `${args.app} has no "${args.env}" deploy; environments: ${Object.keys(DEPLOY_COMMANDS[args.app]).join(", ")}\n`,
+    );
     return 2;
   }
   const required = DEPLOY_REQUIRES[args.app]?.[args.env];
   if (required && !options.exists(required)) {
-    stderr.write(`${required} is missing: the ${args.env} build needs it. See "Staging" in docs/deployment.md\n`);
+    stderr.write(
+      `${required} is missing: the ${args.env} build needs it. See "Staging" in docs/deployment.md\n`,
+    );
     return 2;
   }
 
@@ -131,12 +156,16 @@ export async function deploy(options: DeployOptions): Promise<number> {
       const head = git(["rev-parse", "HEAD"], cwd);
       commit = head.exitCode === 0 ? head.stdout.trim() : "";
       if (!commit) {
-        stderr.write("Can't read HEAD to record the deployment; pass --commit <sha>\n");
+        stderr.write(
+          "Can't read HEAD to record the deployment; pass --commit <sha>\n",
+        );
         return 2;
       }
       const dirty = git(["status", "--porcelain", "--untracked-files=no"], cwd);
       if (dirty.exitCode === 0 && dirty.stdout.trim()) {
-        stderr.write(`Warning: uncommitted changes; the deployment is recorded at HEAD (${commit.slice(0, 7)}), which doesn't include them\n`);
+        stderr.write(
+          `Warning: uncommitted changes; the deployment is recorded at HEAD (${commit.slice(0, 7)}), which doesn't include them\n`,
+        );
       }
     }
   }
@@ -144,18 +173,35 @@ export async function deploy(options: DeployOptions): Promise<number> {
   stdout.write(`Deploying ${args.app} to ${args.env}: ${command.join(" ")}\n`);
   const code = await options.spawn(command, cwd);
   if (code !== 0) {
-    stderr.write(`The ${args.app} deploy failed (exit ${code})${args.release ? `; nothing recorded on ${args.release}` : ""}\n`);
+    stderr.write(
+      `The ${args.app} deploy failed (exit ${code})${args.release ? `; nothing recorded on ${args.release}` : ""}\n`,
+    );
     return code;
   }
   if (!args.release || !commit) {
-    stdout.write(`Deployed ${args.app} to ${args.env}. Not recorded on a release (add --release ST-NN to record it)\n`);
+    stdout.write(
+      `Deployed ${args.app} to ${args.env}. Not recorded on a release (add --release ST-NN to record it)\n`,
+    );
     return 0;
   }
 
-  const record = ["release", "deploy", args.release, "--app", args.app, "--env", args.env, "--commit", commit, ...(args.as ? ["--as", args.as] : [])];
+  const record = [
+    "release",
+    "deploy",
+    args.release,
+    "--app",
+    args.app,
+    "--env",
+    args.env,
+    "--commit",
+    commit,
+    ...(args.as ? ["--as", args.as] : []),
+  ];
   const recorded = await options.spider(record);
   if (recorded !== 0) {
-    stderr.write(`Deployed ${args.app} to ${args.env}, but couldn't record it on ${args.release}. Record it with:\n  bun run spider ${record.join(" ")}\n`);
+    stderr.write(
+      `Deployed ${args.app} to ${args.env}, but couldn't record it on ${args.release}. Record it with:\n  bun run spider ${record.join(" ")}\n`,
+    );
     return 1;
   }
   return 0;

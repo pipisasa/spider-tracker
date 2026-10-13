@@ -9,6 +9,7 @@ export function filterDocumentsByProject(
   filter: string,
 ): DocumentSummaryDto[] {
   if (!filter) return documents;
-  if (filter === ORG_FILTER) return documents.filter((d) => d.projectKey === null);
+  if (filter === ORG_FILTER)
+    return documents.filter((d) => d.projectKey === null);
   return documents.filter((d) => d.projectKey === filter);
 }

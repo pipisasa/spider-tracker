@@ -32,7 +32,15 @@ export const allReleaseTasks = (db: Db | Tx, releaseId: string) =>
  * Refuses (forbidden) when any of the release's tasks is in a project outside `scope`; the message
  * never names them. `action` ends it: "ask a member to release it".
  */
-export function assertSeesWholeRelease(scope: ProjectScope, releaseKey: string, included: { projectId: string }[], action: string) {
+export function assertSeesWholeRelease(
+  scope: ProjectScope,
+  releaseKey: string,
+  included: { projectId: string }[],
+  action: string,
+) {
   if (included.every((t) => inScope(scope, t.projectId))) return;
-  throw new DomainError("forbidden", `Release ${releaseKey} includes tasks in projects you can't see; ask a member to ${action}`);
+  throw new DomainError(
+    "forbidden",
+    `Release ${releaseKey} includes tasks in projects you can't see; ask a member to ${action}`,
+  );
 }

@@ -51,7 +51,11 @@ export function wikiLabel(
 export function wikiSuggestions(
   documents: readonly DocumentSummaryDto[],
   query: string,
-  { fromProjectKey, excludeId, limit = 8 }: { fromProjectKey: string | null; excludeId?: string; limit?: number },
+  {
+    fromProjectKey,
+    excludeId,
+    limit = 8,
+  }: { fromProjectKey: string | null; excludeId?: string; limit?: number },
 ): WikiSuggestion[] {
   const q = normalizeTitle(query);
   const scored: { doc: DocumentSummaryDto; score: number }[] = [];
@@ -61,10 +65,14 @@ export function wikiSuggestions(
     const title = normalizeTitle(doc.title);
     const at = q ? title.indexOf(q) : 0;
     if (at < 0) continue;
-    const score = (at === 0 ? 0 : 2) + (doc.projectKey === fromProjectKey ? 0 : 1);
+    const score =
+      (at === 0 ? 0 : 2) + (doc.projectKey === fromProjectKey ? 0 : 1);
     scored.push({ doc, score });
   }
-  scored.sort((a, b) => a.score - b.score || b.doc.updatedAt.localeCompare(a.doc.updatedAt));
+  scored.sort(
+    (a, b) =>
+      a.score - b.score || b.doc.updatedAt.localeCompare(a.doc.updatedAt),
+  );
   const out: WikiSuggestion[] = [];
   const key = taskKeyTarget(query);
   if (key) out.push({ target: key, title: key, hint: "Task" });
@@ -74,7 +82,11 @@ export function wikiSuggestions(
     const title = normalizeTitle(doc.title);
     if (seen.has(title)) continue;
     seen.add(title);
-    out.push({ target: doc.title.trim(), title: doc.title, hint: doc.taskKey ?? doc.projectKey ?? "Org" });
+    out.push({
+      target: doc.title.trim(),
+      title: doc.title,
+      hint: doc.taskKey ?? doc.projectKey ?? "Org",
+    });
     if (out.length >= limit) break;
   }
   return out;

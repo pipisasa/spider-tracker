@@ -5,7 +5,13 @@ import { assertCanWrite, type ActorContext } from "./access";
 import type { OpenedPullRequestDto } from "./contracts";
 import { DomainError } from "./errors";
 import { branchNameFor, closingKeysIn } from "./git";
-import { pullRequestKeys, pullRequestUrl, savePullRequest, toPullRequestDto, type PullRequestData } from "./git-links";
+import {
+  pullRequestKeys,
+  pullRequestUrl,
+  savePullRequest,
+  toPullRequestDto,
+  type PullRequestData,
+} from "./git-links";
 import { githubBotContext } from "./github";
 import { parseRepoRemote, repoFullName } from "./remotes";
 import { openPullRequestInput } from "./schemas";
@@ -62,7 +68,9 @@ export interface CreatePullRequestResult {
 }
 
 /** Opens a pull request on GitHub (the API's GitHub port). */
-export type CreatePullRequest = (request: GithubPullRequestRequest) => Promise<CreatePullRequestResult>;
+export type CreatePullRequest = (
+  request: GithubPullRequestRequest,
+) => Promise<CreatePullRequestResult>;
 
 /** The default title: the task's title and key, "Fix the login (ST-12)". */
 export function pullRequestTitleFor(taskKey: string, title: string): string {
@@ -76,8 +84,13 @@ export function pullRequestTitleFor(taskKey: string, title: string): string {
  * The body: the given one (or a link to the task), ending with "Closes ST-12" unless it already
  * closes the task with a keyword, so merging the PR finishes the task.
  */
-export function pullRequestBodyFor(taskKey: string, { body, taskUrl }: { body?: string; taskUrl?: string }): string {
-  const text = (body ?? (taskUrl ? `Task: [${taskKey}](${taskUrl})` : "")).trim();
+export function pullRequestBodyFor(
+  taskKey: string,
+  { body, taskUrl }: { body?: string; taskUrl?: string },
+): string {
+  const text = (
+    body ?? (taskUrl ? `Task: [${taskKey}](${taskUrl})` : "")
+  ).trim();
   if (closingKeysIn(text).includes(taskKey)) return text;
   return text ? `${text}\n\nCloses ${taskKey}` : `Closes ${taskKey}`;
 }
@@ -101,7 +114,12 @@ function pullRequestData(pr: GithubPullRequestData): PullRequestData {
 }
 
 /** The repo to open the PR in: the one named among the project's repos, or its only one. */
-async function pickRepo(db: Db, projectId: string, projectKey: string, ref: string | undefined): Promise<RepoRow> {
+async function pickRepo(
+  db: Db,
+  projectId: string,
+  projectKey: string,
+  ref: string | undefined,
+): Promise<RepoRow> {
   const attached = await db
     .select({ repo: repos })
     .from(projectRepos)
@@ -110,33 +128,65 @@ async function pickRepo(db: Db, projectId: string, projectKey: string, ref: stri
     .orderBy(asc(repos.owner), asc(repos.name));
   const names = attached.map((r) => repoFullName(r.repo)).join(", ");
   if (attached.length === 0) {
-    throw new DomainError("validation", `Project ${projectKey} has no repo: attach one first (spider repo attach ${projectKey})`);
+    throw new DomainError(
+      "validation",
+      `Project ${projectKey} has no repo: attach one first (spider repo attach ${projectKey})`,
+    );
   }
   if (ref === undefined) {
-    if (attached.length > 1) throw new DomainError("validation", `Project ${projectKey} has several repos (${names}): name one with repo`);
+    if (attached.length > 1)
+      throw new DomainError(
+        "validation",
+        `Project ${projectKey} has several repos (${names}): name one with repo`,
+      );
     return attached[0]!.repo;
   }
   const remote = parseRepoRemote(ref);
-  if (!remote) throw new DomainError("validation", `Not a GitHub repo: "${ref}". Use owner/name or a GitHub URL`);
+  if (!remote)
+    throw new DomainError(
+      "validation",
+      `Not a GitHub repo: "${ref}". Use owner/name or a GitHub URL`,
+    );
   const match = attached.find(
-    (r) => r.repo.owner.toLowerCase() === remote.owner.toLowerCase() && r.repo.name.toLowerCase() === remote.name.toLowerCase(),
+    (r) =>
+      r.repo.owner.toLowerCase() === remote.owner.toLowerCase() &&
+      r.repo.name.toLowerCase() === remote.name.toLowerCase(),
   );
-  if (!match) throw new DomainError("validation", `Repo ${repoFullName(remote)} isn't attached to project ${projectKey} (its repos: ${names})`);
+  if (!match)
+    throw new DomainError(
+      "validation",
+      `Repo ${repoFullName(remote)} isn't attached to project ${projectKey} (its repos: ${names})`,
+    );
   return match.repo;
 }
 
 /** The repo's installation, when the App can act in it. */
 async function installationOf(db: Db, repo: RepoRow): Promise<number> {
   const notConnected = () =>
-    new DomainError("validation", `The GitHub App has no access to ${repoFullName(repo)}: connect it in Settings → GitHub`);
+    new DomainError(
+      "validation",
+      `The GitHub App has no access to ${repoFullName(repo)}: connect it in Settings → GitHub`,
+    );
   if (repo.githubInstallationId === null) throw notConnected();
   const [installation] = await db
-    .select({ id: githubInstallations.id, suspendedAt: githubInstallations.suspendedAt })
+    .select({
+      id: githubInstallations.id,
+      suspendedAt: githubInstallations.suspendedAt,
+    })
     .from(githubInstallations)
-    .where(and(eq(githubInstallations.id, repo.githubInstallationId), eq(githubInstallations.orgId, repo.orgId)))
+    .where(
+      and(
+        eq(githubInstallations.id, repo.githubInstallationId),
+        eq(githubInstallations.orgId, repo.orgId),
+      ),
+    )
     .limit(1);
   if (!installation) throw notConnected();
-  if (installation.suspendedAt) throw new DomainError("validation", `The GitHub App is suspended for ${repoFullName(repo)}: unsuspend it on GitHub`);
+  if (installation.suspendedAt)
+    throw new DomainError(
+      "validation",
+      `The GitHub App is suspended for ${repoFullName(repo)}: unsuspend it on GitHub`,
+    );
   return installation.id;
 }
 
@@ -150,7 +200,10 @@ export async function openTaskPullRequest(
   ctx: ActorContext,
   taskKey: string,
   input: unknown,
-  { create, taskUrl }: { create: CreatePullRequest; taskUrl?: (key: string) => string },
+  {
+    create,
+    taskUrl,
+  }: { create: CreatePullRequest; taskUrl?: (key: string) => string },
 ): Promise<OpenedPullRequestDto> {
   assertCanWrite(ctx);
   const data = parseInput(openPullRequestInput, input);
@@ -160,16 +213,30 @@ export async function openTaskPullRequest(
   const installationId = await installationOf(db, repo);
   const head = data.head ?? branchNameFor(key, task.title);
   const base = data.base ?? repo.defaultBranch;
-  if (head === base) throw new DomainError("validation", `The branch ${head} is the base branch: push the task's work to its own branch`);
+  if (head === base)
+    throw new DomainError(
+      "validation",
+      `The branch ${head} is the base branch: push the task's work to its own branch`,
+    );
 
   const exists = (number: number) =>
-    new DomainError("conflict", `A pull request is already open for ${head}: ${pullRequestUrl(repo, number)}`, {
-      url: pullRequestUrl(repo, number),
-    });
+    new DomainError(
+      "conflict",
+      `A pull request is already open for ${head}: ${pullRequestUrl(repo, number)}`,
+      {
+        url: pullRequestUrl(repo, number),
+      },
+    );
   const [known] = await db
     .select({ number: pullRequests.number })
     .from(pullRequests)
-    .where(and(eq(pullRequests.repoId, repo.id), eq(pullRequests.headBranch, head), eq(pullRequests.state, "open")))
+    .where(
+      and(
+        eq(pullRequests.repoId, repo.id),
+        eq(pullRequests.headBranch, head),
+        eq(pullRequests.state, "open"),
+      ),
+    )
     .limit(1);
   if (known) throw exists(known.number);
 
@@ -189,15 +256,40 @@ export async function openTaskPullRequest(
   // this repo (a branch name, never "fork:branch") and the actor may write to the task; GitHub's
   // later events for it come from the App's bot, also trusted (trustedPullRequest).
   const saved = pullRequestData(pullRequest);
-  const origin = { defaultBranch: repo.defaultBranch, trusted: true, sender: pullRequest.author };
-  await db.transaction(async (tx) => savePullRequest(tx, await githubBotContext(tx, ctx.orgId), repo, created ? "opened" : "edited", saved, origin));
+  const origin = {
+    defaultBranch: repo.defaultBranch,
+    trusted: true,
+    sender: pullRequest.author,
+  };
+  await db.transaction(async (tx) =>
+    savePullRequest(
+      tx,
+      await githubBotContext(tx, ctx.orgId),
+      repo,
+      created ? "opened" : "edited",
+      saved,
+      origin,
+    ),
+  );
   if (!created) throw exists(pullRequest.number);
 
   const [row] = await db
     .select()
     .from(pullRequests)
-    .where(and(eq(pullRequests.repoId, repo.id), eq(pullRequests.number, pullRequest.number)))
+    .where(
+      and(
+        eq(pullRequests.repoId, repo.id),
+        eq(pullRequests.number, pullRequest.number),
+      ),
+    )
     .limit(1);
   if (!row) throw new Error("Failed to save the pull request");
-  return { taskKey: key, pullRequest: toPullRequestDto(repo, row, pullRequestKeys(saved).get(key) ?? "body") };
+  return {
+    taskKey: key,
+    pullRequest: toPullRequestDto(
+      repo,
+      row,
+      pullRequestKeys(saved).get(key) ?? "body",
+    ),
+  };
 }

@@ -2,14 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { clientIp, createRateLimiter } from "./rate-limit";
 import { loadEnv } from "./env";
 
-const request = (headers: Record<string, string>) => new Request("http://localhost/x", { headers });
-const server = (address: string) => ({ requestIP: () => ({ address, family: "IPv4", port: 1234 }) });
+const request = (headers: Record<string, string>) =>
+  new Request("http://localhost/x", { headers });
+const server = (address: string) => ({
+  requestIP: () => ({ address, family: "IPv4", port: 1234 }),
+});
 
 describe("clientIp", () => {
-  const spoofed = { "CF-Connecting-IP": "1.1.1.1", "X-Forwarded-For": "2.2.2.2, 3.3.3.3" };
+  const spoofed = {
+    "CF-Connecting-IP": "1.1.1.1",
+    "X-Forwarded-For": "2.2.2.2, 3.3.3.3",
+  };
 
   test("none: ignores proxy headers and uses the socket address", () => {
-    expect(clientIp(request(spoofed), "none", server("192.0.2.10"))).toBe("192.0.2.10");
+    expect(clientIp(request(spoofed), "none", server("192.0.2.10"))).toBe(
+      "192.0.2.10",
+    );
   });
 
   test("none: one shared bucket when the socket address is unknown", () => {
@@ -18,16 +26,30 @@ describe("clientIp", () => {
   });
 
   test("cloudflare: CF-Connecting-IP, never X-Forwarded-For", () => {
-    expect(clientIp(request(spoofed), "cloudflare", server("192.0.2.10"))).toBe("1.1.1.1");
-    expect(clientIp(request({ "X-Forwarded-For": "2.2.2.2" }), "cloudflare", server("192.0.2.10"))).toBe(
-      "192.0.2.10",
+    expect(clientIp(request(spoofed), "cloudflare", server("192.0.2.10"))).toBe(
+      "1.1.1.1",
     );
+    expect(
+      clientIp(
+        request({ "X-Forwarded-For": "2.2.2.2" }),
+        "cloudflare",
+        server("192.0.2.10"),
+      ),
+    ).toBe("192.0.2.10");
   });
 
   test("railway: the right-most X-Forwarded-For entry; CF-Connecting-IP is ignored", () => {
     expect(clientIp(request(spoofed), "railway")).toBe("3.3.3.3");
-    expect(clientIp(request({ "X-Forwarded-For": " 203.0.113.5 , " }), "railway")).toBe("203.0.113.5");
-    expect(clientIp(request({ "CF-Connecting-IP": "1.1.1.1" }), "railway", server("192.0.2.10"))).toBe("192.0.2.10");
+    expect(
+      clientIp(request({ "X-Forwarded-For": " 203.0.113.5 , " }), "railway"),
+    ).toBe("203.0.113.5");
+    expect(
+      clientIp(
+        request({ "CF-Connecting-IP": "1.1.1.1" }),
+        "railway",
+        server("192.0.2.10"),
+      ),
+    ).toBe("192.0.2.10");
   });
 
   test("spoofed headers don't reset a client's bucket", () => {
@@ -35,7 +57,10 @@ describe("clientIp", () => {
     const from = (forged: string) =>
       limiter.attempt(
         clientIp(
-          request({ "CF-Connecting-IP": forged, "X-Forwarded-For": `${forged}, 198.51.100.1` }),
+          request({
+            "CF-Connecting-IP": forged,
+            "X-Forwarded-For": `${forged}, 198.51.100.1`,
+          }),
           "railway",
         ),
         0,
@@ -66,8 +91,15 @@ describe("TRUSTED_PROXY in production", () => {
     BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret-123",
   };
   test("is required, so a forgotten deploy step fails at startup", () => {
-    expect(() => loadEnv({ ...base, NODE_ENV: "production" })).toThrow("TRUSTED_PROXY");
-    expect(loadEnv({ ...base, NODE_ENV: "production", TRUSTED_PROXY: "railway" }).TRUSTED_PROXY).toBe("railway");
-    expect(loadEnv({ ...base, NODE_ENV: "development" }).TRUSTED_PROXY).toBe("none");
+    expect(() => loadEnv({ ...base, NODE_ENV: "production" })).toThrow(
+      "TRUSTED_PROXY",
+    );
+    expect(
+      loadEnv({ ...base, NODE_ENV: "production", TRUSTED_PROXY: "railway" })
+        .TRUSTED_PROXY,
+    ).toBe("railway");
+    expect(loadEnv({ ...base, NODE_ENV: "development" }).TRUSTED_PROXY).toBe(
+      "none",
+    );
   });
 });

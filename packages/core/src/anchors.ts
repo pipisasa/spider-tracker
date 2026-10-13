@@ -33,14 +33,20 @@ function readableText(content: string, format: DocumentFormat): string {
 
 /** Letters and digits only, lower-cased: the comparable skeleton of a text. */
 export function skeleton(text: string): string {
-  return text.normalize("NFC").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+  return text
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .toLowerCase();
 }
 
 /**
  * The skeleton of `text` with, for each of its code units, the offset in `text` it comes from,
  * so a match in the skeleton maps back to a range of the text (the web app highlights quotes).
  */
-export function skeletonIndex(text: string): { skeleton: string; offsets: number[] } {
+export function skeletonIndex(text: string): {
+  skeleton: string;
+  offsets: number[];
+} {
   let out = "";
   const offsets: number[] = [];
   let offset = 0;
@@ -56,7 +62,11 @@ export function skeletonIndex(text: string): { skeleton: string; offsets: number
 }
 
 /** Whether `quote` (as a reader sees it) still occurs in a document's content. */
-export function quoteOccursIn(content: string, format: DocumentFormat, quote: string): boolean {
+export function quoteOccursIn(
+  content: string,
+  format: DocumentFormat,
+  quote: string,
+): boolean {
   const needle = skeleton(quote);
   // A quote of only punctuation or symbols: compare it as written.
   if (!needle) return content.includes(quote.trim());

@@ -9,10 +9,15 @@ import type { ApiKeyDto, CreatedApiKeyDto, ProjectRefDto } from "./contracts";
 import { DomainError, isUniqueViolation } from "./errors";
 import { handleFrom } from "./handles";
 import { isUuid } from "./ids";
-import { createAgentInput, createApiKeyInput, updateAgentInput } from "./schemas";
+import {
+  createAgentInput,
+  createApiKeyInput,
+  updateAgentInput,
+} from "./schemas";
 import { parseInput } from "./validate";
 
-const { actors, agentProjects, agents, apiTokens, organizations, projects } = schema;
+const { actors, agentProjects, agents, apiTokens, organizations, projects } =
+  schema;
 
 const KEY_PREFIX = "spt_";
 
@@ -34,17 +39,33 @@ function toApiKeyDto(row: typeof apiTokens.$inferSelect): ApiKeyDto {
 /** Agents are created by people who can work in the organization; never by guests or agent keys. */
 export async function assertCanCreateAgent(db: Db, ctx: ActorContext) {
   assertRole(ctx, ["owner", "admin", "member"], "create agents");
-  const [me] = await db.select({ type: actors.type }).from(actors).where(eq(actors.id, ctx.actorId)).limit(1);
-  if (me?.type !== "human") throw new DomainError("forbidden", "Agents can't create agents");
+  const [me] = await db
+    .select({ type: actors.type })
+    .from(actors)
+    .where(eq(actors.id, ctx.actorId))
+    .limit(1);
+  if (me?.type !== "human")
+    throw new DomainError("forbidden", "Agents can't create agents");
 }
 
 function canManageAgent(ctx: ActorContext, agent: { ownerId: string }) {
-  return agent.ownerId === ctx.actorId || ctx.role === "owner" || ctx.role === "admin";
+  return (
+    agent.ownerId === ctx.actorId ||
+    ctx.role === "owner" ||
+    ctx.role === "admin"
+  );
 }
 
 /** An agent is managed (edited, deleted, keys issued and revoked) by its owner or an organization owner/admin. */
-export function assertCanManageAgent(ctx: ActorContext, agent: { ownerId: string }) {
-  if (!canManageAgent(ctx, agent)) throw new DomainError("forbidden", "Only the agent's owner or an admin can manage it");
+export function assertCanManageAgent(
+  ctx: ActorContext,
+  agent: { ownerId: string },
+) {
+  if (!canManageAgent(ctx, agent))
+    throw new DomainError(
+      "forbidden",
+      "Only the agent's owner or an admin can manage it",
+    );
 }
 
 /** Creates an external agent member owned by the acting person. */
@@ -63,12 +84,23 @@ export async function createAgent(db: Db, ctx: ActorContext, input: unknown) {
     // Creators are owners, admins or members, so "member" never exceeds the owner's role.
     const [actor] = await tx
       .insert(actors)
-      .values({ orgId: ctx.orgId, type: "agent", name: data.name, handle, role: "member" })
+      .values({
+        orgId: ctx.orgId,
+        type: "agent",
+        name: data.name,
+        handle,
+        role: "member",
+      })
       .onConflictDoNothing({ target: [actors.orgId, actors.handle] })
       .returning();
-    if (!actor) throw new DomainError("conflict", `Handle @${handle} is already used`);
+    if (!actor)
+      throw new DomainError("conflict", `Handle @${handle} is already used`);
 
-    await tx.insert(agents).values({ actorId: actor.id, ownerId: ctx.actorId, description: data.description ?? null });
+    await tx.insert(agents).values({
+      actorId: actor.id,
+      ownerId: ctx.actorId,
+      description: data.description ?? null,
+    });
     await recordActivity(tx, ctx, {
       entityType: "actor",
       entityId: actor.id,
@@ -95,7 +127,11 @@ export function listAgents(db: Db, ctx: ActorContext) {
 async function queryAgents(db: Db, ctx: ActorContext, agentActorId?: string) {
   const owners = alias(actors, "owner");
   const rows = await db
-    .select({ actor: actors, agent: agents, owner: { id: owners.id, name: owners.name, handle: owners.handle } })
+    .select({
+      actor: actors,
+      agent: agents,
+      owner: { id: owners.id, name: owners.name, handle: owners.handle },
+    })
     .from(agents)
     .innerJoin(actors, eq(agents.actorId, actors.id))
     .innerJoin(owners, eq(agents.ownerId, owners.id))
@@ -107,7 +143,9 @@ async function queryAgents(db: Db, ctx: ActorContext, agentActorId?: string) {
       ),
     )
     .orderBy(asc(actors.name));
-  const manageable = rows.filter((r) => canManageAgent(ctx, r.agent)).map((r) => r.actor.id);
+  const manageable = rows
+    .filter((r) => canManageAgent(ctx, r.agent))
+    .map((r) => r.actor.id);
   const keys =
     manageable.length === 0
       ? []
@@ -136,7 +174,11 @@ export async function agentProjectRefs(db: Db | Tx, agentActorIds: string[]) {
   const map = new Map<string, ProjectRefDto[]>();
   if (agentActorIds.length === 0) return map;
   const rows = await db
-    .select({ agentId: agentProjects.agentId, key: projects.key, name: projects.name })
+    .select({
+      agentId: agentProjects.agentId,
+      key: projects.key,
+      name: projects.name,
+    })
     .from(agentProjects)
     .innerJoin(projects, eq(agentProjects.projectId, projects.id))
     .where(inArray(agentProjects.agentId, agentActorIds))
@@ -150,12 +192,23 @@ export async function agentProjectRefs(db: Db | Tx, agentActorIds: string[]) {
 }
 
 async function findAgent(db: Db | Tx, orgId: string, agentActorId: string) {
-  if (!isUuid(agentActorId)) throw new DomainError("not_found", "Agent not found");
+  if (!isUuid(agentActorId))
+    throw new DomainError("not_found", "Agent not found");
   const [row] = await db
-    .select({ actor: actors, ownerId: agents.ownerId, description: agents.description })
+    .select({
+      actor: actors,
+      ownerId: agents.ownerId,
+      description: agents.description,
+    })
     .from(agents)
     .innerJoin(actors, eq(agents.actorId, actors.id))
-    .where(and(eq(actors.id, agentActorId), eq(actors.orgId, orgId), isNull(actors.deactivatedAt)))
+    .where(
+      and(
+        eq(actors.id, agentActorId),
+        eq(actors.orgId, orgId),
+        isNull(actors.deactivatedAt),
+      ),
+    )
     .limit(1);
   if (!row) throw new DomainError("not_found", "Agent not found");
   return row;
@@ -165,7 +218,12 @@ async function findAgent(db: Db | Tx, orgId: string, agentActorId: string) {
  * Renames an agent, changes its handle (unique in the organization) or description.
  * An agent may update these three fields on itself.
  */
-export async function updateAgent(db: Db, ctx: ActorContext, agentActorId: string, input: unknown) {
+export async function updateAgent(
+  db: Db,
+  ctx: ActorContext,
+  agentActorId: string,
+  input: unknown,
+) {
   const data = parseInput(updateAgentInput, input);
   const current = await findAgent(db, ctx.orgId, agentActorId);
   if (ctx.actorId !== agentActorId) assertCanManageAgent(ctx, current);
@@ -173,32 +231,55 @@ export async function updateAgent(db: Db, ctx: ActorContext, agentActorId: strin
   await db.transaction(async (tx) => {
     const changes: Record<string, unknown> = {};
     const actorPatch: { name?: string; handle?: string } = {};
-    if (data.name !== undefined && data.name !== current.actor.name) actorPatch.name = changes.name = data.name;
+    if (data.name !== undefined && data.name !== current.actor.name)
+      actorPatch.name = changes.name = data.name;
     if (data.handle !== undefined && data.handle !== current.actor.handle) {
       const [taken] = await tx
         .select({ id: actors.id })
         .from(actors)
         .where(and(eq(actors.orgId, ctx.orgId), eq(actors.handle, data.handle)))
         .limit(1);
-      if (taken) throw new DomainError("conflict", `Handle @${data.handle} is already used`);
+      if (taken)
+        throw new DomainError(
+          "conflict",
+          `Handle @${data.handle} is already used`,
+        );
       actorPatch.handle = changes.handle = data.handle;
     }
     if (Object.keys(actorPatch).length > 0) {
       try {
-        await tx.update(actors).set(actorPatch).where(eq(actors.id, agentActorId));
+        await tx
+          .update(actors)
+          .set(actorPatch)
+          .where(eq(actors.id, agentActorId));
       } catch (err) {
         // Someone took the handle between the check above and this update.
-        if (isUniqueViolation(err, "actors_org_handle_key")) throw new DomainError("conflict", `Handle @${data.handle} is already used`);
+        if (isUniqueViolation(err, "actors_org_handle_key"))
+          throw new DomainError(
+            "conflict",
+            `Handle @${data.handle} is already used`,
+          );
         throw err;
       }
     }
-    if (data.description !== undefined && (data.description || null) !== current.description) {
+    if (
+      data.description !== undefined &&
+      (data.description || null) !== current.description
+    ) {
       const description = data.description || null;
       changes.description = description;
-      await tx.update(agents).set({ description }).where(eq(agents.actorId, agentActorId));
+      await tx
+        .update(agents)
+        .set({ description })
+        .where(eq(agents.actorId, agentActorId));
     }
     if (Object.keys(changes).length > 0) {
-      await recordActivity(tx, ctx, { entityType: "actor", entityId: agentActorId, action: "agent.updated", changes });
+      await recordActivity(tx, ctx, {
+        entityType: "actor",
+        entityId: agentActorId,
+        action: "agent.updated",
+        changes,
+      });
     }
   });
   const [agent] = await queryAgents(db, ctx, agentActorId);
@@ -207,16 +288,25 @@ export async function updateAgent(db: Db, ctx: ActorContext, agentActorId: strin
 }
 
 /** Deactivates an agent (history and assignments stay) and revokes all its keys. */
-export async function deleteAgent(db: Db, ctx: ActorContext, agentActorId: string) {
+export async function deleteAgent(
+  db: Db,
+  ctx: ActorContext,
+  agentActorId: string,
+) {
   const current = await findAgent(db, ctx.orgId, agentActorId);
   assertCanManageAgent(ctx, current);
   await db.transaction(async (tx) => {
     const now = new Date();
-    await tx.update(actors).set({ deactivatedAt: now }).where(eq(actors.id, agentActorId));
+    await tx
+      .update(actors)
+      .set({ deactivatedAt: now })
+      .where(eq(actors.id, agentActorId));
     const revoked = await tx
       .update(apiTokens)
       .set({ revokedAt: now })
-      .where(and(eq(apiTokens.actorId, agentActorId), isNull(apiTokens.revokedAt)))
+      .where(
+        and(eq(apiTokens.actorId, agentActorId), isNull(apiTokens.revokedAt)),
+      )
       .returning({ id: apiTokens.id });
     await recordActivity(tx, ctx, {
       entityType: "actor",
@@ -228,7 +318,12 @@ export async function deleteAgent(db: Db, ctx: ActorContext, agentActorId: strin
 }
 
 /** Inserts a key row for an agent and records it; returns the secret, which is never stored. */
-export async function issueApiKey(tx: Tx, ctx: ActorContext, agentActorId: string, name: string): Promise<CreatedApiKeyDto> {
+export async function issueApiKey(
+  tx: Tx,
+  ctx: ActorContext,
+  agentActorId: string,
+  name: string,
+): Promise<CreatedApiKeyDto> {
   const secret = `${KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
   const [row] = await tx
     .insert(apiTokens)
@@ -266,7 +361,11 @@ export async function revokeApiKey(db: Db, ctx: ActorContext, keyId: string) {
   if (!isUuid(keyId)) throw new DomainError("not_found", "API key not found");
   await db.transaction(async (tx) => {
     const [row] = await tx
-      .select({ id: apiTokens.id, actorId: apiTokens.actorId, ownerId: agents.ownerId })
+      .select({
+        id: apiTokens.id,
+        actorId: apiTokens.actorId,
+        ownerId: agents.ownerId,
+      })
       .from(apiTokens)
       .innerJoin(actors, eq(apiTokens.actorId, actors.id))
       .innerJoin(agents, eq(agents.actorId, actors.id))
@@ -274,8 +373,16 @@ export async function revokeApiKey(db: Db, ctx: ActorContext, keyId: string) {
       .limit(1);
     if (!row) throw new DomainError("not_found", "API key not found");
     assertCanManageAgent(ctx, row);
-    await tx.update(apiTokens).set({ revokedAt: new Date() }).where(and(eq(apiTokens.id, keyId), isNull(apiTokens.revokedAt)));
-    await recordActivity(tx, ctx, { entityType: "actor", entityId: row.actorId, action: "api_key.revoked", changes: { keyId } });
+    await tx
+      .update(apiTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(apiTokens.id, keyId), isNull(apiTokens.revokedAt)));
+    await recordActivity(tx, ctx, {
+      entityType: "actor",
+      entityId: row.actorId,
+      action: "api_key.revoked",
+      changes: { keyId },
+    });
   });
 }
 
@@ -284,7 +391,12 @@ export async function authenticateApiKey(db: Db, secret: string) {
   if (!secret.startsWith(KEY_PREFIX)) return null;
   const owners = alias(actors, "owner");
   const [row] = await db
-    .select({ token: apiTokens, actor: actors, organization: organizations, ownerId: agents.ownerId })
+    .select({
+      token: apiTokens,
+      actor: actors,
+      organization: organizations,
+      ownerId: agents.ownerId,
+    })
     .from(apiTokens)
     .innerJoin(actors, eq(apiTokens.actorId, actors.id))
     .innerJoin(organizations, eq(actors.orgId, organizations.id))
@@ -304,21 +416,47 @@ export async function authenticateApiKey(db: Db, secret: string) {
   if (row.token.expiresAt && row.token.expiresAt <= now) return null;
 
   // Record usage at most once a minute per key.
-  if (!row.token.lastUsedAt || now.getTime() - row.token.lastUsedAt.getTime() > 60_000) {
-    await db.update(apiTokens).set({ lastUsedAt: now }).where(eq(apiTokens.id, row.token.id));
+  if (
+    !row.token.lastUsedAt ||
+    now.getTime() - row.token.lastUsedAt.getTime() > 60_000
+  ) {
+    await db
+      .update(apiTokens)
+      .set({ lastUsedAt: now })
+      .where(eq(apiTokens.id, row.token.id));
   }
-  return { actor: row.actor, organization: row.organization, ownerId: row.ownerId, keyId: row.token.id };
+  return {
+    actor: row.actor,
+    organization: row.organization,
+    ownerId: row.ownerId,
+    keyId: row.token.id,
+  };
 }
 
 /** Revokes the key a request authenticated with (`spider logout`). */
-export async function revokeCurrentApiKey(db: Db, ctx: ActorContext, keyId: string) {
+export async function revokeCurrentApiKey(
+  db: Db,
+  ctx: ActorContext,
+  keyId: string,
+) {
   await db.transaction(async (tx) => {
     const [row] = await tx
       .update(apiTokens)
       .set({ revokedAt: new Date() })
-      .where(and(eq(apiTokens.id, keyId), eq(apiTokens.actorId, ctx.actorId), isNull(apiTokens.revokedAt)))
+      .where(
+        and(
+          eq(apiTokens.id, keyId),
+          eq(apiTokens.actorId, ctx.actorId),
+          isNull(apiTokens.revokedAt),
+        ),
+      )
       .returning({ id: apiTokens.id });
     if (!row) throw new DomainError("not_found", "API key not found");
-    await recordActivity(tx, ctx, { entityType: "actor", entityId: ctx.actorId, action: "api_key.revoked", changes: { keyId } });
+    await recordActivity(tx, ctx, {
+      entityType: "actor",
+      entityId: ctx.actorId,
+      action: "api_key.revoked",
+      changes: { keyId },
+    });
   });
 }

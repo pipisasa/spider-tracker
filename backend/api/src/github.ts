@@ -22,9 +22,14 @@ export interface GithubApp {
    * Whether the person who authorized the App during installation (the OAuth `code` GitHub sends
    * to the setup callback) can access the installation. The code is used up.
    */
-  userCanAccessInstallation(code: string, installationId: number): Promise<boolean>;
+  userCanAccessInstallation(
+    code: string,
+    installationId: number,
+  ): Promise<boolean>;
   /** The installation, or null when GitHub doesn't know it (uninstalled). */
-  getInstallation(installationId: number): Promise<GithubInstallationData | null>;
+  getInstallation(
+    installationId: number,
+  ): Promise<GithubInstallationData | null>;
   /** Every repository the installation grants. */
   listInstallationRepos(installationId: number): Promise<GithubRepoData[]>;
   /**
@@ -32,7 +37,9 @@ export interface GithubApp {
    * open for the branch, returns it with `created: false`. GitHub refusing it (no commits, a branch
    * that isn't pushed) is a DomainError "validation" with GitHub's reason.
    */
-  createPullRequest(request: GithubPullRequestRequest): Promise<CreatePullRequestResult>;
+  createPullRequest(
+    request: GithubPullRequestRequest,
+  ): Promise<CreatePullRequestResult>;
 }
 
 /** What is kept of a failed GitHub request: never its headers or body (they can hold secrets). */
@@ -59,7 +66,9 @@ export class GithubUnavailableError extends Error {
 }
 
 const recordOf = (value: unknown): Record<string, unknown> | null =>
-  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+  typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
 
 /** A URL without its query, fragment or credentials; null when it isn't one. */
 function safeUrl(value: unknown): string | null {
@@ -87,19 +96,29 @@ export function githubFailureOf(err: unknown): GithubFailure {
 
 /** The GithubUnavailableError for a failed request: a message and the failure's safe fields only. */
 export const githubUnavailable = (what: string, err: unknown) =>
-  new GithubUnavailableError(`GitHub request failed: ${what}`, githubFailureOf(err));
+  new GithubUnavailableError(
+    `GitHub request failed: ${what}`,
+    githubFailureOf(err),
+  );
 
 /** One log line for a GitHub failure: the message and the safe fields, never the error object. */
 export function logGithubFailure(err: GithubUnavailableError): void {
   const { status, method, url } = err.failure;
   const request = url ? [method, url].filter(Boolean).join(" ") : null;
-  const details = [status === undefined ? null : `status ${status}`, request].filter(Boolean);
-  console.error(details.length ? `${err.message} (${details.join(", ")})` : err.message);
+  const details = [
+    status === undefined ? null : `status ${status}`,
+    request,
+  ].filter(Boolean);
+  console.error(
+    details.length ? `${err.message} (${details.join(", ")})` : err.message,
+  );
 }
 
-type Account = { login: string } | { slug: string; name: string } | null | undefined;
+type Account =
+  { login: string } | { slug: string; name: string } | null | undefined;
 
-const accountLogin = (account: Account) => (!account ? "" : "login" in account ? account.login : account.slug);
+const accountLogin = (account: Account) =>
+  !account ? "" : "login" in account ? account.login : account.slug;
 
 /** Wraps GitHub failures so routes can tell them from bugs. */
 async function guarded<T>(what: string, run: () => Promise<T>): Promise<T> {
@@ -126,7 +145,9 @@ interface RestPullRequest {
   user: { login: string } | null;
 }
 
-export const toPullRequestData = (pr: RestPullRequest): GithubPullRequestData => ({
+export const toPullRequestData = (
+  pr: RestPullRequest,
+): GithubPullRequestData => ({
   number: pr.number,
   title: pr.title,
   body: pr.body,
@@ -145,7 +166,16 @@ export const toPullRequestData = (pr: RestPullRequest): GithubPullRequestData =>
 const validationFailed = z.object({
   message: z.string().optional(),
   errors: z
-    .array(z.union([z.string(), z.object({ message: z.string().optional(), field: z.string().optional(), code: z.string().optional() })]))
+    .array(
+      z.union([
+        z.string(),
+        z.object({
+          message: z.string().optional(),
+          field: z.string().optional(),
+          code: z.string().optional(),
+        }),
+      ]),
+    )
     .optional(),
 });
 
@@ -154,18 +184,32 @@ export function githubReasons(data: unknown): string {
   const parsed = validationFailed.safeParse(data);
   if (!parsed.success) return "Validation Failed";
   const reasons = (parsed.data.errors ?? []).map((e) =>
-    typeof e === "string" ? e : (e.message ?? [e.field, e.code].filter(Boolean).join(" ")),
+    typeof e === "string"
+      ? e
+      : (e.message ?? [e.field, e.code].filter(Boolean).join(" ")),
   );
-  return reasons.filter(Boolean).join("; ") || parsed.data.message || "Validation Failed";
+  return (
+    reasons.filter(Boolean).join("; ") ||
+    parsed.data.message ||
+    "Validation Failed"
+  );
 }
 
 export interface GithubAppOptions {
   /** Replaces the network, for tests (without retries then). */
-  fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  fetch?: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>;
 }
 
-export function createGithubApp(config: GithubAppConfig, options: GithubAppOptions = {}): GithubApp {
-  const Client = options.fetch ? Octokit.defaults({ request: { fetch: options.fetch, retries: 0 } }) : Octokit;
+export function createGithubApp(
+  config: GithubAppConfig,
+  options: GithubAppOptions = {},
+): GithubApp {
+  const Client = options.fetch
+    ? Octokit.defaults({ request: { fetch: options.fetch, retries: 0 } })
+    : Octokit;
   const app = new App({
     appId: config.appId,
     privateKey: config.privateKey,
@@ -176,7 +220,8 @@ export function createGithubApp(config: GithubAppConfig, options: GithubAppOptio
   return {
     slug: config.slug,
 
-    installUrl: (state) => `https://github.com/apps/${encodeURIComponent(config.slug)}/installations/new?state=${encodeURIComponent(state)}`,
+    installUrl: (state) =>
+      `https://github.com/apps/${encodeURIComponent(config.slug)}/installations/new?state=${encodeURIComponent(state)}`,
 
     async userCanAccessInstallation(code, installationId) {
       const token = await app.oauth.createToken({ code }).then(
@@ -184,14 +229,21 @@ export function createGithubApp(config: GithubAppConfig, options: GithubAppOptio
         // An invalid or used code: the person isn't verified.
         (err: unknown) => {
           if (err instanceof RequestError && err.status < 500) return null;
-          if (err instanceof Error && /bad_verification_code|incorrect or expired/i.test(err.message)) return null;
+          if (
+            err instanceof Error &&
+            /bad_verification_code|incorrect or expired/i.test(err.message)
+          )
+            return null;
           throw githubUnavailable("OAuth code exchange", err);
         },
       );
       if (!token) return false;
       return guarded("user installations", async () => {
         const user = new Client({ auth: token });
-        for await (const { data } of user.paginate.iterator("GET /user/installations", { per_page: 100 })) {
+        for await (const { data } of user.paginate.iterator(
+          "GET /user/installations",
+          { per_page: 100 },
+        )) {
           if (data.some((i) => i.id === installationId)) return true;
         }
         return false;
@@ -201,13 +253,18 @@ export function createGithubApp(config: GithubAppConfig, options: GithubAppOptio
     getInstallation: (installationId) =>
       guarded("installation", async () => {
         try {
-          const { data } = await app.octokit.request("GET /app/installations/{installation_id}", { installation_id: installationId });
+          const { data } = await app.octokit.request(
+            "GET /app/installations/{installation_id}",
+            { installation_id: installationId },
+          );
           return {
             id: data.id,
             account: accountLogin(data.account),
-            accountType: data.target_type === "Organization" ? "Organization" : "User",
+            accountType:
+              data.target_type === "Organization" ? "Organization" : "User",
             repositorySelection: data.repository_selection,
-            suspended: data.suspended_at !== null && data.suspended_at !== undefined,
+            suspended:
+              data.suspended_at !== null && data.suspended_at !== undefined,
           };
         } catch (err) {
           if (err instanceof RequestError && err.status === 404) return null;
@@ -218,27 +275,63 @@ export function createGithubApp(config: GithubAppConfig, options: GithubAppOptio
     listInstallationRepos: (installationId) =>
       guarded("installation repositories", async () => {
         const octokit = await app.getInstallationOctokit(installationId);
-        const repos = await octokit.paginate("GET /installation/repositories", { per_page: 100 });
-        return repos.map((r) => ({ owner: r.owner.login, name: r.name, defaultBranch: r.default_branch }));
+        const repos = await octokit.paginate("GET /installation/repositories", {
+          per_page: 100,
+        });
+        return repos.map((r) => ({
+          owner: r.owner.login,
+          name: r.name,
+          defaultBranch: r.default_branch,
+        }));
       }),
 
-    async createPullRequest({ installationId, owner, name, head, base, title, body, draft }) {
-      const octokit = await guarded("installation token", () => app.getInstallationOctokit(installationId));
+    async createPullRequest({
+      installationId,
+      owner,
+      name,
+      head,
+      base,
+      title,
+      body,
+      draft,
+    }) {
+      const octokit = await guarded("installation token", () =>
+        app.getInstallationOctokit(installationId),
+      );
       try {
-        const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls", { owner, repo: name, head, base, title, body, draft });
+        const { data } = await octokit.request(
+          "POST /repos/{owner}/{repo}/pulls",
+          { owner, repo: name, head, base, title, body, draft },
+        );
         return { created: true, pullRequest: toPullRequestData(data) };
       } catch (err) {
         if (!(err instanceof RequestError) || err.status !== 422) {
           throw githubUnavailable("create pull request", err);
         }
         const reasons = githubReasons(err.response?.data);
-        if (!/already exists/i.test(reasons)) throw new DomainError("validation", `GitHub refused the pull request: ${reasons}`);
+        if (!/already exists/i.test(reasons))
+          throw new DomainError(
+            "validation",
+            `GitHub refused the pull request: ${reasons}`,
+          );
       }
       // Already open for the branch: GitHub's own.
       return guarded("open pull requests", async () => {
-        const { data } = await octokit.request("GET /repos/{owner}/{repo}/pulls", { owner, repo: name, head: `${owner}:${head}`, state: "open", per_page: 1 });
+        const { data } = await octokit.request(
+          "GET /repos/{owner}/{repo}/pulls",
+          {
+            owner,
+            repo: name,
+            head: `${owner}:${head}`,
+            state: "open",
+            per_page: 1,
+          },
+        );
         const [open] = data;
-        if (!open) throw new Error(`GitHub reported an open pull request for ${head} but lists none`);
+        if (!open)
+          throw new Error(
+            `GitHub reported an open pull request for ${head} but lists none`,
+          );
         return { created: false, pullRequest: toPullRequestData(open) };
       });
     },

@@ -7,7 +7,15 @@ import { isAbsolute, join } from "node:path";
 type Env = Record<string, string | undefined>;
 
 /** Claude Code's `--permission-mode` choices (`default` is the older name of `manual`). */
-export const PERMISSION_MODES = ["auto", "manual", "default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"] as const;
+export const PERMISSION_MODES = [
+  "auto",
+  "manual",
+  "default",
+  "acceptEdits",
+  "plan",
+  "dontAsk",
+  "bypassPermissions",
+] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 /** What `spider claude` passes when neither the command line nor the saved agent names a mode. */
@@ -39,9 +47,14 @@ function flagValue(args: string[], flag: string): string | undefined {
  * claude, else the saved agent's, else auto. Always explicit, so Claude Code's own default (settings,
  * built-in, its version) never decides it.
  */
-export function permissionModeFor(option: string | undefined, claudeArgs: string[], saved: string | undefined): PermissionChoice {
+export function permissionModeFor(
+  option: string | undefined,
+  claudeArgs: string[],
+  saved: string | undefined,
+): PermissionChoice {
   if (option) return { mode: option, source: "option" };
-  if (claudeArgs.includes("--dangerously-skip-permissions")) return { mode: null, source: "claude-args" };
+  if (claudeArgs.includes("--dangerously-skip-permissions"))
+    return { mode: null, source: "claude-args" };
   const passed = flagValue(claudeArgs, "--permission-mode");
   if (passed) return { mode: passed, source: "claude-args" };
   if (saved) return { mode: saved, source: "agent" };
@@ -62,16 +75,21 @@ export interface LaunchPlan {
 /** The `claude …` command line `spider claude` runs. */
 export function claudeCommand(plan: LaunchPlan): string[] {
   const { permission } = plan;
-  const addMode = permission.mode !== null && permission.source !== "claude-args";
+  const addMode =
+    permission.mode !== null && permission.source !== "claude-args";
   return [
     "claude",
     ...plan.claudeArgs,
-    ...(addMode && permission.mode ? ["--permission-mode", permission.mode] : []),
+    ...(addMode && permission.mode
+      ? ["--permission-mode", permission.mode]
+      : []),
     ...(plan.agent ? ["--agent", plan.agent] : []),
     // Both options take several values, so they come last.
     "--mcp-config",
     plan.mcpConfig,
-    ...(plan.channel ? ["--dangerously-load-development-channels", "server:spider-channel"] : []),
+    ...(plan.channel
+      ? ["--dangerously-load-development-channels", "server:spider-channel"]
+      : []),
   ];
 }
 
@@ -89,11 +107,20 @@ export const permissionLine = ({ mode, source }: PermissionChoice) =>
     : `Permission mode: ${mode} (${SOURCE_LABEL[source]})`;
 
 /** Claude Code's settings files that apply in `cwd`: the user's, then the project's. */
-export function claudeSettingsFiles(env: Env, cwd: string | undefined): string[] {
-  const userDir = env.CLAUDE_CONFIG_DIR?.trim() || (env.HOME && join(env.HOME, ".claude"));
+export function claudeSettingsFiles(
+  env: Env,
+  cwd: string | undefined,
+): string[] {
+  const userDir =
+    env.CLAUDE_CONFIG_DIR?.trim() || (env.HOME && join(env.HOME, ".claude"));
   return [
     ...(userDir ? [join(userDir, "settings.json")] : []),
-    ...(cwd ? [join(cwd, ".claude", "settings.json"), join(cwd, ".claude", "settings.local.json")] : []),
+    ...(cwd
+      ? [
+          join(cwd, ".claude", "settings.json"),
+          join(cwd, ".claude", "settings.local.json"),
+        ]
+      : []),
   ];
 }
 
@@ -109,7 +136,8 @@ function commandHooks(settings: unknown): { event: string; command: string }[] {
     for (const group of groups) {
       if (!isRecord(group) || !Array.isArray(group.hooks)) continue;
       for (const hook of group.hooks) {
-        if (isRecord(hook) && typeof hook.command === "string") found.push({ event, command: hook.command });
+        if (isRecord(hook) && typeof hook.command === "string")
+          found.push({ event, command: hook.command });
       }
     }
   }
@@ -123,7 +151,13 @@ export function hookScripts(command: string, env: Env): string[] {
   const words = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
   return words
     .map((w) => w.replace(/^["']|["']$/g, ""))
-    .map((w) => (env.HOME ? w.replace(/^~(?=\/)/, env.HOME).replace(/^\$\{?HOME\}?(?=\/)/, env.HOME) : w))
+    .map((w) =>
+      env.HOME
+        ? w
+            .replace(/^~(?=\/)/, env.HOME)
+            .replace(/^\$\{?HOME\}?(?=\/)/, env.HOME)
+        : w,
+    )
     .filter((w) => isAbsolute(w) && SCRIPT.test(w));
 }
 
@@ -138,7 +172,10 @@ export interface BrokenHook {
  * Hooks in Claude Code's settings whose script is gone. Claude Code runs them anyway and shows a
  * hook error at every start (a missing `node` script fails in `node:internal/modules/cjs/loader`).
  */
-export async function brokenHooks(env: Env, cwd: string | undefined): Promise<BrokenHook[]> {
+export async function brokenHooks(
+  env: Env,
+  cwd: string | undefined,
+): Promise<BrokenHook[]> {
   const broken: BrokenHook[] = [];
   for (const settings of claudeSettingsFiles(env, cwd)) {
     let parsed: unknown;

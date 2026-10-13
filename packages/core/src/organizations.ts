@@ -15,10 +15,17 @@ export interface UserIdentity {
 }
 
 /** Creates an organization with the user as its owner actor. */
-export async function createOrganization(db: Db, user: UserIdentity, input: unknown) {
+export async function createOrganization(
+  db: Db,
+  user: UserIdentity,
+  input: unknown,
+) {
   const parsed = createOrganizationInput.safeParse(input);
   if (!parsed.success) {
-    throw new DomainError("validation", parsed.error.issues[0]?.message ?? "Invalid input");
+    throw new DomainError(
+      "validation",
+      parsed.error.issues[0]?.message ?? "Invalid input",
+    );
   }
   const { name, slug } = parsed.data;
 
@@ -28,7 +35,8 @@ export async function createOrganization(db: Db, user: UserIdentity, input: unkn
       .values({ name, slug })
       .onConflictDoNothing({ target: organizations.slug })
       .returning();
-    if (!organization) throw new DomainError("conflict", `Slug "${slug}" is taken`);
+    if (!organization)
+      throw new DomainError("conflict", `Slug "${slug}" is taken`);
 
     const [actor] = await tx
       .insert(actors)
@@ -66,16 +74,26 @@ export async function listMemberships(db: Db, userId: string) {
  * deactivated ones and integration bots, so tasks and activity can show who they were.
  * `ownerId` is the owning person's actor id for agents, null for people.
  */
-export async function listMembers(db: Db, orgId: string, opts: { includeDeactivated?: boolean } = {}) {
-  return db
-    .select({ ...getTableColumns(actors), ownerId: agents.ownerId })
-    .from(actors)
-    .leftJoin(agents, eq(agents.actorId, actors.id))
-    // Integration bots (the GitHub one, ST-82) are listed only with the deactivated: never in pickers.
-    .where(
-      opts.includeDeactivated
-        ? eq(actors.orgId, orgId)
-        : and(eq(actors.orgId, orgId), isNull(actors.deactivatedAt), ne(actors.type, "integration")),
-    )
-    .orderBy(actors.name);
+export async function listMembers(
+  db: Db,
+  orgId: string,
+  opts: { includeDeactivated?: boolean } = {},
+) {
+  return (
+    db
+      .select({ ...getTableColumns(actors), ownerId: agents.ownerId })
+      .from(actors)
+      .leftJoin(agents, eq(agents.actorId, actors.id))
+      // Integration bots (the GitHub one, ST-82) are listed only with the deactivated: never in pickers.
+      .where(
+        opts.includeDeactivated
+          ? eq(actors.orgId, orgId)
+          : and(
+              eq(actors.orgId, orgId),
+              isNull(actors.deactivatedAt),
+              ne(actors.type, "integration"),
+            ),
+      )
+      .orderBy(actors.name)
+  );
 }

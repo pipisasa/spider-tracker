@@ -268,21 +268,33 @@ export function useWorkflowMutations(org: string, projectKey: string) {
   const onError = (error: Error) => toast.error(error.message);
   return {
     create: useMutation({
-      mutationFn: (input: CreateStatusInput) => api<ProjectDetailDto>(path, { method: "POST", body: JSON.stringify(input) }),
+      mutationFn: (input: CreateStatusInput) =>
+        api<ProjectDetailDto>(path, {
+          method: "POST",
+          body: JSON.stringify(input),
+        }),
       onSuccess: done,
       onError,
     }),
     update: useMutation({
       mutationFn: ({ id, ...input }: UpdateStatusInput & { id: string }) =>
-        api<ProjectDetailDto>(`${path}/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+        api<ProjectDetailDto>(`${path}/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify(input),
+        }),
       onSuccess: done,
       onError,
     }),
     remove: useMutation({
       mutationFn: ({ id, moveTo }: { id: string; moveTo: string }) =>
-        api<DeleteStatusResponse>(`${path}/${id}?${new URLSearchParams({ moveTo })}`, { method: "DELETE" }),
+        api<DeleteStatusResponse>(
+          `${path}/${id}?${new URLSearchParams({ moveTo })}`,
+          { method: "DELETE" },
+        ),
       onSuccess: (result) => {
-        toast.success(`Status deleted; ${result.movedTasks} task${result.movedTasks === 1 ? "" : "s"} moved`);
+        toast.success(
+          `Status deleted; ${result.movedTasks} task${result.movedTasks === 1 ? "" : "s"} moved`,
+        );
         done(result.project);
       },
       onError,
@@ -420,19 +432,31 @@ export function useDeleteTask(org: string) {
 export function useMarkDuplicate(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ taskKey, input }: { taskKey: string; input: MarkDuplicateInput }) =>
+    mutationFn: ({
+      taskKey,
+      input,
+    }: {
+      taskKey: string;
+      input: MarkDuplicateInput;
+    }) =>
       api<TaskDto>(`${orgPath(org)}/tasks/${taskKey}/duplicate`, {
         method: "POST",
         body: JSON.stringify(input),
       }),
     onSuccess: (task, { input }) => {
-      qc.setQueryData<TaskDto[]>(keys.tasks(org, projectKeyOf(task.key)), (old) =>
-        old?.map((t) => (t.id === task.id ? task : t)),
+      qc.setQueryData<TaskDto[]>(
+        keys.tasks(org, projectKeyOf(task.key)),
+        (old) => old?.map((t) => (t.id === task.id ? task : t)),
       );
       qc.setQueryData(keys.task(org, task.key), task);
       // The task's comments, links and activity, and the original's links.
-      void qc.invalidateQueries({ queryKey: keys.task(org, task.key), predicate: (q) => q.queryKey.length > 4 });
-      void qc.invalidateQueries({ queryKey: keys.relations(org, input.of.toUpperCase()) });
+      void qc.invalidateQueries({
+        queryKey: keys.task(org, task.key),
+        predicate: (q) => q.queryKey.length > 4,
+      });
+      void qc.invalidateQueries({
+        queryKey: keys.relations(org, input.of.toUpperCase()),
+      });
       if (task.parentId) refreshProgress(qc, org);
     },
   });
@@ -779,7 +803,13 @@ export function useAddDocumentComment(org: string, id: string) {
 export function useResolveDocumentComment(org: string, id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ commentId, resolved }: { commentId: string; resolved: boolean }) =>
+    mutationFn: ({
+      commentId,
+      resolved,
+    }: {
+      commentId: string;
+      resolved: boolean;
+    }) =>
       api<DocumentCommentDto>(
         `${orgPath(org)}/documents/${id}/comments/${commentId}`,
         { method: "PATCH", body: JSON.stringify({ resolved }) },
@@ -981,7 +1011,10 @@ export const useCreateRepo = (org: string) =>
   useRepoMutation(
     org,
     (input: CreateRepoInput) =>
-      api<RepoDto>(`${orgPath(org)}/repos`, { method: "POST", body: JSON.stringify(input) }),
+      api<RepoDto>(`${orgPath(org)}/repos`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     "Repo added",
   );
 
@@ -989,7 +1022,10 @@ export const useUpdateRepo = (org: string) =>
   useRepoMutation(
     org,
     ({ repo, input }: { repo: RepoDto; input: UpdateRepoInput }) =>
-      api<RepoDto>(repoPath(org, repo), { method: "PATCH", body: JSON.stringify(input) }),
+      api<RepoDto>(repoPath(org, repo), {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
     "Repo updated",
   );
 
@@ -1004,12 +1040,23 @@ export const useDeleteRepo = (org: string) =>
 export const useAttachRepo = (org: string) =>
   useRepoMutation(
     org,
-    ({ repo, project, attach }: { repo: RepoDto; project: string; attach: boolean }) =>
+    ({
+      repo,
+      project,
+      attach,
+    }: {
+      repo: RepoDto;
+      project: string;
+      attach: boolean;
+    }) =>
       attach
-        ? api<RepoDto>(`${orgPath(org)}/projects/${encodeURIComponent(project)}/repos`, {
-            method: "POST",
-            body: JSON.stringify({ repo: repo.fullName }),
-          })
+        ? api<RepoDto>(
+            `${orgPath(org)}/projects/${encodeURIComponent(project)}/repos`,
+            {
+              method: "POST",
+              body: JSON.stringify({ repo: repo.fullName }),
+            },
+          )
         : api<RepoDto>(
             `${orgPath(org)}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`,
             { method: "DELETE" },
@@ -1021,14 +1068,25 @@ export const useCreateApp = (org: string) =>
   useRepoMutation(
     org,
     ({ repo, input }: { repo: RepoDto; input: CreateAppInput }) =>
-      api<AppDto>(`${repoPath(org, repo)}/apps`, { method: "POST", body: JSON.stringify(input) }),
+      api<AppDto>(`${repoPath(org, repo)}/apps`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
     "App added",
   );
 
 export const useUpdateApp = (org: string) =>
   useRepoMutation(
     org,
-    ({ repo, app, input }: { repo: RepoDto; app: string; input: UpdateAppInput }) =>
+    ({
+      repo,
+      app,
+      input,
+    }: {
+      repo: RepoDto;
+      app: string;
+      input: UpdateAppInput;
+    }) =>
       api<AppDto>(`${repoPath(org, repo)}/apps/${encodeURIComponent(app)}`, {
         method: "PATCH",
         body: JSON.stringify(input),
@@ -1040,7 +1098,9 @@ export const useDeleteApp = (org: string) =>
   useRepoMutation(
     org,
     ({ repo, app }: { repo: RepoDto; app: string }) =>
-      api<void>(`${repoPath(org, repo)}/apps/${encodeURIComponent(app)}`, { method: "DELETE" }),
+      api<void>(`${repoPath(org, repo)}/apps/${encodeURIComponent(app)}`, {
+        method: "DELETE",
+      }),
     "App removed",
   );
 
@@ -1050,13 +1110,20 @@ export const releasesQuery = (org: string, projectKey: string) =>
   queryOptions({
     queryKey: keys.releases(org, projectKey),
     queryFn: async () =>
-      (await api<ListResponse<ReleaseDto>>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/releases`)).items,
+      (
+        await api<ListResponse<ReleaseDto>>(
+          `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/releases`,
+        )
+      ).items,
   });
 
 export const releaseQuery = (org: string, releaseKey: string) =>
   queryOptions({
     queryKey: keys.release(org, releaseKey),
-    queryFn: () => api<ReleaseDto>(`${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}`),
+    queryFn: () =>
+      api<ReleaseDto>(
+        `${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}`,
+      ),
   });
 
 /** Done tasks with code in no release; of one project, or every project the viewer can see. */
@@ -1072,7 +1139,11 @@ export const releaseCandidatesQuery = (org: string, projectKey?: string) =>
   });
 
 /** A release change: releases and the changed tasks are refetched (shipping states move). */
-function useReleaseMutation<TInput>(org: string, mutationFn: (input: TInput) => Promise<ReleaseDto>, success?: string) {
+function useReleaseMutation<TInput>(
+  org: string,
+  mutationFn: (input: TInput) => Promise<ReleaseDto>,
+  success?: string,
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn,
@@ -1099,7 +1170,10 @@ export const githubQuery = (org: string) =>
 /** Starts the install flow: the page to send the browser to. */
 export function useStartGithubInstall(org: string) {
   return useMutation({
-    mutationFn: () => api<GithubInstallUrlDto>(`${orgPath(org)}/github/install`, { method: "POST" }),
+    mutationFn: () =>
+      api<GithubInstallUrlDto>(`${orgPath(org)}/github/install`, {
+        method: "POST",
+      }),
     onError: (error) => toast.error(error.message),
   });
 }
@@ -1126,49 +1200,76 @@ export const useCreateRelease = (org: string, projectKey: string) =>
   useReleaseMutation(
     org,
     (input: CreateReleaseInput) =>
-      api<ReleaseDto>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/releases`, {
-        method: "POST",
-        body: JSON.stringify(input),
-      }),
+      api<ReleaseDto>(
+        `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/releases`,
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+        },
+      ),
     "Release created",
   );
 
 export const useUpdateRelease = (org: string) =>
-  useReleaseMutation(org, ({ releaseKey, input }: { releaseKey: string; input: UpdateReleaseInput }) =>
-    api<ReleaseDto>(`${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    }),
+  useReleaseMutation(
+    org,
+    ({
+      releaseKey,
+      input,
+    }: {
+      releaseKey: string;
+      input: UpdateReleaseInput;
+    }) =>
+      api<ReleaseDto>(
+        `${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(input),
+        },
+      ),
   );
 
 export const useAddToRelease = (org: string) =>
-  useReleaseMutation(org, ({ releaseKey, taskKeys }: { releaseKey: string; taskKeys: string[] }) =>
-    api<ReleaseDto>(`${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}/tasks`, {
-      method: "POST",
-      body: JSON.stringify({ tasks: taskKeys }),
-    }),
+  useReleaseMutation(
+    org,
+    ({ releaseKey, taskKeys }: { releaseKey: string; taskKeys: string[] }) =>
+      api<ReleaseDto>(
+        `${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}/tasks`,
+        {
+          method: "POST",
+          body: JSON.stringify({ tasks: taskKeys }),
+        },
+      ),
   );
 
 export const useRemoveFromRelease = (org: string) =>
-  useReleaseMutation(org, ({ releaseKey, taskKey }: { releaseKey: string; taskKey: string }) =>
-    api<ReleaseDto>(
-      `${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}/tasks/${encodeURIComponent(taskKey)}`,
-      { method: "DELETE" },
-    ),
+  useReleaseMutation(
+    org,
+    ({ releaseKey, taskKey }: { releaseKey: string; taskKey: string }) =>
+      api<ReleaseDto>(
+        `${orgPath(org)}/releases/${encodeURIComponent(releaseKey)}/tasks/${encodeURIComponent(taskKey)}`,
+        { method: "DELETE" },
+      ),
   );
 
 export const useSyncGithubInstallation = (org: string) =>
   useGithubMutation(
     org,
     (id: number) =>
-      api<GithubInstallationDto>(`${orgPath(org)}/github/installations/${id}/sync`, { method: "POST" }),
+      api<GithubInstallationDto>(
+        `${orgPath(org)}/github/installations/${id}/sync`,
+        { method: "POST" },
+      ),
     "Synced with GitHub",
   );
 
 export const useDisconnectGithubInstallation = (org: string) =>
   useGithubMutation(
     org,
-    (id: number) => api<void>(`${orgPath(org)}/github/installations/${id}`, { method: "DELETE" }),
+    (id: number) =>
+      api<void>(`${orgPath(org)}/github/installations/${id}`, {
+        method: "DELETE",
+      }),
     "GitHub disconnected",
   );
 
@@ -1178,23 +1279,33 @@ export const milestonesQuery = (org: string, projectKey: string) =>
   queryOptions({
     queryKey: keys.milestones(org, projectKey),
     queryFn: async () =>
-      (await api<ListResponse<MilestoneDto>>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/milestones`)).items,
+      (
+        await api<ListResponse<MilestoneDto>>(
+          `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/milestones`,
+        )
+      ).items,
   });
 
 export const milestoneQuery = (org: string, milestoneKey: string) =>
   queryOptions({
     queryKey: keys.milestone(org, milestoneKey),
-    queryFn: () => api<MilestoneDto>(`${orgPath(org)}/milestones/${encodeURIComponent(milestoneKey)}`),
+    queryFn: () =>
+      api<MilestoneDto>(
+        `${orgPath(org)}/milestones/${encodeURIComponent(milestoneKey)}`,
+      ),
   });
 
 export function useCreateMilestone(org: string, projectKey: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateMilestoneInput) =>
-      api<MilestoneDto>(`${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/milestones`, {
-        method: "POST",
-        body: JSON.stringify(input),
-      }),
+      api<MilestoneDto>(
+        `${orgPath(org)}/projects/${encodeURIComponent(projectKey)}/milestones`,
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+        },
+      ),
     onSuccess: (milestone) => {
       toast.success(`Created ${milestone.key}`);
       qc.setQueryData(keys.milestone(org, milestone.key), milestone);

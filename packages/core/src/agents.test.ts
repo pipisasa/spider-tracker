@@ -19,57 +19,113 @@ const run = url ? describe : describe.skip;
 
 run("agents and API keys", () => {
   const db = createDb(url ?? "");
-  const user = { id: `test-${crypto.randomUUID()}`, name: "Owner", email: "owner@example.com" };
+  const user = {
+    id: `test-${crypto.randomUUID()}`,
+    name: "Owner",
+    email: "owner@example.com",
+  };
   const slug = `agents-${Date.now()}`;
   let ctx: ActorContext;
   const people: string[] = [];
 
   /** Adds a person with a role and returns their context. */
-  async function addPerson(role: ActorContext["role"], handle: string): Promise<ActorContext> {
+  async function addPerson(
+    role: ActorContext["role"],
+    handle: string,
+  ): Promise<ActorContext> {
     const id = `test-${crypto.randomUUID()}`;
     people.push(id);
-    await db.insert(schema.user).values({ id, name: handle, email: `${id}@example.com` });
+    await db
+      .insert(schema.user)
+      .values({ id, name: handle, email: `${id}@example.com` });
     const [actor] = await db
       .insert(schema.actors)
-      .values({ orgId: ctx.orgId, type: "human", userId: id, name: handle, handle, role })
+      .values({
+        orgId: ctx.orgId,
+        type: "human",
+        userId: id,
+        name: handle,
+        handle,
+        role,
+      })
       .returning();
     return { orgId: ctx.orgId, actorId: actor?.id ?? "", role, source: "ui" };
   }
 
   beforeAll(async () => {
-    await db.insert(schema.user).values({ id: user.id, name: user.name, email: `${user.id}@example.com` });
-    const { organization, actor } = await createOrganization(db, user, { name: "Agents Org", slug });
-    ctx = { orgId: organization.id, actorId: actor.id, role: "owner", source: "ui" };
+    await db.insert(schema.user).values({
+      id: user.id,
+      name: user.name,
+      email: `${user.id}@example.com`,
+    });
+    const { organization, actor } = await createOrganization(db, user, {
+      name: "Agents Org",
+      slug,
+    });
+    ctx = {
+      orgId: organization.id,
+      actorId: actor.id,
+      role: "owner",
+      source: "ui",
+    };
   });
 
   afterAll(async () => {
-    await db.delete(schema.organizations).where(eq(schema.organizations.slug, slug));
-    for (const id of [user.id, ...people]) await db.delete(schema.user).where(eq(schema.user.id, id));
+    await db
+      .delete(schema.organizations)
+      .where(eq(schema.organizations.slug, slug));
+    for (const id of [user.id, ...people])
+      await db.delete(schema.user).where(eq(schema.user.id, id));
     await db.$client.end();
   });
 
   test("creates an agent owned by the creator, with a unique handle", async () => {
-    const { actor: agent } = await createAgent(db, ctx, { name: "Claude Code" });
-    expect(agent).toMatchObject({ type: "agent", handle: "claude-code", role: "member" });
-    await expect(createAgent(db, ctx, { name: "Claude Code" })).rejects.toMatchObject({ code: "conflict" });
-    await expect(createAgent(db, ctx, { name: "Me", handle: "me" })).rejects.toMatchObject({ code: "validation" });
-    expect((await createAgent(db, ctx, { name: "None" })).actor.handle).toBe("none-1");
-    await expect(createAgent(db, { ...ctx, role: "guest" }, { name: "Nope" })).rejects.toMatchObject({
+    const { actor: agent } = await createAgent(db, ctx, {
+      name: "Claude Code",
+    });
+    expect(agent).toMatchObject({
+      type: "agent",
+      handle: "claude-code",
+      role: "member",
+    });
+    await expect(
+      createAgent(db, ctx, { name: "Claude Code" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      createAgent(db, ctx, { name: "Me", handle: "me" }),
+    ).rejects.toMatchObject({ code: "validation" });
+    expect((await createAgent(db, ctx, { name: "None" })).actor.handle).toBe(
+      "none-1",
+    );
+    await expect(
+      createAgent(db, { ...ctx, role: "guest" }, { name: "Nope" }),
+    ).rejects.toMatchObject({
       code: "forbidden",
     });
     // An agent acting with its own key can't create agents, even with a member role.
-    await expect(createAgent(db, { ...ctx, actorId: agent.id, role: "member" }, { name: "Nope" })).rejects.toMatchObject({
+    await expect(
+      createAgent(
+        db,
+        { ...ctx, actorId: agent.id, role: "member" },
+        { name: "Nope" },
+      ),
+    ).rejects.toMatchObject({
       code: "forbidden",
     });
   });
 
   test("issues a key that authenticates as the agent until revoked", async () => {
     const [agent] = await listAgents(db, ctx);
-    const created = await createApiKey(db, ctx, agent?.actor.id ?? "", { name: "laptop" });
+    const created = await createApiKey(db, ctx, agent?.actor.id ?? "", {
+      name: "laptop",
+    });
     expect(created.secret).toStartWith("spt_");
     expect(created.secret.startsWith(created.key.prefix)).toBe(true);
 
-    const stored = await db.select().from(schema.apiTokens).where(eq(schema.apiTokens.id, created.key.id));
+    const stored = await db
+      .select()
+      .from(schema.apiTokens)
+      .where(eq(schema.apiTokens.id, created.key.id));
     expect(stored[0]?.tokenHash).not.toContain(created.secret);
 
     const auth = await authenticateApiKey(db, created.secret);
@@ -89,39 +145,79 @@ run("agents and API keys", () => {
     const bob = await addPerson("member", `bob-${Date.now()}`);
     const admin = await addPerson("admin", `admin-${Date.now()}`);
 
-    const created = await createAgent(db, alice, { name: "Alice Bot", description: "helps" });
+    const created = await createAgent(db, alice, {
+      name: "Alice Bot",
+      description: "helps",
+    });
     const agentId = created.actor.id;
-    expect(created).toMatchObject({ ownerId: alice.actorId, canManage: true, actor: { role: "member" } });
+    expect(created).toMatchObject({
+      ownerId: alice.actorId,
+      canManage: true,
+      actor: { role: "member" },
+    });
 
     const key = await createApiKey(db, alice, agentId, { name: "laptop" });
-    await expect(createApiKey(db, bob, agentId, { name: "x" })).rejects.toMatchObject({ code: "forbidden" });
-    await expect(revokeApiKey(db, bob, key.key.id)).rejects.toMatchObject({ code: "forbidden" });
-    await expect(updateAgent(db, bob, agentId, { name: "Mine" })).rejects.toMatchObject({ code: "forbidden" });
-    await expect(deleteAgent(db, bob, agentId)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      createApiKey(db, bob, agentId, { name: "x" }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(revokeApiKey(db, bob, key.key.id)).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await expect(
+      updateAgent(db, bob, agentId, { name: "Mine" }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(deleteAgent(db, bob, agentId)).rejects.toMatchObject({
+      code: "forbidden",
+    });
 
-    const seenByBob = (await listAgents(db, bob)).find((a) => a.actor.id === agentId);
-    expect(seenByBob).toMatchObject({ canManage: false, keys: [], owner: { id: alice.actorId } });
-    const seenByAlice = (await listAgents(db, alice)).find((a) => a.actor.id === agentId);
+    const seenByBob = (await listAgents(db, bob)).find(
+      (a) => a.actor.id === agentId,
+    );
+    expect(seenByBob).toMatchObject({
+      canManage: false,
+      keys: [],
+      owner: { id: alice.actorId },
+    });
+    const seenByAlice = (await listAgents(db, alice)).find(
+      (a) => a.actor.id === agentId,
+    );
     expect(seenByAlice?.canManage).toBe(true);
     expect(seenByAlice?.keys.map((k) => k.id)).toEqual([key.key.id]);
 
-    const updated = await updateAgent(db, admin, agentId, { name: "Renamed", handle: "renamed-bot", description: null });
-    expect(updated).toMatchObject({ actor: { name: "Renamed", handle: "renamed-bot" }, description: null });
-    await expect(updateAgent(db, alice, agentId, { handle: "claude-code" })).rejects.toMatchObject({
+    const updated = await updateAgent(db, admin, agentId, {
+      name: "Renamed",
+      handle: "renamed-bot",
+      description: null,
+    });
+    expect(updated).toMatchObject({
+      actor: { name: "Renamed", handle: "renamed-bot" },
+      description: null,
+    });
+    await expect(
+      updateAgent(db, alice, agentId, { handle: "claude-code" }),
+    ).rejects.toMatchObject({
       code: "conflict",
     });
-    await expect(updateAgent(db, alice, agentId, { handle: "Not Valid!" })).rejects.toMatchObject({
+    await expect(
+      updateAgent(db, alice, agentId, { handle: "Not Valid!" }),
+    ).rejects.toMatchObject({
       code: "validation",
     });
     // Reserved for assignee filters.
     for (const handle of ["me", "NONE"]) {
-      await expect(updateAgent(db, alice, agentId, { handle })).rejects.toMatchObject({ code: "validation" });
+      await expect(
+        updateAgent(db, alice, agentId, { handle }),
+      ).rejects.toMatchObject({ code: "validation" });
     }
 
     await deleteAgent(db, alice, agentId);
     expect(await authenticateApiKey(db, key.secret)).toBeNull();
-    expect((await listAgents(db, admin)).some((a) => a.actor.id === agentId)).toBe(false);
-    await expect(updateAgent(db, alice, agentId, { name: "Back" })).rejects.toMatchObject({ code: "not_found" });
+    expect(
+      (await listAgents(db, admin)).some((a) => a.actor.id === agentId),
+    ).toBe(false);
+    await expect(
+      updateAgent(db, alice, agentId, { name: "Back" }),
+    ).rejects.toMatchObject({ code: "not_found" });
   });
 
   test("malformed ids are not found", async () => {
@@ -141,7 +237,10 @@ run("agents and API keys", () => {
     const b = await createAgent(db, ctx, { name: `Race B ${stamp}` });
     const handle = `raced-${stamp}`;
     // B passes the "is it taken?" check, then waits on its row while A takes the handle.
-    const release = await holdLock(db, sql`select 1 from actors where id = ${b.actor.id} for update`);
+    const release = await holdLock(
+      db,
+      sql`select 1 from actors where id = ${b.actor.id} for update`,
+    );
     const second = settle(updateAgent(db, ctx, b.actor.id, { handle }));
     await waitForLockWaiters(db, '"actors"', 1);
     await updateAgent(db, ctx, a.actor.id, { handle });
@@ -154,7 +253,10 @@ run("agents and API keys", () => {
     const { actor } = await createAgent(db, carol, { name: "Carol Bot" });
     const { secret } = await createApiKey(db, carol, actor.id, { name: "k" });
     expect(await authenticateApiKey(db, secret)).not.toBeNull();
-    await db.update(schema.actors).set({ deactivatedAt: new Date() }).where(eq(schema.actors.id, carol.actorId));
+    await db
+      .update(schema.actors)
+      .set({ deactivatedAt: new Date() })
+      .where(eq(schema.actors.id, carol.actorId));
     expect(await authenticateApiKey(db, secret)).toBeNull();
   });
 });

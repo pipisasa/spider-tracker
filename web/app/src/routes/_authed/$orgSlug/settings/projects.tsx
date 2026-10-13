@@ -19,7 +19,9 @@ export const Route = createFileRoute("/_authed/$orgSlug/settings/projects")({
   loader: ({ context, params }) =>
     Promise.all([
       context.queryClient.ensureQueryData(projectsQuery(params.orgSlug)),
-      context.queryClient.ensureQueryData(archivedProjectsQuery(params.orgSlug)),
+      context.queryClient.ensureQueryData(
+        archivedProjectsQuery(params.orgSlug),
+      ),
     ]),
   component: ProjectsSettingsPage,
 });
@@ -43,7 +45,10 @@ function ProjectsSettingsPage() {
             <p className="text-sm text-muted-foreground">No projects yet.</p>
           )}
           {projects.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
+            <div
+              key={p.id}
+              className="flex items-center gap-3 rounded-md border px-3 py-2"
+            >
               <Link
                 to="/$orgSlug/projects/$projectKey"
                 params={{ orgSlug, projectKey: p.key }}
@@ -53,7 +58,10 @@ function ProjectsSettingsPage() {
               </Link>
               <span className="text-xs text-muted-foreground">{p.key}</span>
               <Button variant="outline" size="sm" className="ml-auto" asChild>
-                <Link to="/$orgSlug/settings/workflows/$projectKey" params={{ orgSlug, projectKey: p.key }}>
+                <Link
+                  to="/$orgSlug/settings/workflows/$projectKey"
+                  params={{ orgSlug, projectKey: p.key }}
+                >
                   Workflows
                 </Link>
               </Button>
@@ -66,10 +74,15 @@ function ProjectsSettingsPage() {
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-medium">Archived projects</h2>
           {archived.length === 0 && (
-            <p className="text-sm text-muted-foreground">No archived projects.</p>
+            <p className="text-sm text-muted-foreground">
+              No archived projects.
+            </p>
           )}
           {archived.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
+            <div
+              key={p.id}
+              className="flex items-center gap-3 rounded-md border px-3 py-2"
+            >
               <Link
                 to="/$orgSlug/projects/$projectKey"
                 params={{ orgSlug, projectKey: p.key }}

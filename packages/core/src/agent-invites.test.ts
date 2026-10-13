@@ -23,11 +23,7 @@ import { listMembers } from "./organizations";
 import { createOrganization } from "./organizations";
 import { createProject, getProject, listProjects } from "./projects";
 import { addRelation, listRelations } from "./relations";
-import {
-  holdLock,
-  settle,
-  waitForLockWaiters,
-} from "./test-locks.test-utils";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 import {
   createTask,
   getTask,
@@ -111,13 +107,11 @@ run("agent invites and project scope", () => {
   });
 
   beforeAll(async () => {
-    await db
-      .insert(schema.user)
-      .values({
-        id: user.id,
-        name: user.name,
-        email: `${user.id}@example.com`,
-      });
+    await db.insert(schema.user).values({
+      id: user.id,
+      name: user.name,
+      email: `${user.id}@example.com`,
+    });
     const { organization, actor } = await createOrganization(db, user, {
       name: "Invites Org",
       slug,
@@ -482,7 +476,8 @@ run("agent invites and project scope", () => {
       acceptAgentInvite(db, { code: invite.code }),
     ).rejects.toMatchObject({
       code: "validation",
-      message: "The projects this invite was for no longer exist; ask for a new invite",
+      message:
+        "The projects this invite was for no longer exist; ask for a new invite",
     });
     // Still unused, so it can be revoked.
     expect((await listAgentInvites(db, owner)).map((i) => i.id)).toContain(

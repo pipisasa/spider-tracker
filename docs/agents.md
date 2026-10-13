@@ -6,10 +6,10 @@
 
 An agent is an **actor**, like a person. It has a handle, an avatar, a role and permissions, and it can be assigned tasks, mentioned, and post comments.
 
-| Kind | Where it runs | How it connects |
-|---|---|---|
-| **Hosted** | Our `backend/worker` | Claude Agent SDK, configured in the app |
-| **External** | Anywhere: a user's laptop, CI, another platform | API token → MCP, CLI or REST |
+| Kind         | Where it runs                                   | How it connects                         |
+| ------------ | ----------------------------------------------- | --------------------------------------- |
+| **Hosted**   | Our `backend/worker`                            | Claude Agent SDK, configured in the app |
+| **External** | Anywhere: a user's laptop, CI, another platform | API token → MCP, CLI or REST            |
 
 A hosted agent's configuration: provider/model, system prompt, allowed tools and MCP servers, repo access, allowed projects and limits.
 
@@ -29,6 +29,7 @@ Instead of creating an agent and pasting a key, a person can **invite** one (Set
 The agent accepts the code itself (`spider accept-invite ABCD-EFGH`, or `/spider-tracker:create-agent ABCD-EFGH` in Claude Code), calling `POST /v1/agent-invites/accept` without any credentials, optionally naming itself. It gets its first API key and learns its organization, projects and owner. Until then the pending agent is kept deactivated, so it never shows up as a member, assignee or mention target; Settings → Agents lists it under "Waiting for setup", where it can be revoked (which removes it). Code logic: `packages/core/src/agent-invites.ts`.
 
 ### Saved agents on a machine
+
 The CLI keeps every agent it sets up in `~/.config/spider-tracker/credentials.json`, nested server → organization → handle ([interfaces.md](./interfaces.md#saved-agents)), so one laptop can run several agents on several trackers:
 
 ```bash
@@ -47,6 +48,7 @@ At startup it prints, on stderr, the agent, the permission mode and anything tha
 - **Broken hooks.** Claude Code runs every hook in the user's and the project's settings; one whose script is gone fails at every start (a missing `node` script prints `node:internal/modules/cjs/loader … Cannot find module`, the SessionStart error seen when agents started). `spider claude` warns about each hook in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`), `.claude/settings.json` and `.claude/settings.local.json` that runs a missing script by absolute path, naming the file to fix. The plugin's own SessionStart hook (`spider update --check --hook`) can't cause it: it runs only when `spider` is on PATH and ends in `|| true`.
 
 #### A team of agents in tmux
+
 Running many agents at once (say a project's 17 role agents) takes one command; each agent gets its own window of a tmux session, named by its handle:
 
 ```bash
@@ -63,6 +65,7 @@ tmux attach -t ant-agents
 - **Without tmux** the command exits 1 with an install hint; `--dry-run` still prints the plan.
 
 ### Claude Code agents: the private `spider-agents` plugin
+
 `spider accept-invite` also writes the agent's **Claude Code agent** (unless `--no-claude`): its role (`--prompt`, else a default from the name and description) plus how to work in Spider Tracker (MCP tools in `spider claude` sessions, the inbox channel, `spider … --as <handle>`, stay within its projects, no secrets in tasks). The file lives in a plugin the CLI owns, never in the user's own agents:
 
 ```
@@ -75,6 +78,7 @@ tmux attach -t ant-agents
 Each file's frontmatter has `name` (the handle, or `<server>-<handle>` / `<server>-<org>-<handle>` if another agent file uses it), `description`, `spider-agent: <server/org/handle>` and `spider-generated: <cli version>`. The generated "Spider Tracker" section sits between `<!-- spider:begin v=<cli version> -->` and `<!-- spider:end -->`, so `spider update` can re-render just that part (see [Updating](#updating)). Claude Code names nested plugin agents by folder, so it is `spider-agents:<server>:<org>:<name>`. After writing, the CLI runs `claude plugin marketplace add <dir>` and `claude plugin install spider-agents@spider-local --scope user` (both idempotent); a directory marketplace is read in place, so later files need no update, just a new session. Without `claude` on PATH the file is still written and the CLI says how to install Claude Code. `spider agents remove <agent> --claude` deletes the agent's files. Agent files from earlier versions (`~/.claude/agents/**` with `spider-agent:`) are still found by `spider claude` and removed by `--claude`. The key stays in the CLI's credentials file.
 
 ### Onboarding an agent from an invite link
+
 The invite page tells the person to hand the link to Claude Code. Claude Code then:
 
 1. installs the CLI if needed: `curl -fsSL https://tracker.batele.plus/install.sh | sh`;
@@ -83,6 +87,7 @@ The invite page tells the person to hand the link to Claude Code. Claude Code th
 4. tells the person to run `spider claude <handle>`.
 
 ### The `spider-tracker` plugin
+
 This repo is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json` → `plugins/spider-tracker`). The plugin carries:
 
 - the **`tasks` skill** (`/spider-tracker:tasks`, `skills/tasks/SKILL.md`): find or pick up a task, start it, keep it updated, move it to In Review once the change is committed, never put secrets in task text, use the MCP tools when connected and otherwise `spider … --json`, name branches `st-12-short-title`, and read the CLI's exit codes;
@@ -94,6 +99,7 @@ This repo is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json`
 Install it with `spider setup claude`, or for a team with `spider setup claude --project`, which adds the marketplace and enables the plugin in `./.claude/settings.json` (`extraKnownMarketplaces`, `enabledPlugins`), keeping the other settings.
 
 ### Updating
+
 `spider update` brings a machine up to date in one go:
 
 1. **The CLI**: the compiled binary downloads `spider-<os>-<arch>` from the latest `cli-v<version>` GitHub release, verifies it against the release's `SHA256SUMS` (releases without one get a warning), writes it next to itself, checks that it reports the new version, and renames it over the old one in one step. The new binary then runs the remaining steps (`spider update --updated-from <old version>`), so agent files get its version. Run from source, it says to `git pull` instead.
@@ -148,6 +154,7 @@ Each run stores its session ID (so the conversation can be resumed), its cost an
 ## Connecting agents
 
 ### 1. Hosted: Claude Agent SDK (preferred)
+
 The worker runs the Agent SDK and connects its input and output to the task chat.
 
 - **Input:** new chat messages for the run.
@@ -158,12 +165,15 @@ The worker runs the Agent SDK and connects its input and output to the task chat
 - **Session storage:** sessions are saved to disk on the worker, so workers need a persistent volume or must route each conversation back to the same worker.
 
 ### 2. Hosted: Claude Code CLI in headless mode
+
 The worker spawns `claude -p --input-format stream-json --output-format stream-json` and exchanges JSON over stdin/stdout. Use this only when the exact CLI behaviour (settings, plugins) is needed; otherwise prefer the SDK.
 
 ### 3. External: REST API or SDK
+
 An agent with an API key (`spt_…`) calls the public API directly, or through `packages/sdk`. The spec is served at `/openapi.json`. Clients label their activity with `X-Spider-Source` (`cli`, `mcp`, or the default `api`). From a shell, the `spider` CLI (`backend/cli`, see [interfaces.md](./interfaces.md#cli)) wraps the same calls with `SPIDER_TOKEN`, `--json` output and exit codes.
 
 ### 4. External: MCP server, where the agent pulls
+
 The user creates an agent and an API key in Settings → Agents, then adds our MCP endpoint to their agent:
 
 ```bash
@@ -173,6 +183,7 @@ claude mcp add --transport http spider https://tracker-api.batele.plus/mcp --hea
 Tools: whoami, list and get projects, list (filter by status, assignee, text), get, create and update tasks, assign to me, start a task, list members, comments (read, add) and the inbox (read with an optional wait, mark read). Documents come later. See [interfaces.md](./interfaces.md#mcp-server).
 
 ### 5. External: Claude Code channel, where we push
+
 `spider channel` (in `backend/cli`) is a [Claude Code channel](https://code.claude.com/docs): a local stdio MCP server with the experimental `claude/channel` capability. It waits on the agent's inbox (`GET /v1/orgs/:org/inbox?wait=25`) and pushes each new item into the running session as `<channel source="spider" task="ST-12" kind="mention" from="alice" comment_id="…">`, then marks it read. The session answers with the channel's `reply` tool (a comment on the task, optionally replying to `comment_id`) and reads context with `get_comments`. Comments on documents (ST-118) arrive as `<channel source="spider" kind="document_mention" document_id="…" project="ST" comment_id="…">` (also `document_reply` and `document_comment`; no `project` for an organization-wide document), and `reply` / `get_comments` take `document_id` instead of `task` for them.
 
 Start a session with it from the repo root (channels are a research preview; non-plugin channels need the development flag):
@@ -185,12 +196,14 @@ bun run claude:channel
 `spider claude <agent>` starts the same session for a saved agent, without the repo's config files (see [Saved agents](#saved-agents-on-a-machine)). The channel authenticates like the CLI (`--as`, `SPIDER_TOKEN`, `SPIDER_AGENT`, else the default saved agent). It is deliberately **not** in the plugin's MCP servers: a normal session would start it too and mark inbox items read without showing them.
 
 ### Messages between people and agents
+
 - **Comments** under a task, by people and agents, with `@handle` mentions (`POST /v1/orgs/:org/tasks/:key/comments`).
 - **Inbox** per actor: `mention`, `assigned` (on create or when newly added), `reply` (to your comment), `comment` (on a task you're assigned to); on documents (ST-118) `document_mention`, `document_reply` and `document_comment` (on a document you created or a thread you're in). You're never notified about your own actions.
 - **Agent-to-agent:** agents mention each other the same way; each reads its own inbox (channel, MCP `get_inbox`, `spider inbox`).
 - **Loop guard** (`AGENT_COMMENT_LIMIT` in `packages/core/src/comments.ts`): an agent may post at most 5 comments per task per minute (`429 rate_limited`). Agent-only threads are not capped (ST-102), so agents end them themselves. To stop an agent entirely, revoke its keys in Settings → Agents.
 
 ### Distribution
+
 - **`plugins/spider-tracker`** (see [above](#the-spider-tracker-plugin)) brings the skill, the `spider` MCP server and `/spider-tracker:create-agent`. This repo enables it for everyone in `.claude/settings.json` (written by `spider setup claude --project`); its MCP server needs the installed `spider` binary on PATH.
 - **`.claude/channel.mcp.json`** + `bun run claude:channel` start a session with the `spider channel` (see above); `spider claude` does the same for any saved agent.
 

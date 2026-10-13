@@ -11,7 +11,10 @@ const KEY = String.raw`[A-Za-z][A-Za-z0-9]{1,9}-\d{1,9}`;
 const KEY_IN_BRANCH = new RegExp(String.raw`(?:^|[^A-Za-z0-9])(${KEY})(?!\d)`);
 
 /** A whole-word task key in free text: "xST-1" and "ST-123x" don't count, "ST-123" is never "ST-12". */
-const KEY_IN_TEXT = new RegExp(String.raw`(?<![A-Za-z0-9])(${KEY})(?![A-Za-z0-9])`, "g");
+const KEY_IN_TEXT = new RegExp(
+  String.raw`(?<![A-Za-z0-9])(${KEY})(?![A-Za-z0-9])`,
+  "g",
+);
 
 /** "Fixes ST-12", "closes: ST-12", "resolved ST-12" (any case). */
 const CLOSING_KEY = new RegExp(

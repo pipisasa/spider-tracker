@@ -38,10 +38,14 @@ export function createRateLimiter({
 /** The TCP peer address from Bun's server (the 2nd `fetch` argument, Hono's `c.env`), if any. */
 function socketIp(server: unknown, request: Request): string | undefined {
   if (typeof server !== "object" || server === null) return undefined;
-  if (!("requestIP" in server) || typeof server.requestIP !== "function") return undefined;
+  if (!("requestIP" in server) || typeof server.requestIP !== "function")
+    return undefined;
   const info: unknown = server.requestIP(request);
-  if (typeof info !== "object" || info === null || !("address" in info)) return undefined;
-  return typeof info.address === "string" && info.address ? info.address : undefined;
+  if (typeof info !== "object" || info === null || !("address" in info))
+    return undefined;
+  return typeof info.address === "string" && info.address
+    ? info.address
+    : undefined;
 }
 
 /**
@@ -51,7 +55,11 @@ function socketIp(server: unknown, request: Request): string | undefined {
  * - `cloudflare`: `CF-Connecting-IP` (only safe when the API is reachable through Cloudflare alone).
  * - `railway`: the right-most `X-Forwarded-For` entry, the one Railway's edge appended.
  */
-export function clientIp(request: Request, trustedProxy: TrustedProxy, server?: unknown): string {
+export function clientIp(
+  request: Request,
+  trustedProxy: TrustedProxy,
+  server?: unknown,
+): string {
   const headers = request.headers;
   if (trustedProxy === "cloudflare") {
     const cf = headers.get("cf-connecting-ip")?.trim();

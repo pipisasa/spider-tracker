@@ -1,10 +1,23 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
-import { assertCanManageProjects, inScope, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
+import {
+  assertCanManageProjects,
+  inScope,
+  orgIdOf,
+  projectScope,
+  type ActorContext,
+  type Viewer,
+} from "./access";
 import { recordActivity } from "./activity";
 import { publish } from "./events";
-import type { ProjectDetailDto, ProjectDto, StatusCategory, StatusDto, TaskKind } from "./contracts";
+import type {
+  ProjectDetailDto,
+  ProjectDto,
+  StatusCategory,
+  StatusDto,
+  TaskKind,
+} from "./contracts";
 import { DomainError } from "./errors";
 import { announceRulesChange, assertRulesDocument } from "./project-rules";
 import { gitAutomationOf } from "./git-automation-rules";
@@ -63,12 +76,24 @@ export function toProjectDto(row: ProjectRow): ProjectDto {
 }
 
 export function toStatusDto(row: StatusRow): StatusDto {
-  return { id: row.id, kind: row.kind, name: row.name, category: row.category, color: row.color, position: row.position };
+  return {
+    id: row.id,
+    kind: row.kind,
+    name: row.name,
+    category: row.category,
+    color: row.color,
+    position: row.position,
+  };
 }
 
 /** The project with its workflows; `statuses` stays the task workflow, as before kinds (ST-90). */
-export function toProjectDetailDto(project: ProjectRow, rows: StatusRow[]): ProjectDetailDto {
-  const sorted = [...rows].sort((a, b) => a.position - b.position).map(toStatusDto);
+export function toProjectDetailDto(
+  project: ProjectRow,
+  rows: StatusRow[],
+): ProjectDetailDto {
+  const sorted = [...rows]
+    .sort((a, b) => a.position - b.position)
+    .map(toStatusDto);
   const workflows: Record<TaskKind, StatusDto[]> = {
     task: sorted.filter((s) => s.kind === "task"),
     release: sorted.filter((s) => s.kind === "release"),
@@ -77,7 +102,11 @@ export function toProjectDetailDto(project: ProjectRow, rows: StatusRow[]): Proj
   return { ...toProjectDto(project), statuses: workflows.task, workflows };
 }
 
-export async function createProject(db: Db, ctx: ActorContext, input: unknown): Promise<ProjectDetailDto> {
+export async function createProject(
+  db: Db,
+  ctx: ActorContext,
+  input: unknown,
+): Promise<ProjectDetailDto> {
   await assertCanManageProjects(db, ctx, "create projects");
   const { name, key, description } = parseInput(createProjectInput, input);
   const scope = await projectScope(db, ctx);
@@ -88,19 +117,28 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
       .values({ orgId: ctx.orgId, key, name, description: description || null })
       .onConflictDoNothing({ target: [projects.orgId, projects.key] })
       .returning();
-    if (!project) throw new DomainError("conflict", `Project key "${key}" is already used`);
+    if (!project)
+      throw new DomainError("conflict", `Project key "${key}" is already used`);
 
     const rows = await tx
       .insert(statuses)
       .values(
         TASK_KINDS.flatMap((kind) =>
-          DEFAULT_WORKFLOWS[kind].map((s, position) => ({ ...s, kind, projectId: project.id, position })),
+          DEFAULT_WORKFLOWS[kind].map((s, position) => ({
+            ...s,
+            kind,
+            projectId: project.id,
+            position,
+          })),
         ),
       )
       .returning();
 
     // A project-scoped agent gets access to the project it creates.
-    if (scope) await tx.insert(agentProjects).values({ agentId: ctx.actorId, projectId: project.id });
+    if (scope)
+      await tx
+        .insert(agentProjects)
+        .values({ agentId: ctx.actorId, projectId: project.id });
 
     await recordActivity(tx, ctx, {
       entityType: "project",
@@ -109,7 +147,11 @@ export async function createProject(db: Db, ctx: ActorContext, input: unknown): 
       changes: { key, name },
     });
 
-    await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+    await publish(tx, {
+      type: "project.changed",
+      orgId: ctx.orgId,
+      projectKey: project.key,
+    });
     return toProjectDetailDto(project, rows);
   });
   // The scope is cached per request; keep it in step once the project exists.
@@ -138,23 +180,43 @@ export async function listProjects(
   return rows.map(toProjectDto);
 }
 
-export async function getProject(db: Db, viewer: Viewer, key: string): Promise<ProjectDetailDto> {
+export async function getProject(
+  db: Db,
+  viewer: Viewer,
+  key: string,
+): Promise<ProjectDetailDto> {
   const [project] = await db
     .select()
     .from(projects)
-    .where(and(eq(projects.orgId, orgIdOf(viewer)), eq(projects.key, key.toUpperCase())))
+    .where(
+      and(
+        eq(projects.orgId, orgIdOf(viewer)),
+        eq(projects.key, key.toUpperCase()),
+      ),
+    )
     .limit(1);
-  if (!project || !inScope(await projectScope(db, viewer), project.id)) throw new DomainError("not_found", `Project ${key} not found`);
-  const rows = await db.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
+  if (!project || !inScope(await projectScope(db, viewer), project.id))
+    throw new DomainError("not_found", `Project ${key} not found`);
+  const rows = await db
+    .select()
+    .from(statuses)
+    .where(eq(statuses.projectId, project.id))
+    .orderBy(asc(statuses.position));
   return toProjectDetailDto(project, rows);
 }
 
 /** Locks the project row for a change; out-of-scope projects are "not found". */
-export async function findProjectForUpdate(tx: Tx, ctx: ActorContext, key: string): Promise<ProjectRow> {
+export async function findProjectForUpdate(
+  tx: Tx,
+  ctx: ActorContext,
+  key: string,
+): Promise<ProjectRow> {
   const [project] = await tx
     .select()
     .from(projects)
-    .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, key.toUpperCase())))
+    .where(
+      and(eq(projects.orgId, ctx.orgId), eq(projects.key, key.toUpperCase())),
+    )
     .limit(1)
     .for("update");
   if (!project || !inScope(await projectScope(tx, ctx), project.id)) {
@@ -163,8 +225,15 @@ export async function findProjectForUpdate(tx: Tx, ctx: ActorContext, key: strin
   return project;
 }
 
-export async function withStatuses(tx: Db | Tx, project: ProjectRow): Promise<ProjectDetailDto> {
-  const rows = await tx.select().from(statuses).where(eq(statuses.projectId, project.id)).orderBy(asc(statuses.position));
+export async function withStatuses(
+  tx: Db | Tx,
+  project: ProjectRow,
+): Promise<ProjectDetailDto> {
+  const rows = await tx
+    .select()
+    .from(statuses)
+    .where(eq(statuses.projectId, project.id))
+    .orderBy(asc(statuses.position));
   return toProjectDetailDto(project, rows);
 }
 
@@ -173,7 +242,12 @@ export async function withStatuses(tx: Db | Tx, project: ProjectRow): Promise<Pr
  * status automation from pull requests (ST-85); the key stays.
  * Setting rules tells the project's agents (see announceRulesChange).
  */
-export async function updateProject(db: Db, ctx: ActorContext, key: string, input: unknown): Promise<ProjectDetailDto> {
+export async function updateProject(
+  db: Db,
+  ctx: ActorContext,
+  key: string,
+  input: unknown,
+): Promise<ProjectDetailDto> {
   await assertCanManageProjects(db, ctx, "change projects");
   const data = parseInput(updateProjectInput, input);
 
@@ -181,21 +255,32 @@ export async function updateProject(db: Db, ctx: ActorContext, key: string, inpu
     const current = await findProjectForUpdate(tx, ctx, key);
     const next = {
       name: data.name ?? current.name,
-      description: data.description === undefined ? current.description : data.description || null,
-      rulesDocumentId: data.rulesDocumentId === undefined ? current.rulesDocumentId : data.rulesDocumentId,
+      description:
+        data.description === undefined
+          ? current.description
+          : data.description || null,
+      rulesDocumentId:
+        data.rulesDocumentId === undefined
+          ? current.rulesDocumentId
+          : data.rulesDocumentId,
       // Stored in full once changed; null (the defaults) again when reset.
       gitAutomation:
         data.gitAutomation === undefined
           ? current.gitAutomation
           : data.gitAutomation === null
             ? null
-            : { ...gitAutomationOf(current.gitAutomation), ...data.gitAutomation },
+            : {
+                ...gitAutomationOf(current.gitAutomation),
+                ...data.gitAutomation,
+              },
     };
     const changes: Record<string, [unknown, unknown]> = {};
     if (next.name !== current.name) changes.name = [current.name, next.name];
-    if (next.description !== current.description) changes.description = [current.description, next.description];
+    if (next.description !== current.description)
+      changes.description = [current.description, next.description];
     if (next.rulesDocumentId !== current.rulesDocumentId) {
-      if (next.rulesDocumentId) await assertRulesDocument(tx, current, next.rulesDocumentId);
+      if (next.rulesDocumentId)
+        await assertRulesDocument(tx, current, next.rulesDocumentId);
       changes.rulesDocumentId = [current.rulesDocumentId, next.rulesDocumentId];
     }
     const automationBefore = gitAutomationOf(current.gitAutomation);
@@ -208,24 +293,47 @@ export async function updateProject(db: Db, ctx: ActorContext, key: string, inpu
     }
     if (Object.keys(changes).length === 0) return withStatuses(tx, current);
 
-    const [project] = await tx.update(projects).set(next).where(eq(projects.id, current.id)).returning();
+    const [project] = await tx
+      .update(projects)
+      .set(next)
+      .where(eq(projects.id, current.id))
+      .returning();
     if (!project) throw new Error("Failed to update project");
-    await recordActivity(tx, ctx, { entityType: "project", entityId: project.id, action: "project.updated", changes });
+    await recordActivity(tx, ctx, {
+      entityType: "project",
+      entityId: project.id,
+      action: "project.updated",
+      changes,
+    });
     if (changes.rulesDocumentId && project.rulesDocumentId) {
       await announceRulesChange(tx, ctx, project.id, project.rulesDocumentId);
     }
-    await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+    await publish(tx, {
+      type: "project.changed",
+      orgId: ctx.orgId,
+      projectKey: project.key,
+    });
     return withStatuses(tx, project);
   });
 }
 
 /** Archives a project (hidden from lists, no new tasks) or restores it; archiving twice changes nothing. */
-export async function archiveProject(db: Db, ctx: ActorContext, key: string, archived: boolean): Promise<ProjectDetailDto> {
-  await assertCanManageProjects(db, ctx, archived ? "archive projects" : "restore projects");
+export async function archiveProject(
+  db: Db,
+  ctx: ActorContext,
+  key: string,
+  archived: boolean,
+): Promise<ProjectDetailDto> {
+  await assertCanManageProjects(
+    db,
+    ctx,
+    archived ? "archive projects" : "restore projects",
+  );
 
   return db.transaction(async (tx) => {
     const current = await findProjectForUpdate(tx, ctx, key);
-    if ((current.archivedAt !== null) === archived) return withStatuses(tx, current);
+    if ((current.archivedAt !== null) === archived)
+      return withStatuses(tx, current);
 
     const [project] = await tx
       .update(projects)
@@ -238,7 +346,11 @@ export async function archiveProject(db: Db, ctx: ActorContext, key: string, arc
       entityId: project.id,
       action: archived ? "project.archived" : "project.unarchived",
     });
-    await publish(tx, { type: "project.changed", orgId: ctx.orgId, projectKey: project.key });
+    await publish(tx, {
+      type: "project.changed",
+      orgId: ctx.orgId,
+      projectKey: project.key,
+    });
     return withStatuses(tx, project);
   });
 }

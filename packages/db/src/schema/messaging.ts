@@ -1,5 +1,15 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, index, integer, pgTable, text, timestamp, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  check,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  type AnyPgColumn,
+} from "drizzle-orm/pg-core";
 import { actors, organizations } from "./tenancy";
 import { documents } from "./documents";
 import { tasks } from "./work";
@@ -11,13 +21,19 @@ import { tasks } from "./work";
 export const comments = pgTable(
   "comments",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
-    documentId: uuid("document_id").references(() => documents.id, { onDelete: "cascade" }),
-    parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, { onDelete: "set null" }),
+    documentId: uuid("document_id").references(() => documents.id, {
+      onDelete: "cascade",
+    }),
+    parentId: uuid("parent_id").references((): AnyPgColumn => comments.id, {
+      onDelete: "set null",
+    }),
     authorId: uuid("author_id")
       .notNull()
       .references(() => actors.id),
@@ -28,15 +44,23 @@ export const comments = pgTable(
     documentVersion: integer("document_version"),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: uuid("resolved_by").references(() => actors.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
     index("comments_task_idx").on(t.taskId, t.createdAt),
     index("comments_document_idx").on(t.documentId, t.createdAt),
-    check("comments_subject", sql`(${t.taskId} is null) <> (${t.documentId} is null)`),
-    check("comments_quote_on_documents", sql`${t.quote} is null or ${t.documentId} is not null`),
+    check(
+      "comments_subject",
+      sql`(${t.taskId} is null) <> (${t.documentId} is null)`,
+    ),
+    check(
+      "comments_quote_on_documents",
+      sql`${t.quote} is null or ${t.documentId} is not null`,
+    ),
   ],
 );
 
@@ -47,7 +71,9 @@ export const comments = pgTable(
 export const inboxItems = pgTable(
   "inbox_items",
   {
-    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    id: bigint("id", { mode: "number" })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -55,20 +81,38 @@ export const inboxItems = pgTable(
       .notNull()
       .references(() => actors.id, { onDelete: "cascade" }),
     kind: text("kind", {
-      enum: ["mention", "assigned", "comment", "reply", "rules", "document_mention", "document_comment", "document_reply"],
+      enum: [
+        "mention",
+        "assigned",
+        "comment",
+        "reply",
+        "rules",
+        "document_mention",
+        "document_comment",
+        "document_reply",
+      ],
     }).notNull(),
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
-    documentId: uuid("document_id").references(() => documents.id, { onDelete: "cascade" }),
-    commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id").references(() => documents.id, {
+      onDelete: "cascade",
+    }),
+    commentId: uuid("comment_id").references(() => comments.id, {
+      onDelete: "cascade",
+    }),
     /** Who caused it (the commenter or assigner). */
     actorId: uuid("actor_id")
       .notNull()
       .references(() => actors.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     readAt: timestamp("read_at", { withTimezone: true }),
   },
   (t) => [
     index("inbox_recipient_idx").on(t.recipientId, t.id),
-    check("inbox_items_subject", sql`${t.taskId} is not null or ${t.documentId} is not null`),
+    check(
+      "inbox_items_subject",
+      sql`${t.taskId} is not null or ${t.documentId} is not null`,
+    ),
   ],
 );

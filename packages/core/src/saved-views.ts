@@ -1,11 +1,21 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, asc, eq, or } from "drizzle-orm";
-import { assertCanWrite, inScope, projectScope, type ActorContext } from "./access";
+import {
+  assertCanWrite,
+  inScope,
+  projectScope,
+  type ActorContext,
+} from "./access";
 import type { SavedViewDto } from "./contracts";
 import { DomainError } from "./errors";
 import { isUuid } from "./ids";
-import { createSavedViewInput, updateSavedViewInput, viewFiltersSchema, type ViewFilters } from "./schemas";
+import {
+  createSavedViewInput,
+  updateSavedViewInput,
+  viewFiltersSchema,
+  type ViewFilters,
+} from "./schemas";
 import { parseInput } from "./validate";
 
 // Saved views (ST-15): named filter sets per project. A view is personal unless shared; shared
@@ -25,11 +35,17 @@ function readFilters(stored: unknown): ViewFilters {
   // Stored filters are validated on write; fall back to none rather than failing a list.
   const parsed = viewFiltersSchema.safeParse(stored);
   if (!parsed.success) return {};
-  return { ...parsed.data, tagMatch: parsed.data.tagMatch ?? (parsed.data.tag?.length ? "any" : "all") };
+  return {
+    ...parsed.data,
+    tagMatch: parsed.data.tagMatch ?? (parsed.data.tag?.length ? "any" : "all"),
+  };
 }
 
 /** New and changed views store `tagMatch` explicitly, "all" when left out. */
-const writeFilters = (filters: ViewFilters): ViewFilters => ({ ...filters, tagMatch: filters.tagMatch ?? "all" });
+const writeFilters = (filters: ViewFilters): ViewFilters => ({
+  ...filters,
+  tagMatch: filters.tagMatch ?? "all",
+});
 
 function toDto(row: Row, projectKey: string): SavedViewDto {
   return {
@@ -49,7 +65,12 @@ async function findProject(db: Db, ctx: ActorContext, projectKey: string) {
   const [project] = await db
     .select({ id: projects.id, key: projects.key })
     .from(projects)
-    .where(and(eq(projects.orgId, ctx.orgId), eq(projects.key, projectKey.toUpperCase())))
+    .where(
+      and(
+        eq(projects.orgId, ctx.orgId),
+        eq(projects.key, projectKey.toUpperCase()),
+      ),
+    )
     .limit(1);
   if (!project || !inScope(await projectScope(db, ctx), project.id)) {
     throw new DomainError("not_found", `Project ${projectKey} not found`);
@@ -58,17 +79,34 @@ async function findProject(db: Db, ctx: ActorContext, projectKey: string) {
 }
 
 /** The shared views of the project plus the viewer's own, by name. */
-export async function listSavedViews(db: Db, ctx: ActorContext, projectKey: string): Promise<SavedViewDto[]> {
+export async function listSavedViews(
+  db: Db,
+  ctx: ActorContext,
+  projectKey: string,
+): Promise<SavedViewDto[]> {
   const project = await findProject(db, ctx, projectKey);
   const rows = await db
     .select()
     .from(savedViews)
-    .where(and(eq(savedViews.projectId, project.id), or(eq(savedViews.shared, true), eq(savedViews.ownerActorId, ctx.actorId))))
+    .where(
+      and(
+        eq(savedViews.projectId, project.id),
+        or(
+          eq(savedViews.shared, true),
+          eq(savedViews.ownerActorId, ctx.actorId),
+        ),
+      ),
+    )
     .orderBy(asc(savedViews.name), asc(savedViews.id));
   return rows.map((row) => toDto(row, project.key));
 }
 
-export async function createSavedView(db: Db, ctx: ActorContext, projectKey: string, input: unknown): Promise<SavedViewDto> {
+export async function createSavedView(
+  db: Db,
+  ctx: ActorContext,
+  projectKey: string,
+  input: unknown,
+): Promise<SavedViewDto> {
   assertCanWrite(ctx);
   const data = parseInput(createSavedViewInput, input);
   const project = await findProject(db, ctx, projectKey);
@@ -89,7 +127,12 @@ export async function createSavedView(db: Db, ctx: ActorContext, projectKey: str
 }
 
 /** A view the actor can see in a project they can see; its owner or an owner/admin may change it. */
-async function findEditable(db: Db, ctx: ActorContext, projectKey: string, viewId: string) {
+async function findEditable(
+  db: Db,
+  ctx: ActorContext,
+  projectKey: string,
+  viewId: string,
+) {
   assertCanWrite(ctx);
   if (!isUuid(viewId)) throw new DomainError("not_found", "View not found");
   const project = await findProject(db, ctx, projectKey);
@@ -98,26 +141,49 @@ async function findEditable(db: Db, ctx: ActorContext, projectKey: string, viewI
     .from(savedViews)
     .where(and(eq(savedViews.id, viewId), eq(savedViews.projectId, project.id)))
     .limit(1);
-  if (!row || (!row.shared && row.ownerActorId !== ctx.actorId)) throw new DomainError("not_found", "View not found");
-  if (row.ownerActorId !== ctx.actorId && ctx.role !== "owner" && ctx.role !== "admin") {
-    throw new DomainError("forbidden", "Only the owner of a view can change it");
+  if (!row || (!row.shared && row.ownerActorId !== ctx.actorId))
+    throw new DomainError("not_found", "View not found");
+  if (
+    row.ownerActorId !== ctx.actorId &&
+    ctx.role !== "owner" &&
+    ctx.role !== "admin"
+  ) {
+    throw new DomainError(
+      "forbidden",
+      "Only the owner of a view can change it",
+    );
   }
   return { row, project };
 }
 
-export async function updateSavedView(db: Db, ctx: ActorContext, projectKey: string, viewId: string, input: unknown): Promise<SavedViewDto> {
+export async function updateSavedView(
+  db: Db,
+  ctx: ActorContext,
+  projectKey: string,
+  viewId: string,
+  input: unknown,
+): Promise<SavedViewDto> {
   const data = parseInput(updateSavedViewInput, input);
   const { row, project } = await findEditable(db, ctx, projectKey, viewId);
   const [updated] = await db
     .update(savedViews)
-    .set({ ...data, ...(data.filters ? { filters: writeFilters(data.filters) } : {}), updatedAt: new Date() })
+    .set({
+      ...data,
+      ...(data.filters ? { filters: writeFilters(data.filters) } : {}),
+      updatedAt: new Date(),
+    })
     .where(eq(savedViews.id, row.id))
     .returning();
   if (!updated) throw new DomainError("not_found", "View not found");
   return toDto(updated, project.key);
 }
 
-export async function deleteSavedView(db: Db, ctx: ActorContext, projectKey: string, viewId: string) {
+export async function deleteSavedView(
+  db: Db,
+  ctx: ActorContext,
+  projectKey: string,
+  viewId: string,
+) {
   const { row } = await findEditable(db, ctx, projectKey, viewId);
   await db.delete(savedViews).where(eq(savedViews.id, row.id));
 }

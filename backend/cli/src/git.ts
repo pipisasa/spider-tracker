@@ -13,8 +13,17 @@ export type GitRunner = (args: string[], cwd: string) => GitResult;
 
 export const runGit: GitRunner = (args, cwd) => {
   try {
-    const result = Bun.spawnSync({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
-    return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+    const result = Bun.spawnSync({
+      cmd: ["git", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      exitCode: result.exitCode,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+    };
   } catch {
     // git is not installed.
     return { exitCode: 127, stdout: "", stderr: "git not found" };
@@ -22,7 +31,10 @@ export const runGit: GitRunner = (args, cwd) => {
 };
 
 /** The checked-out branch in `cwd`, or null outside a repository or on a detached HEAD. */
-export function currentBranch(cwd: string, git: GitRunner = runGit): string | null {
+export function currentBranch(
+  cwd: string,
+  git: GitRunner = runGit,
+): string | null {
   const result = git(["branch", "--show-current"], cwd);
   const branch = result.exitCode === 0 ? result.stdout.trim() : "";
   return branch || null;
@@ -49,12 +61,19 @@ export function createOrSwitchBranch(
   name: string,
   git: GitRunner = runGit,
 ): { created: boolean; tracking: string | null } {
-  const has = (ref: string) => git(["rev-parse", "--verify", "--quiet", ref], cwd).exitCode === 0;
+  const has = (ref: string) =>
+    git(["rev-parse", "--verify", "--quiet", ref], cwd).exitCode === 0;
   const local = has(`refs/heads/${name}`);
-  const tracking = !local && has(`refs/remotes/origin/${name}`) ? `origin/${name}` : null;
-  const args = local ? ["switch", name] : tracking ? ["switch", "-c", name, "--track", tracking] : ["switch", "-c", name];
+  const tracking =
+    !local && has(`refs/remotes/origin/${name}`) ? `origin/${name}` : null;
+  const args = local
+    ? ["switch", name]
+    : tracking
+      ? ["switch", "-c", name, "--track", tracking]
+      : ["switch", "-c", name];
   const result = git(args, cwd);
-  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `git switch ${name} failed`);
+  if (result.exitCode !== 0)
+    throw new Error(result.stderr.trim() || `git switch ${name} failed`);
   return { created: !local, tracking };
 }
 
@@ -67,17 +86,27 @@ export function repoFromRemoteUrl(url: string): string | null {
 /** The `origin` remote's URL in `cwd`, or null. */
 export function originUrl(cwd: string, git: GitRunner = runGit): string | null {
   const result = git(["remote", "get-url", "origin"], cwd);
-  return result.exitCode === 0 && result.stdout.trim() ? result.stdout.trim() : null;
+  return result.exitCode === 0 && result.stdout.trim()
+    ? result.stdout.trim()
+    : null;
 }
 
 /** The "owner/name" of the `origin` remote in `cwd`, or null. */
-export function remoteRepo(cwd: string, git: GitRunner = runGit): string | null {
+export function remoteRepo(
+  cwd: string,
+  git: GitRunner = runGit,
+): string | null {
   const url = originUrl(cwd, git);
   return url ? repoFromRemoteUrl(url) : null;
 }
 
 /** Pushes `branch` to `origin` and sets it as the upstream (`spider pr`), with the person's own git and credentials. Throws with git's message on failure. */
-export function pushBranch(cwd: string, branch: string, git: GitRunner = runGit): void {
+export function pushBranch(
+  cwd: string,
+  branch: string,
+  git: GitRunner = runGit,
+): void {
   const result = git(["push", "--set-upstream", "origin", branch], cwd);
-  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `git push origin ${branch} failed`);
+  if (result.exitCode !== 0)
+    throw new Error(result.stderr.trim() || `git push origin ${branch} failed`);
 }

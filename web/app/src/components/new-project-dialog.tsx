@@ -18,7 +18,10 @@ import { useState, type FormEvent } from "react";
 /** "Spider Tracker" → "ST", "Website" → "WEB". */
 function suggestKey(name: string) {
   const words = name.toUpperCase().match(/[A-Z0-9]+/g) ?? [];
-  const key = words.length > 1 ? words.map((w) => w[0]).join("") : (words[0] ?? "").slice(0, 3);
+  const key =
+    words.length > 1
+      ? words.map((w) => w[0]).join("")
+      : (words[0] ?? "").slice(0, 3);
   return key.replace(/^[0-9]+/, "").slice(0, 10);
 }
 
@@ -49,7 +52,11 @@ export function NewProjectDialog({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = createProjectInput.safeParse({ name, key, description: description || undefined });
+    const parsed = createProjectInput.safeParse({
+      name,
+      key,
+      description: description || undefined,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid input");
       return;
@@ -58,7 +65,10 @@ export function NewProjectDialog({
       onSuccess: async (project) => {
         onOpenChange(false);
         reset();
-        await navigate({ to: "/$orgSlug/projects/$projectKey", params: { orgSlug, projectKey: project.key } });
+        await navigate({
+          to: "/$orgSlug/projects/$projectKey",
+          params: { orgSlug, projectKey: project.key },
+        });
       },
       onError: (err) => setError(err.message),
     });
@@ -76,7 +86,9 @@ export function NewProjectDialog({
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
-            <DialogDescription>Tasks in this project are numbered with its key, like SPI-12.</DialogDescription>
+            <DialogDescription>
+              Tasks in this project are numbered with its key, like SPI-12.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-[1fr_8rem] gap-3">
             <div className="flex flex-col gap-2">

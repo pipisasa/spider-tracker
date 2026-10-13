@@ -47,7 +47,8 @@ export interface AuthProvidersResponse {
   providers: AuthProvider[];
 }
 
-export type StatusCategory = "backlog" | "todo" | "in_progress" | "in_review" | "done" | "canceled";
+export type StatusCategory =
+  "backlog" | "todo" | "in_progress" | "in_review" | "done" | "canceled";
 
 /** What a task is (ST-90): ordinary work, a release (ST-93) or a milestone (ST-96); each kind has its own workflow. */
 export type TaskKind = "task" | "release" | "milestone";
@@ -88,7 +89,10 @@ export type GitAutomationEvent = "draft" | "opened" | "merged" | "closed";
  * no change. `opened` covers opened, reopened and ready for review; `draft` opened as or
  * converted to a draft.
  */
-export interface GitAutomationSettings extends Record<GitAutomationEvent, StatusCategory | null> {
+export interface GitAutomationSettings extends Record<
+  GitAutomationEvent,
+  StatusCategory | null
+> {
   enabled: boolean;
 }
 
@@ -179,7 +183,8 @@ export interface TaskDto {
  * `in_release` (in a release on its way: Planned, On staging, Release review), `shipped` (its
  * release is Released) or `no_code` (marked as having nothing to ship).
  */
-export type ShippingState = "not_in_release" | "in_release" | "shipped" | "no_code";
+export type ShippingState =
+  "not_in_release" | "in_release" | "shipped" | "no_code";
 
 /** A release as a task's shipping state names it. */
 export interface ReleaseRefDto {
@@ -490,7 +495,12 @@ export interface ReleaseCheckDto {
   /** Included tasks that no commit in the release apps' ranges mentions. */
   noCommits: { key: string; title: string }[];
   /** Apps of the repo changed since their previous tag that the release doesn't ship. */
-  appsNotInRelease: { name: string; since: string | null; commits: number; tasks: string[] }[];
+  appsNotInRelease: {
+    name: string;
+    since: string | null;
+    commits: number;
+    tasks: string[];
+  }[];
   /** The release's apps in other repos, not checked here. */
   skippedApps: { name: string; repo: string }[];
 }
@@ -758,7 +768,8 @@ export type InboxKind =
 /** The kinds about a task. */
 export type TaskInboxKind = "mention" | "assigned" | "comment" | "reply";
 /** The kinds about a comment on a document. */
-export type DocumentInboxKind = "document_mention" | "document_comment" | "document_reply";
+export type DocumentInboxKind =
+  "document_mention" | "document_comment" | "document_reply";
 
 export interface InboxItemDto {
   /** Increasing; pass the last one seen as `after` to get only newer items. */
@@ -788,7 +799,8 @@ export interface ActivityDto {
 }
 
 /** How a related task relates to this one, from this task's point of view. */
-export type RelationKind = "blocks" | "blocked_by" | "relates" | "duplicates" | "duplicated_by";
+export type RelationKind =
+  "blocks" | "blocked_by" | "relates" | "duplicates" | "duplicated_by";
 
 export interface RelationDto {
   kind: RelationKind;
@@ -866,7 +878,11 @@ export interface DocumentGraphTaskDto {
 export interface DocumentGraphDto {
   documents: DocumentSummaryDto[];
   tasks: DocumentGraphTaskDto[];
-  projects: { key: string; name: string; /** The web page's address (ST-107); set by the API and MCP. */ url?: string }[];
+  projects: {
+    key: string;
+    name: string;
+    /** The web page's address (ST-107); set by the API and MCP. */ url?: string;
+  }[];
   links: DocumentLinkDto[];
 }
 

@@ -42,10 +42,16 @@ export function createRealtime(db: Db) {
     },
 
     /** Resolves when `match` accepts an event, or after `ms`, or when `signal` aborts. */
-    async waitFor(match: (event: OrgEvent) => boolean, ms: number, signal?: AbortSignal) {
+    async waitFor(
+      match: (event: OrgEvent) => boolean,
+      ms: number,
+      signal?: AbortSignal,
+    ) {
       let done: () => void = () => {};
       const settled = new Promise<void>((resolve) => (done = resolve));
-      const unsubscribe = await this.subscribe((event) => match(event) && done());
+      const unsubscribe = await this.subscribe(
+        (event) => match(event) && done(),
+      );
       const timer = setTimeout(done, ms);
       signal?.addEventListener("abort", done, { once: true });
       await settled;

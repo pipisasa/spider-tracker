@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  check,
+  index,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { actors, organizations } from "./tenancy";
 
@@ -15,18 +23,34 @@ export const githubInstallations = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     // The GitHub account the App is installed on.
     accountLogin: text("account_login").notNull(),
-    accountType: text("account_type", { enum: ["User", "Organization"] }).notNull(),
+    accountType: text("account_type", {
+      enum: ["User", "Organization"],
+    }).notNull(),
     // "all" repositories of the account, or only "selected" ones.
-    repositorySelection: text("repository_selection", { enum: ["all", "selected"] }).notNull(),
+    repositorySelection: text("repository_selection", {
+      enum: ["all", "selected"],
+    }).notNull(),
     suspendedAt: timestamp("suspended_at", { withTimezone: true }),
-    connectedBy: uuid("connected_by").references(() => actors.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    connectedBy: uuid("connected_by").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("github_installations_org_idx").on(t.orgId),
-    check("github_installations_account_type_check", sql`${t.accountType} in ('User', 'Organization')`),
-    check("github_installations_repository_selection_check", sql`${t.repositorySelection} in ('all', 'selected')`),
+    check(
+      "github_installations_account_type_check",
+      sql`${t.accountType} in ('User', 'Organization')`,
+    ),
+    check(
+      "github_installations_repository_selection_check",
+      sql`${t.repositorySelection} in ('all', 'selected')`,
+    ),
   ],
 );
 
@@ -43,14 +67,23 @@ export const githubDeliveries = pgTable(
     action: text("action"),
     // No foreign key: the installation may be unknown here, or deleted since.
     installationId: bigint("installation_id", { mode: "number" }),
-    orgId: uuid("org_id").references(() => organizations.id, { onDelete: "set null" }),
+    orgId: uuid("org_id").references(() => organizations.id, {
+      onDelete: "set null",
+    }),
     // "processed" when it changed something for an organization; "ignored" otherwise.
-    result: text("result", { enum: ["processed", "ignored"] }).notNull().default("ignored"),
-    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    result: text("result", { enum: ["processed", "ignored"] })
+      .notNull()
+      .default("ignored"),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("github_deliveries_received_at_idx").on(t.receivedAt),
-    check("github_deliveries_result_check", sql`${t.result} in ('processed', 'ignored')`),
+    check(
+      "github_deliveries_result_check",
+      sql`${t.result} in ('processed', 'ignored')`,
+    ),
   ],
 );
 
@@ -68,7 +101,9 @@ export const githubInstallStates = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("github_install_states_expires_at_idx").on(t.expiresAt)],
 );

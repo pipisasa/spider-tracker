@@ -1,4 +1,9 @@
-import { PRESENCE_WINDOW_MS, publish, type ActorContext, type PresenceDto } from "@repo/core";
+import {
+  PRESENCE_WINDOW_MS,
+  publish,
+  type ActorContext,
+  type PresenceDto,
+} from "@repo/core";
 import type { Db } from "@repo/db";
 
 /** At most one presence event per agent and task in this period. */
@@ -16,7 +21,8 @@ export function createPresence(db: Db, now: () => number = Date.now) {
 
   const prune = (cutoff: number) => {
     for (const [taskId, byActor] of touches) {
-      for (const [actorId, at] of byActor) if (at < cutoff) byActor.delete(actorId);
+      for (const [actorId, at] of byActor)
+        if (at < cutoff) byActor.delete(actorId);
       if (byActor.size === 0) touches.delete(taskId);
     }
     for (const [id, at] of lastEvent) if (at < cutoff) lastEvent.delete(id);
@@ -37,16 +43,27 @@ export function createPresence(db: Db, now: () => number = Date.now) {
       lastEvent.set(eventId, at);
       // Presence is best-effort: a failed event must not fail the read that triggered it.
       try {
-        await publish(db, { type: "presence", orgId: ctx.orgId, taskKey: taskKey.toUpperCase() });
+        await publish(db, {
+          type: "presence",
+          orgId: ctx.orgId,
+          taskKey: taskKey.toUpperCase(),
+        });
       } catch (err) {
         console.error("[presence] publishing a presence event failed:", err);
       }
     },
 
     /** Activity-log presence plus recent reads of the project's tasks; the latest time per task and agent. */
-    merge(orgId: string, projectKey: string, written: PresenceDto[], since: Date): PresenceDto[] {
+    merge(
+      orgId: string,
+      projectKey: string,
+      written: PresenceDto[],
+      since: Date,
+    ): PresenceDto[] {
       const prefix = `${orgId}|${projectKey.toUpperCase()}-`;
-      const latest = new Map<string, PresenceDto>(written.map((p) => [`${p.taskKey}|${p.actorId}`, p]));
+      const latest = new Map<string, PresenceDto>(
+        written.map((p) => [`${p.taskKey}|${p.actorId}`, p]),
+      );
       for (const [key, byActor] of touches) {
         if (!key.startsWith(prefix)) continue;
         const taskKey = key.slice(orgId.length + 1);
@@ -54,10 +71,17 @@ export function createPresence(db: Db, now: () => number = Date.now) {
           if (at < since.getTime()) continue;
           const id = `${taskKey}|${actorId}`;
           const seen = latest.get(id);
-          if (!seen || Date.parse(seen.lastSeenAt) < at) latest.set(id, { taskKey, actorId, lastSeenAt: new Date(at).toISOString() });
+          if (!seen || Date.parse(seen.lastSeenAt) < at)
+            latest.set(id, {
+              taskKey,
+              actorId,
+              lastSeenAt: new Date(at).toISOString(),
+            });
         }
       }
-      return [...latest.values()].sort((a, b) => (a.taskKey + a.actorId).localeCompare(b.taskKey + b.actorId));
+      return [...latest.values()].sort((a, b) =>
+        (a.taskKey + a.actorId).localeCompare(b.taskKey + b.actorId),
+      );
     },
   };
 }

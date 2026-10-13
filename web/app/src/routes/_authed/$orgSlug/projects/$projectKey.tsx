@@ -11,7 +11,11 @@ import { Button } from "@/components/ui/button";
 import { DocumentContent } from "@/components/document-content";
 import { useAppAction } from "@/lib/app-events";
 import { toast } from "sonner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   actorsQuery,
   documentQuery,
@@ -37,13 +41,24 @@ import type { SavedViewDto } from "@repo/core/contracts";
 import { kindOf } from "@repo/core/statuses";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileTextIcon, FlagIcon, KanbanIcon, ListIcon, PackageIcon, PlusIcon, ScrollTextIcon, SettingsIcon } from "lucide-react";
+import {
+  FileTextIcon,
+  FlagIcon,
+  KanbanIcon,
+  ListIcon,
+  PackageIcon,
+  PlusIcon,
+  ScrollTextIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 type View = "board" | "list" | "docs" | "releases" | "roadmap";
 
 /** The board setting "Release columns" (ST-93): on by default, remembered per project in this browser. */
-function useReleaseColumns(projectKey: string): [boolean, (on: boolean) => void] {
+function useReleaseColumns(
+  projectKey: string,
+): [boolean, (on: boolean) => void] {
   const storageKey = `spider:board:${projectKey}:release-columns`;
   const read = () => {
     try {
@@ -76,15 +91,23 @@ type ProjectSearch = TaskFilters & { view?: View };
 
 export const Route = createFileRoute("/_authed/$orgSlug/projects/$projectKey")({
   validateSearch: (search: Record<string, unknown>): ProjectSearch => ({
-    ...(search.view === "list" || search.view === "board" || search.view === "docs" || search.view === "releases" || search.view === "roadmap"
+    ...(search.view === "list" ||
+    search.view === "board" ||
+    search.view === "docs" ||
+    search.view === "releases" ||
+    search.view === "roadmap"
       ? { view: search.view }
       : {}),
     ...parseFilters(search),
   }),
   loader: async ({ context, params }) => {
     await Promise.all([
-      context.queryClient.ensureQueryData(projectQuery(params.orgSlug, params.projectKey)),
-      context.queryClient.ensureQueryData(tasksQuery(params.orgSlug, params.projectKey)),
+      context.queryClient.ensureQueryData(
+        projectQuery(params.orgSlug, params.projectKey),
+      ),
+      context.queryClient.ensureQueryData(
+        tasksQuery(params.orgSlug, params.projectKey),
+      ),
     ]);
   },
   component: ProjectPage,
@@ -105,20 +128,36 @@ function ProjectPage() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newDocumentOpen, setNewDocumentOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [newReleaseStatus, setNewReleaseStatus] = useState<string | undefined>();
+  const [newReleaseStatus, setNewReleaseStatus] = useState<
+    string | undefined
+  >();
   const [newReleaseOpen, setNewReleaseOpen] = useState(false);
   const [releaseColumns, setReleaseColumns] = useReleaseColumns(projectKey);
-  const { data: releases = [] } = useQuery({ ...releasesQuery(orgSlug, projectKey), enabled: view === "releases" || (view === "board" && releaseColumns) });
-  const { data: milestones = [], isPending: milestonesPending } = useQuery({ ...milestonesQuery(orgSlug, projectKey), enabled: view === "roadmap" });
+  const { data: releases = [] } = useQuery({
+    ...releasesQuery(orgSlug, projectKey),
+    enabled: view === "releases" || (view === "board" && releaseColumns),
+  });
+  const { data: milestones = [], isPending: milestonesPending } = useQuery({
+    ...milestonesQuery(orgSlug, projectKey),
+    enabled: view === "roadmap",
+  });
   const restore = useArchiveProject(orgSlug);
-  const canManage = membership.actor.role === "owner" || membership.actor.role === "admin";
+  const canManage =
+    membership.actor.role === "owner" || membership.actor.role === "admin";
   const archived = project.archivedAt !== null;
 
   const meId = membership.actor.id;
   const mineIds = useMemo(() => mineActorIds(meId, actors), [meId, actors]);
   const visibleTasks = useMemo(
     // The board and list show ordinary tasks; releases and milestones get their own views (ST-93, ST-96).
-    () => applyFilters(tasks.filter((t) => kindOf(t) === "task"), filters, meId, mineIds, project.statuses),
+    () =>
+      applyFilters(
+        tasks.filter((t) => kindOf(t) === "task"),
+        filters,
+        meId,
+        mineIds,
+        project.statuses,
+      ),
     [tasks, filters, meId, mineIds, project.statuses],
   );
   const filtered = !isEmptyFilters(filters);
@@ -130,7 +169,12 @@ function ProjectPage() {
     });
 
   const applyView = (saved: SavedViewDto) =>
-    void navigate({ search: { view: saved.view, ...filtersToSearch(normalizeFilters(saved.filters)) } });
+    void navigate({
+      search: {
+        view: saved.view,
+        ...filtersToSearch(normalizeFilters(saved.filters)),
+      },
+    });
 
   const openNewTask = (statusId?: string) => {
     setNewTaskStatus(statusId);
@@ -139,8 +183,10 @@ function ProjectPage() {
 
   // Palette and keyboard shortcuts (ST-16): `c` and "New document" arrive here.
   useAppAction(["new-task", "new-document"], (action) => {
-    if (membership.actor.role === "guest") return void toast.error("Guests can't create content.");
-    if (archived) return void toast.error("This project is archived. Restore it first.");
+    if (membership.actor.role === "guest")
+      return void toast.error("Guests can't create content.");
+    if (archived)
+      return void toast.error("This project is archived. Restore it first.");
     if (action === "new-task") openNewTask();
     else setNewDocumentOpen(true);
   });
@@ -158,31 +204,56 @@ function ProjectPage() {
         <h1 className="min-w-0 truncate font-semibold">{project.name}</h1>
         <span className="text-sm text-muted-foreground">{project.key}</span>
         <div className="ml-auto flex flex-wrap items-center gap-1">
-          <Button variant={view === "board" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+          <Button
+            variant={view === "board" ? "secondary" : "ghost"}
+            size="sm"
+            className="max-md:h-10"
+            asChild
+          >
             <Link to="." search={(prev) => ({ ...prev, view: "board" })}>
               <KanbanIcon />
               <span className="max-sm:sr-only">Board</span>
             </Link>
           </Button>
-          <Button variant={view === "list" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+          <Button
+            variant={view === "list" ? "secondary" : "ghost"}
+            size="sm"
+            className="max-md:h-10"
+            asChild
+          >
             <Link to="." search={(prev) => ({ ...prev, view: "list" })}>
               <ListIcon />
               <span className="max-sm:sr-only">List</span>
             </Link>
           </Button>
-          <Button variant={view === "releases" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+          <Button
+            variant={view === "releases" ? "secondary" : "ghost"}
+            size="sm"
+            className="max-md:h-10"
+            asChild
+          >
             <Link to="." search={{ view: "releases" }}>
               <PackageIcon />
               <span className="max-sm:sr-only">Releases</span>
             </Link>
           </Button>
-          <Button variant={view === "roadmap" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+          <Button
+            variant={view === "roadmap" ? "secondary" : "ghost"}
+            size="sm"
+            className="max-md:h-10"
+            asChild
+          >
             <Link to="." search={{ view: "roadmap" }}>
               <FlagIcon />
               <span className="max-sm:sr-only">Roadmap</span>
             </Link>
           </Button>
-          <Button variant={view === "docs" ? "secondary" : "ghost"} size="sm" className="max-md:h-10" asChild>
+          <Button
+            variant={view === "docs" ? "secondary" : "ghost"}
+            size="sm"
+            className="max-md:h-10"
+            asChild
+          >
             <Link to="." search={{ view: "docs" }}>
               <FileTextIcon />
               <span className="max-sm:sr-only">Docs</span>
@@ -191,19 +262,33 @@ function ProjectPage() {
           {project.rulesDocumentId && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="sm" className="max-md:h-10" asChild>
-                  <Link to="/$orgSlug/docs/$documentId" params={{ orgSlug, documentId: project.rulesDocumentId }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="max-md:h-10"
+                  asChild
+                >
+                  <Link
+                    to="/$orgSlug/docs/$documentId"
+                    params={{ orgSlug, documentId: project.rulesDocumentId }}
+                  >
                     <ScrollTextIcon />
                     <span className="max-sm:sr-only">Rules</span>
                   </Link>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>The project&apos;s rules for agents</TooltipContent>
+              <TooltipContent>
+                The project&apos;s rules for agents
+              </TooltipContent>
             </Tooltip>
           )}
           {view === "board" && (
             <label className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
-              <input type="checkbox" checked={releaseColumns} onChange={(e) => setReleaseColumns(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={releaseColumns}
+                onChange={(e) => setReleaseColumns(e.target.checked)}
+              />
               Release columns
             </label>
           )}
@@ -218,10 +303,15 @@ function ProjectPage() {
               onApply={applyView}
             />
           )}
-          {view === "releases" || view === "roadmap" ? null : view === "docs" ? (
+          {view === "releases" || view === "roadmap" ? null : view ===
+            "docs" ? (
             membership.actor.role !== "guest" &&
             !archived && (
-              <Button size="sm" className="ml-2 max-md:h-10" onClick={() => setNewDocumentOpen(true)}>
+              <Button
+                size="sm"
+                className="ml-2 max-md:h-10"
+                onClick={() => setNewDocumentOpen(true)}
+              >
                 <PlusIcon />
                 <span className="max-sm:sr-only">New document</span>
               </Button>
@@ -237,12 +327,18 @@ function ProjectPage() {
                   </Button>
                 </span>
               </TooltipTrigger>
-              <TooltipContent>This project is archived. Restore it to create tasks.</TooltipContent>
+              <TooltipContent>
+                This project is archived. Restore it to create tasks.
+              </TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" className="ml-2 max-md:h-10" onClick={() => openNewTask()}>
+                <Button
+                  size="sm"
+                  className="ml-2 max-md:h-10"
+                  onClick={() => openNewTask()}
+                >
                   <PlusIcon />
                   <span className="max-sm:sr-only">New task</span>
                 </Button>
@@ -251,22 +347,36 @@ function ProjectPage() {
             </Tooltip>
           )}
           {canManage && (
-            <Button variant="ghost" size="icon" className="max-md:size-10" aria-label="Project settings" onClick={() => setSettingsOpen(true)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="max-md:size-10"
+              aria-label="Project settings"
+              onClick={() => setSettingsOpen(true)}
+            >
               <SettingsIcon />
             </Button>
           )}
         </div>
       </header>
       {archived && (
-        <div role="status" className="flex items-center gap-3 border-b bg-muted px-4 py-2 text-sm md:px-6">
-          <span>This project is archived. Its tasks stay readable, but no new tasks can be created.</span>
+        <div
+          role="status"
+          className="flex items-center gap-3 border-b bg-muted px-4 py-2 text-sm md:px-6"
+        >
+          <span>
+            This project is archived. Its tasks stay readable, but no new tasks
+            can be created.
+          </span>
           {canManage && (
             <Button
               variant="outline"
               size="sm"
               className="ml-auto"
               disabled={restore.isPending}
-              onClick={() => restore.mutate({ key: project.key, archive: false })}
+              onClick={() =>
+                restore.mutate({ key: project.key, archive: false })
+              }
             >
               Restore
             </Button>
@@ -285,7 +395,10 @@ function ProjectPage() {
         />
       )}
       {(view === "board" || view === "list") && filtered && (
-        <p role="status" className="border-b px-4 py-1.5 md:px-6 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="border-b px-4 py-1.5 md:px-6 text-xs text-muted-foreground"
+        >
           Showing {visibleTasks.length} of {tasks.length} tasks
         </p>
       )}
@@ -298,9 +411,18 @@ function ProjectPage() {
           canWrite={membership.actor.role !== "guest" && !archived}
         />
       ) : view === "releases" ? (
-        <ReleasesView orgSlug={orgSlug} project={project} releases={releases} canWrite={membership.actor.role !== "guest" && !archived} />
+        <ReleasesView
+          orgSlug={orgSlug}
+          project={project}
+          releases={releases}
+          canWrite={membership.actor.role !== "guest" && !archived}
+        />
       ) : view === "docs" ? (
-        <ProjectDocuments orgSlug={orgSlug} projectKey={project.key} rulesDocumentId={project.rulesDocumentId} />
+        <ProjectDocuments
+          orgSlug={orgSlug}
+          projectKey={project.key}
+          rulesDocumentId={project.rulesDocumentId}
+        />
       ) : view === "board" ? (
         <Board
           orgSlug={orgSlug}
@@ -308,7 +430,11 @@ function ProjectPage() {
           tasks={visibleTasks}
           members={actors}
           tags={tags}
-          onAdd={!archived && membership.actor.role !== "guest" ? openNewTask : undefined}
+          onAdd={
+            !archived && membership.actor.role !== "guest"
+              ? openNewTask
+              : undefined
+          }
           releaseStatuses={releaseColumns ? project.workflows.release : []}
           releases={releases}
           onAddRelease={
@@ -321,7 +447,13 @@ function ProjectPage() {
           }
         />
       ) : (
-        <TaskList orgSlug={orgSlug} statuses={project.statuses} tasks={visibleTasks} members={actors} tags={tags} />
+        <TaskList
+          orgSlug={orgSlug}
+          statuses={project.statuses}
+          tasks={visibleTasks}
+          members={actors}
+          tags={tags}
+        />
       )}
       <NewTaskDialog
         orgSlug={orgSlug}
@@ -332,7 +464,12 @@ function ProjectPage() {
         onOpenChange={setNewTaskOpen}
       />
       {canManage && (
-        <ProjectSettingsDialog orgSlug={orgSlug} project={project} open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <ProjectSettingsDialog
+          orgSlug={orgSlug}
+          project={project}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+        />
       )}
       <NewReleaseDialog
         orgSlug={orgSlug}
@@ -360,10 +497,14 @@ function ProjectDocuments({
   projectKey: string;
   rulesDocumentId: string | null;
 }) {
-  const { data: documents = [], isPending } = useQuery(documentsQuery(orgSlug, { project: projectKey }));
+  const { data: documents = [], isPending } = useQuery(
+    documentsQuery(orgSlug, { project: projectKey }),
+  );
   return (
     <main className="flex flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
-      {rulesDocumentId && <ProjectRules orgSlug={orgSlug} documentId={rulesDocumentId} />}
+      {rulesDocumentId && (
+        <ProjectRules orgSlug={orgSlug} documentId={rulesDocumentId} />
+      )}
       {!isPending && (
         <DocumentList
           orgSlug={orgSlug}
@@ -377,11 +518,20 @@ function ProjectDocuments({
 }
 
 /** The project's rules for agents (ST-111): what every agent working here gets automatically. */
-function ProjectRules({ orgSlug, documentId }: { orgSlug: string; documentId: string }) {
+function ProjectRules({
+  orgSlug,
+  documentId,
+}: {
+  orgSlug: string;
+  documentId: string;
+}) {
   const { data: rules } = useQuery(documentQuery(orgSlug, documentId));
   if (!rules) return null;
   return (
-    <section aria-labelledby="project-rules-title" className="rounded-lg border">
+    <section
+      aria-labelledby="project-rules-title"
+      className="rounded-lg border"
+    >
       <header className="flex items-center gap-2 border-b px-3 py-2 text-sm">
         <ScrollTextIcon className="size-4 text-muted-foreground" />
         <h2 id="project-rules-title" className="font-medium">

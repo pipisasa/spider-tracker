@@ -14,7 +14,13 @@ export const consoleMailer: Mailer = {
 const RESEND_API = "https://api.resend.com/emails";
 
 const escapeHtml = (text: string) =>
-  text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
+  text.replace(
+    /[&<>"']/g,
+    (ch) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        ch
+      ] ?? ch,
+  );
 
 /** The sign-in email: plain text plus a minimal HTML version with one button. */
 export function magicLinkEmail(url: string) {
@@ -48,7 +54,10 @@ export function createResendMailer({
     async sendMagicLink(email, url) {
       const res = await fetchImpl(RESEND_API, {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ from, to: [email], ...magicLinkEmail(url) }),
         // A slow Resend call must not hold the sign-in request open.
         signal: AbortSignal.timeout(10_000),
@@ -56,7 +65,9 @@ export function createResendMailer({
       if (!res.ok) {
         // Resend errors are { name, message, statusCode }; never include the key or the link.
         const detail = await res.text().catch(() => "");
-        throw new Error(`Resend refused the email (${res.status}): ${detail.slice(0, 300)}`);
+        throw new Error(
+          `Resend refused the email (${res.status}): ${detail.slice(0, 300)}`,
+        );
       }
     },
   };
@@ -64,9 +75,15 @@ export function createResendMailer({
 
 /** Resend when RESEND_API_KEY is set, otherwise the console mailer. */
 export function createMailer(env: Env): Mailer {
-  if (env.RESEND_API_KEY) return createResendMailer({ apiKey: env.RESEND_API_KEY, from: env.MAIL_FROM });
+  if (env.RESEND_API_KEY)
+    return createResendMailer({
+      apiKey: env.RESEND_API_KEY,
+      from: env.MAIL_FROM,
+    });
   if (env.NODE_ENV === "production") {
-    console.warn("[mail] RESEND_API_KEY is not set: magic links are only logged, not emailed");
+    console.warn(
+      "[mail] RESEND_API_KEY is not set: magic links are only logged, not emailed",
+    );
   }
   return consoleMailer;
 }

@@ -61,8 +61,13 @@ export async function replaceBinary(
     // Releases before cli-v0.1.3 have no SHA256SUMS; from 0.1.3 on a missing file means a broken
     // or tampered release, so it is an error.
     const sumsRes = await get(sumsUrl);
-    if (sumsRes.status === 404 && compareVersions(version, FIRST_VERSION_WITH_SUMS) >= 0) {
-      throw new Error(`${sumsUrl} is missing; refusing to install an unverified binary`);
+    if (
+      sumsRes.status === 404 &&
+      compareVersions(version, FIRST_VERSION_WITH_SUMS) >= 0
+    ) {
+      throw new Error(
+        `${sumsUrl} is missing; refusing to install an unverified binary`,
+      );
     }
     if (sumsRes.status === 404) {
       options.warn?.(`${sumsUrl} not found; skipping checksum verification`);
@@ -71,9 +76,7 @@ export async function replaceBinary(
         throw new Error(`Download failed: ${sumsUrl} (HTTP ${sumsRes.status})`);
       const expected = checksumOf(await sumsRes.text(), asset);
       if (!expected) throw new Error(`${asset} is not listed in ${sumsUrl}`);
-      const actual = new Bun.CryptoHasher("sha256")
-        .update(bytes)
-        .digest("hex");
+      const actual = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
       if (actual !== expected)
         throw new Error(
           `Checksum mismatch for ${asset} (expected ${expected}, got ${actual})`,

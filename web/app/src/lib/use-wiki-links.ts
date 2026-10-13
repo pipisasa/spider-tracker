@@ -54,7 +54,10 @@ export function useWikiLinks({
           toast.info(`No document is titled “${to.title}” yet`);
         } else {
           createDocument(
-            { title: to.title, ...(from.projectKey ? { project: from.projectKey } : {}) },
+            {
+              title: to.title,
+              ...(from.projectKey ? { project: from.projectKey } : {}),
+            },
             {
               onSuccess: (doc) =>
                 void navigate({
@@ -73,5 +76,13 @@ export function useWikiLinks({
           excludeId: from.id,
         }),
     };
-  }, [documents, from.id, from.projectKey, orgSlug, navigate, canWrite, createDocument]);
+  }, [
+    documents,
+    from.id,
+    from.projectKey,
+    orgSlug,
+    navigate,
+    canWrite,
+    createDocument,
+  ]);
 }

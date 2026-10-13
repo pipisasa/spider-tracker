@@ -12,8 +12,16 @@ export type TmuxRunner = (args: string[]) => TmuxResult;
 
 export const runTmux: TmuxRunner = (args) => {
   try {
-    const result = Bun.spawnSync({ cmd: ["tmux", ...args], stdout: "pipe", stderr: "pipe" });
-    return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+    const result = Bun.spawnSync({
+      cmd: ["tmux", ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      exitCode: result.exitCode,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+    };
   } catch {
     // tmux is not installed.
     return { exitCode: 127, stdout: "", stderr: "tmux not found" };
@@ -21,13 +29,15 @@ export const runTmux: TmuxRunner = (args) => {
 };
 
 /** Quotes a word for a POSIX shell command line (tmux runs window commands through the user's shell). */
-export const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
+export const shellQuote = (word: string) =>
+  /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 
 /**
  * tmux treats `:` and `.` in a target as window and pane separators, so a session name can't hold them;
  * a leading `=` (exact match), `$` (session id) or `%` (pane id) would change what the target means.
  */
-export const isSessionName = (name: string) => /^[^\s:.=$%][^\s:.]*$/.test(name);
+export const isSessionName = (name: string) =>
+  /^[^\s:.=$%][^\s:.]*$/.test(name);
 
 export const TMUX_MISSING =
   "tmux isn't installed (or not on PATH). Install it (macOS: brew install tmux; Debian/Ubuntu: sudo apt install tmux) and run this again";
@@ -42,10 +52,22 @@ export function tmuxVersion(tmux: TmuxRunner): string | null {
 const exact = (session: string) => `=${session}`;
 
 /** Window names in `session`, or null when there is no such session. */
-export function windowNames(session: string, tmux: TmuxRunner): string[] | null {
+export function windowNames(
+  session: string,
+  tmux: TmuxRunner,
+): string[] | null {
   if (tmux(["has-session", "-t", exact(session)]).exitCode !== 0) return null;
-  const result = tmux(["list-windows", "-t", exact(session), "-F", "#{window_name}"]);
-  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `tmux list-windows -t ${session} failed`);
+  const result = tmux([
+    "list-windows",
+    "-t",
+    exact(session),
+    "-F",
+    "#{window_name}",
+  ]);
+  if (result.exitCode !== 0)
+    throw new Error(
+      result.stderr.trim() || `tmux list-windows -t ${session} failed`,
+    );
   return result.stdout.split("\n").filter(Boolean);
 }
 
@@ -89,16 +111,48 @@ export const windowCommand = (argv: string[]) => argv.map(shellQuote).join(" ");
  * then a window per agent. Each starts in `cwd` with `env` set (tmux 3.0+ `-e`). Throws with tmux's
  * message when a command fails; windows opened before it stay, and a rerun skips them.
  */
-export function openWindows(plan: TmuxPlan, cwd: string, env: Record<string, string>, tmux: TmuxRunner): void {
+export function openWindows(
+  plan: TmuxPlan,
+  cwd: string,
+  env: Record<string, string>,
+  tmux: TmuxRunner,
+): void {
   let exists = plan.exists;
-  const envArgs = Object.entries(env).flatMap(([name, value]) => ["-e", `${name}=${value}`]);
+  const envArgs = Object.entries(env).flatMap(([name, value]) => [
+    "-e",
+    `${name}=${value}`,
+  ]);
   for (const w of plan.windows.filter((x) => x.start)) {
     const args = exists
-      ? ["new-window", "-d", "-t", `${exact(plan.session)}:`, "-n", w.window, "-c", cwd, ...envArgs, windowCommand(w.argv)]
-      : ["new-session", "-d", "-s", plan.session, "-n", w.window, "-c", cwd, ...envArgs, windowCommand(w.argv)];
+      ? [
+          "new-window",
+          "-d",
+          "-t",
+          `${exact(plan.session)}:`,
+          "-n",
+          w.window,
+          "-c",
+          cwd,
+          ...envArgs,
+          windowCommand(w.argv),
+        ]
+      : [
+          "new-session",
+          "-d",
+          "-s",
+          plan.session,
+          "-n",
+          w.window,
+          "-c",
+          cwd,
+          ...envArgs,
+          windowCommand(w.argv),
+        ];
     const result = tmux(args);
     if (result.exitCode !== 0) {
-      throw new Error(`tmux ${args[0]} for ${w.window} failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`);
+      throw new Error(
+        `tmux ${args[0]} for ${w.window} failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
+      );
     }
     exists = true;
   }

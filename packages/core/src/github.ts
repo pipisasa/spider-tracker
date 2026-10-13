@@ -4,7 +4,14 @@ import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { ensureBot } from "./bots";
-import { assertCanManageProjects, assertRole, orgIdOf, projectScope, type ActorContext, type Viewer } from "./access";
+import {
+  assertCanManageProjects,
+  assertRole,
+  orgIdOf,
+  projectScope,
+  type ActorContext,
+  type Viewer,
+} from "./access";
 import { recordActivity } from "./activity";
 import type { GithubInstallationDto } from "./contracts";
 import { DomainError } from "./errors";
@@ -20,7 +27,13 @@ import { insertRepo, repoVisibleIn } from "./repos";
 // Core never calls GitHub: the API's GitHub port (Octokit, or a fake in tests) fetches the
 // installation and its repositories and hands them over as plain data.
 
-const { actors, githubInstallations, githubInstallStates, organizations, repos } = schema;
+const {
+  actors,
+  githubInstallations,
+  githubInstallStates,
+  organizations,
+  repos,
+} = schema;
 
 /** An installation as GitHub describes it. */
 export interface GithubInstallationData {
@@ -52,11 +65,20 @@ export interface GithubInstallState {
   nonce: string;
 }
 
-const statePayload = z.object({ o: z.string(), u: z.string(), e: z.number(), n: z.string() });
+const statePayload = z.object({
+  o: z.string(),
+  u: z.string(),
+  e: z.number(),
+  n: z.string(),
+});
 
 // A key of its own, so a state can't be replayed as any other signed value.
-const stateKey = (secret: string) => createHmac("sha256", secret).update("spider-tracker/github-install-state").digest();
-const sign = (secret: string, payload: string) => createHmac("sha256", stateKey(secret)).update(payload).digest("base64url");
+const stateKey = (secret: string) =>
+  createHmac("sha256", secret)
+    .update("spider-tracker/github-install-state")
+    .digest();
+const sign = (secret: string, payload: string) =>
+  createHmac("sha256", stateKey(secret)).update(payload).digest("base64url");
 
 const newNonce = () => randomBytes(18).toString("base64url");
 
@@ -67,18 +89,28 @@ export function signGithubInstallState(
   now: number = Date.now(),
 ): string {
   const payload = Buffer.from(
-    JSON.stringify({ o: state.orgId, u: state.userId, e: now + GITHUB_INSTALL_STATE_TTL_MS, n: state.nonce ?? newNonce() }),
+    JSON.stringify({
+      o: state.orgId,
+      u: state.userId,
+      e: now + GITHUB_INSTALL_STATE_TTL_MS,
+      n: state.nonce ?? newNonce(),
+    }),
   ).toString("base64url");
   return `${payload}.${sign(secret, payload)}`;
 }
 
 /** The state when it is well formed, correctly signed and not expired; null otherwise. */
-export function verifyGithubInstallState(secret: string, state: string, now: number = Date.now()): GithubInstallState | null {
+export function verifyGithubInstallState(
+  secret: string,
+  state: string,
+  now: number = Date.now(),
+): GithubInstallState | null {
   const [payload, signature, extra] = state.split(".");
   if (!payload || !signature || extra !== undefined) return null;
   const expected = Buffer.from(sign(secret, payload));
   const given = Buffer.from(signature);
-  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  if (expected.length !== given.length || !timingSafeEqual(expected, given))
+    return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
@@ -87,7 +119,12 @@ export function verifyGithubInstallState(secret: string, state: string, now: num
   }
   const data = statePayload.safeParse(parsed);
   if (!data.success || data.data.e <= now) return null;
-  return { orgId: data.data.o, userId: data.data.u, expiresAt: data.data.e, nonce: data.data.n };
+  return {
+    orgId: data.data.o,
+    userId: data.data.u,
+    expiresAt: data.data.e,
+    nonce: data.data.n,
+  };
 }
 
 /**
@@ -97,17 +134,35 @@ export function verifyGithubInstallState(secret: string, state: string, now: num
 export async function createGithubInstallState(
   db: Db,
   ctx: ActorContext,
-  { secret, userId, now = Date.now() }: { secret: string; userId: string; now?: number },
+  {
+    secret,
+    userId,
+    now = Date.now(),
+  }: { secret: string; userId: string; now?: number },
 ): Promise<string> {
   assertRole(ctx, ["owner", "admin"], "connect GitHub");
   const nonce = newNonce();
-  await db.delete(githubInstallStates).where(lt(githubInstallStates.expiresAt, new Date(now)));
-  await db.insert(githubInstallStates).values({ nonce, orgId: ctx.orgId, userId, expiresAt: new Date(now + GITHUB_INSTALL_STATE_TTL_MS) });
-  return signGithubInstallState(secret, { orgId: ctx.orgId, userId, nonce }, now);
+  await db
+    .delete(githubInstallStates)
+    .where(lt(githubInstallStates.expiresAt, new Date(now)));
+  await db.insert(githubInstallStates).values({
+    nonce,
+    orgId: ctx.orgId,
+    userId,
+    expiresAt: new Date(now + GITHUB_INSTALL_STATE_TTL_MS),
+  });
+  return signGithubInstallState(
+    secret,
+    { orgId: ctx.orgId, userId, nonce },
+    now,
+  );
 }
 
 const invalidState = () =>
-  new DomainError("validation", "The GitHub install link is invalid, expired or already used; start again from Settings → GitHub");
+  new DomainError(
+    "validation",
+    "The GitHub install link is invalid, expired or already used; start again from Settings → GitHub",
+  );
 
 /**
  * Checks the setup callback's `state` against the signed-in person: it must be theirs, unexpired
@@ -117,12 +172,21 @@ const invalidState = () =>
  */
 export async function resolveGithubSetup(
   db: Db,
-  { secret, state, userId, now = Date.now() }: { secret: string; state: string; userId: string; now?: number },
+  {
+    secret,
+    state,
+    userId,
+    now = Date.now(),
+  }: { secret: string; state: string; userId: string; now?: number },
 ): Promise<{ ctx: ActorContext; orgSlug: string }> {
   const verified = verifyGithubInstallState(secret, state, now);
   if (!verified) throw invalidState();
   // Checked before using it up, so someone else's session can't spend the person's link.
-  if (verified.userId !== userId) throw new DomainError("forbidden", "This GitHub install was started by someone else");
+  if (verified.userId !== userId)
+    throw new DomainError(
+      "forbidden",
+      "This GitHub install was started by someone else",
+    );
   // Atomic: of two callbacks with the same state, only one deletes the row.
   const [used] = await db
     .delete(githubInstallStates)
@@ -140,10 +204,21 @@ export async function resolveGithubSetup(
     .select({ actorId: actors.id, role: actors.role, slug: organizations.slug })
     .from(actors)
     .innerJoin(organizations, eq(organizations.id, actors.orgId))
-    .where(and(eq(actors.orgId, verified.orgId), eq(actors.userId, userId), isNull(actors.deactivatedAt)))
+    .where(
+      and(
+        eq(actors.orgId, verified.orgId),
+        eq(actors.userId, userId),
+        isNull(actors.deactivatedAt),
+      ),
+    )
     .limit(1);
   if (!row) throw new DomainError("not_found", "Organization not found");
-  const ctx: ActorContext = { orgId: verified.orgId, actorId: row.actorId, role: row.role, source: "ui" };
+  const ctx: ActorContext = {
+    orgId: verified.orgId,
+    actorId: row.actorId,
+    role: row.role,
+    source: "ui",
+  };
   assertRole(ctx, ["owner", "admin"], "connect GitHub");
   return { ctx, orgSlug: row.slug };
 }
@@ -158,12 +233,24 @@ const BOT_HANDLES = ["github", "github-bot"];
  * pickers), created on first use.
  */
 export function ensureGithubBot(tx: Tx, orgId: string): Promise<string> {
-  return ensureBot(tx, orgId, { name: "GitHub", handles: BOT_HANDLES, purpose: "connect GitHub" });
+  return ensureBot(tx, orgId, {
+    name: "GitHub",
+    handles: BOT_HANDLES,
+    purpose: "connect GitHub",
+  });
 }
 
 /** Context for changes made by GitHub events: the bot, with activity source "git". */
-export async function githubBotContext(tx: Tx, orgId: string): Promise<ActorContext> {
-  return { orgId, actorId: await ensureGithubBot(tx, orgId), role: "member", source: "git" };
+export async function githubBotContext(
+  tx: Tx,
+  orgId: string,
+): Promise<ActorContext> {
+  return {
+    orgId,
+    actorId: await ensureGithubBot(tx, orgId),
+    role: "member",
+    source: "git",
+  };
 }
 
 // --- Installations ----------------------------------------------------------------------------
@@ -171,24 +258,39 @@ export async function githubBotContext(tx: Tx, orgId: string): Promise<ActorCont
 /** The installation is connected to another organization: a 409, and the setup callback's `other_organization`. */
 export class GithubInstallationTakenError extends DomainError {
   constructor(account: string) {
-    super("conflict", `The GitHub installation on ${account} is connected to another organization`);
+    super(
+      "conflict",
+      `The GitHub installation on ${account} is connected to another organization`,
+    );
     this.name = "GithubInstallationTakenError";
   }
 }
 
 type InstallationRow = typeof githubInstallations.$inferSelect;
 
-export function githubInstallationSettingsUrl(row: { id: number; accountLogin: string; accountType: string }): string {
+export function githubInstallationSettingsUrl(row: {
+  id: number;
+  accountLogin: string;
+  accountType: string;
+}): string {
   return row.accountType === "Organization"
     ? `https://github.com/organizations/${encodeURIComponent(row.accountLogin)}/settings/installations/${row.id}`
     : `https://github.com/settings/installations/${row.id}`;
 }
 
-async function toInstallationDtos(db: Db | Tx, viewer: Viewer, rows: InstallationRow[]): Promise<GithubInstallationDto[]> {
+async function toInstallationDtos(
+  db: Db | Tx,
+  viewer: Viewer,
+  rows: InstallationRow[],
+): Promise<GithubInstallationDto[]> {
   if (rows.length === 0) return [];
   const scope = await projectScope(db, viewer);
   const granted = await db
-    .select({ installationId: repos.githubInstallationId, owner: repos.owner, name: repos.name })
+    .select({
+      installationId: repos.githubInstallationId,
+      owner: repos.owner,
+      name: repos.name,
+    })
     .from(repos)
     .where(
       and(
@@ -216,23 +318,39 @@ async function toInstallationDtos(db: Db | Tx, viewer: Viewer, rows: Installatio
 }
 
 /** The organization's installations, by account; a scoped agent sees only its projects' repos in them. */
-export async function listGithubInstallations(db: Db, viewer: Viewer): Promise<GithubInstallationDto[]> {
+export async function listGithubInstallations(
+  db: Db,
+  viewer: Viewer,
+): Promise<GithubInstallationDto[]> {
   const rows = await db
     .select()
     .from(githubInstallations)
     .where(eq(githubInstallations.orgId, orgIdOf(viewer)))
-    .orderBy(sql`lower(${githubInstallations.accountLogin})`, asc(githubInstallations.id));
+    .orderBy(
+      sql`lower(${githubInstallations.accountLogin})`,
+      asc(githubInstallations.id),
+    );
   return toInstallationDtos(db, viewer, rows);
 }
 
 /** Owners, admins and their agents manage the connection, except agents limited to some projects. */
-async function assertCanManageGithub(db: Db, ctx: ActorContext, action: string) {
+async function assertCanManageGithub(
+  db: Db,
+  ctx: ActorContext,
+  action: string,
+) {
   await assertCanManageProjects(db, ctx, action);
-  if (await projectScope(db, ctx)) throw new DomainError("forbidden", `Agents limited to some projects can't ${action}`);
+  if (await projectScope(db, ctx))
+    throw new DomainError(
+      "forbidden",
+      `Agents limited to some projects can't ${action}`,
+    );
 }
 
 /** A repository an installation grants; webhooks don't say the default branch ("main" then). */
-export type GithubRepoGrant = Omit<GithubRepoData, "defaultBranch"> & { defaultBranch?: string };
+export type GithubRepoGrant = Omit<GithubRepoData, "defaultBranch"> & {
+  defaultBranch?: string;
+};
 
 /**
  * Gives the installation the repos it grants, inside the caller's transaction: repos the
@@ -247,18 +365,28 @@ export async function grantGithubRepos(
 ): Promise<{ attached: string[]; added: string[] }> {
   // Unique by owner/name, case-insensitively.
   const wanted = new Map<string, GithubRepoGrant>();
-  for (const repo of repositories) wanted.set(repoFullName(repo).toLowerCase(), repo);
+  for (const repo of repositories)
+    wanted.set(repoFullName(repo).toLowerCase(), repo);
   const attached: string[] = [];
   const added: string[] = [];
   if (wanted.size === 0) return { attached, added };
 
-  const existing = await tx.select().from(repos).where(eq(repos.orgId, ctx.orgId)).for("update");
-  const byName = new Map(existing.map((r) => [repoFullName(r).toLowerCase(), r]));
+  const existing = await tx
+    .select()
+    .from(repos)
+    .where(eq(repos.orgId, ctx.orgId))
+    .for("update");
+  const byName = new Map(
+    existing.map((r) => [repoFullName(r).toLowerCase(), r]),
+  );
   for (const [key, repo] of wanted) {
     const found = byName.get(key);
     if (found) {
       if (found.githubInstallationId !== installationId) {
-        await tx.update(repos).set({ githubInstallationId: installationId }).where(eq(repos.id, found.id));
+        await tx
+          .update(repos)
+          .set({ githubInstallationId: installationId })
+          .where(eq(repos.id, found.id));
         attached.push(repoFullName(found));
       }
       continue;
@@ -287,7 +415,12 @@ export async function releaseGithubRepos(
   const granted = await tx
     .select()
     .from(repos)
-    .where(and(eq(repos.orgId, orgId), eq(repos.githubInstallationId, installationId)))
+    .where(
+      and(
+        eq(repos.orgId, orgId),
+        eq(repos.githubInstallationId, installationId),
+      ),
+    )
     .for("update");
   const rows = granted.filter((r) => released(repoFullName(r).toLowerCase()));
   if (rows.length) {
@@ -305,8 +438,16 @@ export async function releaseGithubRepos(
 }
 
 /** The non-empty lists of an access change, for an activity entry's `changes`. */
-export function repoAccessChanges(lists: { attached?: string[]; added?: string[]; released?: string[] }): Record<string, string[]> {
-  return Object.fromEntries(Object.entries(lists).filter(([, names]) => names !== undefined && names.length > 0));
+export function repoAccessChanges(lists: {
+  attached?: string[];
+  added?: string[];
+  released?: string[];
+}): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(lists).filter(
+      ([, names]) => names !== undefined && names.length > 0,
+    ),
+  );
 }
 
 /**
@@ -319,7 +460,10 @@ export function repoAccessChanges(lists: { attached?: string[]; added?: string[]
 export async function saveGithubInstallation(
   db: Db,
   ctx: ActorContext,
-  { installation, repositories }: { installation: GithubInstallationData; repositories: GithubRepoData[] },
+  {
+    installation,
+    repositories,
+  }: { installation: GithubInstallationData; repositories: GithubRepoData[] },
 ): Promise<GithubInstallationDto> {
   await assertCanManageGithub(db, ctx, "connect GitHub");
   return db.transaction(async (tx) => {
@@ -336,29 +480,55 @@ export async function saveGithubInstallation(
       accountLogin: installation.account,
       accountType: installation.accountType,
       repositorySelection: installation.repositorySelection,
-      suspendedAt: installation.suspended ? (current?.suspendedAt ?? new Date()) : null,
+      suspendedAt: installation.suspended
+        ? (current?.suspendedAt ?? new Date())
+        : null,
       updatedAt: new Date(),
     };
     const [row] = current
-      ? await tx.update(githubInstallations).set(values).where(eq(githubInstallations.id, installation.id)).returning()
+      ? await tx
+          .update(githubInstallations)
+          .set(values)
+          .where(eq(githubInstallations.id, installation.id))
+          .returning()
       : await tx
           .insert(githubInstallations)
-          .values({ id: installation.id, orgId: ctx.orgId, connectedBy: ctx.actorId, ...values })
+          .values({
+            id: installation.id,
+            orgId: ctx.orgId,
+            connectedBy: ctx.actorId,
+            ...values,
+          })
           .onConflictDoNothing()
           .returning();
     // Only when a concurrent request connected it first.
-    if (!row) throw new DomainError("conflict", `The GitHub installation on ${installation.account} was just connected; reload`);
+    if (!row)
+      throw new DomainError(
+        "conflict",
+        `The GitHub installation on ${installation.account} was just connected; reload`,
+      );
     await ensureGithubBot(tx, ctx.orgId);
 
     const access = await grantGithubRepos(tx, ctx, row.id, repositories);
-    const wanted = new Set(repositories.map((r) => repoFullName(r).toLowerCase()));
-    const released = await releaseGithubRepos(tx, ctx.orgId, row.id, (key) => !wanted.has(key));
+    const wanted = new Set(
+      repositories.map((r) => repoFullName(r).toLowerCase()),
+    );
+    const released = await releaseGithubRepos(
+      tx,
+      ctx.orgId,
+      row.id,
+      (key) => !wanted.has(key),
+    );
 
     await recordActivity(tx, ctx, {
       entityType: "organization",
       entityId: ctx.orgId,
       action: current ? "github.synced" : "github.connected",
-      changes: { installation: row.id, account: row.accountLogin, ...repoAccessChanges({ ...access, released }) },
+      changes: {
+        installation: row.id,
+        account: row.accountLogin,
+        ...repoAccessChanges({ ...access, released }),
+      },
     });
     await publish(tx, { type: "repos.changed", orgId: ctx.orgId });
     const [dto] = await toInstallationDtos(tx, ctx, [row]);
@@ -368,20 +538,34 @@ export async function saveGithubInstallation(
 }
 
 /** An installation of the organization, by GitHub's id; 404 for anything else. */
-export async function getGithubInstallation(db: Db, viewer: Viewer, id: number): Promise<GithubInstallationDto> {
+export async function getGithubInstallation(
+  db: Db,
+  viewer: Viewer,
+  id: number,
+): Promise<GithubInstallationDto> {
   const [row] = await db
     .select()
     .from(githubInstallations)
-    .where(and(eq(githubInstallations.id, id), eq(githubInstallations.orgId, orgIdOf(viewer))))
+    .where(
+      and(
+        eq(githubInstallations.id, id),
+        eq(githubInstallations.orgId, orgIdOf(viewer)),
+      ),
+    )
     .limit(1);
-  if (!row) throw new DomainError("not_found", `GitHub installation ${id} not found`);
+  if (!row)
+    throw new DomainError("not_found", `GitHub installation ${id} not found`);
   const [dto] = await toInstallationDtos(db, viewer, [row]);
   if (!dto) throw new Error("Failed to load the GitHub installation");
   return dto;
 }
 
 /** Checks that the caller may sync `id` before the API asks GitHub about it. */
-export async function assertCanSyncGithubInstallation(db: Db, ctx: ActorContext, id: number): Promise<void> {
+export async function assertCanSyncGithubInstallation(
+  db: Db,
+  ctx: ActorContext,
+  id: number,
+): Promise<void> {
   await assertCanManageGithub(db, ctx, "sync GitHub");
   await getGithubInstallation(db, ctx, id);
 }
@@ -390,14 +574,24 @@ export async function assertCanSyncGithubInstallation(db: Db, ctx: ActorContext,
  * Forgets an installation: its repos stay, without it. The App stays installed on GitHub until
  * someone uninstalls it there (`settingsUrl`).
  */
-export async function disconnectGithubInstallation(db: Db, ctx: ActorContext, id: number): Promise<void> {
+export async function disconnectGithubInstallation(
+  db: Db,
+  ctx: ActorContext,
+  id: number,
+): Promise<void> {
   await assertCanManageGithub(db, ctx, "disconnect GitHub");
   await db.transaction(async (tx) => {
     const [row] = await tx
       .delete(githubInstallations)
-      .where(and(eq(githubInstallations.id, id), eq(githubInstallations.orgId, ctx.orgId)))
+      .where(
+        and(
+          eq(githubInstallations.id, id),
+          eq(githubInstallations.orgId, ctx.orgId),
+        ),
+      )
       .returning();
-    if (!row) throw new DomainError("not_found", `GitHub installation ${id} not found`);
+    if (!row)
+      throw new DomainError("not_found", `GitHub installation ${id} not found`);
     await recordActivity(tx, ctx, {
       entityType: "organization",
       entityId: ctx.orgId,

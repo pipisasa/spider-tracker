@@ -23,15 +23,28 @@ const { projects, statuses, taskRelations, tasks } = schema;
  * another task, and a project without a canceled status. The original may be in any status, even closed
  * or a duplicate itself (chains are allowed, cycles aren't).
  */
-export async function markDuplicate(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<TaskDto> {
+export async function markDuplicate(
+  db: Db,
+  ctx: ActorContext,
+  taskKey: string,
+  input: unknown,
+): Promise<TaskDto> {
   assertCanWrite(ctx);
   const data = parseInput(markDuplicateInput, input);
   return db.transaction(async (tx) => {
     const first = await findTask(tx, ctx, taskKey);
     const original = await findTask(tx, ctx, data.of);
-    if (first.task.id === original.task.id) throw new DomainError("validation", "A task can't be a duplicate of itself");
+    if (first.task.id === original.task.id)
+      throw new DomainError(
+        "validation",
+        "A task can't be a duplicate of itself",
+      );
     // One mark at a time per task (against another original too); "no key update" leaves link inserts alone.
-    await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, first.task.id)).for("no key update");
+    await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.id, first.task.id))
+      .for("no key update");
     await lockPair(tx, first.task.id, original.task.id);
     const self = await findTask(tx, ctx, taskKey);
     const originalKey = `${original.projectKey}-${original.task.number}`;
@@ -41,7 +54,13 @@ export async function markDuplicate(db: Db, ctx: ActorContext, taskKey: string, 
       .from(taskRelations)
       .innerJoin(tasks, eq(tasks.id, taskRelations.toTaskId))
       .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(and(eq(taskRelations.fromTaskId, self.task.id), eq(taskRelations.type, "duplicates"), isNull(tasks.deletedAt)));
+      .where(
+        and(
+          eq(taskRelations.fromTaskId, self.task.id),
+          eq(taskRelations.type, "duplicates"),
+          isNull(tasks.deletedAt),
+        ),
+      );
     const linked = marked.some((m) => m.id === original.task.id);
     const elsewhere = marked.find((m) => m.id !== original.task.id);
     if (!linked && elsewhere) {
@@ -51,29 +70,50 @@ export async function markDuplicate(db: Db, ctx: ActorContext, taskKey: string, 
       );
     }
 
-    const [current] = await tx.select({ category: statuses.category }).from(statuses).where(eq(statuses.id, self.task.statusId)).limit(1);
+    const [current] = await tx
+      .select({ category: statuses.category })
+      .from(statuses)
+      .where(eq(statuses.id, self.task.statusId))
+      .limit(1);
     let statusId: string | undefined;
     if (current?.category !== "canceled") {
       const [canceled] = await tx
         .select({ id: statuses.id })
         .from(statuses)
         .where(
-          and(eq(statuses.projectId, self.task.projectId), eq(statuses.kind, self.task.kind), eq(statuses.category, "canceled")),
+          and(
+            eq(statuses.projectId, self.task.projectId),
+            eq(statuses.kind, self.task.kind),
+            eq(statuses.category, "canceled"),
+          ),
         )
         .orderBy(asc(statuses.position))
         .limit(1);
       if (!canceled) {
-        const where = self.task.kind === "task" ? `Project ${self.projectKey}` : `${self.projectKey}'s ${self.task.kind} workflow`;
-        throw new DomainError("validation", `${where} has no canceled status to move the duplicate to`);
+        const where =
+          self.task.kind === "task"
+            ? `Project ${self.projectKey}`
+            : `${self.projectKey}'s ${self.task.kind} workflow`;
+        throw new DomainError(
+          "validation",
+          `${where} has no canceled status to move the duplicate to`,
+        );
       }
       statusId = canceled.id;
     }
 
     if (!linked) await linkTasks(tx, ctx, self, original, "duplicates");
-    const { task } = await applyTaskUpdate(tx, ctx, self, statusId ? { statusId } : {});
+    const { task } = await applyTaskUpdate(
+      tx,
+      ctx,
+      self,
+      statusId ? { statusId } : {},
+    );
     if (!linked || statusId) {
       const note = `Duplicate of ${originalKey}: ${original.task.title}`;
-      await postComment(tx, ctx, self, { body: data.comment ? `${note}\n\n${data.comment}` : note });
+      await postComment(tx, ctx, self, {
+        body: data.comment ? `${note}\n\n${data.comment}` : note,
+      });
     }
     return task;
   });

@@ -79,7 +79,7 @@ describe("first-save fidelity", () => {
     underscores: "Use snake_case and __dunder__ names, MAX_VALUE.",
     brackets: "See [1] and array[0].",
     "code span": "Use `a<b>&c` here.",
-    "code block": "```html\n<div class=\"a\">&amp; < > &</div>\n```",
+    "code block": '```html\n<div class="a">&amp; < > &</div>\n```',
   };
   for (const [name, markdown] of Object.entries(untouched)) {
     test(name, () => {
@@ -115,11 +115,16 @@ describe("wiki links (ST-100)", () => {
     ])
       expect(roundTrip(markdown)).toBe(markdown);
     // Tables are re-padded, but the link inside stays.
-    expect(roundTrip("| Doc |\n| --- |\n| [[Guide]] |")).toContain("| [[Guide]] |");
+    expect(roundTrip("| Doc |\n| --- |\n| [[Guide]] |")).toContain(
+      "| [[Guide]] |",
+    );
   });
 
   test("stay text in code and when broken", () => {
-    for (const markdown of ["Use `[[Title]]` here.", "Not a [[link] or [[]]."]) {
+    for (const markdown of [
+      "Use `[[Title]]` here.",
+      "Not a [[link] or [[]].",
+    ]) {
       const first = roundTrip(markdown);
       expect(first).not.toContain("wikiLink");
       expect(roundTrip(first)).toBe(first);

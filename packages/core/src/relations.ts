@@ -1,7 +1,13 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
 import { and, eq, or, sql } from "drizzle-orm";
-import { assertCanWrite, inScope, projectScope, type ActorContext, type Viewer } from "./access";
+import {
+  assertCanWrite,
+  inScope,
+  projectScope,
+  type ActorContext,
+  type Viewer,
+} from "./access";
 import { recordActivity } from "./activity";
 import type { RelationDto, RelationKind } from "./contracts";
 import { DomainError } from "./errors";
@@ -18,13 +24,20 @@ const { projects, taskRelations, tasks } = schema;
 type StoredType = "blocks" | "relates" | "duplicates";
 
 /** Normalises a kind seen from `self` into the stored direction; `relates` is stored smaller id first. */
-function toStored(kind: RelationKind, self: string, other: string): { from: string; to: string; type: StoredType } {
+function toStored(
+  kind: RelationKind,
+  self: string,
+  other: string,
+): { from: string; to: string; type: StoredType } {
   if (kind === "blocked_by") return { from: other, to: self, type: "blocks" };
-  if (kind === "duplicated_by") return { from: other, to: self, type: "duplicates" };
+  if (kind === "duplicated_by")
+    return { from: other, to: self, type: "duplicates" };
   if (kind === "relates") {
     // Must agree with the `task_relations_relates_ordered` CHECK (from < to as uuids): Postgres
     // orders uuids by bytes, which matches comparing their lowercase hex strings.
-    return self.toLowerCase() < other.toLowerCase() ? { from: self, to: other, type: kind } : { from: other, to: self, type: kind };
+    return self.toLowerCase() < other.toLowerCase()
+      ? { from: self, to: other, type: kind }
+      : { from: other, to: self, type: kind };
   }
   return { from: self, to: other, type: kind };
 }
@@ -47,34 +60,62 @@ const INVERSE: Record<RelationKind, RelationKind> = {
 async function findLink(tx: Tx, from: string, to: string, type: StoredType) {
   const symmetric = type === "relates";
   const [row] = await tx
-    .select({ fromTaskId: taskRelations.fromTaskId, toTaskId: taskRelations.toTaskId })
+    .select({
+      fromTaskId: taskRelations.fromTaskId,
+      toTaskId: taskRelations.toTaskId,
+    })
     .from(taskRelations)
     .where(
       and(
         eq(taskRelations.type, type),
         symmetric
           ? or(
-              and(eq(taskRelations.fromTaskId, from), eq(taskRelations.toTaskId, to)),
-              and(eq(taskRelations.fromTaskId, to), eq(taskRelations.toTaskId, from)),
+              and(
+                eq(taskRelations.fromTaskId, from),
+                eq(taskRelations.toTaskId, to),
+              ),
+              and(
+                eq(taskRelations.fromTaskId, to),
+                eq(taskRelations.toTaskId, from),
+              ),
             )
-          : and(eq(taskRelations.fromTaskId, from), eq(taskRelations.toTaskId, to)),
+          : and(
+              eq(taskRelations.fromTaskId, from),
+              eq(taskRelations.toTaskId, to),
+            ),
       ),
     )
     .limit(1);
   return row;
 }
 
-async function announce(tx: Tx, ctx: ActorContext, ...keys: { key: string; projectKey: string }[]) {
-  for (const { key, projectKey } of keys) await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey, taskKey: key });
+async function announce(
+  tx: Tx,
+  ctx: ActorContext,
+  ...keys: { key: string; projectKey: string }[]
+) {
+  for (const { key, projectKey } of keys)
+    await publish(tx, {
+      type: "task.changed",
+      orgId: ctx.orgId,
+      projectKey,
+      taskKey: key,
+    });
 }
 
-export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, input: unknown): Promise<RelationDto> {
+export async function addRelation(
+  db: Db,
+  ctx: ActorContext,
+  taskKey: string,
+  input: unknown,
+): Promise<RelationDto> {
   assertCanWrite(ctx);
   const { kind, task: otherKey } = parseInput(relationInput, input);
   return db.transaction(async (tx) => {
     const self = await findTask(tx, ctx, taskKey);
     const other = await findTask(tx, ctx, otherKey);
-    if (self.task.id === other.task.id) throw new DomainError("validation", "A task can't be related to itself");
+    if (self.task.id === other.task.id)
+      throw new DomainError("validation", "A task can't be related to itself");
     await lockPair(tx, self.task.id, other.task.id);
     return linkTasks(tx, ctx, self, other, kind);
   });
@@ -84,7 +125,11 @@ export async function addRelation(db: Db, ctx: ActorContext, taskKey: string, in
  * Whether `from` already duplicates `to`, directly or through a chain of `duplicates` links
  * (deleted tasks break the chain). Linking `to` as a duplicate of `from` would close a cycle.
  */
-export async function duplicatesChain(tx: Tx, from: string, to: string): Promise<boolean> {
+export async function duplicatesChain(
+  tx: Tx,
+  from: string,
+  to: string,
+): Promise<boolean> {
   const rows = await tx.execute(sql`
     with recursive chain(id) as (
       select to_task_id from task_relations where from_task_id = ${from}::uuid and type = 'duplicates'
@@ -103,24 +148,55 @@ export async function duplicatesChain(tx: Tx, from: string, to: string): Promise
  * The body of addRelation for two different tasks found in `tx` whose pair is locked (lockPair):
  * refuses an existing link, mutual blocking and duplicate cycles, then records and announces it.
  */
-export async function linkTasks(tx: Tx, ctx: ActorContext, self: FoundTask, other: FoundTask, kind: RelationKind): Promise<RelationDto> {
+export async function linkTasks(
+  tx: Tx,
+  ctx: ActorContext,
+  self: FoundTask,
+  other: FoundTask,
+  kind: RelationKind,
+): Promise<RelationDto> {
   const link = toStored(kind, self.task.id, other.task.id);
-  if (await findLink(tx, link.from, link.to, link.type)) throw new DomainError("conflict", "These tasks are already linked that way");
+  if (await findLink(tx, link.from, link.to, link.type))
+    throw new DomainError(
+      "conflict",
+      "These tasks are already linked that way",
+    );
   // "A blocks B" and "B blocks A" together would be a deadlock.
-  if (link.type === "blocks" && (await findLink(tx, link.to, link.from, "blocks"))) {
-    throw new DomainError("validation", "The other task already blocks this one; two tasks can't block each other");
+  if (
+    link.type === "blocks" &&
+    (await findLink(tx, link.to, link.from, "blocks"))
+  ) {
+    throw new DomainError(
+      "validation",
+      "The other task already blocks this one; two tasks can't block each other",
+    );
   }
   // "A duplicates B" when B already duplicates A (directly or through other tasks) would be a cycle.
-  if (link.type === "duplicates" && (await duplicatesChain(tx, link.to, link.from))) {
-    throw new DomainError("validation", "That would make a cycle of duplicates: the original is already a duplicate of this task");
+  if (
+    link.type === "duplicates" &&
+    (await duplicatesChain(tx, link.to, link.from))
+  ) {
+    throw new DomainError(
+      "validation",
+      "That would make a cycle of duplicates: the original is already a duplicate of this task",
+    );
   }
   const [inserted] = await tx
     .insert(taskRelations)
-    .values({ fromTaskId: link.from, toTaskId: link.to, type: link.type, createdBy: ctx.actorId })
+    .values({
+      fromTaskId: link.from,
+      toTaskId: link.to,
+      type: link.type,
+      createdBy: ctx.actorId,
+    })
     .onConflictDoNothing()
     .returning({ fromTaskId: taskRelations.fromTaskId });
   // A concurrent request added the same link.
-  if (!inserted) throw new DomainError("conflict", "These tasks are already linked that way");
+  if (!inserted)
+    throw new DomainError(
+      "conflict",
+      "These tasks are already linked that way",
+    );
 
   const selfKey = `${self.projectKey}-${self.task.number}`;
   const otherFullKey = `${other.projectKey}-${other.task.number}`;
@@ -136,14 +212,29 @@ export async function linkTasks(tx: Tx, ctx: ActorContext, self: FoundTask, othe
     action: "relation.added",
     changes: { kind: INVERSE[kind], task: selfKey },
   });
-  await announce(tx, ctx, { key: selfKey, projectKey: self.projectKey }, { key: otherFullKey, projectKey: other.projectKey });
+  await announce(
+    tx,
+    ctx,
+    { key: selfKey, projectKey: self.projectKey },
+    { key: otherFullKey, projectKey: other.projectKey },
+  );
   return {
     kind,
-    task: { id: other.task.id, key: otherFullKey, title: other.task.title, statusId: other.task.statusId },
+    task: {
+      id: other.task.id,
+      key: otherFullKey,
+      title: other.task.title,
+      statusId: other.task.statusId,
+    },
   };
 }
 
-export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string, input: unknown) {
+export async function removeRelation(
+  db: Db,
+  ctx: ActorContext,
+  taskKey: string,
+  input: unknown,
+) {
   assertCanWrite(ctx);
   const { kind, task: otherKey } = parseInput(relationInput, input);
   await db.transaction(async (tx) => {
@@ -151,7 +242,8 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
     const other = await findTask(tx, ctx, otherKey);
     const link = toStored(kind, self.task.id, other.task.id);
     const found = await findLink(tx, link.from, link.to, link.type);
-    if (!found) throw new DomainError("not_found", "No such link between these tasks");
+    if (!found)
+      throw new DomainError("not_found", "No such link between these tasks");
     const deleted = await tx
       .delete(taskRelations)
       .where(
@@ -163,7 +255,8 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
       )
       .returning({ fromTaskId: taskRelations.fromTaskId });
     // A concurrent request removed it first.
-    if (deleted.length === 0) throw new DomainError("not_found", "No such link between these tasks");
+    if (deleted.length === 0)
+      throw new DomainError("not_found", "No such link between these tasks");
     const selfKey = `${self.projectKey}-${self.task.number}`;
     const otherFullKey = `${other.projectKey}-${other.task.number}`;
     await recordActivity(tx, ctx, {
@@ -178,12 +271,21 @@ export async function removeRelation(db: Db, ctx: ActorContext, taskKey: string,
       action: "relation.removed",
       changes: { kind: INVERSE[kind], task: selfKey },
     });
-    await announce(tx, ctx, { key: selfKey, projectKey: self.projectKey }, { key: otherFullKey, projectKey: other.projectKey });
+    await announce(
+      tx,
+      ctx,
+      { key: selfKey, projectKey: self.projectKey },
+      { key: otherFullKey, projectKey: other.projectKey },
+    );
   });
 }
 
 /** Every link of a task, from its point of view, ordered by kind then key. */
-export async function listRelations(db: Db, viewer: Viewer, taskKey: string): Promise<RelationDto[]> {
+export async function listRelations(
+  db: Db,
+  viewer: Viewer,
+  taskKey: string,
+): Promise<RelationDto[]> {
   const { task } = await findTask(db, viewer, taskKey);
   const scope = await projectScope(db, viewer);
   const rows = await db
@@ -191,31 +293,72 @@ export async function listRelations(db: Db, viewer: Viewer, taskKey: string): Pr
       fromTaskId: taskRelations.fromTaskId,
       toTaskId: taskRelations.toTaskId,
       type: taskRelations.type,
-      other: { id: tasks.id, projectId: tasks.projectId, number: tasks.number, title: tasks.title, statusId: tasks.statusId, deletedAt: tasks.deletedAt },
+      other: {
+        id: tasks.id,
+        projectId: tasks.projectId,
+        number: tasks.number,
+        title: tasks.title,
+        statusId: tasks.statusId,
+        deletedAt: tasks.deletedAt,
+      },
       projectKey: projects.key,
     })
     .from(taskRelations)
     .innerJoin(
       tasks,
       or(
-        and(eq(taskRelations.fromTaskId, task.id), eq(tasks.id, taskRelations.toTaskId)),
-        and(eq(taskRelations.toTaskId, task.id), eq(tasks.id, taskRelations.fromTaskId)),
+        and(
+          eq(taskRelations.fromTaskId, task.id),
+          eq(tasks.id, taskRelations.toTaskId),
+        ),
+        and(
+          eq(taskRelations.toTaskId, task.id),
+          eq(tasks.id, taskRelations.fromTaskId),
+        ),
       ),
     )
     .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(or(eq(taskRelations.fromTaskId, task.id), eq(taskRelations.toTaskId, task.id)));
+    .where(
+      or(
+        eq(taskRelations.fromTaskId, task.id),
+        eq(taskRelations.toTaskId, task.id),
+      ),
+    );
 
-  const order: RelationKind[] = ["blocked_by", "blocks", "duplicates", "duplicated_by", "relates"];
+  const order: RelationKind[] = [
+    "blocked_by",
+    "blocks",
+    "duplicates",
+    "duplicated_by",
+    "relates",
+  ];
   return rows
     .filter((r) => !r.other.deletedAt && inScope(scope, r.other.projectId))
     .map((r) => {
       const outgoing = r.fromTaskId === task.id;
       const kind: RelationKind =
-        r.type === "relates" ? "relates" : r.type === "blocks" ? (outgoing ? "blocks" : "blocked_by") : outgoing ? "duplicates" : "duplicated_by";
+        r.type === "relates"
+          ? "relates"
+          : r.type === "blocks"
+            ? outgoing
+              ? "blocks"
+              : "blocked_by"
+            : outgoing
+              ? "duplicates"
+              : "duplicated_by";
       return {
         kind,
-        task: { id: r.other.id, key: `${r.projectKey}-${r.other.number}`, title: r.other.title, statusId: r.other.statusId },
+        task: {
+          id: r.other.id,
+          key: `${r.projectKey}-${r.other.number}`,
+          title: r.other.title,
+          statusId: r.other.statusId,
+        },
       };
     })
-    .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.task.key.localeCompare(b.task.key, undefined, { numeric: true }));
+    .sort(
+      (a, b) =>
+        order.indexOf(a.kind) - order.indexOf(b.kind) ||
+        a.task.key.localeCompare(b.task.key, undefined, { numeric: true }),
+    );
 }

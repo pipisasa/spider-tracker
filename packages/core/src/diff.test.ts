@@ -4,7 +4,10 @@ import { diffHunks, diffLines, formatUnifiedDiff, splitLines } from "./diff";
 
 /** The diff as `diff -u` body lines, without line numbers. */
 const marks = (lines: DiffLineDto[]) =>
-  lines.map((l) => `${l.kind === "added" ? "+" : l.kind === "removed" ? "-" : " "}${l.text}`);
+  lines.map(
+    (l) =>
+      `${l.kind === "added" ? "+" : l.kind === "removed" ? "-" : " "}${l.text}`,
+  );
 
 /** Rebuilds both texts from a diff: what every correct diff must satisfy. */
 function sides(lines: DiffLineDto[]) {
@@ -34,12 +37,14 @@ describe("diffLines", () => {
   });
 
   test("a changed line is removed, then added, with line numbers", () => {
-    expect(diffLines("# Plan\nold step\nend", "# Plan\nnew step\nend")).toEqual([
-      { kind: "context", text: "# Plan", oldLine: 1, newLine: 1 },
-      { kind: "removed", text: "old step", oldLine: 2, newLine: null },
-      { kind: "added", text: "new step", oldLine: null, newLine: 2 },
-      { kind: "context", text: "end", oldLine: 3, newLine: 3 },
-    ]);
+    expect(diffLines("# Plan\nold step\nend", "# Plan\nnew step\nend")).toEqual(
+      [
+        { kind: "context", text: "# Plan", oldLine: 1, newLine: 1 },
+        { kind: "removed", text: "old step", oldLine: 2, newLine: null },
+        { kind: "added", text: "new step", oldLine: null, newLine: 2 },
+        { kind: "context", text: "end", oldLine: 3, newLine: 3 },
+      ],
+    );
   });
 
   test("from and to empty texts", () => {
@@ -52,21 +57,39 @@ describe("diffLines", () => {
     // The classic Myers example: ABCABBA → CBABAC takes 5 edits.
     const lines = diffLines("A\nB\nC\nA\nB\nB\nA", "C\nB\nA\nB\nA\nC");
     expect(lines.filter((l) => l.kind !== "context")).toHaveLength(5);
-    expect(sides(lines)).toEqual({ old: ["A", "B", "C", "A", "B", "B", "A"], new: ["C", "B", "A", "B", "A", "C"] });
+    expect(sides(lines)).toEqual({
+      old: ["A", "B", "C", "A", "B", "B", "A"],
+      new: ["C", "B", "A", "B", "A", "C"],
+    });
   });
 
   test("insertions and deletions in the middle", () => {
     const a = "one\ntwo\nthree\nfour\nfive";
     const b = "one\ntwo and a half\nthree\nfive\nsix";
-    expect(sides(diffLines(a, b))).toEqual({ old: splitLines(a), new: splitLines(b) });
-    expect(marks(diffLines(a, b))).toEqual([" one", "-two", "+two and a half", " three", "-four", " five", "+six"]);
+    expect(sides(diffLines(a, b))).toEqual({
+      old: splitLines(a),
+      new: splitLines(b),
+    });
+    expect(marks(diffLines(a, b))).toEqual([
+      " one",
+      "-two",
+      "+two and a half",
+      " three",
+      "-four",
+      " five",
+      "+six",
+    ]);
   });
 
   test("random edits always rebuild both texts", () => {
     let seed = 7;
-    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const random = () =>
+      (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
     for (let round = 0; round < 200; round++) {
-      const a = Array.from({ length: Math.floor(random() * 30) }, () => "abcde"[Math.floor(random() * 5)]!);
+      const a = Array.from(
+        { length: Math.floor(random() * 30) },
+        () => "abcde"[Math.floor(random() * 5)]!,
+      );
       const b = a.flatMap((line) => {
         const r = random();
         if (r < 0.15) return [];
@@ -86,8 +109,17 @@ describe("diffLines", () => {
     expect(sides(lines).new).toHaveLength(3002);
     expect(lines[0]).toMatchObject({ kind: "context", text: "head" });
     expect(lines[1]).toMatchObject({ kind: "removed", text: "a0" });
-    expect(lines[3001]).toMatchObject({ kind: "added", text: "b0", newLine: 2 });
-    expect(lines.at(-1)).toMatchObject({ kind: "context", text: "tail", oldLine: 3002, newLine: 3002 });
+    expect(lines[3001]).toMatchObject({
+      kind: "added",
+      text: "b0",
+      newLine: 2,
+    });
+    expect(lines.at(-1)).toMatchObject({
+      kind: "context",
+      text: "tail",
+      oldLine: 3002,
+      newLine: 3002,
+    });
   });
 });
 
@@ -104,7 +136,9 @@ describe("diffHunks and formatUnifiedDiff", () => {
     next[1] = "changed 2";
     next[17] = "changed 18";
     const hunks = diffHunks(diffLines(old.join("\n"), next.join("\n")));
-    expect(hunks.map((h) => [h.oldStart, h.oldLines, h.newStart, h.newLines])).toEqual([
+    expect(
+      hunks.map((h) => [h.oldStart, h.oldLines, h.newStart, h.newLines]),
+    ).toEqual([
       [1, 5, 1, 5],
       [15, 6, 15, 6],
     ]);
@@ -137,13 +171,22 @@ describe("diffHunks and formatUnifiedDiff", () => {
     next[10] = "changed 11";
     const hunks = diffHunks(diffLines(old.join("\n"), next.join("\n")));
     expect(hunks).toHaveLength(1);
-    expect(hunks[0]).toMatchObject({ oldStart: 2, oldLines: 13, newStart: 2, newLines: 13 });
+    expect(hunks[0]).toMatchObject({
+      oldStart: 2,
+      oldLines: 13,
+      newStart: 2,
+      newLines: 13,
+    });
   });
 
   test("pure insertions and deletions number like diff -u", () => {
     const added = diffHunks(diffLines("", "a\nb"));
-    expect(formatUnifiedDiff(added, "x", "y")).toBe("--- x\n+++ y\n@@ -0,0 +1,2 @@\n+a\n+b");
+    expect(formatUnifiedDiff(added, "x", "y")).toBe(
+      "--- x\n+++ y\n@@ -0,0 +1,2 @@\n+a\n+b",
+    );
     const removed = diffHunks(diffLines("a", ""));
-    expect(formatUnifiedDiff(removed, "x", "y")).toBe("--- x\n+++ y\n@@ -1 +0,0 @@\n-a");
+    expect(formatUnifiedDiff(removed, "x", "y")).toBe(
+      "--- x\n+++ y\n@@ -1 +0,0 @@\n-a",
+    );
   });
 });

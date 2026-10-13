@@ -1,5 +1,14 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { actors, organizations } from "./tenancy";
 import { projects } from "./work";
 
@@ -8,7 +17,9 @@ import { projects } from "./work";
 export const savedViews = pgTable(
   "saved_views",
   {
-    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -19,11 +30,20 @@ export const savedViews = pgTable(
       .notNull()
       .references(() => actors.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    filters: jsonb("filters").$type<Record<string, unknown>>().notNull().default({}),
+    filters: jsonb("filters")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
     shared: boolean("shared").notNull().default(false),
-    view: text("view", { enum: ["board", "list"] }).notNull().default("board"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    view: text("view", { enum: ["board", "list"] })
+      .notNull()
+      .default("board"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("saved_views_project_idx").on(t.projectId),
