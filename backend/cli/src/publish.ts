@@ -54,20 +54,27 @@ function keyLine(line: string): { key: string; value: string } | null {
   return match ? { key: match[2] ?? "", value: match[3] ?? "" } : null;
 }
 
+const COMMENT_LINE = /^\s*#/;
+
 /**
  * The front matter block at the start of `text` (no BOM), or null. A block counts only when its
- * first line is a `key: value` line and every other non-blank line is one too, a YAML comment, or
- * an indented or `- item` line of a nested value. So a file that opens with a horizontal rule and
- * a paragraph is all body, even a one-line `Word: text` paragraph after a blank line.
+ * first line after any leading YAML comments is a `key: value` line (not blank) and every other
+ * non-blank line is one too, a comment, or an indented or `- item` line of a nested value. So a
+ * file that opens with a horizontal rule and a paragraph is all body, even a one-line
+ * `Word: text` paragraph after a blank line. A block opening with `# comment` lines is front
+ * matter, as YAML reads it (ST-132): a published file like `---`, `# notes`, `id: …` keeps its id.
  */
 function matchFrontMatter(text: string): RegExpExecArray | null {
   const match = text.startsWith("---") ? FRONT_MATTER.exec(text) : null;
   if (!match || match.index !== 0) return null;
   const lines = (match[1] ?? "").split(/\r?\n/);
   // The block ends with a line break, so the last element is "" (an empty block has only that).
-  if (lines.length > 1 && !keyLine(lines[0] ?? "")) return null;
+  if (lines.length > 1) {
+    const first = lines.findIndex((line) => !COMMENT_LINE.test(line));
+    if (!keyLine(lines[first] ?? "")) return null;
+  }
   for (const line of lines) {
-    if (!line.trim() || /^\s*#/.test(line) || keyLine(line)) continue;
+    if (!line.trim() || COMMENT_LINE.test(line) || keyLine(line)) continue;
     if (!/^(?:\s|-(?:\s|$))/.test(line)) return null;
   }
   return match;
@@ -173,11 +180,12 @@ export interface SourceDoc {
 
 /**
  * A short hash of a file's title and body as written (front matter and resolved links aside): it
- * tells whether the file changed since it was last published.
+ * tells whether the file changed since it was last published. Line endings are normalized, so a
+ * checkout with other `core.autocrlf` settings hashes the same.
  */
 export function sourceHash(doc: Pick<SourceDoc, "title" | "body">): string {
   return createHash("sha256")
-    .update(`${doc.title.trim()}\n${doc.body}`)
+    .update(`${doc.title.trim()}\n${doc.body}`.replace(/\r\n/g, "\n"))
     .digest("hex")
     .slice(0, 16);
 }
@@ -673,7 +681,7 @@ export async function publishDocuments(
       doc.hash === sourceHash(doc)
     ) {
       result.trackerNewer = true;
-      result.message = `The tracker has newer versions (${doc.version} → ${remote.version}) and this file hasn't changed since it was published: to update the file, copy the document's content (spider doc view ${doc.id}) and set version: ${remote.version}`;
+      result.message = `The tracker has newer versions (${doc.version} → ${remote.version}) and this file hasn't changed since it was published: to update the file, copy the document's content (spider doc view ${doc.id} --json | jq -r .content) and set version: ${remote.version}`;
       continue;
     }
     if (doc.version === null || doc.version !== remote.version) {
