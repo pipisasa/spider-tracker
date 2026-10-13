@@ -2247,16 +2247,24 @@ function createMcpServer(
           kinds: [...INBOX_KINDS],
         };
         const deadline = Date.now() + (wait_seconds ?? 0) * 1000;
-        let items = await listInbox(db, ctx, query);
-        while (items.length === 0 && Date.now() < deadline) {
-          await realtime.waitFor(
-            (e) =>
-              e.type === "inbox.created" &&
-              e.orgId === ctx.orgId &&
-              e.recipientIds.includes(ctx.actorId),
-            Math.min(5000, deadline - Date.now()),
-          );
+        // Listening starts before the first read, so an item created in between still wakes us.
+        const watch = wait_seconds
+          ? await realtime.watch(
+              (e) =>
+                e.type === "inbox.created" &&
+                e.orgId === ctx.orgId &&
+                e.recipientIds.includes(ctx.actorId),
+            )
+          : null;
+        let items: Awaited<ReturnType<typeof listInbox>>;
+        try {
           items = await listInbox(db, ctx, query);
+          while (watch && items.length === 0 && Date.now() < deadline) {
+            await watch.next(Math.min(5000, deadline - Date.now()));
+            items = await listInbox(db, ctx, query);
+          }
+        } finally {
+          watch?.close();
         }
         return items.map((i) => ({
           id: i.id,

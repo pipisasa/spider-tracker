@@ -41,22 +41,40 @@ export function createRealtime(db: Db) {
       return () => void subscribers.delete(fn);
     },
 
-    /** Resolves when `match` accepts an event, or after `ms`, or when `signal` aborts. */
-    async waitFor(
-      match: (event: OrgEvent) => boolean,
-      ms: number,
-      signal?: AbortSignal,
-    ) {
-      let done: () => void = () => {};
-      const settled = new Promise<void>((resolve) => (done = resolve));
-      const unsubscribe = await this.subscribe(
-        (event) => match(event) && done(),
-      );
-      const timer = setTimeout(done, ms);
-      signal?.addEventListener("abort", done, { once: true });
-      await settled;
-      clearTimeout(timer);
-      unsubscribe();
+    /**
+     * Starts listening for events `match` accepts; resolves once LISTEN is up. Subscribe before
+     * reading what you wait for: an event that arrives between the read and `next` isn't lost
+     * (ST-124; waiting inbox requests used to miss it and sleep until the 5 s re-check).
+     * `next(ms, signal)` resolves at once if a matching event came since the last call, else on
+     * the next one, after `ms`, or when `signal` aborts. Call `close` when done.
+     */
+    async watch(match: (event: OrgEvent) => boolean) {
+      let pending = false;
+      let wake: (() => void) | null = null;
+      const unsubscribe = await this.subscribe((event) => {
+        if (!match(event)) return;
+        pending = true;
+        wake?.();
+      });
+      return {
+        async next(ms: number, signal?: AbortSignal) {
+          if (!pending && !signal?.aborted) {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(done, ms);
+              function done() {
+                clearTimeout(timer);
+                signal?.removeEventListener("abort", done);
+                wake = null;
+                resolve();
+              }
+              wake = done;
+              signal?.addEventListener("abort", done, { once: true });
+            });
+          }
+          pending = false;
+        },
+        close: unsubscribe,
+      };
     },
   };
 }
