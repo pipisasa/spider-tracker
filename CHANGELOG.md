@@ -8,6 +8,7 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 
 - **API, MCP, CLI (ST-122):** bulk updates (`update_tasks`, `PATCH …/tasks`, multi-key `spider task update`) check `set.assigneeIds`, `set.tagIds` and the parent once: an unknown or other organization's id, or a parent outside the agent's projects, fails the request (`400 validation`, CLI exit 2) with one error instead of one per task, and nothing changes. A deactivated agent already assigned still stays assigned. Plugin: the `tasks` skill mentions `update_tasks` and multi-key `spider task update`.
 - **API, MCP, CLI (ST-131):** linking a task as a duplicate (`link_tasks`, `POST …/relations`) when it already duplicates another task is refused (`409`, as `mark_duplicate` already did); the message names the first original only when you can see its project. `mark_duplicate` / `spider task duplicate` called again with a new `comment` now posts that comment by itself instead of dropping it.
+- **API (ST-133):** two concurrent task updates that each set one date no longer fail with a `500` when together they'd put the start after the target; the second gets the usual `400`. Web: board cards show the target date (red when overdue), and the new-task dialog takes a start and a target date.
 
 ### MCP server (breaking: tool output shapes, ST-107)
 

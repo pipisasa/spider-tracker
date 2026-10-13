@@ -994,10 +994,17 @@ export interface TaskUpdateOptions {
 export async function applyTaskUpdate(
   tx: Tx,
   ctx: ActorContext,
-  { task, projectKey }: FoundTask,
+  found: FoundTask,
   data: UpdateTaskInput,
   options: TaskUpdateOptions = {},
 ): Promise<TaskUpdateOutcome> {
+  const { projectKey } = found;
+  // A date change re-reads the row under a lock: two concurrent updates each setting one date would
+  // otherwise both pass the start ≤ target check and trip `tasks_dates_ordered` (a 500, ST-133).
+  const task =
+    data.startDate !== undefined || data.targetDate !== undefined
+      ? await lockTaskRow(tx, found.task.id)
+      : found.task;
   const scope = await projectScope(tx, ctx);
   const patch: Partial<typeof tasks.$inferInsert> = {};
   const changes: Record<string, [unknown, unknown]> = {};
@@ -1261,6 +1268,17 @@ async function assertBulkChanges(
     const scope = await projectScope(db, ctx);
     await db.transaction((tx) => assertParent(tx, ctx.orgId, scope, parentId));
   }
+}
+
+/** The task's row, read again and locked until commit (FOR NO KEY UPDATE: links and comments to it can still be added). */
+async function lockTaskRow(tx: Tx, taskId: string): Promise<TaskRow> {
+  const [row] = await tx
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .for("no key update");
+  if (!row) throw new Error("Task disappeared while updating it");
+  return row;
 }
 
 /** Thrown inside a dry run's transaction to roll it back once the outcome is known. */

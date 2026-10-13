@@ -1,7 +1,7 @@
 import { ReleaseCardBody, ShippingChip } from "@/components/releases";
 import { TagChips } from "@/components/tags";
 import { WorkingAvatars } from "@/components/working-avatars";
-import { PriorityIcon, StatusIcon } from "@/components/task-fields";
+import { PriorityIcon, StatusIcon, TargetDate } from "@/components/task-fields";
 import { Button } from "@/components/ui/button";
 import { assigneesOf } from "@/lib/assignees";
 import { useAddToRelease, useUpdateTask } from "@/lib/work";
@@ -27,6 +27,7 @@ import { boardColumns } from "@repo/core/board";
 import type {
   ActorDto,
   ReleaseDto,
+  StatusCategory,
   StatusDto,
   TagDto,
   TaskDto,
@@ -42,12 +43,15 @@ const releaseDropId = (releaseId: string) => `release:${releaseId}`;
 
 function TaskCard({
   task,
+  category,
   orgSlug,
   members,
   tags,
   dragging,
 }: {
   task: TaskDto;
+  /** The category of the task's status, for the overdue mark. */
+  category: StatusCategory | undefined;
   orgSlug: string;
   members: Map<string, ActorDto>;
   tags: TagDto[];
@@ -81,11 +85,17 @@ function TaskCard({
       <TagChips tagIds={task.tagIds} tags={tags} />
       {/* Done means finished: where the task's code is (ST-93). */}
       <ShippingChip shipping={task.shipping} />
-      {sub && (
-        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-          <ListChecksIcon className="size-3.5" />
-          {sub.done}/{sub.total}
-        </span>
+      {(sub || task.targetDate) && (
+        <div className="flex items-center gap-3">
+          {sub && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ListChecksIcon className="size-3.5" />
+              {sub.done}/{sub.total}
+            </span>
+          )}
+          {/* The target date, red when overdue (ST-91, ST-133). */}
+          <TargetDate task={task} category={category} />
+        </div>
       )}
     </div>
   );
@@ -93,11 +103,13 @@ function TaskCard({
 
 function SortableTask({
   task,
+  category,
   orgSlug,
   members,
   tags,
 }: {
   task: TaskDto;
+  category: StatusCategory;
   orgSlug: string;
   members: Map<string, ActorDto>;
   tags: TagDto[];
@@ -121,7 +133,13 @@ function SortableTask({
       {...attributes}
       {...listeners}
     >
-      <TaskCard task={task} orgSlug={orgSlug} members={members} tags={tags} />
+      <TaskCard
+        task={task}
+        category={category}
+        orgSlug={orgSlug}
+        members={members}
+        tags={tags}
+      />
     </div>
   );
 }
@@ -175,6 +193,7 @@ function Column({
             <SortableTask
               key={task.id}
               task={task}
+              category={status.category}
               orgSlug={orgSlug}
               members={members}
               tags={tags}
@@ -456,6 +475,7 @@ export function Board({
         {active && (
           <TaskCard
             task={active}
+            category={statuses.find((s) => s.id === active.statusId)?.category}
             orgSlug={orgSlug}
             members={memberMap}
             tags={tags}

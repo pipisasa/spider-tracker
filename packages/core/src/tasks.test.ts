@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { DomainError } from "./errors";
 import { createAgent, deleteAgent } from "./agents";
@@ -14,6 +14,7 @@ import {
 } from "./projects";
 import { listTaskActivity } from "./activity-feed";
 import { createTag } from "./tags";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 import { MAX_BULK_TASKS, todayUtc } from "./schemas";
 import {
   createTask,
@@ -765,6 +766,34 @@ run("projects and tasks", () => {
       [one.key, "unchanged", null],
       [two.key, "error", "validation"],
     ]);
+  });
+
+  test("two concurrent updates each setting one date: the second sees the first and fails validation, not the constraint", async () => {
+    await createProject(db, ctx, { name: "Date race", key: "DRC" });
+    const raced = await createTask(db, ctx, "DRC", { title: "Raced" });
+    // Both updates wait on the task's row; each alone keeps the dates in order.
+    const release = await holdLock(
+      db,
+      sql`select 1 from tasks where id = ${raced.id} for no key update`,
+    );
+    const first = settle(
+      updateTask(db, ctx, raced.key, { targetDate: "2020-01-10" }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 1);
+    const second = settle(
+      updateTask(db, ctx, raced.key, { startDate: "2020-02-01" }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 2);
+    await release();
+    expect(await first).toBeNull();
+    expect(await second).toMatchObject({
+      code: "validation",
+      message: "The start date must be on or before the target date",
+    });
+    expect(await getTask(db, ctx, raced.key)).toMatchObject({
+      startDate: null,
+      targetDate: "2020-01-10",
+    });
   });
 
   test("start and target dates: set, cleared, kept in order, recorded; overdue lists open tasks past their target", async () => {
