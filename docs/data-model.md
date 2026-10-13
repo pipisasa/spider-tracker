@@ -306,7 +306,8 @@ create index github_install_states_expires_at_idx on github_install_states (expi
 
 -- ST-83: GitHub webhook deliveries, by X-GitHub-Delivery. Inserted first (on conflict do nothing) in the
 -- transaction that handles the event, so each delivery is handled once, even when copies arrive together.
--- Deliveries of installations no organization has connected are kept too (org_id null).
+-- Deliveries of installations no organization has connected are kept too (org_id null). Rows older than 30 days
+-- are deleted a batch at a time after each new delivery (ST-138, pruneGithubDeliveries).
 create table github_deliveries (
   id text primary key,                                 -- X-GitHub-Delivery (a GUID)
   event text not null,                                 -- X-GitHub-Event, e.g. 'installation'

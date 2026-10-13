@@ -1097,19 +1097,34 @@ export function orgRoutes(
     const deadline = Date.now() + wait * 1000;
     const signal = c.req.raw.signal;
     const actor = c.get("actor");
-    let items = await listInbox(db, actor, query);
-    while (items.length === 0 && Date.now() < deadline && !signal.aborted) {
-      await realtime.waitFor(
-        (e) =>
-          e.type === "inbox.created" &&
-          e.orgId === actor.orgId &&
-          e.recipientIds.includes(actor.actorId),
-        Math.min(INBOX_RECHECK_MS, deadline - Date.now()),
-        signal,
-      );
-      items = await listInbox(db, actor, query);
+    // Listening starts before the first read, so an item created in between still wakes us.
+    const watch =
+      wait > 0
+        ? await realtime.watch(
+            (e) =>
+              e.type === "inbox.created" &&
+              e.orgId === actor.orgId &&
+              e.recipientIds.includes(actor.actorId),
+          )
+        : null;
+    try {
+      let items = await listInbox(db, actor, query);
+      while (
+        watch &&
+        items.length === 0 &&
+        Date.now() < deadline &&
+        !signal.aborted
+      ) {
+        await watch.next(
+          Math.min(INBOX_RECHECK_MS, deadline - Date.now()),
+          signal,
+        );
+        items = await listInbox(db, actor, query);
+      }
+      return c.json(list(items));
+    } finally {
+      watch?.close();
     }
-    return c.json(list(items));
   });
 
   // Server-sent change events for the organization: the web app refreshes what changed.

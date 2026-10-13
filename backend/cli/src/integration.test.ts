@@ -28,6 +28,13 @@ import { createClient } from "@repo/sdk";
 import { run } from "./cli";
 import type { Store } from "./credentials";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 // Runs the CLI against the real API app (no network), with a fresh org, project and agent key.
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -584,24 +591,44 @@ withDb("spider CLI against the API", () => {
       await import("@modelcontextprotocol/sdk/inMemory.js");
     const { createChannel } = await import("./channel");
     const { createClient } = await import("@repo/sdk");
+    // No sleeps or polling (ST-124): the test waits on what the channel does, each push and
+    // each mark-read, and stopping the channel aborts its long poll at once.
+    const waiters: (() => void)[] = [];
+    const changed = () => {
+      for (const wake of waiters.splice(0)) wake();
+    };
+    const until = async (done: () => boolean) => {
+      while (!done()) await new Promise<void>((wake) => waiters.push(wake));
+    };
+    let marked = 0;
     const channel = createChannel({
       client: createClient({
         baseUrl: env.API_ORIGIN,
         token,
         source: "cli",
-        fetch: (i, init) => app.request(i, init),
+        fetch: async (i, init) => {
+          const res = await app.request(i, init);
+          if (init?.method === "POST" && String(i).endsWith("/inbox/read")) {
+            marked += 1;
+            changed();
+          }
+          return res;
+        },
       }),
       org: slug,
       handle: "cli-bot",
-      waitSeconds: 2,
+      // The API's longest wait: stopping must not wait it out.
+      waitSeconds: 25,
       retryMs: 100,
     });
     const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
     const session = new Client({ name: "claude-code-test", version: "0" });
     const pushed: { content: string; meta: Record<string, string> }[] = [];
     session.fallbackNotificationHandler = async (n) => {
-      if (n.method === "notifications/claude/channel")
+      if (n.method === "notifications/claude/channel") {
         pushed.push(n.params as (typeof pushed)[number]);
+        changed();
+      }
     };
     await channel.server.connect(serverSide);
     await session.connect(clientSide);
@@ -613,7 +640,7 @@ withDb("spider CLI against the API", () => {
     const stop = new AbortController();
     const pumping = channel.pump(stop.signal);
     await ownerComment("@cli-bot please also check the docs");
-    for (let i = 0; i < 50 && pushed.length === 0; i++) await Bun.sleep(100);
+    await until(() => pushed.length >= 1);
     expect(pushed[0]?.meta).toMatchObject({
       task: "SPI-1",
       kind: "mention",
@@ -664,7 +691,8 @@ withDb("spider CLI against the API", () => {
         })
       ).status,
     ).toBe(200);
-    for (let i = 0; i < 50 && pushed.length < 2; i++) await Bun.sleep(100);
+    const markedBefore = marked;
+    await until(() => pushed.length >= 2);
     expect(pushed[1]?.meta).toMatchObject({
       kind: "rules",
       project: "SPI",
@@ -675,13 +703,8 @@ withDb("spider CLI against the API", () => {
       'changed the rules of project SPI: "Rules"',
     );
     // The channel marks the rules item read too (ST-128: `upTo` covers only the kinds named).
-    let unread: unknown[] = [];
-    for (let i = 0; i < 50; i++) {
-      unread = (await spider("inbox", "--json")).json().items as unknown[];
-      if (unread.length === 0) break;
-      await Bun.sleep(100);
-    }
-    expect(unread).toEqual([]);
+    await until(() => marked > markedBefore);
+    expect((await spider("inbox", "--json")).json()).toEqual({ items: [] });
 
     const view = await spider("project", "view", "SPI");
     expect(view.stdout).toContain(
@@ -803,7 +826,7 @@ withDb("spider CLI against the API", () => {
         body: "@cli-bot review this?",
       })
     ).json()) as { id: string };
-    for (let i = 0; i < 50 && pushed.length < 3; i++) await Bun.sleep(100);
+    await until(() => pushed.length >= 3);
     expect(pushed[2]?.meta).toMatchObject({
       kind: "document_mention",
       project: "SPI",
@@ -837,7 +860,12 @@ withDb("spider CLI against the API", () => {
     ).toBeLessThan(300);
 
     stop.abort();
-    await pumping;
+    await Promise.race([
+      pumping,
+      Bun.sleep(1000).then(() => {
+        throw new Error("pump did not stop on abort");
+      }),
+    ]);
     await session.close();
 
     // `spider inbox --mark-read` marks the document items it listed too (ST-128).
@@ -862,8 +890,7 @@ withDb("spider CLI against the API", () => {
     expect(
       (await asOwner("DELETE", `/documents/${later.id}`, {})).status,
     ).toBeLessThan(300);
-    // Stopping the channel waits out its long poll, so this test runs close to the default 5 s.
-  }, 15_000);
+  });
   test("tags: list, set on create and update, unknown names fail with the list", async () => {
     // Agents (members) can create tags through the API; the CLI only reads and assigns them.
     const res = await app.request(`/v1/orgs/${slug}/tags`, {
@@ -2787,7 +2814,7 @@ withDb("spider CLI against the API", () => {
       role: "owner",
       source: "ui",
     };
-    const installationId = stamp + 400;
+    const installationId = uniqueInstallationId();
     await saveGithubInstallation(db, owner, {
       installation: {
         id: installationId,

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run, type RunOptions } from "./cli";
@@ -271,6 +277,44 @@ describe("spider claude --tmux", () => {
       "/usr/local/bin/spider claude prod/acme/ant-owner",
       "/usr/local/bin/spider claude prod/acme/st-dev",
     ]);
+  });
+
+  test("an unknown saved permission mode stops the team before any window, --dry-run too (ST-125)", async () => {
+    const env = savedAgents();
+    const file = join(env.SPIDER_CONFIG_DIR, "credentials.json");
+    const store = JSON.parse(readFileSync(file, "utf8")) as Store;
+    const stDev = store.servers.prod?.orgs.acme?.agents["st-dev"];
+    if (!stDev) throw new Error("expected st-dev");
+    stDev.permissionMode = "plna";
+    writeFileSync(file, JSON.stringify(store), { mode: 0o600 });
+    for (const extra of [[], ["--dry-run"]]) {
+      const { tmux, calls } = fakeTmux();
+      const result = await cli(
+        ["claude", "ant-owner", "st-dev", "--tmux", "team", ...extra],
+        { tmux, env },
+      );
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain(
+        'The permission mode saved for prod/acme/st-dev ("plna") isn\'t one Claude Code knows',
+      );
+      expect(calls).toEqual([]);
+    }
+    // A mode given on the command line decides for every window instead.
+    const { tmux } = fakeTmux();
+    const given = await cli(
+      [
+        "claude",
+        "ant-owner",
+        "st-dev",
+        "--permission-mode",
+        "plan",
+        "--tmux",
+        "team",
+        "--dry-run",
+      ],
+      { tmux, env },
+    );
+    expect(given.code).toBe(0);
   });
 
   test("--dry-run prints the plan and opens nothing", async () => {

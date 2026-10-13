@@ -197,31 +197,50 @@ export function createChannel(options: ChannelOptions) {
       });
   }
 
-  /** Delivers unread items, then waits for new ones until `signal` aborts. */
+  /**
+   * Delivers unread items, then waits for new ones until `signal` aborts. Aborting cancels the
+   * waiting inbox request and the pause after a failure, so stopping is immediate (ST-124).
+   */
   async function pump(signal: AbortSignal) {
     let cursor = 0;
     while (!signal.aborted) {
       try {
-        const { items } = await client.inbox.list(org, {
-          unread: true,
-          after: cursor,
-          limit: 20,
-          wait: options.waitSeconds ?? 25,
-          kinds: [...INBOX_KINDS],
-        });
+        const { items } = await client.inbox.list(
+          org,
+          {
+            unread: true,
+            after: cursor,
+            limit: 20,
+            wait: options.waitSeconds ?? 25,
+            kinds: [...INBOX_KINDS],
+          },
+          { signal },
+        );
         if (signal.aborted) break;
         await deliver(items);
         cursor = items.at(-1)?.id ?? cursor;
       } catch (err) {
+        if (signal.aborted) break;
         log(
           `inbox request failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        await new Promise((resolve) =>
-          setTimeout(resolve, options.retryMs ?? 5000),
-        );
+        await pause(options.retryMs ?? 5000, signal);
       }
     }
   }
 
   return { server, pump };
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 }

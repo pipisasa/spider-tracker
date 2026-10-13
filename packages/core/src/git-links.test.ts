@@ -16,6 +16,13 @@ import { createProject, getProject } from "./projects";
 import { attachRepo, createRepo, detachRepo } from "./repos";
 import { createTask, deleteTask } from "./tasks";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 describe("task keys in pull requests and commits (ST-84)", () => {
   test("a PR's keys, each with the strongest way it is named", () => {
     const keys = pullRequestKeys({
@@ -98,7 +105,7 @@ run("git links from GitHub webhooks (ST-84)", () => {
   const stamp = Date.now();
   const slug = `git-links-${stamp}`;
   // GitHub ids are global: unique per run (and apart from the other GitHub tests').
-  const installationId = stamp + 200;
+  const installationId = uniqueInstallationId();
   let owner: ActorContext;
   let n = 0;
   const deliveries: string[] = [];

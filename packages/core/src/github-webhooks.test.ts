@@ -1,13 +1,27 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { createHmac } from "node:crypto";
 import type { ActorContext } from "./access";
 import { listGithubInstallations, saveGithubInstallation } from "./github";
-import { handleGithubWebhook, verifyGithubSignature } from "./github-webhooks";
+import {
+  GITHUB_DELIVERY_RETENTION_DAYS,
+  handleGithubWebhook,
+  isGithubDeliveryId,
+  isGithubEventName,
+  pruneGithubDeliveries,
+  verifyGithubSignature,
+} from "./github-webhooks";
 import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { createRepo, getRepo, listRepos } from "./repos";
+
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
 
 const SECRET = "webhook-secret";
 const sign = (body: string, secret = SECRET) =>
@@ -67,8 +81,8 @@ run("GitHub webhooks (ST-83)", () => {
   const stamp = Date.now();
   const slug = `gh-hooks-${stamp}`;
   // GitHub ids are global: unique per run (and apart from github.test.ts's).
-  const installationId = stamp + 100;
-  const unknownInstallationId = stamp + 101;
+  const installationId = uniqueInstallationId();
+  const unknownInstallationId = uniqueInstallationId();
   let owner: ActorContext;
   let n = 0;
   const deliveries: string[] = [];
@@ -148,6 +162,79 @@ run("GitHub webhooks (ST-83)", () => {
       .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.id, userId));
     await db.$client.end();
+  });
+
+  test("pruneGithubDeliveries deletes rows past the retention, at most a batch per call (ST-138)", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    // Only this test's own rows: its clock is a random day in the 1990s, so on the shared test
+    // database nothing else is past the retention for it (other tests and runs use real dates).
+    // Its expired rows may also go to a concurrent prune with the real clock (the API's retention
+    // test), so it asserts which of its ids remain, and returned counts only as upper bounds.
+    const now = new Date(
+      Date.UTC(1990, 0, 1) + Math.floor(Math.random() * 3650) * day,
+    );
+    const old = new Date(
+      now.getTime() - (GITHUB_DELIVERY_RETENTION_DAYS + 1) * day,
+    );
+    // Kept: recent by the real clock too, so no prune deletes it.
+    const kept = new Date();
+    const expired = Array.from({ length: 30 }, () => nextDelivery());
+    const keptId = nextDelivery();
+    const ids = [...expired, keptId];
+    await db
+      .insert(schema.githubDeliveries)
+      .values([
+        ...expired.map((id) => ({ id, event: "ping", receivedAt: old })),
+        { id: keptId, event: "ping", receivedAt: kept },
+      ]);
+    const remaining = async () =>
+      (
+        await db
+          .select({ id: schema.githubDeliveries.id })
+          .from(schema.githubDeliveries)
+          .where(inArray(schema.githubDeliveries.id, ids))
+      ).map((r) => r.id);
+    // At most one batch per call, whatever the plan. Forced here to the plan that broke
+    // `id IN (SELECT … LIMIT n)`: a nested-loop semi join re-running the subquery per row, which
+    // deleted every expired row (30 for a batch of 1). Rolled back, so nothing is lost.
+    const rollback = new Error("rollback");
+    await db
+      .transaction(async (tx) => {
+        for (const setting of [
+          "enable_hashjoin",
+          "enable_mergejoin",
+          "enable_material",
+          "enable_hashagg",
+          "enable_sort",
+          "enable_memoize",
+        ])
+          await tx.execute(sql.raw(`set local ${setting} = off`));
+        expect(
+          await pruneGithubDeliveries(tx, { now, limit: 1 }),
+        ).toBeLessThanOrEqual(1);
+        expect(
+          await pruneGithubDeliveries(tx, { now, limit: 7 }),
+        ).toBeLessThanOrEqual(7);
+        throw rollback;
+      })
+      .catch((err: unknown) => {
+        if (err !== rollback) throw err;
+      });
+    while ((await pruneGithubDeliveries(db, { now, limit: 10 })) > 0) {
+      /* drain: only rows older than this test's ancient cutoff */
+    }
+    expect(await remaining()).toEqual([keptId]);
+  });
+
+  test("header shapes that may be logged (ST-138)", () => {
+    expect(isGithubDeliveryId("72d3162e-cc78-11e3-81ab-4c9367dc0958")).toBe(
+      true,
+    );
+    expect(isGithubDeliveryId("a b")).toBe(false);
+    expect(isGithubDeliveryId("x".repeat(101))).toBe(false);
+    expect(isGithubDeliveryId(undefined)).toBe(false);
+    expect(isGithubEventName("pull_request")).toBe(true);
+    expect(isGithubEventName("Push!")).toBe(false);
   });
 
   test("ping and unhandled events are recorded and ignored", async () => {
@@ -420,6 +507,17 @@ run("GitHub webhooks (ST-83)", () => {
         changes: { repository: { name: { from: "docs" } } },
       }),
     ).toBe("ignored");
+    // A repo added by URL only (no installation) isn't the installation's to rename (ST-138).
+    await createRepo(db, owner, { url: "acme/by-url" });
+    expect(
+      await deliver("repository", {
+        action: "renamed",
+        installation: { id: installationId },
+        repository: repository("acme", "by-url-2"),
+        changes: { repository: { name: { from: "by-url" } } },
+      }),
+    ).toBe("ignored");
+    expect((await getRepo(db, owner, "acme/by-url")).name).toBe("by-url");
     expect(
       await deliver("repository", {
         action: "publicized",

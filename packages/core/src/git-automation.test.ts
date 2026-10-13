@@ -21,8 +21,15 @@ import {
   getProject,
   updateProject,
 } from "./projects";
-import { createRepo } from "./repos";
+import { attachRepo, createRepo, detachRepo } from "./repos";
 import { createTask, getTask, updateTask } from "./tasks";
+
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
 
 describe("status automation rules (ST-85)", () => {
   const settings: GitAutomationSettings = DEFAULT_GIT_AUTOMATION;
@@ -79,11 +86,13 @@ describe("status automation rules (ST-85)", () => {
     ).toBe("draft");
   });
 
-  test("trusted pull requests: same repo, and an owner, member, collaborator or bot", () => {
+  test("trusted pull requests: same repo, and an owner, member, collaborator or our own App's bot", () => {
     const same = {
       baseRepo: "acme/web",
       headRepo: "acme/web",
       authorType: "User",
+      authorLogin: "ann",
+      appSlug: "spider-tracker",
     };
     for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
       expect(
@@ -123,22 +132,35 @@ describe("status automation rules (ST-85)", () => {
         authorAssociation: "MEMBER",
       }),
     ).toBe(false);
-    // A bot (an App installed on the repo, like Spider Tracker's own for `spider pr`), from the repo only.
-    expect(
-      trustedPullRequest({
-        ...same,
-        authorType: "Bot",
-        authorAssociation: "NONE",
-      }),
-    ).toBe(true);
-    expect(
-      trustedPullRequest({
-        ...same,
-        headRepo: "mallory/web",
-        authorType: "Bot",
-        authorAssociation: "NONE",
-      }),
-    ).toBe(false);
+    // Our own App's bot (opening PRs for `spider pr`), from the repo only; any case.
+    const ours = {
+      ...same,
+      authorType: "Bot",
+      authorLogin: "Spider-Tracker[bot]",
+      authorAssociation: "NONE",
+    };
+    expect(trustedPullRequest(ours)).toBe(true);
+    expect(trustedPullRequest({ ...ours, headRepo: "mallory/web" })).toBe(
+      false,
+    );
+    // Other bots never (ST-141), whatever their association; without our slug, no bot.
+    for (const login of [
+      "dependabot[bot]",
+      "renovate[bot]",
+      "spider-tracker",
+    ]) {
+      for (const association of ["NONE", "MEMBER"]) {
+        expect(
+          trustedPullRequest({
+            ...ours,
+            authorLogin: login,
+            authorAssociation: association,
+          }),
+        ).toBe(false);
+      }
+    }
+    expect(trustedPullRequest({ ...ours, appSlug: null })).toBe(false);
+    expect(trustedPullRequest({ ...ours, authorLogin: null })).toBe(false);
   });
 
   test("defaults: draft → In Progress, opened → In Review, merged → Done, closed → nothing", () => {
@@ -289,7 +311,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
   const userId = `test-${crypto.randomUUID()}`;
   const stamp = Date.now();
   const slug = `git-auto-${stamp}`;
-  const installationId = stamp + 400;
+  const installationId = uniqueInstallationId();
   let owner: ActorContext;
   let n = 0;
   const deliveries: string[] = [];
@@ -302,6 +324,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
       deliveryId,
       event,
       payload: { installation: { id: installationId }, ...payload },
+      appSlug: "spider-tracker",
     });
   };
   /** A PR's head branch, in the repo itself (not a fork). */
@@ -368,7 +391,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
     for (let i = 1; i <= 8; i++)
       await createTask(db, owner, "ST", { title: `Task ${i}` });
     await createTask(db, owner, "ST", { title: "M1", kind: "milestone" });
-    for (let i = 10; i <= 16; i++)
+    for (let i = 10; i <= 18; i++)
       await createTask(db, owner, "ST", { title: `Task ${i}` });
     await createTask(db, owner, "OFF", { title: "Off task" });
     await updateProject(db, owner, "OFF", {
@@ -395,8 +418,13 @@ run("status automation from GitHub pull requests (ST-85)", () => {
         repositorySelection: "selected",
         suspended: false,
       },
-      repositories: [{ owner: "acme", name: "web", defaultBranch: "main" }],
+      repositories: [
+        { owner: "acme", name: "web", defaultBranch: "main" },
+        { owner: "acme", name: "api", defaultBranch: "main" },
+      ],
     });
+    // Granted by the installation (added attached to no project), then attached to ST.
+    await attachRepo(db, owner, "ST", { repo: "acme/api" });
   });
 
   afterAll(async () => {
@@ -512,6 +540,42 @@ run("status automation from GitHub pull requests (ST-85)", () => {
     expect(await statusOf("ST-6")).toBe("Done");
   });
 
+  test("an open PR in a repo detached from the project doesn't hold merged → Done (ST-146)", async () => {
+    await deliver("pull_request", {
+      action: "opened",
+      repository: {
+        name: "api",
+        owner: { login: "acme" },
+        default_branch: "main",
+      },
+      sender: { login: "ann", type: "User" },
+      pull_request: {
+        number: 1,
+        title: "API side",
+        body: null,
+        state: "open",
+        draft: false,
+        merged: false,
+        updated_at: "2026-10-12T09:00:00Z",
+        head: { ref: "st-18-api-side", repo: { full_name: "acme/api" } },
+        base: { ref: "main" },
+        user: { login: "ann", type: "User" },
+        author_association: "MEMBER",
+      },
+    });
+    expect(await statusOf("ST-18")).toBe("In Review");
+    await detachRepo(db, owner, "ST", "acme/api");
+    const web = { number: 40, head: head("st-18-web-side") };
+    await pr("opened", web);
+    await pr("closed", {
+      ...web,
+      state: "closed",
+      merged: true,
+      merged_at: "2026-10-12T11:00:00Z",
+    });
+    expect(await statusOf("ST-18")).toBe("Done");
+  });
+
   test("stale events, milestones and projects with automation off aren't moved", async () => {
     // ST-7 is In Progress by hand; an event older than the stored one changes nothing.
     await updateTask(db, owner, "ST-7", {
@@ -621,6 +685,32 @@ run("status automation from GitHub pull requests (ST-85)", () => {
       author_association: "NONE",
     });
     expect(await statusOf("ST-16")).toBe("In Review");
+
+    // Another App's bot isn't (ST-141): Dependabot's body quotes upstream "Fixes" lines. It links.
+    const dependabot = {
+      number: 31,
+      head: head("dependabot/npm/left-pad-2"),
+      title: "Bump left-pad",
+      body: "Release notes: Fixes ST-17",
+      user: { login: "dependabot[bot]", type: "Bot" },
+      author_association: "MEMBER",
+    };
+    await pr("opened", dependabot);
+    expect(await statusOf("ST-17")).toBe("Todo");
+    expect((await getTaskGit(db, owner, "ST-17")).pullRequests).toMatchObject([
+      { number: 31, via: "closing" },
+    ]);
+    // Its merge into the default branch moves nothing either.
+    await pr("closed", {
+      ...dependabot,
+      state: "closed",
+      merged: true,
+      merged_at: "2026-10-12T11:00:00Z",
+    });
+    expect(await statusOf("ST-17")).toBe("Todo");
+    expect((await getTaskGit(db, owner, "ST-17")).pullRequests).toMatchObject([
+      { number: 31, state: "merged" },
+    ]);
   });
 
   test("the activity names the PR, the event and who merged", async () => {

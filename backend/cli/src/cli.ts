@@ -119,12 +119,16 @@ import {
 } from "./claude-setup";
 import {
   DEFAULT_PERMISSION_MODE,
+  InvalidSavedModeError,
   PERMISSION_MODES,
   brokenHooks,
   claudeCommand,
+  flagValue,
   isPermissionMode,
   permissionLine,
+  invalidSavedModeMessage,
   permissionModeFor,
+  type PermissionChoice,
   type PermissionMode,
 } from "./claude-launch";
 import {
@@ -135,6 +139,7 @@ import {
 } from "@repo/core/git";
 import {
   createOrSwitchBranch,
+  fetchBranch,
   currentBranch,
   isDirty,
   isRepo,
@@ -581,6 +586,55 @@ type Api = ReturnType<typeof connect>;
 
 const projectKeyOf = (taskKey: string) =>
   parseTaskKey(taskKey)?.projectKey ?? taskKey.split("-")[0] ?? taskKey;
+
+/**
+ * The project a command takes as a positional argument (ST-130): `project view|update|archive
+ * <project>`, `status [list|add|update|delete] <project>`, `repo attach|detach <repo> <project>`.
+ */
+function positionalProject(argv: string[]): string | undefined {
+  // The words before the command's own options, without the global --as / --server and their values.
+  const words: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const word = argv[i] ?? "";
+    if (word === "--as" || word === "--server") i++;
+    else if (!word.startsWith("-")) words.push(word);
+  }
+  const [command, sub, first, second] = words;
+  if (
+    command === "project" &&
+    ["view", "update", "archive"].includes(sub ?? "")
+  )
+    return first;
+  if (command === "project" && sub === "status")
+    return ["list", "add", "update", "delete"].includes(first ?? "")
+      ? second
+      : first;
+  if (command === "repo" && (sub === "attach" || sub === "detach"))
+    return second;
+  return undefined;
+}
+
+/**
+ * The projects a command line names: those of its task keys, `--project` values and a positional
+ * project argument (upper case).
+ */
+function requestedProjects(argv: string[]): Set<string> {
+  const found = new Set<string>();
+  const positional = positionalProject(argv);
+  if (positional?.trim()) found.add(positional.trim().toUpperCase());
+  for (const [i, word] of argv.entries()) {
+    const parsed = parseTaskKey(word.trim());
+    if (parsed) found.add(parsed.projectKey.toUpperCase());
+    const option = word.startsWith("--project=")
+      ? word.slice("--project=".length)
+      : word === "--project"
+        ? argv[i + 1]
+        : undefined;
+    for (const key of option?.split(",") ?? [])
+      if (key.trim()) found.add(key.trim().toUpperCase());
+  }
+  return found;
+}
 
 /** The task key given, or the one in the current branch name. */
 function taskKey(
@@ -1690,6 +1744,9 @@ function buildProgram(
       }
       const current =
         mode ?? (opts.clear ? undefined : entry.saved.permissionMode);
+      // A saved value Claude Code doesn't know: reported like spider claude does (ST-125).
+      if (current !== undefined && !isPermissionMode(current))
+        throw usageError(invalidSavedModeMessage(entry.ref, current));
       output(
         opts,
         {
@@ -1782,6 +1839,19 @@ function buildProgram(
       throw usageError(
         `Which agents? Name them or use --all: spider claude <agent>… --tmux ${session}`,
       );
+    // Each window starts like a single spider claude: an unknown saved mode would fail there, so
+    // refuse here first, before any window opens (and in --dry-run too). ST-125.
+    if (!opts.permissionMode) {
+      for (const agent of agents) {
+        try {
+          permissionModeFor(undefined, claudeArgs, agent.saved.permissionMode);
+        } catch (err) {
+          if (err instanceof InvalidSavedModeError)
+            throw usageError(invalidSavedModeMessage(agent.ref, err.value));
+          throw err;
+        }
+      }
+    }
     const tmux = options.tmux ?? runTmux;
     const installed = tmuxVersion(tmux) !== null;
     if (!installed && !opts.dryRun)
@@ -1880,7 +1950,8 @@ function buildProgram(
         );
         const given = operands[0] ?? globals().as;
         // With --tmux every operand before "--" is an agent, so claude gets only what follows "--". A single
-        // agent also takes claude args without "--" (`spider claude a -p hi`).
+        // agent also takes plain claude args without "--" (`spider claude a "hi"`); options need it
+        // (`spider claude a -- -p hi`), since Commander rejects unknown ones.
         const extra = dash >= 0 || opts.tmux !== undefined ? afterDash : rest;
 
         const store = await readStore(options.env);
@@ -1902,6 +1973,17 @@ function buildProgram(
         ) {
           throw usageError(
             "Give the permission mode once: spider claude --permission-mode, or after --, not both",
+          );
+        }
+        const passedMode = flagValue(extra, "--permission-mode");
+        if (passedMode === null) {
+          throw usageError(
+            `--permission-mode after -- needs a mode (${PERMISSION_MODES.join(", ")}), or use spider claude --permission-mode <mode>`,
+          );
+        }
+        if (passedMode !== undefined && !isPermissionMode(passedMode)) {
+          throw usageError(
+            `Unknown permission mode ${passedMode} after --. Use one of ${PERMISSION_MODES.join(", ")}`,
           );
         }
         if (opts.tmux !== undefined) {
@@ -1957,11 +2039,18 @@ function buildProgram(
         const agentName = extra.includes("--agent")
           ? undefined
           : await claudeAgentFor(options.env, entry);
-        const permission = permissionModeFor(
-          opts.permissionMode,
-          extra,
-          entry.saved.permissionMode,
-        );
+        let permission: PermissionChoice;
+        try {
+          permission = permissionModeFor(
+            opts.permissionMode,
+            extra,
+            entry.saved.permissionMode,
+          );
+        } catch (err) {
+          if (err instanceof InvalidSavedModeError)
+            throw usageError(invalidSavedModeMessage(entry.ref, err.value));
+          throw err;
+        }
         const command = claudeCommand({
           claudeArgs: extra,
           agent: agentName,
@@ -1988,7 +2077,9 @@ function buildProgram(
         }
         for (const hook of await brokenHooks(options.env, cwd)) {
           stderr.write(
-            `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`,
+            "missing" in hook
+              ? `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`
+              : `Warning: a ${hook.event} hook in ${hook.settings} names "${hook.quotedTilde}" with the ~ quoted or escaped, which the shell doesn't expand; Claude Code will report a hook error. Use $HOME or an absolute path.\n`,
           );
         }
         try {
@@ -4070,14 +4161,23 @@ function buildProgram(
         throw usageError(
           "This repository has no origin remote: push the branch yourself and pass --no-push",
         );
+      // The base, origin's default and always main and master (ST-146), whatever --any-branch says.
       const originDefault = originDefaultBranch(cwd, git);
       const protectedBranches = [
         ...(opts.base !== undefined ? [opts.base] : []),
-        ...(originDefault ? [originDefault] : ["main", "master"]),
+        ...(originDefault ? [originDefault] : []),
+        "main",
+        "master",
       ];
       if (protectedBranches.includes(head)) {
+        const what =
+          head === opts.base
+            ? "the base branch"
+            : head === originDefault
+              ? "the default branch"
+              : "main or master, which spider pr never pushes";
         throw usageError(
-          `Not pushing ${head}: it is the ${head === opts.base ? "base" : "default"} branch. Check out the task's branch (spider start ${resolved}) and run spider pr there`,
+          `Not pushing ${head}: it is ${what}. Check out the task's branch (spider start ${resolved}) and run spider pr there`,
         );
       }
       if (!opts.anyBranch && taskKeyFromBranch(head) !== resolved) {
@@ -4440,18 +4540,32 @@ function buildProgram(
   const checkoutTaskBranch = (
     key: string,
     title: string,
+    fetch: boolean,
   ): { branch: string | null; note?: string } => {
     if (!isRepo(cwd, git)) return { branch: null };
     const current = currentBranch(cwd, git);
     if (current && taskKeysIn(current).includes(key))
       return { branch: current };
     const name = branchNameFor(key, title);
+    // Opt-in (ST-126): a branch pushed from another machine is only seen as origin/<name> after a fetch.
+    if (fetch) {
+      const fetched = fetchBranch(cwd, name, git);
+      if (!fetched.ok && !fetched.missing)
+        stderr.write(
+          `Warning: couldn't fetch ${name} from origin: ${fetched.error}; using what git already knows\n`,
+        );
+    }
     if (isDirty(cwd, git))
       stderr.write(
-        "Warning: the working tree has uncommitted changes; they move to the new branch.\n",
+        `Warning: the working tree has uncommitted changes; they come along to ${name}.\n`,
       );
     try {
-      const { created, tracking } = createOrSwitchBranch(cwd, name, git);
+      const { created, tracking, warning } = createOrSwitchBranch(
+        cwd,
+        name,
+        git,
+      );
+      if (warning) stderr.write(`Warning: ${warning}\n`);
       const from = current ?? "a detached HEAD";
       const what = tracking
         ? `new branch ${name} tracking ${tracking}`
@@ -4470,7 +4584,7 @@ function buildProgram(
     }
   };
 
-  type StartOptions = JsonOption & { branch: boolean };
+  type StartOptions = JsonOption & { branch: boolean; fetch?: boolean };
   const startTask = async (key: string | undefined, opts: StartOptions) => {
     const resolved = taskKey(key, cwd, git);
     const { sdk, org, whoami, project, describe } = conn();
@@ -4488,7 +4602,7 @@ function buildProgram(
       }),
     );
     const { branch, note } = opts.branch
-      ? checkoutTaskBranch(resolved, started.title)
+      ? checkoutTaskBranch(resolved, started.title, opts.fetch === true)
       : { branch: null };
     output(opts, { ...started, branch }, () =>
       [taskLines([started]), ...(note ? [note] : [])].join("\n"),
@@ -4501,7 +4615,11 @@ function buildProgram(
           "assign me, move to the first in-progress status and switch to the task's git branch",
         )
         .argument("[key]")
-        .option("--no-branch", "don't create or switch git branches"),
+        .option("--no-branch", "don't create or switch git branches")
+        .option(
+          "--fetch",
+          "git fetch origin <branch> first, so a branch pushed from another machine is tracked instead of created from HEAD",
+        ),
     ).action(startTask);
 
   startCommand(task.command("start"));
@@ -5324,12 +5442,26 @@ function buildProgram(
   /**
    * For "not found" and "forbidden": which saved agent acted, when it sees only some projects. A task
    * in another project reads as missing, and the default agent is easy to use by mistake (ST-107).
+   * Only when the request named a project outside the agent's saved scope (ST-130): a task key,
+   * `--project` or a positional project in the arguments, else the current branch's key. A missing task in a project the
+   * agent sees gets the plain message; with no key to judge by, the hint stays.
    */
   const scopeHint = async (): Promise<string> => {
     const entry = api
       ? (await api.credentials.catch(() => undefined))?.entry
       : undefined;
     if (!api || !entry?.saved.projects) return "";
+    const requested = requestedProjects(argv);
+    if (requested.size === 0) {
+      const branch = currentBranch(cwd, git);
+      const key = branch ? taskKeyFromBranch(branch) : null;
+      if (key) requested.add(projectKeyOf(key).toUpperCase());
+    }
+    const visible = new Set(
+      entry.saved.projects.map((p) => p.key.toUpperCase()),
+    );
+    if (requested.size > 0 && [...requested].every((k) => visible.has(k)))
+      return "";
     const { via } = await api.credentials;
     return ` (acting as ${entry.ref}${via ? `, ${via}` : ""}, which sees only ${scopeOf(entry)}; pass --as <agent> to act as another)`;
   };

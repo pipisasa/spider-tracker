@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+  GITHUB_DELIVERY_RETENTION_DAYS,
   GITHUB_WEBHOOK_MAX_BYTES,
   createAgent,
   createApiKey,
@@ -20,6 +21,13 @@ import { createAuth } from "./auth";
 import { loadEnv } from "./env";
 import { createFakeGithub } from "./github-fake";
 import type { Mailer } from "./mailer";
+
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const SECRET = "webhook-secret";
@@ -145,6 +153,71 @@ describe("POST /webhooks/github: signature and size (ST-83)", () => {
       error: { code: "payload_too_large" },
     });
   });
+
+  test("a chunked body (no Content-Length) over the limit is 413 too, logged without the body (ST-138)", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(0x78);
+    const chunks = Math.ceil(GITHUB_WEBHOOK_MAX_BYTES / chunk.byteLength) + 1;
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < chunks) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    let res: Response;
+    try {
+      res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-GitHub-Event": "push",
+          "X-GitHub-Delivery": "chunked-1",
+          "X-Hub-Signature-256": "sha256=00",
+        },
+        body,
+        duplex: "half",
+      } as RequestInit);
+    } finally {
+      console.error = original;
+    }
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({
+      error: { code: "payload_too_large" },
+    });
+    expect(logged).toEqual([
+      `GitHub webhook refused: body over ${GITHUB_WEBHOOK_MAX_BYTES} bytes (delivery chunked-1, event push, content-length none)`,
+    ]);
+  });
+
+  test("the 413 log leaves out headers that don't have GitHub's shape (ST-138 review)", async () => {
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    try {
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "X-GitHub-Event": "push; rm -rf /",
+          "X-GitHub-Delivery": `forged ${"x".repeat(200)}`,
+        },
+        body: "x".repeat(GITHUB_WEBHOOK_MAX_BYTES + 1),
+      });
+      expect(res.status).toBe(413);
+    } finally {
+      console.error = original;
+    }
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(
+      /^GitHub webhook refused: body over \d+ bytes \(delivery \?, event \?, content-length (\d+|none)\)$/,
+    );
+  });
 });
 
 const withDb = databaseUrl ? describe : describe.skip;
@@ -153,7 +226,7 @@ withDb("POST /webhooks/github: deliveries (ST-83)", () => {
   const stamp = Date.now();
   const slug = `gh-hook-api-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 200;
+  const installationId = uniqueInstallationId();
   let owner: ActorContext;
 
   beforeAll(async () => {
@@ -205,6 +278,40 @@ withDb("POST /webhooks/github: deliveries (ST-83)", () => {
     expect(row).toMatchObject({ event: "ping", result: "ignored" });
   });
 
+  test("a new delivery prunes deliveries older than the retention (ST-138)", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const expired = newDelivery();
+    const recent = newDelivery();
+    await db.insert(schema.githubDeliveries).values([
+      {
+        id: expired,
+        event: "ping",
+        receivedAt: new Date(
+          Date.now() - (GITHUB_DELIVERY_RETENTION_DAYS + 1) * day,
+        ),
+      },
+      {
+        id: recent,
+        event: "ping",
+        receivedAt: new Date(
+          Date.now() - (GITHUB_DELIVERY_RETENTION_DAYS - 1) * day,
+        ),
+      },
+    ]);
+    expect((await post(ping)).status).toBe(200);
+    // The prune runs after the answer (not awaited): wait for it, briefly.
+    const left = async () =>
+      (
+        await db
+          .select({ id: schema.githubDeliveries.id })
+          .from(schema.githubDeliveries)
+          .where(inArray(schema.githubDeliveries.id, [expired, recent]))
+      ).map((r) => r.id);
+    for (let i = 0; i < 100 && (await left()).length > 1; i++)
+      await Bun.sleep(20);
+    expect(await left()).toEqual([recent]);
+  });
+
   test("missing headers and bodies that aren't JSON are 400", async () => {
     expect((await post(ping, { delivery: "" })).status).toBe(400);
     expect((await post(ping, { event: "" })).status).toBe(400);
@@ -252,7 +359,7 @@ withDb("GitHub links on tasks (ST-84)", () => {
   const stamp = Date.now();
   const slug = `gh-links-api-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 300;
+  const installationId = uniqueInstallationId();
   let token = "";
 
   beforeAll(async () => {
@@ -375,7 +482,7 @@ withDb("status automation from signed pull_request events (ST-85)", () => {
   const stamp = Date.now();
   const slug = `gh-auto-api-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 400;
+  const installationId = uniqueInstallationId();
   let token = "";
 
   beforeAll(async () => {

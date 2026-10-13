@@ -8,16 +8,24 @@ export interface GitResult {
   stderr: string;
 }
 
-/** Runs `git <args>` in `cwd`; injected in tests so they never touch a real repository. */
-export type GitRunner = (args: string[], cwd: string) => GitResult;
+/**
+ * Runs `git <args>` in `cwd`, with `env` added to the environment; injected in tests so they never
+ * touch a real repository.
+ */
+export type GitRunner = (
+  args: string[],
+  cwd: string,
+  env?: Record<string, string>,
+) => GitResult;
 
-export const runGit: GitRunner = (args, cwd) => {
+export const runGit: GitRunner = (args, cwd, env) => {
   try {
     const result = Bun.spawnSync({
       cmd: ["git", ...args],
       cwd,
       stdout: "pipe",
       stderr: "pipe",
+      ...(env ? { env: { ...process.env, ...env } } : {}),
     });
     return {
       exitCode: result.exitCode,
@@ -52,15 +60,60 @@ export function isDirty(cwd: string, git: GitRunner = runGit): boolean {
   return result.exitCode === 0 && result.stdout.trim() !== "";
 }
 
+/** Never ask for credentials on a terminal: a fetch that needs them fails instead (ST-126). */
+const NO_PROMPT = { GIT_TERMINAL_PROMPT: "0" };
+
+/**
+ * Fetches branch `name` from `origin` (`spider start --fetch`), so a branch pushed from another
+ * machine is seen as `origin/<name>`. Whether origin has it is asked first (`git ls-remote
+ * --exit-code`, exit 2 when it doesn't: no message parsing, any locale), so a missing branch isn't an
+ * error (`missing`). The fetch names the full refspec, so single-branch clones get
+ * `refs/remotes/origin/<name>` too. Other failures (no network, no origin) are returned for a warning.
+ */
+export function fetchBranch(
+  cwd: string,
+  name: string,
+  git: GitRunner = runGit,
+): { ok: true } | { ok: false; missing: boolean; error: string } {
+  const failed = (result: GitResult, what: string) => ({
+    ok: false as const,
+    missing: false,
+    error: result.stderr.trim() || `${what} failed (exit ${result.exitCode})`,
+  });
+  const listed = git(
+    ["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${name}`],
+    cwd,
+    NO_PROMPT,
+  );
+  if (listed.exitCode === 2)
+    return { ok: false, missing: true, error: `origin has no branch ${name}` };
+  if (listed.exitCode !== 0) return failed(listed, "git ls-remote origin");
+  const fetched = git(
+    [
+      "fetch",
+      "--quiet",
+      "origin",
+      `+refs/heads/${name}:refs/remotes/origin/${name}`,
+    ],
+    cwd,
+    NO_PROMPT,
+  );
+  return fetched.exitCode === 0
+    ? { ok: true }
+    : failed(fetched, `git fetch origin ${name}`);
+}
+
 /**
  * Switches to branch `name`: the local branch when it exists, else a new local branch tracking `origin/<name>` when
  * only the remote one exists, else a new branch from HEAD. Throws with git's message on failure.
+ * Only what git already knows of origin counts: a branch pushed elsewhere and not fetched yet is
+ * created from HEAD (fetch first, or `fetchBranch`).
  */
 export function createOrSwitchBranch(
   cwd: string,
   name: string,
   git: GitRunner = runGit,
-): { created: boolean; tracking: string | null } {
+): { created: boolean; tracking: string | null; warning?: string } {
   const has = (ref: string) =>
     git(["rev-parse", "--verify", "--quiet", ref], cwd).exitCode === 0;
   const local = has(`refs/heads/${name}`);
@@ -72,9 +125,42 @@ export function createOrSwitchBranch(
       ? ["switch", "-c", name, "--track", tracking]
       : ["switch", "-c", name];
   const result = git(args, cwd);
-  if (result.exitCode !== 0)
+  if (result.exitCode !== 0) {
+    // A single-branch clone's fetch refspec doesn't cover origin/<name>, so --track refuses it
+    // ("starting point … is not a branch"): branch from it and set the upstream explicitly.
+    const explicit = tracking
+      ? trackExplicitly(cwd, name, tracking, git)
+      : "failed";
+    if (explicit === "tracked") return { created: true, tracking };
+    if (explicit === "untracked")
+      return {
+        created: true,
+        tracking: null,
+        warning: `created ${name} from ${tracking}, but couldn't set its upstream; run git branch --set-upstream-to=${tracking}`,
+      };
     throw new Error(result.stderr.trim() || `git switch ${name} failed`);
+  }
   return { created: !local, tracking };
+}
+
+/**
+ * `git switch -c <name> --no-track <start>` plus the upstream config `--track` would write:
+ * "tracked", "untracked" (switched, but the config failed) or "failed" (nothing changed).
+ */
+function trackExplicitly(
+  cwd: string,
+  name: string,
+  start: string,
+  git: GitRunner,
+): "tracked" | "untracked" | "failed" {
+  if (git(["switch", "-c", name, "--no-track", start], cwd).exitCode !== 0)
+    return "failed";
+  const remote = git(["config", `branch.${name}.remote`, "origin"], cwd);
+  const merge =
+    remote.exitCode === 0
+      ? git(["config", `branch.${name}.merge`, `refs/heads/${name}`], cwd)
+      : remote;
+  return merge.exitCode === 0 ? "tracked" : "untracked";
 }
 
 /** "owner/name" from a GitHub remote URL (https, ssh or scp-like), or null. */
@@ -111,20 +197,20 @@ export function pushBranch(
     throw new Error(result.stderr.trim() || `git push origin ${branch} failed`);
 }
 
+const ORIGIN_REFS = "refs/remotes/origin/";
+
 /**
  * The origin remote's default branch ("main" from `refs/remotes/origin/HEAD`), or null when git
- * doesn't know it (a clone that never set it).
+ * doesn't know it (a clone that never set it). Reads the full ref: `--short` prints
+ * `remotes/origin/main` when a local branch named `origin/main` exists (ST-146).
  */
 export function originDefaultBranch(
   cwd: string,
   git: GitRunner = runGit,
 ): string | null {
-  const result = git(
-    ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    cwd,
-  );
+  const result = git(["symbolic-ref", "refs/remotes/origin/HEAD"], cwd);
   const ref = result.exitCode === 0 ? result.stdout.trim() : "";
-  return ref.startsWith("origin/") && ref.length > "origin/".length
-    ? ref.slice("origin/".length)
+  return ref.startsWith(ORIGIN_REFS) && ref.length > ORIGIN_REFS.length
+    ? ref.slice(ORIGIN_REFS.length)
     : null;
 }

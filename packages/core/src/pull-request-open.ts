@@ -1,6 +1,6 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   assertCanWrite,
   inScope,
@@ -14,13 +14,12 @@ import {
   pullRequestKeys,
   pullRequestUrl,
   savePullRequest,
-  tasksOfKeys,
   toPullRequestDto,
   type PullRequestData,
 } from "./git-links";
 import { githubBotContext } from "./github";
 import { parseRepoRemote, repoFullName } from "./remotes";
-import { openPullRequestInput } from "./schemas";
+import { openPullRequestInput, parseTaskKey } from "./schemas";
 import { findTask } from "./tasks";
 import { parseInput } from "./validate";
 
@@ -39,7 +38,8 @@ import { parseInput } from "./validate";
 //
 // Core never calls GitHub: the API passes `create`, its GitHub port's createPullRequest.
 
-const { githubInstallations, projectRepos, pullRequests, repos } = schema;
+const { githubInstallations, projectRepos, projects, pullRequests, repos } =
+  schema;
 
 type RepoRow = typeof repos.$inferSelect;
 
@@ -201,8 +201,10 @@ async function installationOf(db: Db, repo: RepoRow): Promise<number> {
 }
 
 /**
- * Refuses (as not found, naming no key) a pull request whose head, title or body names a task in
- * a project attached to the repo that the caller can't see.
+ * Refuses (as not found, naming no key) a pull request whose head, title or body names a key of a
+ * project attached to the repo that the caller can't see. It goes by the key's project, not the
+ * task: the answer is the same whether that task exists or not, so a scoped agent can't probe
+ * which tasks exist outside its projects (ST-146).
  */
 async function assertKeysInScope(
   db: Db,
@@ -212,8 +214,25 @@ async function assertKeysInScope(
 ) {
   const scope = await projectScope(db, ctx);
   if (!scope) return;
-  const named = await tasksOfKeys(db, repo, pullRequestKeys(pr).keys());
-  if ([...named.values()].some((t) => !inScope(scope, t.projectId))) {
+  const projectKeys = new Set<string>();
+  for (const key of pullRequestKeys(pr).keys()) {
+    const parsed = parseTaskKey(key);
+    if (parsed) projectKeys.add(parsed.projectKey);
+  }
+  if (projectKeys.size === 0) return;
+  const named = await db
+    .select({ id: projects.id })
+    .from(projectRepos)
+    .innerJoin(projects, eq(projects.id, projectRepos.projectId))
+    .where(
+      and(
+        eq(projectRepos.repoId, repo.id),
+        // A second safeguard: a repo's projects are always its organization's.
+        eq(projects.orgId, repo.orgId),
+        inArray(projects.key, [...projectKeys]),
+      ),
+    );
+  if (named.some((p) => !inScope(scope, p.id))) {
     throw new DomainError(
       "not_found",
       "The branch, title or body names a task that wasn't found in your projects",
@@ -326,24 +345,18 @@ export async function openTaskPullRequest(
   const via = pullRequestKeys(saved).get(key) ?? "body";
   if (row)
     return { taskKey: key, pullRequest: toPullRequestDto(repo, row, via) };
-  // GitHub opened it but it wasn't kept (a newer event already stored, or it names no task here):
-  // still answer with the pull request GitHub returned, never a 500.
+  // GitHub opened it but it wasn't kept (it names no task here, as GitHub answered): still answer
+  // with the pull request GitHub returned, never a 500.
   return {
     taskKey: key,
-    pullRequest: {
-      repo: repoFullName(repo),
-      number: saved.number,
-      title: saved.title,
-      url: pullRequestUrl(repo, saved.number),
-      state: saved.state,
-      draft: saved.draft,
-      headBranch: saved.headBranch,
-      baseBranch: saved.baseBranch,
-      author: saved.author,
-      mergedAt: saved.mergedAt?.toISOString() ?? null,
-      closedAt: saved.closedAt?.toISOString() ?? null,
-      updatedAt: saved.updatedAt.toISOString(),
+    pullRequest: toPullRequestDto(
+      repo,
+      {
+        ...saved,
+        authorLogin: saved.author,
+        githubUpdatedAt: saved.updatedAt,
+      },
       via,
-    },
+    ),
   };
 }

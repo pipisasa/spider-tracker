@@ -24,6 +24,13 @@ import { loadEnv } from "./env";
 import { createFakeGithub } from "./github-fake";
 import type { Mailer } from "./mailer";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 // POST /tasks/:key/pull-request and the MCP open_pull_request tool (ST-87), against a fake GitHub.
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -92,8 +99,8 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
   const stamp = Date.now();
   const slug = `gh-pr-${stamp}`;
   const userId = `test-${crypto.randomUUID()}`;
-  const installationId = stamp + 870;
-  const otherInstallationId = stamp + 871;
+  const installationId = uniqueInstallationId();
+  const otherInstallationId = uniqueInstallationId();
   const otherSlug = `gh-pr-other-${stamp}`;
   const otherUserId = `test-${crypto.randomUUID()}`;
   const repoName = `app-${stamp}`;
@@ -184,6 +191,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       ["SPI", "Known elsewhere"],
       ["SPI", "Refused"],
       ["SPI", "Scoped"],
+      ["SPI", "Answered but not kept"],
       ["TWO", "Pick a repo"],
       ["TWO", "Out of scope"],
       ["NOR", "Nowhere to go"],
@@ -510,6 +518,8 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       { title: "Scoped (TWO-2)" },
       { head: "two-2-out-of-scope" },
       { body: "See two-2" },
+      // A task that doesn't exist in that project gets the same answer (ST-146).
+      { body: "Closes TWO-999" },
     ]) {
       const err = await apiError(
         sdk(app, scopedToken).tasks.openPullRequest(slug, "SPI-5", input),
@@ -532,6 +542,55 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       via: "closing",
     });
     expect(await statusOf("SPI-5")).toBe("in_review");
+  });
+
+  test("a pull request GitHub opened but that isn't kept is still answered, as the same DTO (ST-146)", async () => {
+    // GitHub answers with a PR that names no task here (so it isn't saved): the fallback DTO.
+    let number = -1;
+    const odd = createApp({
+      db,
+      auth: createAuth(db, env, mailer),
+      env,
+      github: {
+        ...github,
+        async createPullRequest(request) {
+          const result = await github.createPullRequest(request);
+          number = result.pullRequest.number;
+          return {
+            ...result,
+            pullRequest: {
+              ...result.pullRequest,
+              title: "Unrelated",
+              body: null,
+              headBranch: "unrelated-work",
+            },
+          };
+        },
+      },
+    });
+    const opened = await sdk(odd).tasks.openPullRequest(slug, "SPI-6", {
+      head: "spi-6-not-kept",
+    });
+    expect(opened).toEqual({
+      taskKey: "SPI-6",
+      pullRequest: {
+        repo: `acme/${repoName}`,
+        number,
+        title: "Unrelated",
+        url: `https://github.com/acme/${repoName}/pull/${number}`,
+        state: "open",
+        draft: false,
+        headBranch: "unrelated-work",
+        baseBranch: "main",
+        author: "spider-tracker-test[bot]",
+        mergedAt: null,
+        closedAt: null,
+        updatedAt: expect.any(String),
+        via: "body",
+      },
+    });
+    expect((await sdk().tasks.git(slug, "SPI-6")).pullRequests).toEqual([]);
+    expect(await statusOf("SPI-6")).toBe("todo");
   });
 
   test("only the task asked for moves at once; others it names (in scope) are linked", async () => {
