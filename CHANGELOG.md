@@ -4,6 +4,15 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 
 ## Unreleased
 
+### Review follow-ups
+
+- **API, MCP, CLI (ST-122):** bulk updates (`update_tasks`, `PATCH …/tasks`, multi-key `spider task update`) check `set.assigneeIds`, `set.tagIds` and the parent once: an unknown or other organization's id, or a parent outside the agent's projects, fails the request (`400 validation`, CLI exit 2) with one error instead of one per task, and nothing changes. A deactivated agent already assigned still stays assigned. Plugin: the `tasks` skill mentions `update_tasks` and multi-key `spider task update`.
+- **API, MCP, CLI (ST-131):** linking a task as a duplicate (`link_tasks`, `POST …/relations`) when it already duplicates another task is refused (`409`, as `mark_duplicate` already did); the message names the first original only when you can see its project. `mark_duplicate` / `spider task duplicate` called again with a new `comment` now posts that comment by itself instead of dropping it.
+- **API (ST-133):** two concurrent task updates that each set one date no longer fail with a `500` when together they'd put the start after the target; the second gets the usual `400`. Web: board cards show the target date (red when overdue), and the new-task dialog takes a start and a target date.
+- **API, MCP, CLI (ST-136):** deleting a status reports `movedTasks` as the number of live tasks moved; deleted tasks still move with them but are no longer counted.
+- **API, MCP, CLI, channel (ST-139):** `rules` inbox items of archived projects are no longer listed. Items dropped because the rules changed (replaced, cleared, moved, deleted) or the project was archived are marked read, so a document that becomes the rules again gets a new item that the channel delivers, instead of the old one reappearing unseen.
+- **API, MCP, CLI (ST-145):** every move of a release now locks it and checks its status first, not only releasing, unreleasing and canceling: a plain move (Planned → On staging) that waited behind a concurrent Released is refused (`409`, "changed meanwhile; try again") instead of overwriting it. A sub-task created already closed under a parent in a milestone now moves that milestone to Ready to close when it completes it.
+
 ### MCP server (breaking: tool output shapes, ST-107)
 
 MCP tools now return the same JSON as the CLI's `--json` output, built from the API DTOs ([interfaces.md](docs/interfaces.md#cli-and-mcp-output)). Tool inputs are unchanged. Scripts or prompts that read the old fields need these changes:

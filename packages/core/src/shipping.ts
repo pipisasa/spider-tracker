@@ -49,8 +49,10 @@ async function announce(
  * - out of done: the shipping is undone ("task.unshipped");
  * - into canceled: the included tasks leave the release, free for another one.
  * Any of these is refused when an included task is outside the actor's `scope`. The release row is
- * locked first, as adding and removing tasks do (releases.ts), so no task joins or leaves between
- * the scope check and the writes, and the writes touch only the tasks that were checked.
+ * locked first, on every move (ST-145), as adding and removing tasks do (releases.ts), so no task
+ * joins or leaves between the scope check and the writes, the writes touch only the tasks that were
+ * checked, and a move that waited for the lock behind another one is refused (409) instead of
+ * overwriting it.
  * Returns the release's own `shippedAt` when it changes (undefined when it doesn't).
  */
 export async function applyReleaseTransition(
@@ -62,8 +64,8 @@ export async function applyReleaseTransition(
   to: StatusCategory,
   now: Date,
 ): Promise<Date | null | undefined> {
-  if (from === to) return undefined;
-  if (to !== "done" && from !== "done" && to !== "canceled") return undefined;
+  // Every move of a release takes the lock and checks `from` first, even one that ships nothing
+  // (Planned → On staging): otherwise it could overwrite a concurrent Released (ST-145).
   // Lock order: the release row, then its tasks (as addToRelease and removeFromRelease take them).
   const [locked] = await tx
     .select({ statusId: tasks.statusId })
@@ -78,6 +80,8 @@ export async function applyReleaseTransition(
       "conflict",
       `Release ${release.key} changed meanwhile; try again`,
     );
+  if (from === to) return undefined;
+  if (to !== "done" && from !== "done" && to !== "canceled") return undefined;
   const included = await allReleaseTasks(tx, release.id);
   const includedIds = included.map((t) => t.id);
   assertSeesWholeRelease(

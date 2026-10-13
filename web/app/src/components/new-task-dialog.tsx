@@ -19,6 +19,7 @@ import type {
   Priority,
   ProjectDetailDto,
 } from "@repo/core/contracts";
+import { DATES_OUT_OF_ORDER, datesInOrder } from "@repo/core/schemas";
 import {
   lazy,
   Suspense,
@@ -55,6 +56,10 @@ export function NewTaskDialog({
   const [priority, setPriority] = useState<Priority>(0);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
+  // "YYYY-MM-DD" from the date inputs, "" when unset (ST-91).
+  const [startDate, setStartDate] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const datesOk = datesInOrder(startDate || null, targetDate || null);
   const create = useCreateTask(orgSlug, project.key);
 
   // Re-seed the status when the dialog opens from a different column.
@@ -70,11 +75,17 @@ export function NewTaskDialog({
     setPriority(0);
     setAssigneeIds([]);
     setTagIds([]);
+    setStartDate("");
+    setTargetDate("");
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
+    if (!datesOk) {
+      toast.error(DATES_OUT_OF_ORDER);
+      return;
+    }
     create.mutate(
       {
         title,
@@ -83,6 +94,8 @@ export function NewTaskDialog({
         priority,
         assigneeIds,
         tagIds,
+        startDate: startDate || undefined,
+        targetDate: targetDate || undefined,
       },
       {
         onSuccess: (task) => {
@@ -155,9 +168,34 @@ export function NewTaskDialog({
               />
             </div>
             <TagPicker orgSlug={orgSlug} value={tagIds} onChange={setTagIds} />
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Start date
+                <Input
+                  type="date"
+                  value={startDate}
+                  max={targetDate || undefined}
+                  aria-invalid={!datesOk || undefined}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Target date
+                <Input
+                  type="date"
+                  value={targetDate}
+                  min={startDate || undefined}
+                  aria-invalid={!datesOk || undefined}
+                  onChange={(e) => setTargetDate(e.target.value)}
+                />
+              </label>
+            </div>
           </div>
           <DialogFooter>
-            <Button type="submit" disabled={create.isPending || !title.trim()}>
+            <Button
+              type="submit"
+              disabled={create.isPending || !title.trim() || !datesOk}
+            >
               {create.isPending ? "Creating…" : "Create task"}
             </Button>
           </DialogFooter>

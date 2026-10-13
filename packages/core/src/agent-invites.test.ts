@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import {
   acceptAgentInvite,
@@ -571,7 +571,8 @@ run("agent invites and project scope", () => {
           eq(schema.activity.entityId, stale.agent.id),
           eq(schema.activity.action, "agent_invite.purged"),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(purged).toHaveLength(1);
     expect(purged[0]).toMatchObject({
       actorId: owner.actorId,

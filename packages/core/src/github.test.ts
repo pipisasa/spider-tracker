@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createAgent } from "./agents";
 import { addComment } from "./comments";
@@ -444,7 +444,8 @@ run("GitHub installations (ST-82)", () => {
           eq(schema.activity.orgId, owner.orgId),
           eq(schema.activity.action, "github.connected"),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(activity.map((a) => a.changes)).toEqual([
       {
         installation: installationId,
@@ -482,7 +483,8 @@ run("GitHub installations (ST-82)", () => {
           eq(schema.activity.orgId, owner.orgId),
           eq(schema.activity.action, "github.synced"),
         ),
-      );
+      )
+      .orderBy(asc(schema.activity.id));
     expect(synced?.changes).toEqual({
       installation: installationId,
       account: "acme-inc",

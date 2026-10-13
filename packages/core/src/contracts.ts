@@ -103,7 +103,7 @@ export interface ProjectDetailDto extends ProjectDto {
   workflows: Record<TaskKind, StatusDto[]>;
 }
 
-/** A deleted status (ST-90): the project afterwards and how many tasks moved to the target status. */
+/** A deleted status (ST-90): the project afterwards and how many live tasks moved to the target status (ST-136). */
 export interface DeleteStatusResponse {
   project: ProjectDetailDto;
   movedTasks: number;

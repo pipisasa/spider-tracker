@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { generateNKeysBetween } from "fractional-indexing";
 import { assertCanManageProjects, type ActorContext } from "./access";
 import { recordActivity } from "./activity";
@@ -281,7 +281,7 @@ async function findProjectStatus(
   return status;
 }
 
-/** Moves every task of `from` to the end of `to`'s column, recording the change on the live ones. */
+/** Moves every task of `from` to the end of `to`'s column, recording the change on the live ones; returns how many live tasks moved. */
 async function moveTasks(
   tx: Tx,
   ctx: ActorContext,
@@ -318,14 +318,30 @@ async function moveTasks(
   const wasClosed = CLOSED.includes(from.category);
   const isClosed = CLOSED.includes(to.category);
   const now = new Date();
-  for (const [i, task] of moving.entries()) {
-    const completedAt =
-      isClosed === wasClosed ? task.completedAt : isClosed ? now : null;
+  // completedAt is kept, or set or cleared when the tasks close or reopen.
+  const completedAt =
+    isClosed === wasClosed ? sql`${tasks.completedAt}` : isClosed ? now : null;
+  // One UPDATE … FROM (VALUES …) per chunk instead of one per task (ST-136); chunks stay well
+  // under Postgres' bind parameter limit.
+  for (let start = 0; start < moving.length; start += MOVE_CHUNK) {
+    const rows = moving
+      .slice(start, start + MOVE_CHUNK)
+      .map((task, i) => sql`(${task.id}::uuid, ${keys[start + i]!})`);
     await tx
       .update(tasks)
-      .set({ statusId: to.id, sortKey: keys[i]!, completedAt, updatedAt: now })
-      .where(eq(tasks.id, task.id));
-    if (task.deletedAt) continue;
+      .set({
+        statusId: to.id,
+        sortKey: sql`moved.sort_key`,
+        completedAt,
+        updatedAt: now,
+      })
+      .from(sql`(values ${sql.join(rows, sql`, `)}) as moved(id, sort_key)`)
+      .where(eq(tasks.id, sql`moved.id`));
+  }
+
+  // Deleted tasks move too (a restore needs a status) but aren't announced or counted.
+  const live = moving.filter((task) => !task.deletedAt);
+  for (const task of live) {
     await recordActivity(tx, ctx, {
       entityType: "task",
       entityId: task.id,
@@ -339,5 +355,7 @@ async function moveTasks(
       taskKey: `${project.key}-${task.number}`,
     });
   }
-  return moving.length;
+  return live.length;
 }
+
+const MOVE_CHUNK = 1000;
