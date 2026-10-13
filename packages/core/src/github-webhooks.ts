@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { ActorContext } from "./access";
@@ -52,7 +52,7 @@ const PRUNE_BATCH = 500;
  * Rows another prune is deleting are skipped.
  */
 export async function pruneGithubDeliveries(
-  db: Db,
+  db: Db | Tx,
   {
     now = new Date(),
     limit = PRUNE_BATCH,
@@ -61,16 +61,19 @@ export async function pruneGithubDeliveries(
   const cutoff = new Date(
     now.getTime() - GITHUB_DELIVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
   );
-  const stale = db
-    .select({ id: githubDeliveries.id })
-    .from(githubDeliveries)
-    .where(lt(githubDeliveries.receivedAt, cutoff))
-    .limit(limit)
-    .for("update", { skipLocked: true });
-  const deleted = await db
-    .delete(githubDeliveries)
-    .where(inArray(githubDeliveries.id, stale))
-    .returning({ id: githubDeliveries.id });
+  // The batch is materialized first: `DELETE … WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP
+  // LOCKED)` can be planned as a semi join that re-runs the subquery and deletes more than n.
+  const deleted = await db.execute<{ id: string }>(sql`
+    with stale as materialized (
+      select ${githubDeliveries.id} as id from ${githubDeliveries}
+      where ${githubDeliveries.receivedAt} < ${cutoff.toISOString()}
+      order by ${githubDeliveries.receivedAt}
+      limit ${limit}
+      for update skip locked
+    )
+    delete from ${githubDeliveries} as d using stale
+    where d.id = stale.id
+    returning d.id`);
   return deleted.length;
 }
 

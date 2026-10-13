@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { createHmac } from "node:crypto";
 import type { ActorContext } from "./access";
 import { listGithubInstallations, saveGithubInstallation } from "./github";
@@ -167,12 +167,16 @@ run("GitHub webhooks (ST-83)", () => {
     const kept = new Date(
       now.getTime() - (GITHUB_DELIVERY_RETENTION_DAYS - 1) * day,
     );
-    const ids = [nextDelivery(), nextDelivery(), nextDelivery()];
-    await db.insert(schema.githubDeliveries).values([
-      { id: ids[0]!, event: "ping", receivedAt: old },
-      { id: ids[1]!, event: "ping", receivedAt: old },
-      { id: ids[2]!, event: "ping", receivedAt: kept },
-    ]);
+    // Enough expired rows that each batch is a strict subset; one kept.
+    const expired = Array.from({ length: 30 }, () => nextDelivery());
+    const keptId = nextDelivery();
+    const ids = [...expired, keptId];
+    await db
+      .insert(schema.githubDeliveries)
+      .values([
+        ...expired.map((id) => ({ id, event: "ping", receivedAt: old })),
+        { id: keptId, event: "ping", receivedAt: kept },
+      ]);
     const remaining = async () =>
       (
         await db
@@ -180,12 +184,33 @@ run("GitHub webhooks (ST-83)", () => {
           .from(schema.githubDeliveries)
           .where(inArray(schema.githubDeliveries.id, ids))
       ).map((r) => r.id);
-    // One row per call: drains the expired rows (other runs' too) a batch at a time.
+    // At most one batch per call, whatever the plan. Forced here to the plan that broke
+    // `id IN (SELECT … LIMIT n)`: a nested-loop semi join re-running the subquery per row, which
+    // deleted every expired row. Rolled back, so the shared database keeps its rows.
+    const rollback = new Error("rollback");
+    await db
+      .transaction(async (tx) => {
+        for (const setting of [
+          "enable_hashjoin",
+          "enable_mergejoin",
+          "enable_material",
+          "enable_hashagg",
+          "enable_sort",
+          "enable_memoize",
+        ])
+          await tx.execute(sql.raw(`set local ${setting} = off`));
+        expect(await pruneGithubDeliveries(tx, { now, limit: 1 })).toBe(1);
+        expect(await pruneGithubDeliveries(tx, { now, limit: 7 })).toBe(7);
+        throw rollback;
+      })
+      .catch((err: unknown) => {
+        if (err !== rollback) throw err;
+      });
     expect(await pruneGithubDeliveries(db, { now, limit: 1 })).toBe(1);
-    while ((await pruneGithubDeliveries(db, { now, limit: 1 })) > 0) {
-      /* drain */
+    while ((await pruneGithubDeliveries(db, { now, limit: 10 })) > 0) {
+      /* drain the rest (other runs' expired rows too) */
     }
-    expect(await remaining()).toEqual([ids[2]!]);
+    expect(await remaining()).toEqual([keptId]);
   });
 
   test("header shapes that may be logged (ST-138)", () => {
