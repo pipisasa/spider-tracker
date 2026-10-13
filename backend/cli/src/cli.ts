@@ -586,9 +586,41 @@ type Api = ReturnType<typeof connect>;
 const projectKeyOf = (taskKey: string) =>
   parseTaskKey(taskKey)?.projectKey ?? taskKey.split("-")[0] ?? taskKey;
 
-/** The projects a command line names: those of its task keys, and `--project` values (upper case). */
+/**
+ * The project a command takes as a positional argument (ST-130): `project view|update|archive
+ * <project>`, `status [list|add|update|delete] <project>`, `repo attach|detach <repo> <project>`.
+ */
+function positionalProject(argv: string[]): string | undefined {
+  // The words before the command's own options, without the global --as / --server and their values.
+  const words: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const word = argv[i] ?? "";
+    if (word === "--as" || word === "--server") i++;
+    else if (!word.startsWith("-")) words.push(word);
+  }
+  const [command, sub, first, second] = words;
+  if (
+    command === "project" &&
+    ["view", "update", "archive"].includes(sub ?? "")
+  )
+    return first;
+  if (command === "project" && sub === "status")
+    return ["list", "add", "update", "delete"].includes(first ?? "")
+      ? second
+      : first;
+  if (command === "repo" && (sub === "attach" || sub === "detach"))
+    return second;
+  return undefined;
+}
+
+/**
+ * The projects a command line names: those of its task keys, `--project` values and a positional
+ * project argument (upper case).
+ */
 function requestedProjects(argv: string[]): Set<string> {
   const found = new Set<string>();
+  const positional = positionalProject(argv);
+  if (positional?.trim()) found.add(positional.trim().toUpperCase());
   for (const [i, word] of argv.entries()) {
     const parsed = parseTaskKey(word.trim());
     if (parsed) found.add(parsed.projectKey.toUpperCase());
@@ -5393,8 +5425,8 @@ function buildProgram(
   /**
    * For "not found" and "forbidden": which saved agent acted, when it sees only some projects. A task
    * in another project reads as missing, and the default agent is easy to use by mistake (ST-107).
-   * Only when the request named a project outside the agent's saved scope (ST-130): a task key or
-   * `--project` in the arguments, else the current branch's key. A missing task in a project the
+   * Only when the request named a project outside the agent's saved scope (ST-130): a task key,
+   * `--project` or a positional project in the arguments, else the current branch's key. A missing task in a project the
    * agent sees gets the plain message; with no key to judge by, the hint stays.
    */
   const scopeHint = async (): Promise<string> => {

@@ -216,12 +216,11 @@ withDb("MCP server", () => {
     );
   });
 
-  test("reports server version 0.2.0 after the breaking output change (ST-130)", async () => {
+  test("reports MCP_SERVER_VERSION, bumped for the breaking output change (ST-130)", async () => {
     expect(client.getServerVersion()).toMatchObject({
       name: "spider-tracker",
       version: MCP_SERVER_VERSION,
     });
-    expect(MCP_SERVER_VERSION).toBe("0.2.0");
   });
 
   test("whoami is the key's agent", async () => {

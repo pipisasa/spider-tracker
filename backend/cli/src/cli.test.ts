@@ -931,6 +931,30 @@ describe("saved agents", () => {
       // An out-of-scope --project gets the hint.
       const other = await cli(["task", "list", "--project", "ANT"], { env });
       expect(other.stderr).toContain("which sees only ST");
+      // A positional project counts, before the branch's key: ANT on an ST branch gets the hint.
+      const onStBranch: GitRunner = (args) =>
+        args.join(" ") === "branch --show-current"
+          ? { exitCode: 0, stdout: "st-1-work\n", stderr: "" }
+          : { exitCode: 0, stdout: "true\n", stderr: "" };
+      for (const argv of [
+        ["project", "view", "ANT"],
+        ["--as", "reviewer", "project", "view", "ANT"],
+        ["project", "status", "ANT"],
+        ["project", "status", "add", "ANT", "QA", "--category", "in_review"],
+        ["repo", "attach", "acme/web", "ANT"],
+      ]) {
+        const viewed = await cli(argv, { env, git: onStBranch, cwd: "/work" });
+        expect(viewed.stderr).toContain("which sees only ST");
+      }
+      expect(
+        (
+          await cli(["project", "view", "ST"], {
+            env,
+            git: onStBranch,
+            cwd: "/work",
+          })
+        ).stderr,
+      ).not.toContain("acting as");
     } finally {
       cleanup();
     }
