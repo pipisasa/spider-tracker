@@ -139,8 +139,8 @@ export async function addDocumentComment(
     );
 
     const quote = data.quote ?? null;
-    const occurs =
-      quote === null ? () => true : await quoteCheck(tx, ctx, document);
+    // Only a top-level comment quotes, so only it reads the document's link labels.
+    let occurs: QuoteCheck = () => true;
     let parentAuthor: string | undefined;
     let threadAuthors: string[] = [];
     let reopen: string | null = null;
@@ -174,11 +174,13 @@ export async function addDocumentComment(
         .filter((c) => rootOf(byId, c.id) === root)
         .map((c) => c.authorId);
       if (byId.get(root)?.resolvedAt) reopen = root;
-    } else if (quote !== null && !occurs(quote)) {
-      throw new DomainError(
-        "validation",
-        "The quoted text isn't in the document's current version. Quote plain text from it: a selection across a link, image or formatting may not match; select a shorter part",
-      );
+    } else if (quote !== null) {
+      occurs = await quoteCheck(tx, ctx, document);
+      if (!occurs(quote))
+        throw new DomainError(
+          "validation",
+          "The quoted text isn't in the document's current version. Quote plain text from it: a selection across a link, image or formatting may not match; select a shorter part",
+        );
     }
 
     const [comment] = await tx
