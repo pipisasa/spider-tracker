@@ -1275,6 +1275,49 @@ describe("saved agents", () => {
         (await cli(["agents", "permission-mode", "reviewer", "yolo"], { env }))
           .code,
       ).toBe(2);
+
+      // --permission-mode as the last word after --: a usage error, not "--permission-mode
+      // --permission-mode auto" (ST-125).
+      for (const last of ["--permission-mode", "--permission-mode="]) {
+        const dangling = await cli(["claude", "reviewer", "--", "-p", last], {
+          env,
+          spawn,
+          self,
+        });
+        expect(dangling.code).toBe(2);
+        expect(dangling.stderr).toContain(
+          "--permission-mode after -- needs a mode",
+        );
+      }
+      expect(launched).toHaveLength(6);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("claude ignores a saved permission mode Claude Code doesn't know, with a warning (ST-125)", async () => {
+    const { home, env, cleanup } = savedAgents();
+    const file = join(home, "config", "credentials.json");
+    const store = JSON.parse(readFileSync(file, "utf8")) as Store;
+    const reviewer = store.servers.prod?.orgs.acme?.agents.reviewer;
+    if (!reviewer) throw new Error("expected the reviewer");
+    reviewer.permissionMode = "yolo";
+    writeFileSync(file, JSON.stringify(store), { mode: 0o600 });
+    const launched: string[][] = [];
+    try {
+      const started = await cli(["claude", "reviewer"], {
+        env,
+        spawn: async (argv) => (launched.push(argv), 0),
+        self: ["spider"],
+      });
+      expect(started.code).toBe(0);
+      expect(launched[0]).not.toContain("yolo");
+      expect(started.stderr).toContain(
+        'Warning: the permission mode saved for @reviewer ("yolo") isn\'t one Claude Code knows',
+      );
+      expect(started.stderr).toContain(
+        "Permission mode: auto (spider default)",
+      );
     } finally {
       cleanup();
     }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   brokenHooks,
   claudeCommand,
+  flagValue,
   hookScripts,
   permissionLine,
   permissionModeFor,
@@ -39,6 +40,29 @@ describe("permissionModeFor", () => {
       mode: "auto",
       source: "default",
     });
+  });
+
+  test("a saved mode Claude Code doesn't know is ignored and reported (ST-125)", () => {
+    expect(permissionModeFor(undefined, [], "yolo")).toEqual({
+      mode: "auto",
+      source: "default",
+      ignoredSaved: "yolo",
+    });
+    expect(permissionModeFor("plan", [], "yolo")).toEqual({
+      mode: "plan",
+      source: "option",
+    });
+  });
+
+  test("flagValue: null when the flag has no value (ST-125)", () => {
+    expect(
+      flagValue(["-p", "hi", "--permission-mode"], "--permission-mode"),
+    ).toBeNull();
+    expect(flagValue(["--permission-mode="], "--permission-mode")).toBeNull();
+    expect(flagValue(["--permission-mode", "plan"], "--permission-mode")).toBe(
+      "plan",
+    );
+    expect(flagValue(["--model", "opus"], "--permission-mode")).toBeUndefined();
   });
 
   test("the startup line names the mode and where it came from", () => {
@@ -131,6 +155,13 @@ describe("hooks", () => {
       ),
     ).toEqual([]);
     expect(hookScripts("node relative/hook.js", env)).toEqual([]);
+    // As a shell expands them (ST-125): ~ only unquoted, $HOME also in double quotes.
+    expect(hookScripts("node \"~/q.js\" '~/s.js' ~/u.js", env)).toEqual([
+      "/home/me/u.js",
+    ]);
+    expect(hookScripts("node \"$HOME/d.js\" '$HOME/s.js'", env)).toEqual([
+      "/home/me/d.js",
+    ]);
   });
 
   test("brokenHooks reports hooks in user and project settings whose script is missing", async () => {
@@ -149,6 +180,7 @@ describe("hooks", () => {
                 hooks: [
                   { type: "command", command: "node ~/gone.js" },
                   { type: "command", command: "~/ok.sh" },
+                  { type: "command", command: 'node "~/ok.sh"' },
                 ],
               },
             ],
@@ -176,6 +208,12 @@ describe("hooks", () => {
           event: "SessionStart",
           command: "node ~/gone.js",
           missing: join(home, "gone.js"),
+        },
+        {
+          settings: join(home, ".claude", "settings.json"),
+          event: "SessionStart",
+          command: 'node "~/ok.sh"',
+          quotedTilde: "~/ok.sh",
         },
         {
           settings: join(project, ".claude", "settings.local.json"),

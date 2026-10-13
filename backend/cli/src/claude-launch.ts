@@ -31,13 +31,21 @@ export interface PermissionChoice {
   /** null when the claude arguments decide it (`--dangerously-skip-permissions`). */
   mode: string | null;
   source: PermissionSource;
+  /** Set when a saved mode was ignored (not one of PERMISSION_MODES), for a warning. */
+  ignoredSaved?: string;
 }
 
-/** The value after `flag` in args, or in `flag=value` form. */
-function flagValue(args: string[], flag: string): string | undefined {
+/**
+ * The value after `flag` in args, or in `flag=value` form; `null` when the flag is there without a
+ * value (the last word, or `flag=`), which callers refuse (ST-125).
+ */
+export function flagValue(
+  args: string[],
+  flag: string,
+): string | null | undefined {
   for (const [i, arg] of args.entries()) {
-    if (arg === flag) return args[i + 1];
-    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+    if (arg === flag) return args[i + 1] ?? null;
+    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1) || null;
   }
   return undefined;
 }
@@ -45,7 +53,9 @@ function flagValue(args: string[], flag: string): string | undefined {
 /**
  * The mode a session starts in: `spider claude --permission-mode`, else one in the arguments for
  * claude, else the saved agent's, else auto. Always explicit, so Claude Code's own default (settings,
- * built-in, its version) never decides it.
+ * built-in, its version) never decides it. A saved mode Claude Code doesn't know is ignored (and
+ * reported in `ignoredSaved`): the store keeps any string, so a typo or an older name never reaches
+ * claude (ST-125).
  */
 export function permissionModeFor(
   option: string | undefined,
@@ -57,8 +67,12 @@ export function permissionModeFor(
     return { mode: null, source: "claude-args" };
   const passed = flagValue(claudeArgs, "--permission-mode");
   if (passed) return { mode: passed, source: "claude-args" };
-  if (saved) return { mode: saved, source: "agent" };
-  return { mode: DEFAULT_PERMISSION_MODE, source: "default" };
+  if (saved && isPermissionMode(saved)) return { mode: saved, source: "agent" };
+  return {
+    mode: DEFAULT_PERMISSION_MODE,
+    source: "default",
+    ...(saved ? { ignoredSaved: saved } : {}),
+  };
 }
 
 export interface LaunchPlan {
@@ -146,27 +160,45 @@ function commandHooks(settings: unknown): { event: string; command: string }[] {
 
 const SCRIPT = /\.(?:c?js|mjs|ts|sh|py)$/;
 
-/** Script files a hook command runs by path (`node "/x/hook.js"`, `~/hooks/a.sh`), `~` and $HOME expanded. */
-export function hookScripts(command: string, env: Env): string[] {
+/** A hook command's words, with the quote each was in (null when unquoted). */
+function hookWords(command: string): { text: string; quote: string | null }[] {
   const words = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-  return words
-    .map((w) => w.replace(/^["']|["']$/g, ""))
-    .map((w) =>
-      env.HOME
-        ? w
-            .replace(/^~(?=\/)/, env.HOME)
-            .replace(/^\$\{?HOME\}?(?=\/)/, env.HOME)
-        : w,
-    )
+  return words.map((w) => {
+    const quote = w.length >= 2 && /^(["'])[\s\S]*\1$/.test(w) ? w[0]! : null;
+    return { text: quote ? w.slice(1, -1) : w, quote };
+  });
+}
+
+/**
+ * Script files a hook command runs by path (`node "/x/hook.js"`, `~/hooks/a.sh`), expanded as the
+ * shell does: `~` only unquoted, `$HOME` unquoted or in double quotes, nothing in single quotes.
+ */
+export function hookScripts(command: string, env: Env): string[] {
+  const home = env.HOME;
+  return hookWords(command)
+    .map(({ text, quote }) => {
+      if (!home || quote === "'") return text;
+      const tilde = quote === null ? text.replace(/^~(?=\/)/, home) : text;
+      return tilde.replace(/^\$\{?HOME\}?(?=\/)/, home);
+    })
     .filter((w) => isAbsolute(w) && SCRIPT.test(w));
 }
 
-export interface BrokenHook {
+/** Quoted words starting with `~/`: the shell doesn't expand `~` in quotes, so they name no file. */
+export const quotedTildeWords = (command: string): string[] =>
+  hookWords(command)
+    .filter((w) => w.quote !== null && w.text.startsWith("~/"))
+    .map((w) => w.text);
+
+/**
+ * A hook that will fail: its script is `missing`, or it names a script as a quoted `~/…`
+ * (`quotedTilde`), which the shell leaves unexpanded (ST-125).
+ */
+export type BrokenHook = {
   settings: string;
   event: string;
   command: string;
-  missing: string;
-}
+} & ({ missing: string } | { quotedTilde: string });
 
 /**
  * Hooks in Claude Code's settings whose script is gone. Claude Code runs them anyway and shows a
@@ -185,6 +217,8 @@ export async function brokenHooks(
       continue;
     }
     for (const { event, command } of commandHooks(parsed)) {
+      for (const word of quotedTildeWords(command))
+        broken.push({ settings, event, command, quotedTilde: word });
       for (const script of hookScripts(command, env)) {
         const exists = await access(script).then(
           () => true,

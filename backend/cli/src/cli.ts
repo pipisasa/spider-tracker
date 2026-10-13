@@ -121,6 +121,7 @@ import {
   PERMISSION_MODES,
   brokenHooks,
   claudeCommand,
+  flagValue,
   isPermissionMode,
   permissionLine,
   permissionModeFor,
@@ -1879,7 +1880,8 @@ function buildProgram(
         );
         const given = operands[0] ?? globals().as;
         // With --tmux every operand before "--" is an agent, so claude gets only what follows "--". A single
-        // agent also takes claude args without "--" (`spider claude a -p hi`).
+        // agent also takes plain claude args without "--" (`spider claude a "hi"`); options need it
+        // (`spider claude a -- -p hi`), since Commander rejects unknown ones.
         const extra = dash >= 0 || opts.tmux !== undefined ? afterDash : rest;
 
         const store = await readStore(options.env);
@@ -1901,6 +1903,11 @@ function buildProgram(
         ) {
           throw usageError(
             "Give the permission mode once: spider claude --permission-mode, or after --, not both",
+          );
+        }
+        if (flagValue(extra, "--permission-mode") === null) {
+          throw usageError(
+            `--permission-mode after -- needs a mode (${PERMISSION_MODES.join(", ")}), or use spider claude --permission-mode <mode>`,
           );
         }
         if (opts.tmux !== undefined) {
@@ -1979,6 +1986,11 @@ function buildProgram(
         stderr.write(
           `Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`,
         );
+        if (permission.ignoredSaved !== undefined) {
+          stderr.write(
+            `Warning: the permission mode saved for @${entry.agent} ("${permission.ignoredSaved}") isn't one Claude Code knows (${PERMISSION_MODES.join(", ")}); using ${permission.mode ?? "the default"}. Change it with spider agents permission-mode, or pass --permission-mode.\n`,
+          );
+        }
         stderr.write(`${permissionLine(permission)}\n`);
         if (opts.channel) {
           stderr.write(
@@ -1987,7 +1999,9 @@ function buildProgram(
         }
         for (const hook of await brokenHooks(options.env, cwd)) {
           stderr.write(
-            `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`,
+            "missing" in hook
+              ? `Warning: a ${hook.event} hook in ${hook.settings} runs ${hook.missing}, which doesn't exist; Claude Code will report a hook error. Remove the hook or restore the file.\n`
+              : `Warning: a ${hook.event} hook in ${hook.settings} names "${hook.quotedTilde}" in quotes, where the shell doesn't expand ~; Claude Code will report a hook error. Use $HOME or an absolute path.\n`,
           );
         }
         try {
