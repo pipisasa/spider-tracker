@@ -35,7 +35,7 @@ activity (append-only log for everything)
 | **GitHub delivery** | A webhook delivery GitHub sent (ST-83), by its `X-GitHub-Delivery` id: what makes each one handled once |
 | **Repo** | An organization's GitHub repository (`owner/name`, default branch), attached to projects through `project_repos`; a GitHub installation that grants it sets `github_installation_id` (ST-82) |
 | **App** | A deployable part of one repo: folder, shared packages, versioning (`date` / `semver`) and ordered environments (ST-92) |
-| **Milestone** | A task of kind `milestone` (ST-96): goal and "Done when" in its description, start and target dates; tasks of its project join through `tasks.milestone_id`, and sub-tasks without one inherit their parent's (computed, not stored). The project's milestones by date are its roadmap |
+| **Milestone** | A task of kind `milestone` (ST-96): goal and "Done when" in its description, start and target dates; tasks of its project join through `tasks.milestone_id`, and sub-tasks without one inherit their parent's when the parent is in the same project (computed, not stored). The project's milestones by date are its roadmap |
 | **Release** | A task of kind `release` (ST-93): links repos (`release_repos`) and apps with a version each (`release_apps`), includes Done tasks of any project (`tasks.release_id`), records `deployments` per app and environment (ST-94); marking it Released sets `shipped_at` on it and its tasks |
 | **Git link** | A branch, commit or pull request linked to a task, with how its key was found (ST-84) |
 | **Pull request** | A repo's GitHub pull request that links to a task: state, draft, branches, and its `updated_at` on GitHub for the out-of-order guard (ST-84) |

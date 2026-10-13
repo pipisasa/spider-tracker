@@ -193,15 +193,54 @@ run("milestones (ST-96)", () => {
     expect(await listMilestones(db, owner, "RD", { status: ["Active"] })).toEqual([]);
     expect(compareMilestones({ targetDate: null, startDate: null, number: 1 }, { targetDate: null, startDate: null, number: 2 })).toBeLessThan(0);
 
-    // A sub-task in OPS under an RD task inherits the RD milestone; an OPS-only agent sees neither.
+    // A sub-task in OPS under an RD task doesn't inherit the RD milestone: membership stays inside
+    // the milestone's project.
     const parent = await createTask(db, owner, "RD", { title: "Road task", milestoneId: early.id });
     const opsChild = await createTask(db, owner, "OPS", { title: "Ops child", parentId: parent.id });
-    expect((await getMilestone(db, owner, early.key)).tasks.map((t) => t.key)).toEqual([opsChild.key, parent.key]);
+    const rdChild = await createTask(db, owner, "RD", { title: "Road child", parentId: opsChild.id });
+    expect((await getTask(db, owner, opsChild.key)).milestone).toBeNull();
+    // Nor does the walk pass through another project's task to reach it.
+    expect((await getTask(db, owner, rdChild.key)).milestone).toBeNull();
+    expect((await getMilestone(db, owner, early.key)).tasks.map((t) => t.key)).toEqual([parent.key]);
     const { actor } = await createAgent(db, owner, { name: "Ops only" });
     await db.update(schema.agents).set({ scoped: true }).where(eq(schema.agents.actorId, actor.id));
     await db.insert(schema.agentProjects).values({ agentId: actor.id, projectId: (await getProject(db, owner, "OPS")).id });
     const agent: ActorContext = { orgId: owner.orgId, actorId: actor.id, role: "member", source: "mcp" };
     expect((await getTask(db, agent, opsChild.key)).milestone).toBeNull();
     await expect(listMilestones(db, agent, "RD")).rejects.toThrow("not found");
+  });
+
+  test("an OPS-scoped agent finishing an OPS sub-task of an RD task doesn't move the RD milestone", async () => {
+    const m = await createMilestone(db, owner, "RD", { title: "Cross", statusId: await statusOf("RD", "milestone", "Active") });
+    const parent = await createTask(db, owner, "RD", { title: "Cross parent", milestoneId: m.id });
+    const opsChild = await createTask(db, owner, "OPS", { title: "Cross child", parentId: parent.id });
+    // The RD task alone completes the milestone; the open OPS child doesn't hold it back.
+    await updateTask(db, owner, parent.key, { statusId: await statusOf("RD", "task", "Done"), noCode: true });
+    expect(await statusName(m.key)).toBe("Ready to close");
+    // A person reopens it, then the OPS agent finishes its task: the RD milestone stays put.
+    await move(m.key, "Active", "milestone");
+    const { actor } = await createAgent(db, owner, { name: "Ops finisher" });
+    await db.update(schema.agents).set({ scoped: true }).where(eq(schema.agents.actorId, actor.id));
+    await db.insert(schema.agentProjects).values({ agentId: actor.id, projectId: (await getProject(db, owner, "OPS")).id });
+    const agent: ActorContext = { orgId: owner.orgId, actorId: actor.id, role: "member", source: "mcp" };
+    await updateTask(db, agent, opsChild.key, { statusId: await statusOf("OPS", "task", "Done"), noCode: true });
+    expect(await statusName(m.key)).toBe("Active");
+    await deleteTask(db, agent, opsChild.key);
+    expect(await statusName(m.key)).toBe("Active");
+  });
+
+  test("a task created already closed settles its milestone", async () => {
+    const m = await createMilestone(db, owner, "ST", { title: "Born closed" });
+    const a = await createTask(db, owner, "ST", { title: "Finished", milestoneId: m.id });
+    await updateTask(db, owner, a.key, { statusId: await statusOf("ST", "task", "Done"), noCode: true });
+    expect(await statusName(m.key)).toBe("Ready to close");
+    await move(m.key, "Active", "milestone");
+    // Creating a task in it settles it again, as any change to one of its tasks does.
+    await createTask(db, owner, "ST", { title: "Dropped", milestoneId: m.id, statusId: await statusOf("ST", "task", "Canceled") });
+    expect(await statusName(m.key)).toBe("Ready to close");
+    // A task created Done whose code hasn't shipped keeps it open.
+    await move(m.key, "Active", "milestone");
+    await createTask(db, owner, "ST", { title: "Done, unshipped", milestoneId: m.id, statusId: await statusOf("ST", "task", "Done") });
+    expect(await statusName(m.key)).toBe("Active");
   });
 });

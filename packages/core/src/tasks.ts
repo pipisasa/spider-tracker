@@ -446,6 +446,8 @@ export async function createTaskIn(tx: Tx, ctx: ActorContext, projectKey: string
   });
 
   await publish(tx, { type: "task.changed", orgId: ctx.orgId, projectKey: project.key, taskKey: `${project.key}-${task.number}` });
+  // A task created already closed may complete its milestone (ST-96).
+  if (task.milestoneId) await settleMilestones(tx, ctx.orgId, [task.milestoneId]);
   const links = (await linksByTask(tx, scope, [task.id])).get(task.id) ?? emptyLinks();
   return toTaskDto(task, project.key, { ...links, assigneeIds, tagIds });
 }
