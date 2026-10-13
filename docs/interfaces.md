@@ -367,7 +367,7 @@ spider start [ST-12] [--no-branch]        # the same
 spider task done [ST-12]    # the first done status of the task's workflow
 spider task duplicate [ST-12] --of ST-9 [--comment "…"]   # link duplicates + first canceled status + a comment, in one step (ST-114)
 spider task git [ST-12]     # pull requests, branches and commits linked from GitHub (ST-84)
-spider pr [ST-12] [--draft] [--base <branch>] [--no-push] [--any-branch] [--repo owner/name]   # push the branch, open its PR on GitHub, link it (ST-87; also `task pr`); never pushes the default or base branch, and only the task's branch unless --any-branch; without --repo the origin remote must be attached to the project
+spider pr [ST-12] [--draft] [--base <branch>] [--no-push] [--any-branch] [--repo owner/name]   # push the branch, open its PR on GitHub, link it (ST-87; also `task pr`); never pushes the default or base branch, main or master, and only the task's branch unless --any-branch; without --repo the origin remote must be attached to the project
 spider tags
 spider repo list [--project ST]          # repos with their apps and projects (ST-92)
 spider repo view [owner/name]            # default: this folder's origin remote

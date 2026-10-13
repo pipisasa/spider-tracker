@@ -6,6 +6,7 @@ import {
   createOrSwitchBranch,
   currentBranch,
   isDirty,
+  originDefaultBranch,
   remoteRepo,
   repoFromRemoteUrl,
   taskKeyFromBranch,
@@ -91,6 +92,19 @@ describe("remoteRepo", () => {
       expect(repoFromRemoteUrl(url)).toBeNull();
     },
   );
+
+  test("originDefaultBranch reads the full ref of origin/HEAD (ST-146)", () => {
+    const answer = (ref: string) =>
+      originDefaultBranch(
+        "/work",
+        fakeGit({ "symbolic-ref refs/remotes/origin/HEAD": `${ref}\n` }).git,
+      );
+    expect(answer("refs/remotes/origin/main")).toBe("main");
+    expect(answer("refs/remotes/origin/release/2026")).toBe("release/2026");
+    expect(answer("refs/remotes/origin/")).toBeNull();
+    expect(answer("refs/heads/main")).toBeNull();
+    expect(originDefaultBranch("/work", fakeGit({}).git)).toBeNull();
+  });
 
   test("reads origin, or null without one", () => {
     expect(

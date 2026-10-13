@@ -184,6 +184,7 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       ["SPI", "Known elsewhere"],
       ["SPI", "Refused"],
       ["SPI", "Scoped"],
+      ["SPI", "Answered but not kept"],
       ["TWO", "Pick a repo"],
       ["TWO", "Out of scope"],
       ["NOR", "Nowhere to go"],
@@ -510,6 +511,8 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       { title: "Scoped (TWO-2)" },
       { head: "two-2-out-of-scope" },
       { body: "See two-2" },
+      // A task that doesn't exist in that project gets the same answer (ST-146).
+      { body: "Closes TWO-999" },
     ]) {
       const err = await apiError(
         sdk(app, scopedToken).tasks.openPullRequest(slug, "SPI-5", input),
@@ -532,6 +535,56 @@ withDb("POST /tasks/:key/pull-request (ST-87)", () => {
       via: "closing",
     });
     expect(await statusOf("SPI-5")).toBe("in_review");
+  });
+
+  test("a pull request GitHub opened but that isn't kept is still answered, as the same DTO (ST-146)", async () => {
+    // GitHub answers with a PR that names no task here (so it isn't saved): the fallback DTO.
+    const odd = createApp({
+      db,
+      auth: createAuth(db, env, mailer),
+      env,
+      github: {
+        ...github,
+        async createPullRequest(request) {
+          const result = await github.createPullRequest(request);
+          return {
+            ...result,
+            pullRequest: {
+              ...result.pullRequest,
+              title: "Unrelated",
+              body: null,
+              headBranch: "unrelated-work",
+            },
+          };
+        },
+      },
+    });
+    const opened = await sdk(odd).tasks.openPullRequest(slug, "SPI-6", {
+      head: "spi-6-not-kept",
+    });
+    const number = github.pullRequests.get(
+      `acme/${repoName}`.toLowerCase(),
+    )?.length;
+    expect(opened).toEqual({
+      taskKey: "SPI-6",
+      pullRequest: {
+        repo: `acme/${repoName}`,
+        number: number ?? -1,
+        title: "Unrelated",
+        url: `https://github.com/acme/${repoName}/pull/${number}`,
+        state: "open",
+        draft: false,
+        headBranch: "unrelated-work",
+        baseBranch: "main",
+        author: "spider-tracker-test[bot]",
+        mergedAt: null,
+        closedAt: null,
+        updatedAt: expect.any(String),
+        via: "body",
+      },
+    });
+    expect((await sdk().tasks.git(slug, "SPI-6")).pullRequests).toEqual([]);
+    expect(await statusOf("SPI-6")).toBe("todo");
   });
 
   test("only the task asked for moves at once; others it names (in scope) are linked", async () => {

@@ -528,9 +528,9 @@ describe("spider pr (ST-87)", () => {
         return origin
           ? ok(`${origin}\n`)
           : fail("error: No such remote 'origin'");
-      if (command === "symbolic-ref --short refs/remotes/origin/HEAD") {
+      if (command === "symbolic-ref refs/remotes/origin/HEAD") {
         return originHead
-          ? ok(`origin/${originHead}\n`)
+          ? ok(`refs/remotes/origin/${originHead}\n`)
           : fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref");
       }
       if (args[0] === "push")
@@ -656,7 +656,7 @@ describe("spider pr (ST-87)", () => {
     expect(api.bodies).toEqual([]);
   });
 
-  test("never pushes the origin's default branch or the base, whatever --any-branch says (ST-144)", async () => {
+  test("never pushes the origin's default branch, the base, main or master, whatever --any-branch says (ST-144, ST-146)", async () => {
     const api = prApi();
     const pushed = (calls: string[]) => calls.some((c) => c.startsWith("push"));
     for (const [options, argv] of [
@@ -681,19 +681,21 @@ describe("spider pr (ST-87)", () => {
       expect(result.stderr).toContain(`Not pushing ${options.branch}`);
       expect(pushed(calls)).toBe(false);
     }
-    // A known default other than main: main is then an ordinary branch (pushed with --any-branch).
-    const { git, calls } = prGit({ branch: "main", originHead: "trunk" });
-    expect(
-      (
-        await cli(["pr", "ST-1", "--any-branch"], {
-          git,
-          fetch: api.fetch,
-          cwd: "/work",
-        })
-      ).code,
-    ).toBe(0);
-    expect(calls).toContain("push --set-upstream origin main");
-    expect(api.bodies).toEqual([{ repo: "acme/app", head: "main" }]);
+    // A known default other than main: main and master are still never pushed (ST-146).
+    for (const branch of ["main", "master"]) {
+      const { git, calls } = prGit({ branch, originHead: "trunk" });
+      const result = await cli(["pr", "ST-1", "--any-branch"], {
+        git,
+        fetch: api.fetch,
+        cwd: "/work",
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain(
+        `Not pushing ${branch}: it is main or master, which spider pr never pushes`,
+      );
+      expect(pushed(calls)).toBe(false);
+    }
+    expect(api.bodies).toEqual([]);
   });
 
   test("pushes only the task's own branch, unless --any-branch (ST-144)", async () => {

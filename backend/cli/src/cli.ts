@@ -4069,14 +4069,23 @@ function buildProgram(
         throw usageError(
           "This repository has no origin remote: push the branch yourself and pass --no-push",
         );
+      // The base, origin's default and always main and master (ST-146), whatever --any-branch says.
       const originDefault = originDefaultBranch(cwd, git);
       const protectedBranches = [
         ...(opts.base !== undefined ? [opts.base] : []),
-        ...(originDefault ? [originDefault] : ["main", "master"]),
+        ...(originDefault ? [originDefault] : []),
+        "main",
+        "master",
       ];
       if (protectedBranches.includes(head)) {
+        const what =
+          head === opts.base
+            ? "the base branch"
+            : head === originDefault
+              ? "the default branch"
+              : "main or master, which spider pr never pushes";
         throw usageError(
-          `Not pushing ${head}: it is the ${head === opts.base ? "base" : "default"} branch. Check out the task's branch (spider start ${resolved}) and run spider pr there`,
+          `Not pushing ${head}: it is ${what}. Check out the task's branch (spider start ${resolved}) and run spider pr there`,
         );
       }
       if (!opts.anyBranch && taskKeyFromBranch(head) !== resolved) {

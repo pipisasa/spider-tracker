@@ -21,7 +21,7 @@ import {
   getProject,
   updateProject,
 } from "./projects";
-import { createRepo } from "./repos";
+import { attachRepo, createRepo, detachRepo } from "./repos";
 import { createTask, getTask, updateTask } from "./tasks";
 
 describe("status automation rules (ST-85)", () => {
@@ -384,7 +384,7 @@ run("status automation from GitHub pull requests (ST-85)", () => {
     for (let i = 1; i <= 8; i++)
       await createTask(db, owner, "ST", { title: `Task ${i}` });
     await createTask(db, owner, "ST", { title: "M1", kind: "milestone" });
-    for (let i = 10; i <= 17; i++)
+    for (let i = 10; i <= 18; i++)
       await createTask(db, owner, "ST", { title: `Task ${i}` });
     await createTask(db, owner, "OFF", { title: "Off task" });
     await updateProject(db, owner, "OFF", {
@@ -411,8 +411,13 @@ run("status automation from GitHub pull requests (ST-85)", () => {
         repositorySelection: "selected",
         suspended: false,
       },
-      repositories: [{ owner: "acme", name: "web", defaultBranch: "main" }],
+      repositories: [
+        { owner: "acme", name: "web", defaultBranch: "main" },
+        { owner: "acme", name: "api", defaultBranch: "main" },
+      ],
     });
+    // Granted by the installation (added attached to no project), then attached to ST.
+    await attachRepo(db, owner, "ST", { repo: "acme/api" });
   });
 
   afterAll(async () => {
@@ -526,6 +531,42 @@ run("status automation from GitHub pull requests (ST-85)", () => {
       merged_at: "2026-10-12T11:01:00Z",
     });
     expect(await statusOf("ST-6")).toBe("Done");
+  });
+
+  test("an open PR in a repo detached from the project doesn't hold merged → Done (ST-146)", async () => {
+    await deliver("pull_request", {
+      action: "opened",
+      repository: {
+        name: "api",
+        owner: { login: "acme" },
+        default_branch: "main",
+      },
+      sender: { login: "ann", type: "User" },
+      pull_request: {
+        number: 1,
+        title: "API side",
+        body: null,
+        state: "open",
+        draft: false,
+        merged: false,
+        updated_at: "2026-10-12T09:00:00Z",
+        head: { ref: "st-18-api-side", repo: { full_name: "acme/api" } },
+        base: { ref: "main" },
+        user: { login: "ann", type: "User" },
+        author_association: "MEMBER",
+      },
+    });
+    expect(await statusOf("ST-18")).toBe("In Review");
+    await detachRepo(db, owner, "ST", "acme/api");
+    const web = { number: 40, head: head("st-18-web-side") };
+    await pr("opened", web);
+    await pr("closed", {
+      ...web,
+      state: "closed",
+      merged: true,
+      merged_at: "2026-10-12T11:00:00Z",
+    });
+    expect(await statusOf("ST-18")).toBe("Done");
   });
 
   test("stale events, milestones and projects with automation off aren't moved", async () => {
