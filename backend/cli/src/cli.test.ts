@@ -344,8 +344,21 @@ function fakeGit({
         : state.branches.has(ref.replace("refs/heads/", ""));
       return found ? ok() : fail();
     }
+    if (command === "ls-remote") {
+      const name = (rest.at(-1) ?? "").replace("refs/heads/", "");
+      if (fetchable === null)
+        return fail(
+          "fatal: unable to access 'https://github.com/': Could not resolve host",
+        );
+      return fetchable.includes(name)
+        ? ok(`abc\trefs/heads/${name}\n`)
+        : { exitCode: 2, stdout: "", stderr: "" };
+    }
     if (command === "fetch") {
-      const name = rest.at(-1) ?? "";
+      const name = (rest.at(-1) ?? "").replace(
+        /^.*:refs\/remotes\/origin\//,
+        "",
+      );
       if (fetchable === null)
         return fail(
           "fatal: unable to access 'https://github.com/': Could not resolve host",
@@ -483,7 +496,9 @@ describe("spider start", () => {
     const pushed = fakeGit({ fetchable: ["st-1-write-the-cli"] });
     const result = await start(["start", "ST-1", "--fetch"], pushed.git);
     expect(result.code).toBe(0);
-    expect(pushed.calls).toContain("fetch --quiet origin st-1-write-the-cli");
+    expect(pushed.calls).toContain(
+      "fetch --quiet origin +refs/heads/st-1-write-the-cli:refs/remotes/origin/st-1-write-the-cli",
+    );
     expect(pushed.calls).toContain(
       "switch -c st-1-write-the-cli --track origin/st-1-write-the-cli",
     );

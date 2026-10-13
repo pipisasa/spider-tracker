@@ -26,11 +26,11 @@ const gitEnv: Record<string, string> = Object.fromEntries(
 );
 
 /** Real git with gitEnv, for the tests that need a repository. */
-const realGit: GitRunner = (args, cwd) => {
+const realGit: GitRunner = (args, cwd, env) => {
   const result = Bun.spawnSync({
     cmd: ["git", ...args],
     cwd,
-    env: gitEnv,
+    env: { ...gitEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -216,17 +216,30 @@ describe("branches", () => {
         origin,
       );
       sh(["git", "clone", "-q", origin, clone]);
-      // Pushed from another machine after the clone: seen only after fetchBranch (ST-126).
+      // Pushed from another machine after the clone: seen only after fetchBranch (ST-126), also
+      // in a single-branch clone (the full refspec).
+      const single = join(dir, "single");
+      sh(["git", "clone", "-q", "--single-branch", origin, single]);
       sh(["git", "branch", "st-2-y"], origin);
-      expect(fetchBranch(clone, "st-9-none", realGit)).toMatchObject({
-        ok: false,
-        missing: true,
-      });
-      expect(fetchBranch(clone, "st-2-y", realGit)).toEqual({ ok: true });
-      expect(createOrSwitchBranch(clone, "st-2-y", realGit)).toEqual({
-        created: true,
-        tracking: "origin/st-2-y",
-      });
+      for (const repo of [clone, single]) {
+        expect(fetchBranch(repo, "st-9-none", realGit)).toMatchObject({
+          ok: false,
+          missing: true,
+        });
+        expect(fetchBranch(repo, "st-2-y", realGit)).toEqual({ ok: true });
+        expect(createOrSwitchBranch(repo, "st-2-y", realGit)).toEqual({
+          created: true,
+          tracking: "origin/st-2-y",
+        });
+        // Its upstream is set (a single-branch clone's refspec can't show it as @{upstream}).
+        expect(sh(["git", "config", "branch.st-2-y.remote"], repo)).toBe(
+          "origin",
+        );
+        expect(sh(["git", "config", "branch.st-2-y.merge"], repo)).toBe(
+          "refs/heads/st-2-y",
+        );
+        sh(["git", "switch", "-q", "main"], repo);
+      }
 
       expect(createOrSwitchBranch(clone, "st-1-x", realGit)).toEqual({
         created: true,
@@ -242,6 +255,41 @@ describe("branches", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("fetchBranch asks origin first, never prompts, and reports other failures (ST-126)", () => {
+    const calls: { args: string; env?: Record<string, string> }[] = [];
+    const runner =
+      (lsRemote: number, fetch = 0): GitRunner =>
+      (args, _cwd, env) => {
+        calls.push({ args: args.join(" "), env });
+        const exitCode = args[0] === "ls-remote" ? lsRemote : fetch;
+        return { exitCode, stdout: "", stderr: exitCode ? "fatal: boom" : "" };
+      };
+    expect(fetchBranch("/work", "st-1-x", runner(0))).toEqual({ ok: true });
+    expect(calls).toEqual([
+      {
+        args: "ls-remote --exit-code --heads origin refs/heads/st-1-x",
+        env: { GIT_TERMINAL_PROMPT: "0" },
+      },
+      {
+        args: "fetch --quiet origin +refs/heads/st-1-x:refs/remotes/origin/st-1-x",
+        env: { GIT_TERMINAL_PROMPT: "0" },
+      },
+    ]);
+    expect(fetchBranch("/work", "st-1-x", runner(2))).toMatchObject({
+      ok: false,
+      missing: true,
+    });
+    expect(fetchBranch("/work", "st-1-x", runner(128))).toEqual({
+      ok: false,
+      missing: false,
+      error: "fatal: boom",
+    });
+    expect(fetchBranch("/work", "st-1-x", runner(0, 1))).toMatchObject({
+      ok: false,
+      missing: false,
+    });
   });
 
   test("isDirty looks at tracked changes", () => {
