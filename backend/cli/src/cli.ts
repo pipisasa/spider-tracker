@@ -4514,7 +4514,12 @@ function buildProgram(
         `Warning: the working tree has uncommitted changes; they come along to ${name}.\n`,
       );
     try {
-      const { created, tracking } = createOrSwitchBranch(cwd, name, git);
+      const { created, tracking, warning } = createOrSwitchBranch(
+        cwd,
+        name,
+        git,
+      );
+      if (warning) stderr.write(`Warning: ${warning}\n`);
       const from = current ?? "a detached HEAD";
       const what = tracking
         ? `new branch ${name} tracking ${tracking}`

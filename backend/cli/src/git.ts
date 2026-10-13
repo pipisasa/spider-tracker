@@ -113,7 +113,7 @@ export function createOrSwitchBranch(
   cwd: string,
   name: string,
   git: GitRunner = runGit,
-): { created: boolean; tracking: string | null } {
+): { created: boolean; tracking: string | null; warning?: string } {
   const has = (ref: string) =>
     git(["rev-parse", "--verify", "--quiet", ref], cwd).exitCode === 0;
   const local = has(`refs/heads/${name}`);
@@ -128,25 +128,39 @@ export function createOrSwitchBranch(
   if (result.exitCode !== 0) {
     // A single-branch clone's fetch refspec doesn't cover origin/<name>, so --track refuses it
     // ("starting point … is not a branch"): branch from it and set the upstream explicitly.
-    if (tracking && trackExplicitly(cwd, name, tracking, git))
-      return { created: true, tracking };
+    const explicit = tracking
+      ? trackExplicitly(cwd, name, tracking, git)
+      : "failed";
+    if (explicit === "tracked") return { created: true, tracking };
+    if (explicit === "untracked")
+      return {
+        created: true,
+        tracking: null,
+        warning: `created ${name} from ${tracking}, but couldn't set its upstream; run git branch --set-upstream-to=${tracking}`,
+      };
     throw new Error(result.stderr.trim() || `git switch ${name} failed`);
   }
   return { created: !local, tracking };
 }
 
-/** `git switch -c <name> --no-track <start>` plus the upstream config `--track` would write. */
+/**
+ * `git switch -c <name> --no-track <start>` plus the upstream config `--track` would write:
+ * "tracked", "untracked" (switched, but the config failed) or "failed" (nothing changed).
+ */
 function trackExplicitly(
   cwd: string,
   name: string,
   start: string,
   git: GitRunner,
-): boolean {
+): "tracked" | "untracked" | "failed" {
   if (git(["switch", "-c", name, "--no-track", start], cwd).exitCode !== 0)
-    return false;
-  git(["config", `branch.${name}.remote`, "origin"], cwd);
-  git(["config", `branch.${name}.merge`, `refs/heads/${name}`], cwd);
-  return true;
+    return "failed";
+  const remote = git(["config", `branch.${name}.remote`, "origin"], cwd);
+  const merge =
+    remote.exitCode === 0
+      ? git(["config", `branch.${name}.merge`, `refs/heads/${name}`], cwd)
+      : remote;
+  return merge.exitCode === 0 ? "tracked" : "untracked";
 }
 
 /** "owner/name" from a GitHub remote URL (https, ssh or scp-like), or null. */

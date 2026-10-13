@@ -185,6 +185,33 @@ describe("branches", () => {
     expect(remote.calls.at(-1)).toBe("switch -c st-1-x --track origin/st-1-x");
   });
 
+  test("createOrSwitchBranch falls back to explicit upstream config, and says when that fails (ST-126)", () => {
+    const refused = "switch -c st-1-x --track origin/st-1-x";
+    const base = {
+      "rev-parse --verify --quiet refs/remotes/origin/st-1-x": "abc\n",
+      "switch -c st-1-x --no-track origin/st-1-x": "",
+    };
+    // fakeGit answers only listed commands: --track is refused, as in a single-branch clone.
+    const tracked = fakeGit({
+      ...base,
+      "config branch.st-1-x.remote origin": "",
+      "config branch.st-1-x.merge refs/heads/st-1-x": "",
+    });
+    expect(createOrSwitchBranch("/work", "st-1-x", tracked.git)).toEqual({
+      created: true,
+      tracking: "origin/st-1-x",
+    });
+    expect(tracked.calls).toContain(refused);
+    const noConfig = fakeGit(base);
+    expect(createOrSwitchBranch("/work", "st-1-x", noConfig.git)).toEqual({
+      created: true,
+      tracking: null,
+      warning:
+        "created st-1-x from origin/st-1-x, but couldn't set its upstream; run git branch --set-upstream-to=origin/st-1-x",
+    });
+    expect(noConfig.calls.at(-1)).toBe("config branch.st-1-x.remote origin");
+  });
+
   test("createOrSwitchBranch tracks origin in a real repository", () => {
     const dir = mkdtempSync(join(tmpdir(), "spider-cli-"));
     const sh = (cmd: string[], cwd = dir) => {
