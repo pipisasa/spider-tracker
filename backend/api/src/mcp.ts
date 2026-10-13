@@ -1708,7 +1708,7 @@ function createMcpServer(
     "mark_duplicate",
     {
       description:
-        'Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment "Duplicate of KEY". Calling it again changes nothing (a comment given again is posted by itself); a task can\'t duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).',
+        'Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment "Duplicate of KEY". Calling it again changes nothing (a comment given again is posted by itself, unless it repeats your latest comment); a task can\'t duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).',
       inputSchema: {
         key: z.string().describe('The duplicate, e.g. "ST-12"'),
         of: z.string().describe('The original task, e.g. "ST-9"'),

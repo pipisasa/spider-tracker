@@ -1004,9 +1004,13 @@ export async function applyTaskUpdate(
   const { projectKey } = found;
   // A date change re-reads the row under a lock: two concurrent updates each setting one date would
   // otherwise both pass the start ≤ target check and trip `tasks_dates_ordered` (a 500, ST-133).
+  // A parent change locks the row too, before assertParent's advisory lock, so every update takes
+  // the row lock first; a parent-only update taking them in the other order deadlocked (ST-147).
   const task =
-    data.startDate !== undefined || data.targetDate !== undefined
-      ? await lockTaskRow(tx, found.task.id)
+    data.startDate !== undefined ||
+    data.targetDate !== undefined ||
+    data.parentId !== undefined
+      ? await lockTaskRow(tx, found)
       : found.task;
   const scope = await projectScope(tx, ctx);
   const patch: Partial<typeof tasks.$inferInsert> = {};
@@ -1268,19 +1272,38 @@ async function assertBulkChanges(
   }
   const { parentId } = changes;
   if (parentId) {
-    const scope = await projectScope(db, ctx);
-    await db.transaction((tx) => assertParent(tx, ctx.orgId, scope, parentId));
+    // A plain read: each task's update checks the chain (cycles, depth) under the advisory lock.
+    const [parent] = await db
+      .select({ projectId: tasks.projectId })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.id, parentId),
+          eq(tasks.orgId, ctx.orgId),
+          isNull(tasks.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!parent || !inScope(await projectScope(db, ctx), parent.projectId))
+      throw new DomainError("validation", "Parent task not found");
   }
 }
 
-/** The task's row, read again and locked until commit (FOR NO KEY UPDATE: links and comments to it can still be added). */
-async function lockTaskRow(tx: Tx, taskId: string): Promise<TaskRow> {
+/**
+ * The task's row, read again and locked until commit (FOR NO KEY UPDATE: links and comments to it
+ * can still be added). not_found when the task was deleted while the update waited for the lock.
+ */
+async function lockTaskRow(tx: Tx, found: FoundTask): Promise<TaskRow> {
   const [row] = await tx
     .select()
     .from(tasks)
-    .where(eq(tasks.id, taskId))
+    .where(and(eq(tasks.id, found.task.id), isNull(tasks.deletedAt)))
     .for("no key update");
-  if (!row) throw new Error("Task disappeared while updating it");
+  if (!row)
+    throw new DomainError(
+      "not_found",
+      `Task ${found.projectKey}-${found.task.number} not found`,
+    );
   return row;
 }
 
@@ -1313,7 +1336,6 @@ export async function updateTasks(
     dryRun = false,
   } = parseInput(bulkUpdateTasksInput, input);
   const { status, ...changes } = set;
-  await assertBulkChanges(db, ctx, changes);
 
   let targets: string[];
   if (keys) {
@@ -1331,6 +1353,8 @@ export async function updateTasks(
   } else {
     throw new DomainError("validation", "Pass either keys or a filter");
   }
+  // After the filter resolves, so an unknown project is a 404 rather than a bad id's 400.
+  await assertBulkChanges(db, ctx, changes);
 
   // Statuses are per project and kind, so a status name is matched in each task's own workflow.
   const projectsByKey = new Map<string, Promise<ProjectDetailDto>>();
