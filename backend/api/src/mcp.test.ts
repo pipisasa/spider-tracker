@@ -1193,7 +1193,9 @@ withDb("MCP server", () => {
     });
     expect(bad).toMatchObject({
       isError: true,
-      text: "The quoted text isn't in the document's current version",
+      text: expect.stringContaining(
+        "The quoted text isn't in the document's current version.",
+      ),
     });
 
     await addDocumentComment(db, owner, doc.id, {

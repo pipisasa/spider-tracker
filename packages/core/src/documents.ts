@@ -23,9 +23,11 @@ import {
   type Viewer,
 } from "./access";
 import { recordActivity } from "./activity";
+import type { WikiLabel } from "./anchors";
 import type {
   DocumentDiffDto,
   DocumentDto,
+  DocumentFormat,
   DocumentGraphDto,
   DocumentGraphTaskDto,
   DocumentLinkDto,
@@ -196,6 +198,39 @@ export async function findDocument(
   if (!row || !visible)
     throw new DomainError("not_found", "Document not found");
   return { document: row.document, scope: scopeOf(row) };
+}
+
+/**
+ * What the unlabelled `[[doc:<id>]]` links of a Markdown document show `viewer`: the titles of
+ * the documents it can see (ST-115); others show their target. For matching comment quotes
+ * against the rendered text (ST-134).
+ */
+export async function documentLinkLabels(
+  db: Db | Tx,
+  viewer: Viewer,
+  content: string,
+  format: DocumentFormat,
+): Promise<WikiLabel> {
+  const ids = format === "md" ? outgoingLinksIn(content).documentIds : [];
+  if (!ids.length) return () => null;
+  const rows = await db
+    .select({ id: documents.id, title: documents.title })
+    .from(documents)
+    .leftJoin(tasks, eq(documents.taskId, tasks.id))
+    .where(
+      and(
+        eq(documents.orgId, orgIdOf(viewer)),
+        inArray(documents.id, ids),
+        isNull(documents.deletedAt),
+        or(isNull(documents.taskId), isNull(tasks.deletedAt)),
+        visibleIn(await projectScope(db, viewer)),
+      ),
+    );
+  const titles = new Map(rows.map((r) => [r.id, r.title]));
+  return (target) => {
+    const id = documentIdTarget(target.split("#")[0] ?? "");
+    return id ? (titles.get(id) ?? null) : null;
+  };
 }
 
 /**

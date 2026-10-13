@@ -104,6 +104,8 @@ export async function notifyRulesChanged(
 }
 
 const sender = aliasedTable(actors, "sender");
+/** The task a task document belongs to (ST-134): deleted, it hides the document. */
+const documentTask = aliasedTable(tasks, "document_task");
 
 /** The acting actor's inbox, oldest first; `after` returns only newer items (a cursor). */
 export async function listInbox(
@@ -137,6 +139,7 @@ export async function listInbox(
     // organization-wide (no project).
     .leftJoin(tasks, eq(inboxItems.taskId, tasks.id))
     .leftJoin(documents, eq(inboxItems.documentId, documents.id))
+    .leftJoin(documentTask, eq(documents.taskId, documentTask.id))
     .leftJoin(
       projects,
       eq(
@@ -157,6 +160,8 @@ export async function listInbox(
             isNull(inboxItems.taskId),
             isNotNull(documents.id),
             isNull(documents.deletedAt),
+            // A task document goes with its task, as everywhere else (findDocument).
+            isNull(documentTask.deletedAt),
           ),
         ),
         // A `rules` item only while its document is still the project's rules (ST-128): not after
