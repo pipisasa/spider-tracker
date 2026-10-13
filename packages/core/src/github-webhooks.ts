@@ -431,6 +431,14 @@ export type GithubWebhookResult = "processed" | "ignored" | "duplicate";
 const deliveryIdPattern = /^[A-Za-z0-9-]{1,100}$/;
 const eventPattern = /^[a-z_]{1,100}$/;
 
+/** Whether an X-GitHub-Delivery header has the shape we accept (and may be logged). */
+export const isGithubDeliveryId = (value: string | undefined) =>
+  value !== undefined && deliveryIdPattern.test(value);
+
+/** Whether an X-GitHub-Event header has the shape we accept (and may be logged). */
+export const isGithubEventName = (value: string | undefined) =>
+  value !== undefined && eventPattern.test(value);
+
 /**
  * Handles one verified delivery, once: "duplicate" when its id was seen before, "ignored" when
  * nothing was changed (ping, unhandled events and actions, installations no organization has

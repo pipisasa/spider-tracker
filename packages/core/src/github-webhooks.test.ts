@@ -4,7 +4,14 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { createHmac } from "node:crypto";
 import type { ActorContext } from "./access";
 import { listGithubInstallations, saveGithubInstallation } from "./github";
-import { handleGithubWebhook, verifyGithubSignature } from "./github-webhooks";
+import {
+  GITHUB_DELIVERY_RETENTION_DAYS,
+  handleGithubWebhook,
+  isGithubDeliveryId,
+  isGithubEventName,
+  pruneGithubDeliveries,
+  verifyGithubSignature,
+} from "./github-webhooks";
 import { createOrganization } from "./organizations";
 import { createProject } from "./projects";
 import { createRepo, getRepo, listRepos } from "./repos";
@@ -148,6 +155,48 @@ run("GitHub webhooks (ST-83)", () => {
       .where(eq(schema.organizations.slug, slug));
     await db.delete(schema.user).where(eq(schema.user.id, userId));
     await db.$client.end();
+  });
+
+  test("pruneGithubDeliveries deletes rows past the retention, in batches (ST-138)", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    // The real clock: on the shared test database only rows past the retention may go.
+    const now = new Date();
+    const old = new Date(
+      now.getTime() - (GITHUB_DELIVERY_RETENTION_DAYS + 1) * day,
+    );
+    const kept = new Date(
+      now.getTime() - (GITHUB_DELIVERY_RETENTION_DAYS - 1) * day,
+    );
+    const ids = [nextDelivery(), nextDelivery(), nextDelivery()];
+    await db.insert(schema.githubDeliveries).values([
+      { id: ids[0]!, event: "ping", receivedAt: old },
+      { id: ids[1]!, event: "ping", receivedAt: old },
+      { id: ids[2]!, event: "ping", receivedAt: kept },
+    ]);
+    const remaining = async () =>
+      (
+        await db
+          .select({ id: schema.githubDeliveries.id })
+          .from(schema.githubDeliveries)
+          .where(inArray(schema.githubDeliveries.id, ids))
+      ).map((r) => r.id);
+    // One row per call: drains the expired rows (other runs' too) a batch at a time.
+    expect(await pruneGithubDeliveries(db, { now, limit: 1 })).toBe(1);
+    while ((await pruneGithubDeliveries(db, { now, limit: 1 })) > 0) {
+      /* drain */
+    }
+    expect(await remaining()).toEqual([ids[2]!]);
+  });
+
+  test("header shapes that may be logged (ST-138)", () => {
+    expect(isGithubDeliveryId("72d3162e-cc78-11e3-81ab-4c9367dc0958")).toBe(
+      true,
+    );
+    expect(isGithubDeliveryId("a b")).toBe(false);
+    expect(isGithubDeliveryId("x".repeat(101))).toBe(false);
+    expect(isGithubDeliveryId(undefined)).toBe(false);
+    expect(isGithubEventName("pull_request")).toBe(true);
+    expect(isGithubEventName("Push!")).toBe(false);
   });
 
   test("ping and unhandled events are recorded and ignored", async () => {

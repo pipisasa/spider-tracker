@@ -186,6 +186,31 @@ describe("POST /webhooks/github: signature and size (ST-83)", () => {
       `GitHub webhook refused: body over ${GITHUB_WEBHOOK_MAX_BYTES} bytes (delivery chunked-1, event push, content-length none)`,
     ]);
   });
+
+  test("the 413 log leaves out headers that don't have GitHub's shape (ST-138 review)", async () => {
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    try {
+      const res = await app.request("/webhooks/github", {
+        method: "POST",
+        headers: {
+          "X-GitHub-Event": "push; rm -rf /",
+          "X-GitHub-Delivery": `forged ${"x".repeat(200)}`,
+        },
+        body: "x".repeat(GITHUB_WEBHOOK_MAX_BYTES + 1),
+      });
+      expect(res.status).toBe(413);
+    } finally {
+      console.error = original;
+    }
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(
+      /^GitHub webhook refused: body over \d+ bytes \(delivery \?, event \?, content-length (\d+|none)\)$/,
+    );
+  });
 });
 
 const withDb = databaseUrl ? describe : describe.skip;
@@ -267,11 +292,17 @@ withDb("POST /webhooks/github: deliveries (ST-83)", () => {
       },
     ]);
     expect((await post(ping)).status).toBe(200);
-    const left = await db
-      .select({ id: schema.githubDeliveries.id })
-      .from(schema.githubDeliveries)
-      .where(inArray(schema.githubDeliveries.id, [expired, recent]));
-    expect(left.map((r) => r.id)).toEqual([recent]);
+    // The prune runs after the answer (not awaited): wait for it, briefly.
+    const left = async () =>
+      (
+        await db
+          .select({ id: schema.githubDeliveries.id })
+          .from(schema.githubDeliveries)
+          .where(inArray(schema.githubDeliveries.id, [expired, recent]))
+      ).map((r) => r.id);
+    for (let i = 0; i < 100 && (await left()).length > 1; i++)
+      await Bun.sleep(20);
+    expect(await left()).toEqual([recent]);
   });
 
   test("missing headers and bodies that aren't JSON are 400", async () => {

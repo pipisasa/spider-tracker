@@ -11,6 +11,8 @@ import {
   createGithubInstallState,
   disconnectGithubInstallation,
   handleGithubWebhook,
+  isGithubDeliveryId,
+  isGithubEventName,
   listGithubInstallations,
   pruneGithubDeliveries,
   resolveGithubSetup,
@@ -233,13 +235,17 @@ export function githubWebhookRoutes(
   const secret = webhookSecret;
   const appSlug = github.slug;
 
-  // A refused delivery is lost (GitHub doesn't retry), so it is logged: its headers, never the body.
+  // A refused delivery is lost (GitHub doesn't retry), so it is logged, never with the body. The
+  // request isn't authenticated yet: headers are logged only when they have the expected shape.
   const refuseTooLarge = (c: Context<AppEnv>) => {
+    const delivery = c.req.header("X-GitHub-Delivery");
+    const event = c.req.header("X-GitHub-Event");
+    const length = c.req.header("Content-Length");
     console.error(
       `GitHub webhook refused: body over ${GITHUB_WEBHOOK_MAX_BYTES} bytes (delivery ${
-        c.req.header("X-GitHub-Delivery") ?? "?"
-      }, event ${c.req.header("X-GitHub-Event") ?? "?"}, content-length ${
-        c.req.header("Content-Length") ?? "none"
+        isGithubDeliveryId(delivery) ? delivery : "?"
+      }, event ${isGithubEventName(event) ? event : "?"}, content-length ${
+        length && /^\d{1,20}$/.test(length) ? length : "none"
       })`,
     );
     return c.json(tooLarge, 413);
@@ -285,10 +291,10 @@ export function githubWebhookRoutes(
         payload,
         appSlug,
       });
-      // Retention (ST-138): each new delivery clears a batch of expired ones. A failure here
-      // doesn't fail the delivery, which is already handled.
+      // Retention (ST-138): each new delivery clears a batch of expired ones, after the answer
+      // (not awaited). A failure doesn't fail the delivery, which is already handled.
       if (status !== "duplicate") {
-        await pruneGithubDeliveries(db).catch((err: unknown) => {
+        void pruneGithubDeliveries(db).catch((err: unknown) => {
           console.error(
             `Pruning GitHub deliveries failed: ${err instanceof Error ? err.message : String(err)}`,
           );
