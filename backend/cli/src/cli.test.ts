@@ -902,6 +902,20 @@ describe("saved agents", () => {
         code: 3,
         stderr: "spider: Task not found\n",
       });
+      // A task truly missing in a project the agent sees: the plain message (ST-130).
+      const inScope = await cli(["task", "view", "st-999"], { env });
+      expect(inScope).toMatchObject({
+        code: 3,
+        stderr: "spider: Task not found\n",
+      });
+      const listed = await cli(["task", "list", "--project", "ST"], { env });
+      expect(listed).toMatchObject({
+        code: 3,
+        stderr: "spider: Task not found\n",
+      });
+      // An out-of-scope --project gets the hint.
+      const other = await cli(["task", "list", "--project", "ANT"], { env });
+      expect(other.stderr).toContain("which sees only ST");
     } finally {
       cleanup();
     }

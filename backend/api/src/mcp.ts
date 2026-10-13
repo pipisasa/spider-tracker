@@ -194,6 +194,12 @@ const RULES_INSTRUCTIONS_CHARS = 12_000;
  * The server's instructions (ST-111): the rules of the agent's projects, so a new session has
  * them from its first MCP answer (Claude Code puts them in the system prompt).
  */
+/**
+ * The version the MCP server reports. Bumped when tool inputs or outputs change incompatibly:
+ * 0.2.0 for the CLI-shaped outputs (ST-107, ST-130).
+ */
+export const MCP_SERVER_VERSION = "0.2.0";
+
 export function rulesInstructions(
   handle: string,
   rules: ProjectRulesDto[],
@@ -347,7 +353,7 @@ function createMcpServer(
   });
 
   const server = new McpServer(
-    { name: "spider-tracker", version: "0.1.0" },
+    { name: "spider-tracker", version: MCP_SERVER_VERSION },
     instructions ? { instructions } : undefined,
   );
 

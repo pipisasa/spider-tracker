@@ -21,6 +21,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { createApp } from "./app";
 import { createAuth } from "./auth";
 import { loadEnv } from "./env";
+import { MCP_SERVER_VERSION } from "./mcp";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -213,6 +214,14 @@ withDb("MCP server", () => {
         "whoami",
       ].sort(),
     );
+  });
+
+  test("reports server version 0.2.0 after the breaking output change (ST-130)", async () => {
+    expect(client.getServerVersion()).toMatchObject({
+      name: "spider-tracker",
+      version: MCP_SERVER_VERSION,
+    });
+    expect(MCP_SERVER_VERSION).toBe("0.2.0");
   });
 
   test("whoami is the key's agent", async () => {

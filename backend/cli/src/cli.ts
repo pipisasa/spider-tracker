@@ -586,6 +586,23 @@ type Api = ReturnType<typeof connect>;
 const projectKeyOf = (taskKey: string) =>
   parseTaskKey(taskKey)?.projectKey ?? taskKey.split("-")[0] ?? taskKey;
 
+/** The projects a command line names: those of its task keys, and `--project` values (upper case). */
+function requestedProjects(argv: string[]): Set<string> {
+  const found = new Set<string>();
+  for (const [i, word] of argv.entries()) {
+    const parsed = parseTaskKey(word.trim());
+    if (parsed) found.add(parsed.projectKey.toUpperCase());
+    const option = word.startsWith("--project=")
+      ? word.slice("--project=".length)
+      : word === "--project"
+        ? argv[i + 1]
+        : undefined;
+    for (const key of option?.split(",") ?? [])
+      if (key.trim()) found.add(key.trim().toUpperCase());
+  }
+  return found;
+}
+
 /** The task key given, or the one in the current branch name. */
 function taskKey(
   given: string | undefined,
@@ -5371,12 +5388,26 @@ function buildProgram(
   /**
    * For "not found" and "forbidden": which saved agent acted, when it sees only some projects. A task
    * in another project reads as missing, and the default agent is easy to use by mistake (ST-107).
+   * Only when the request named a project outside the agent's saved scope (ST-130): a task key or
+   * `--project` in the arguments, else the current branch's key. A missing task in a project the
+   * agent sees gets the plain message; with no key to judge by, the hint stays.
    */
   const scopeHint = async (): Promise<string> => {
     const entry = api
       ? (await api.credentials.catch(() => undefined))?.entry
       : undefined;
     if (!api || !entry?.saved.projects) return "";
+    const requested = requestedProjects(argv);
+    if (requested.size === 0) {
+      const branch = currentBranch(cwd, git);
+      const key = branch ? taskKeyFromBranch(branch) : null;
+      if (key) requested.add(projectKeyOf(key).toUpperCase());
+    }
+    const visible = new Set(
+      entry.saved.projects.map((p) => p.key.toUpperCase()),
+    );
+    if (requested.size > 0 && [...requested].every((k) => visible.has(k)))
+      return "";
     const { via } = await api.credentials;
     return ` (acting as ${entry.ref}${via ? `, ${via}` : ""}, which sees only ${scopeOf(entry)}; pass --as <agent> to act as another)`;
   };
