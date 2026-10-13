@@ -164,17 +164,20 @@ run("GitHub webhooks (ST-83)", () => {
     await db.$client.end();
   });
 
-  test("pruneGithubDeliveries deletes rows past the retention, in batches (ST-138)", async () => {
+  test("pruneGithubDeliveries deletes rows past the retention, at most a batch per call (ST-138)", async () => {
     const day = 24 * 60 * 60 * 1000;
-    // The real clock: on the shared test database only rows past the retention may go.
-    const now = new Date();
+    // Only this test's own rows: its clock is a random day in the 1990s, so on the shared test
+    // database nothing else is past the retention for it (other tests and runs use real dates).
+    // Its expired rows may also go to a concurrent prune with the real clock (the API's retention
+    // test), so it asserts which of its ids remain, and returned counts only as upper bounds.
+    const now = new Date(
+      Date.UTC(1990, 0, 1) + Math.floor(Math.random() * 3650) * day,
+    );
     const old = new Date(
       now.getTime() - (GITHUB_DELIVERY_RETENTION_DAYS + 1) * day,
     );
-    const kept = new Date(
-      now.getTime() - (GITHUB_DELIVERY_RETENTION_DAYS - 1) * day,
-    );
-    // Enough expired rows that each batch is a strict subset; one kept.
+    // Kept: recent by the real clock too, so no prune deletes it.
+    const kept = new Date();
     const expired = Array.from({ length: 30 }, () => nextDelivery());
     const keptId = nextDelivery();
     const ids = [...expired, keptId];
@@ -193,7 +196,7 @@ run("GitHub webhooks (ST-83)", () => {
       ).map((r) => r.id);
     // At most one batch per call, whatever the plan. Forced here to the plan that broke
     // `id IN (SELECT … LIMIT n)`: a nested-loop semi join re-running the subquery per row, which
-    // deleted every expired row. Rolled back, so the shared database keeps its rows.
+    // deleted every expired row (30 for a batch of 1). Rolled back, so nothing is lost.
     const rollback = new Error("rollback");
     await db
       .transaction(async (tx) => {
@@ -206,16 +209,19 @@ run("GitHub webhooks (ST-83)", () => {
           "enable_memoize",
         ])
           await tx.execute(sql.raw(`set local ${setting} = off`));
-        expect(await pruneGithubDeliveries(tx, { now, limit: 1 })).toBe(1);
-        expect(await pruneGithubDeliveries(tx, { now, limit: 7 })).toBe(7);
+        expect(
+          await pruneGithubDeliveries(tx, { now, limit: 1 }),
+        ).toBeLessThanOrEqual(1);
+        expect(
+          await pruneGithubDeliveries(tx, { now, limit: 7 }),
+        ).toBeLessThanOrEqual(7);
         throw rollback;
       })
       .catch((err: unknown) => {
         if (err !== rollback) throw err;
       });
-    expect(await pruneGithubDeliveries(db, { now, limit: 1 })).toBe(1);
     while ((await pruneGithubDeliveries(db, { now, limit: 10 })) > 0) {
-      /* drain the rest (other runs' expired rows too) */
+      /* drain: only rows older than this test's ancient cutoff */
     }
     expect(await remaining()).toEqual([keptId]);
   });
