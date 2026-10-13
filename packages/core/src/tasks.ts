@@ -425,7 +425,22 @@ async function assertActorsInOrg(tx: Tx, orgId: string, actorIds: string[]) {
 
 const MAX_TASK_DEPTH = 20;
 
-/** The parent must exist in the organization, and must not be the task itself or one of its sub-tasks. */
+/**
+ * Serialises parent changes per organization until commit: otherwise two concurrent re-parents
+ * (A under B, B under A) each pass assertParent against the other's uncommitted state and form a
+ * cycle. Taken before any task row (the task's own, then its milestone's or release's), so no
+ * transaction holds a task row while it waits here (ST-147).
+ */
+async function lockParentChanges(tx: Tx, orgId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + orgId}))`,
+  );
+}
+
+/**
+ * The parent must exist in the organization, and must not be the task itself or one of its
+ * sub-tasks. Callers hold lockParentChanges first.
+ */
 async function assertParent(
   tx: Tx,
   orgId: string,
@@ -435,11 +450,6 @@ async function assertParent(
 ) {
   if (parentId === selfId)
     throw new DomainError("validation", "A task can't be its own parent");
-  // Serialise parent changes per organization until commit: otherwise two concurrent re-parents
-  // (A under B, B under A) each pass the check against the other's uncommitted state and form a cycle.
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + orgId}))`,
-  );
   let current: string | null = parentId;
   for (let depth = 0; current; depth++) {
     if (depth >= MAX_TASK_DEPTH)
@@ -548,6 +558,8 @@ export async function createTaskIn(
   projectKey: string,
   data: CreateTaskInput,
 ): Promise<TaskDto> {
+  // A sub-task takes the parent lock before any row (ST-147).
+  if (data.parentId) await lockParentChanges(tx, ctx.orgId);
   // Bumping the counter locks the project row, so numbers are unique and gap-free per project.
   const [project] = await tx
     .update(projects)
@@ -1004,8 +1016,10 @@ export async function applyTaskUpdate(
   const { projectKey } = found;
   // A date change re-reads the row under a lock: two concurrent updates each setting one date would
   // otherwise both pass the start ≤ target check and trip `tasks_dates_ordered` (a 500, ST-133).
-  // A parent change locks the row too, before assertParent's advisory lock, so every update takes
-  // the row lock first; a parent-only update taking them in the other order deadlocked (ST-147).
+  // A parent change takes the org's parent lock first, then the row, then (when it settles them)
+  // milestone and release rows: no update holds a task row while it waits for the parent lock,
+  // which deadlocked with a concurrent re-parent (ST-147).
+  if (data.parentId !== undefined) await lockParentChanges(tx, ctx.orgId);
   const task =
     data.startDate !== undefined ||
     data.targetDate !== undefined ||

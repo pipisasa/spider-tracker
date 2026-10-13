@@ -947,7 +947,7 @@ withDb("MCP server", () => {
     );
   });
 
-  test("diff_document: a diff of one huge line is cut at 50,000 characters (ST-147)", async () => {
+  test("diff_document: a diff of one huge line is cut to about 50,000 characters in all (ST-129)", async () => {
     const doc = (
       await call(client, "create_document", {
         title: "One long line",
@@ -965,12 +965,18 @@ withDb("MCP server", () => {
       added: number;
       removed: number;
       truncated?: boolean;
-      hunks: { lines: { kind: string; text: string }[] }[];
+      hunks: { lines: { kind: string; text: string; cut?: true }[] }[];
+      diff: string;
     };
     expect(diff).toMatchObject({ added: 1, removed: 1, truncated: true });
+    // The lines get half the budget: the unified diff repeats them.
     expect(
-      diff.hunks.flatMap((h) => h.lines.map((l) => [l.kind, l.text.length])),
-    ).toEqual([["removed", 50_000]]);
+      diff.hunks.flatMap((h) =>
+        h.lines.map((l) => [l.kind, l.text.length, l.cut ?? false]),
+      ),
+    ).toEqual([["removed", 25_000, true]]);
+    expect(diff.diff.length).toBeLessThan(25_100);
+    expect(diff.diff.endsWith("\n\\ Line cut short")).toBe(true);
   });
 
   test("statuses can be given by category, like the CLI", async () => {

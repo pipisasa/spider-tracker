@@ -194,8 +194,12 @@ const RULES_INSTRUCTIONS_CHARS = 12_000;
 
 /** diff_document returns at most this many hunk lines, so a long diff doesn't flood the context (ST-129). */
 const MCP_DIFF_MAX_LINES = 200;
-/** …and at most this many characters of line text, so one huge line can't flood it either. */
+/**
+ * …and about this many characters in all, so one huge line can't flood it either. The unified
+ * `diff` repeats every hunk line, so the lines get half of it (MCP_DIFF_MAX_LINE_CHARS).
+ */
 const MCP_DIFF_MAX_CHARS = 50_000;
+const MCP_DIFF_MAX_LINE_CHARS = MCP_DIFF_MAX_CHARS / 2;
 
 /**
  * The server's instructions (ST-111): the rules of the agent's projects, so a new session has
@@ -1775,7 +1779,7 @@ function createMcpServer(
   server.registerTool(
     "diff_document",
     {
-      description: `What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit \`to\` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version. Long diffs are cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_CHARS} characters (truncated: true).`,
+      description: `What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit \`to\` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version. Long diffs are cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_LINE_CHARS} characters of line text, about ${MCP_DIFF_MAX_CHARS} in all since the unified diff repeats the lines (truncated: true); a line cut short has cut: true, and a "\\ Line cut short" line follows it in the diff.`,
       inputSchema: {
         id: z.string().describe("Document id"),
         from: z.number().int().positive().describe("The older version number"),
@@ -1790,18 +1794,18 @@ function createMcpServer(
     ({ id, from, to }) =>
       run(async () => {
         // DocumentDiffView, as `spider doc diff --json`, cut at MCP_DIFF_MAX_LINES hunk lines or
-        // MCP_DIFF_MAX_CHARS characters.
+        // MCP_DIFF_MAX_LINE_CHARS characters of line text (the unified diff repeats them).
         const diff = await diffDocumentVersions(db, ctx, id, { from, to });
         const cut = truncateHunks(
           diff.hunks,
           MCP_DIFF_MAX_LINES,
-          MCP_DIFF_MAX_CHARS,
+          MCP_DIFF_MAX_LINE_CHARS,
         );
         if (!cut.truncated) return documentDiffView(diff);
         return {
           ...documentDiffView({ ...diff, hunks: cut.hunks }),
           truncated: true,
-          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_CHARS} characters; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
+          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_LINE_CHARS} characters of line text; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
         };
       }),
   );
@@ -1915,7 +1919,7 @@ function createMcpServer(
     "edit_document",
     {
       description:
-        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
+        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). A section's new content may not contain a heading of the same or a higher level (it would end the section; repeating the section's own heading first is dropped), nor leave a code fence open (close a ``` or ~~~ fence with a line of the same character, at least as long, with nothing after it). Each text is at most 1 MB in UTF-8. Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
       inputSchema: {
         id: z.string().describe("Document id"),
         baseVersion: z

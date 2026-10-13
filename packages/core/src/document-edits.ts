@@ -29,10 +29,10 @@ export function markdownHeadings(content: string): MarkdownHeading[] {
   return scanMarkdown(content).headings;
 }
 
-/** The headings of Markdown text, and whether a code fence is still open at its end. */
+/** The headings of Markdown text, and the opening marker of a code fence still open at its end. */
 function scanMarkdown(content: string): {
   headings: MarkdownHeading[];
-  openFence: boolean;
+  openFence: string | null;
 } {
   const headings: MarkdownHeading[] = [];
   let fence: string | null = null;
@@ -67,7 +67,7 @@ function scanMarkdown(content: string): {
     }
     start = end;
   }
-  return { headings, openFence: fence !== null };
+  return { headings, openFence: fence };
 }
 
 /** `"## Decisions"` names a level-2 heading; plain `"Decisions"` one of any level. */
@@ -192,11 +192,14 @@ function replaceSection(
   text = text.replace(/^(?:[ \t]*\n)+/, "").trimEnd();
   const scanned = scanMarkdown(text);
   // An unclosed fence would turn the rest of the document, its headings included, into code.
-  if (scanned.openFence)
+  if (scanned.openFence) {
+    const { length } = scanned.openFence;
+    const marks = scanned.openFence.startsWith("`") ? "backticks" : "tildes";
     throw new DomainError(
       "validation",
-      `The new body of ${preview(section.trim())} leaves a code fence open. Close it with a matching \`\`\` or ~~~ line`,
+      `The new body of ${preview(section.trim())} leaves a code fence open. Close it with a line of at least ${length} ${marks} (${scanned.openFence}) and nothing after them`,
     );
+  }
   const breaking = scanned.headings.find((h) => h.level <= heading.level);
   if (breaking) {
     throw new DomainError(

@@ -57,27 +57,45 @@ function keyLine(line: string): { key: string; value: string } | null {
 const COMMENT_LINE = /^\s*#/;
 
 /**
- * The front matter block at the start of `text` (no BOM), or null. A block counts only when its
- * first line after any leading YAML comments is a `key: value` line (not blank) and every other
- * non-blank line is one too, a comment, or an indented or `- item` line of a nested value. So a
- * file that opens with a horizontal rule and a paragraph is all body, even a one-line
+ * The front matter block at the start of `text` (no BOM), or null. A block counts only when every
+ * non-blank line is a `key: value` line, a comment, or an indented or `- item` line of a nested
+ * value, and its first line after any leading YAML comments is a `key: value` line (not blank).
+ * So a file that opens with a horizontal rule and a paragraph is all body, even a one-line
  * `Word: text` paragraph after a blank line. A block opening with `# comment` lines is front
- * matter, as YAML reads it (ST-132): a published file like `---`, `# notes`, `id: …` keeps its id.
+ * matter, as YAML reads it (ST-132): a published file like `---`, `# notes`, `id: …` keeps its id,
+ * even with a blank line after the comments, since a block holding an `id:` line counts anyway.
  */
 function matchFrontMatter(text: string): RegExpExecArray | null {
   const match = text.startsWith("---") ? FRONT_MATTER.exec(text) : null;
   if (!match || match.index !== 0) return null;
   const lines = (match[1] ?? "").split(/\r?\n/);
-  // The block ends with a line break, so the last element is "" (an empty block has only that).
-  if (lines.length > 1) {
-    const first = lines.findIndex((line) => !COMMENT_LINE.test(line));
-    if (!keyLine(lines[first] ?? "")) return null;
-  }
   for (const line of lines) {
     if (!line.trim() || COMMENT_LINE.test(line) || keyLine(line)) continue;
     if (!/^(?:\s|-(?:\s|$))/.test(line)) return null;
   }
+  // The block ends with a line break, so the last element is "" (an empty block has only that).
+  if (lines.length > 1) {
+    const first = lines.findIndex((line) => !COMMENT_LINE.test(line));
+    const hasId = lines.some(
+      (line) => keyLine(line)?.key.toLowerCase() === "id",
+    );
+    if (!keyLine(lines[first] ?? "") && !hasId) return null;
+  }
   return match;
+}
+
+/**
+ * Whether `raw` opens with a front matter block that holds none of the keys publish reads: its
+ * text (a `# Heading` and a `Note: …` line, say) is dropped from the content, as YAML reads it.
+ */
+export function frontMatterWithoutKnownKeys(raw: string): boolean {
+  const text = raw.startsWith(BOM) ? raw.slice(BOM.length) : raw;
+  const match = matchFrontMatter(text);
+  if (!match) return false;
+  return !(match[1] ?? "").split(/\r?\n/).some((line) => {
+    const key = keyLine(line)?.key.toLowerCase();
+    return FRONT_MATTER_KEYS.some((k) => k === key);
+  });
 }
 
 /** A value without its quotes, or without a trailing ` # comment` when unquoted. */
@@ -221,7 +239,10 @@ export interface SourceFolder {
   docs: SourceDoc[];
   /** Files that are reported as `failed` and never written: too large, or not UTF-8. */
   failed: PublishResult[];
-  /** Files skipped with a reason: symbolic links, and paths that lead outside the folder. */
+  /**
+   * Files skipped with a reason (symbolic links, paths that lead outside the folder), and files
+   * whose front matter holds no key publish reads.
+   */
   warnings: string[];
 }
 
@@ -285,6 +306,10 @@ export async function readSourceFolder(root: string): Promise<SourceFolder> {
       continue;
     }
     folder.docs.push(parseSourceDoc(path, raw));
+    if (frontMatterWithoutKnownKeys(raw))
+      folder.warnings.push(
+        `${path} opens with a front matter block (between --- lines) holding none of the keys publish reads (id, version, hash, title, project, task); its text isn't part of the document`,
+      );
   }
   return folder;
 }
@@ -459,7 +484,7 @@ export interface PublishResult {
 export interface PublishResponse {
   dryRun: boolean;
   results: PublishResult[];
-  /** Files skipped before publishing (symbolic links, paths outside the folder). */
+  /** Files skipped before publishing (symbolic links, paths outside the folder), and front matter without known keys. */
   warnings: string[];
   summary: Record<PublishStatus, number>;
 }
@@ -470,7 +495,7 @@ export interface PublishOptions {
   docs: SourceDoc[];
   /** Files that can't be published (from `readSourceFolder`): reported as they are. */
   failed?: PublishResult[];
-  /** Files skipped before publishing, reported with the results. */
+  /** Files skipped before publishing, and other notes on the files, reported with the results. */
   warnings?: string[];
   /** For files whose front matter names no `project` or `task`. */
   project?: string;

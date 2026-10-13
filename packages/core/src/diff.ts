@@ -289,8 +289,8 @@ function hunkOf(
 
 /**
  * The first hunks up to `maxLines` lines and `maxChars` characters of line text in all, cutting
- * the last hunk (and, past `maxChars`, its last line's text) short when needed; `truncated` says
- * whether anything was left out. For outputs with a size budget (MCP).
+ * the last hunk (and, past `maxChars`, its last line's text, marked `cut: true`) short when
+ * needed; `truncated` says whether anything was left out. For outputs with a size budget (MCP).
  */
 export function truncateHunks(
   hunks: DiffHunkDto[],
@@ -304,11 +304,12 @@ export function truncateHunks(
     const lines: DiffLineDto[] = [];
     for (const line of hunk.lines) {
       if (linesLeft <= 0 || charsLeft <= 0) break;
-      const text =
-        line.text.length > charsLeft
-          ? line.text.slice(0, charsLeft)
-          : line.text;
-      lines.push(text === line.text ? line : { ...line, text });
+      if (line.text.length > charsLeft) {
+        // Not between the two halves of a surrogate pair.
+        const high = /[\uD800-\uDBFF]/.test(line.text[charsLeft - 1] ?? "");
+        const text = line.text.slice(0, high ? charsLeft - 1 : charsLeft);
+        lines.push({ ...line, text, cut: true });
+      } else lines.push(line);
       linesLeft -= 1;
       charsLeft -= line.text.length;
     }
@@ -341,6 +342,9 @@ const PREFIX: Record<DiffLineDto["kind"], string> = {
   removed: "-",
 };
 
+/** Follows a line that truncateHunks cut short, in a unified diff. */
+export const CUT_NOTE = "\\ Line cut short";
+
 /** A unified diff (`diff -u` style), with `fromLabel` and `toLabel` on the `---`/`+++` lines; "" without hunks. */
 export function formatUnifiedDiff(
   hunks: DiffHunkDto[],
@@ -353,7 +357,11 @@ export function formatUnifiedDiff(
     out.push(
       `@@ -${range(hunk.oldStart, hunk.oldLines)} +${range(hunk.newStart, hunk.newLines)} @@`,
     );
-    for (const line of hunk.lines) out.push(`${PREFIX[line.kind]}${line.text}`);
+    for (const line of hunk.lines) {
+      out.push(`${PREFIX[line.kind]}${line.text}`);
+      // Like "\ No newline at end of file": a note on the line above, not a line of the text.
+      if (line.cut) out.push(CUT_NOTE);
+    }
   }
   return out.join("\n");
 }

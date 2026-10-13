@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createDb, schema } from "@repo/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { ActorContext } from "./access";
 import { createAgent } from "./agents";
 import { createOrganization } from "./organizations";
@@ -19,6 +19,7 @@ import {
   updateTask,
   updateTasks,
 } from "./tasks";
+import { holdLock, settle, waitForLockWaiters } from "./test-locks.test-utils";
 
 const url = process.env.TEST_DATABASE_URL;
 const run = url ? describe : describe.skip;
@@ -522,5 +523,36 @@ run("milestones (ST-96)", () => {
       statusId: await statusOf("ST", "task", "Canceled"),
     });
     expect(await statusName(m.key)).toBe("Ready to close");
+  });
+
+  test("a milestone re-parent and a sub-task re-parent that settles it don't deadlock (ST-147)", async () => {
+    const milestone = await createMilestone(db, owner, "st", {
+      title: "Lock order",
+    });
+    const member = await createTask(db, owner, "ST", {
+      title: "In the milestone",
+      milestoneId: milestone.id,
+    });
+    const sub = await createTask(db, owner, "ST", { title: "Sub-task" });
+    const epic = await createTask(db, owner, "ST", { title: "Epic" });
+    // Both updates queue on the org's parent lock: the sub-task's first, so once the lock is free
+    // it settles the milestone. The milestone's update used to hold its own row while it waited.
+    const release = await holdLock(
+      db,
+      sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + owner.orgId}))`,
+    );
+    const moved = settle(
+      updateTask(db, owner, sub.key, { parentId: member.id }),
+    );
+    await waitForLockWaiters(db, "pg_advisory_xact_lock", 1);
+    const nested = settle(
+      updateTask(db, owner, milestone.key, { parentId: epic.id }),
+    );
+    await waitForLockWaiters(db, "pg_advisory_xact_lock", 2);
+    await release();
+    expect(await moved).toBeNull();
+    expect(await nested).toBeNull();
+    expect((await getTask(db, owner, sub.key)).parentId).toBe(member.id);
+    expect((await getTask(db, owner, milestone.key)).parentId).toBe(epic.id);
   });
 });

@@ -1,8 +1,8 @@
 import type { Db } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import { assertCanWrite, type ActorContext } from "./access";
-import { postComment } from "./comments";
+import { COMMENT_RATE_WINDOW_MS, postComment } from "./comments";
 import type { TaskDto } from "./contracts";
 import { DomainError } from "./errors";
 import { linkTasks, lockDuplicate, lockPair } from "./relations";
@@ -19,7 +19,7 @@ const { comments, statuses, taskRelations } = schema;
  * Marks `taskKey` as a duplicate of `input.of`: links it (`duplicates`), moves it to the first status of
  * category `canceled` in its project's workflow for its kind (unless it already is in a canceled one) and comments "Duplicate of KEY".
  * Idempotent: when the link and a canceled status are already there, nothing changes, except that a
- * `comment` given again is posted by itself (skipped when it repeats the caller's latest comment). Refused: a task as its own duplicate, a cycle of duplicates,
+ * `comment` given again is posted by itself (skipped when it repeats the caller's latest comment of the last minute, as a retry would). Refused: a task as its own duplicate, a cycle of duplicates,
  * a task already marked as a duplicate of another task (409; linkTasks refuses it for plain links too),
  * and a project without a canceled status. The original may be in any status, even closed
  * or a duplicate itself (chains are allowed, cycles aren't).
@@ -106,7 +106,8 @@ export async function markDuplicate(
       });
     } else if (data.comment) {
       // Already marked: the new comment is posted by itself rather than dropped (ST-131), unless the
-      // caller's latest comment on the task already says it, as after a retried call (ST-147).
+      // caller's latest comment on the task, posted within the comment rate-limit window, already
+      // says it, as after a retried call (ST-147). An older one is a deliberate repeat.
       const [latest] = await tx
         .select({ body: comments.body })
         .from(comments)
@@ -115,6 +116,10 @@ export async function markDuplicate(
             eq(comments.taskId, self.task.id),
             eq(comments.authorId, ctx.actorId),
             isNull(comments.deletedAt),
+            gt(
+              comments.createdAt,
+              new Date(Date.now() - COMMENT_RATE_WINDOW_MS),
+            ),
           ),
         )
         .orderBy(desc(comments.createdAt), desc(comments.id))

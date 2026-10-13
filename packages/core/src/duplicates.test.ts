@@ -102,6 +102,13 @@ run("marking duplicates (ST-114)", () => {
     // The same comment again (a retried call) isn't posted twice; another caller's would be (ST-147).
     await markDuplicate(db, ctx, copy, { of: original, comment: "Again" });
     expect(await comments(copy)).toHaveLength(2);
+    // Past the comment rate-limit window, the same comment is a deliberate repeat and is posted.
+    await db
+      .update(schema.comments)
+      .set({ createdAt: new Date(Date.now() - 2 * 60_000) })
+      .where(eq(schema.comments.taskId, (await getTask(db, ctx, copy)).id));
+    await markDuplicate(db, ctx, copy, { of: original, comment: "Again" });
+    expect(await comments(copy)).toHaveLength(3);
   });
 
   test("a retried first mark with a comment posts nothing new", async () => {

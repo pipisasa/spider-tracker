@@ -123,12 +123,18 @@ describe("front matter", () => {
   });
 
   test("comments, blank lines and nested YAML values still make front matter", () => {
-    const raw =
-      "---\n# notes\ntitle: T\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody";
-    expect(parseFrontMatter(raw)).toEqual({
-      fields: { title: "T" },
-      body: "Body",
-    });
+    for (const raw of [
+      "---\ntitle: T\n# notes\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody",
+      "---\n# notes\ntitle: T\n\ntags:\n  - a\n- b\nmeta:\n  x: 1\n---\nBody",
+    ])
+      expect(parseFrontMatter(raw)).toEqual({
+        fields: { title: "T" },
+        body: "Body",
+      });
+    // A blank line after the comments: a block holding `id:` is still front matter (ST-132).
+    expect(
+      parseFrontMatter(`---\n# notes\n\nid: ${A}\nversion: 3\n---\nBody`),
+    ).toEqual({ fields: { id: A, version: "3" }, body: "Body" });
     // A nested line before any key isn't YAML front matter.
     expect(parseFrontMatter("---\n  indented\n---\nBody").fields).toEqual({});
     // Comments first (ST-132): the keys are read and written back in place, without a second block.
@@ -358,6 +364,26 @@ describe("readSourceFolder", () => {
     ).toBe(true);
     expect(readFileSync(join(outside, "secret.md"), "utf8")).toBe("outside");
   });
+
+  test("warns about front matter that holds none of the keys publish reads (ST-132)", async () => {
+    const root = join(base, "keys");
+    mkdirSync(root);
+    writeFileSync(
+      join(root, "note.md"),
+      "---\n# Heading\nNote: read this.\n---\nRest",
+    );
+    writeFileSync(join(root, "known.md"), "---\n# notes\ntitle: T\n---\nRest");
+    writeFileSync(join(root, "rule.md"), "---\n\nIntro\n\n---\nRest");
+    const folder = await readSourceFolder(root);
+    expect(folder.docs.map((d) => [d.path, d.body])).toEqual([
+      ["known.md", "Rest"],
+      ["note.md", "Rest"],
+      ["rule.md", "---\n\nIntro\n\n---\nRest"],
+    ]);
+    expect(folder.warnings).toEqual([
+      "note.md opens with a front matter block (between --- lines) holding none of the keys publish reads (id, version, hash, title, project, task); its text isn't part of the document",
+    ]);
+  });
 });
 
 describe("publishDocuments", () => {
@@ -485,36 +511,39 @@ describe("publishDocuments", () => {
   });
 
   test("a published file whose front matter opens with a comment updates its document, not a new one (ST-132)", async () => {
-    const raw = `---\n# notes\nid: ${A}\nversion: 3\n---\n\nEdited`;
-    const written: string[] = [];
-    let created = false;
-    const response = await publishDocuments({
-      client: fakeClient({
-        get: async () => dto(A, 3, "a", "Before"),
-        create: async () => {
-          created = true;
-          return dto(B, 1, "a", "Edited");
+    // Comments first, with or without a blank line before the keys.
+    for (const comments of ["# notes\n", "# notes\n\n"]) {
+      const raw = `---\n${comments}id: ${A}\nversion: 3\n---\n\nEdited`;
+      const written: string[] = [];
+      let created = false;
+      const response = await publishDocuments({
+        client: fakeClient({
+          get: async () => dto(A, 3, "a", "Before"),
+          create: async () => {
+            created = true;
+            return dto(B, 1, "a", "Edited");
+          },
+          update: async (id, input) => dto(id, 4, "a", input.content),
+        }),
+        org: "o",
+        docs: [parseSourceDoc("a.md", raw)],
+        dryRun: false,
+        save: async (_doc, text) => {
+          written.push(text);
         },
-        update: async (id, input) => dto(id, 4, "a", input.content),
-      }),
-      org: "o",
-      docs: [parseSourceDoc("a.md", raw)],
-      dryRun: false,
-      save: async (_doc, text) => {
-        written.push(text);
-      },
-    });
-    expect(created).toBe(false);
-    expect(response.results[0]).toMatchObject({
-      status: "updated",
-      id: A,
-      version: 4,
-    });
-    // One block, the comment kept.
-    const hash = sourceHash({ title: "a", body: "Edited" });
-    expect(written).toEqual([
-      `---\n# notes\nid: ${A}\nversion: 4\nhash: ${hash}\n---\n\nEdited`,
-    ]);
+      });
+      expect(created).toBe(false);
+      expect(response.results[0]).toMatchObject({
+        status: "updated",
+        id: A,
+        version: 4,
+      });
+      // One block, the comment kept.
+      const hash = sourceHash({ title: "a", body: "Edited" });
+      expect(written).toEqual([
+        `---\n${comments}id: ${A}\nversion: 4\nhash: ${hash}\n---\n\nEdited`,
+      ]);
+    }
   });
 
   test("the hash ignores line endings", () => {

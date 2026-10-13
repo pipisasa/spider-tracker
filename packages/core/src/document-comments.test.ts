@@ -58,12 +58,12 @@ describe("quoteOccursIn", () => {
     const md = "Caf&eacute; &amp; bar &copy; 2026&nbsp;Acme &#8212; &#x41;BC";
     expect(quoteOccursIn(md, "md", "Café & bar © 2026 Acme — ABC")).toBe(true);
     expect(quoteOccursIn(md, "md", "copy")).toBe(false);
-    // A quote copied from the source, entities and all, matches too (ST-147).
+    // A quote copied from the source, entities and all, matches too (ST-134).
     expect(quoteOccursIn(md, "md", "Caf&eacute; &amp; bar")).toBe(true);
     expect(quoteOccursIn(md, "md", "&copy; 2026&nbsp;Acme")).toBe(true);
   });
 
-  test("code shows as written: no entity decoding or [[…]] titles inside it (ST-147)", () => {
+  test("code shows as written: no entity decoding or [[…]] titles inside it (ST-134)", () => {
     const id = "01a13118-ef01-7aa0-bf37-10e38fb20956";
     const label = (target: string) =>
       target === `doc:${id}` ? "Q3 Roadmap" : null;
@@ -74,6 +74,19 @@ describe("quoteOccursIn", () => {
     expect(quoteOccursIn(md, "md", "in Q3 Roadmap", label)).toBe(true);
     expect(quoteOccursIn(md, "md", "Use Q3 Roadmap", label)).toBe(false);
     expect(quoteOccursIn(md, "md", "x & Q3 Roadmap", label)).toBe(false);
+  });
+
+  test("a link whose label holds code shows its label, code and all (ST-134)", () => {
+    const md = "See [`spider doc publish`](cli.md) writes files.\n";
+    expect(quoteOccursIn(md, "md", "spider doc publish writes files")).toBe(
+      true,
+    );
+    expect(quoteOccursIn(md, "md", "cli.md")).toBe(false);
+    const wiki = "Read [[Title|`x &amp; y`]] next.";
+    expect(quoteOccursIn(wiki, "md", "Read x &amp; y next")).toBe(true);
+    expect(quoteOccursIn(wiki, "md", "Title")).toBe(false);
+    // A quote typed in decoded form against code doesn't match: code shows as written.
+    expect(quoteOccursIn(wiki, "md", "x & y")).toBe(false);
   });
 
   test("[[doc:<id>]] matches the title it shows; a labelled link its label (ST-134)", () => {

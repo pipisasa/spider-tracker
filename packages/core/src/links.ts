@@ -31,11 +31,16 @@ export function parseWikiLink(
   return { target, label: shown ? shown : null };
 }
 
-/** Code, in the order it is taken out: fenced blocks, HTML <pre>/<code> elements, inline code spans. */
+/**
+ * Code, in the order it is taken out: fenced blocks, HTML <pre>/<code> elements, inline code
+ * spans. A fence may be indented up to 3 spaces (as in a list item) and is closed by a line of the
+ * same character at least as long, or runs to the end. A code span is closed by a run of exactly
+ * as many backticks, without a blank line in between (as in CommonMark).
+ */
 const CODE = [
-  /^(```|~~~)[^\n]*\n[\s\S]*?(?:^\1[^\S\n]*$|(?![\s\S]))/gm,
+  /^ {0,3}((`)\2{2,}|(~)\3{2,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:\2|\3)*[^\S\n]*$|(?![\s\S]))/gm,
   /<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi,
-  /(`+)[\s\S]*?\1/g,
+  /(?<!`)(`+)(?!`)(?:[^\n]|\n(?![^\S\n]*\n))*?(?<!`)\1(?!`)/g,
 ];
 
 /** Text without code: fenced blocks, inline code spans and HTML <pre>/<code> elements. */
