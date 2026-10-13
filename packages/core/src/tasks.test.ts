@@ -711,6 +711,46 @@ run("projects and tasks", () => {
     ).rejects.toMatchObject({
       code: "not_found",
     });
+    // The filter resolves before the changes are checked: an unknown project with a bad tag is a 404.
+    await expect(
+      updateTasks(db, botCtx, {
+        filter: { project: "NOPE" },
+        set: { tagIds: ["00000000-0000-7000-8000-000000000000"] },
+      }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    // A parent outside the agent's projects fails the request like a missing one.
+    await expect(
+      updateTasks(db, botCtx, {
+        keys: [visible.key],
+        set: { parentId: secret.id },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Parent task not found",
+    });
+    expect((await getTask(db, ctx, visible.key)).parentId).toBeNull();
+  });
+
+  test("the bulk parent check doesn't wait for the organization's parent lock", async () => {
+    await createProject(db, ctx, { name: "Bulk lock", key: "BKL" });
+    const parent = await createTask(db, ctx, "BKL", { title: "Parent" });
+    const release = await holdLock(
+      db,
+      sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + ctx.orgId}))`,
+    );
+    try {
+      // Only the request-level check runs: the task is missing, so no per-task update starts.
+      const outcome = await Promise.race([
+        updateTasks(db, ctx, {
+          keys: ["BKL-999"],
+          set: { parentId: parent.id },
+        }).then((r) => r.results.map((x) => x.error?.code)),
+        Bun.sleep(2000).then(() => "blocked"),
+      ]);
+      expect(outcome).toEqual(["not_found"]);
+    } finally {
+      await release();
+    }
   });
 
   test("bulk update checks assignees, tags and the parent once, the parent's cycle per task", async () => {
@@ -794,6 +834,61 @@ run("projects and tasks", () => {
       startDate: null,
       targetDate: "2020-01-10",
     });
+  });
+
+  test("a date-and-parent update and a parent-only update of one task don't deadlock (ST-147)", async () => {
+    await createProject(db, ctx, { name: "Lock order", key: "LCK" });
+    const child = await createTask(db, ctx, "LCK", { title: "Child" });
+    const first = await createTask(db, ctx, "LCK", { title: "First parent" });
+    const second = await createTask(db, ctx, "LCK", { title: "Second" });
+    // The date-and-parent update takes the org's parent lock and queues on the row. The parent-only
+    // update used to take the row's lock first; now it queues on the parent lock, behind the first.
+    const release = await holdLock(
+      db,
+      sql`select 1 from tasks where id = ${child.id} for no key update`,
+    );
+    const dated = settle(
+      updateTask(db, ctx, child.key, {
+        parentId: first.id,
+        targetDate: "2020-01-10",
+      }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 1);
+    const moved = settle(
+      updateTask(db, ctx, child.key, { parentId: second.id }),
+    );
+    await waitForLockWaiters(db, ['"tasks"', "pg_advisory_xact_lock"], 2);
+    await release();
+    expect(await dated).toBeNull();
+    expect(await moved).toBeNull();
+    expect(await getTask(db, ctx, child.key)).toMatchObject({
+      parentId: second.id,
+      targetDate: "2020-01-10",
+    });
+  });
+
+  test("an update waiting on a task deleted meanwhile is not_found and writes nothing", async () => {
+    await createProject(db, ctx, { name: "Gone", key: "GON" });
+    const gone = await createTask(db, ctx, "GON", { title: "Gone" });
+    // The delete holds the row until it commits; the update re-reads it then.
+    const release = await holdLock(
+      db,
+      sql`update tasks set deleted_at = now() where id = ${gone.id}`,
+    );
+    const update = settle(
+      updateTask(db, ctx, gone.key, { targetDate: "2020-01-10" }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 1);
+    await release();
+    expect(await update).toMatchObject({
+      code: "not_found",
+      message: `Task ${gone.key} not found`,
+    });
+    const [row] = await db
+      .select({ targetDate: schema.tasks.targetDate })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, gone.id));
+    expect(row?.targetDate).toBeNull();
   });
 
   test("start and target dates: set, cleared, kept in order, recorded; overdue lists open tasks past their target", async () => {

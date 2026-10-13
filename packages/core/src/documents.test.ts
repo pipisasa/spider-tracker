@@ -18,6 +18,7 @@ import {
 } from "./documents";
 import { createOrganization } from "./organizations";
 import { archiveProject, createProject } from "./projects";
+import { MAX_DOCUMENT_BYTES } from "./schemas";
 import { createTask, deleteTask } from "./tasks";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -297,6 +298,7 @@ run("documents", () => {
     });
     expect(v2).toMatchObject({
       version: 2,
+      changed: true,
       content: expect.stringContaining("Hello."),
     });
 
@@ -345,14 +347,18 @@ run("documents", () => {
         edits: [{ old: "a", new: "b", append: "c" }],
       }),
     ).rejects.toMatchObject({ code: "validation" });
-    // A no-op edit keeps the version.
+    // A no-op edit keeps the version and says nothing changed.
     expect(
-      (
-        await editDocument(db, ctx, doc.id, {
-          edits: [{ old: "New.", new: "New." }],
-        })
-      ).version,
-    ).toBe(3);
+      await editDocument(db, ctx, doc.id, {
+        edits: [{ old: "New.", new: "New." }],
+      }),
+    ).toMatchObject({ version: 3, changed: false });
+    // Each text is capped at 1 MB.
+    await expect(
+      editDocument(db, ctx, doc.id, {
+        edits: [{ append: "x".repeat(MAX_DOCUMENT_BYTES + 1) }],
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
 
     expect(
       (await listDocumentVersions(db, ctx.orgId, doc.id)).map((v) => v.version),

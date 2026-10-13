@@ -910,6 +910,18 @@ const schemas: Record<string, JsonSchema> = {
     url: webUrl("document"),
   }),
   Document: { allOf: [ref("DocumentSummary"), object({ content: string() })] },
+  EditedDocument: {
+    allOf: [
+      ref("Document"),
+      object({
+        changed: {
+          type: "boolean",
+          description:
+            "False when the edits left the content as it was (no new version)",
+        },
+      }),
+    ],
+  },
   UpdatedDocument: {
     allOf: [
       ref("Document"),
@@ -987,7 +999,17 @@ const schemas: Record<string, JsonSchema> = {
       type: "array",
       items: ref("DiffHunk"),
       description:
-        "Changes with 3 lines of context, as in a unified diff; empty when the contents match",
+        "Changes with 3 lines of context, as in a unified diff; empty when the contents match. Lines compare without their CRLF or LF ending",
+    },
+    trailingNewlineChanged: {
+      type: "boolean",
+      description:
+        "One version ends with a newline and the other doesn't (not shown in hunks)",
+    },
+    lineEndingsChanged: {
+      type: "boolean",
+      description:
+        "One version has CRLF line endings and the other LF (not shown in hunks)",
     },
   }),
   DocumentLink: object({
@@ -2055,7 +2077,7 @@ const paths = {
     post: {
       operationId: "markDuplicate",
       summary:
-        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing (a `comment` given again is posted by itself); self, cycles and a second original (409) are refused',
+        "Mark as a duplicate of another task in one step: link it (duplicates), move it to the project's first canceled status and comment \"Duplicate of KEY\". A repeat changes nothing (a `comment` given again is posted by itself, unless it repeats the caller's latest comment); self, cycles and a second original (409) are refused",
       requestBody: body("MarkDuplicateInput"),
       responses: { "200": ok("The task, canceled", "Task"), ...errors },
     },
@@ -2537,7 +2559,10 @@ const paths = {
       summary:
         "Partial edits saved as one new version: replace a fragment ({ old, new, all? }; it must occur once unless all), append ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }). With baseVersion, 409 if saved since; without, applies to the current version. 409 when a fragment or section isn't there, 400 when ambiguous",
       requestBody: body("EditDocumentInput"),
-      responses: { "200": ok("Edited document", "Document"), ...errors },
+      responses: {
+        "200": ok("Edited document", "EditedDocument"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/move": {

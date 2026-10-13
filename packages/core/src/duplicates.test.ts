@@ -98,6 +98,27 @@ run("marking duplicates (ST-114)", () => {
       "Again",
     ]);
     expect(await links(copy)).toEqual([`duplicates ${original}`]);
+
+    // The same comment again (a retried call) isn't posted twice; another caller's would be (ST-147).
+    await markDuplicate(db, ctx, copy, { of: original, comment: "Again" });
+    expect(await comments(copy)).toHaveLength(2);
+    // Past the comment rate-limit window, the same comment is a deliberate repeat and is posted.
+    await db
+      .update(schema.comments)
+      .set({ createdAt: new Date(Date.now() - 2 * 60_000) })
+      .where(eq(schema.comments.taskId, (await getTask(db, ctx, copy)).id));
+    await markDuplicate(db, ctx, copy, { of: original, comment: "Again" });
+    expect(await comments(copy)).toHaveLength(3);
+  });
+
+  test("a retried first mark with a comment posts nothing new", async () => {
+    const [copy, original] = [await task("Retried"), await task("Kept")];
+    const input = { of: original, comment: "Same work" };
+    await markDuplicate(db, ctx, copy, input);
+    await markDuplicate(db, ctx, copy, input);
+    expect(await comments(copy)).toEqual([
+      `Duplicate of ${original}: Kept\n\nSame work`,
+    ]);
   });
 
   test("completes a half-done mark: an existing link, or an already canceled task", async () => {
@@ -226,7 +247,10 @@ run("marking duplicates (ST-114)", () => {
     const conflict = await markDuplicate(db, scopedCtx, mine, {
       of: other,
     }).catch((err: unknown) => err);
-    expect(conflict).toMatchObject({ code: "conflict" });
+    expect(conflict).toMatchObject({
+      code: "conflict",
+      message: `${mine} is already a duplicate of a task in a project you can't see; ask a member to unlink it`,
+    });
     expect(String(conflict)).not.toContain(hidden);
     expect(await links(mine)).toEqual([`duplicates ${hidden}`]);
   });

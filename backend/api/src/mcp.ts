@@ -34,7 +34,9 @@ import {
   createDocument,
   diffDocumentVersions,
   editDocument,
+  documentEditSchema,
   documentDiffView,
+  truncateHunks,
   getDocument,
   getDocumentGraph,
   getDocumentVersion,
@@ -189,6 +191,15 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 
 /** Rules longer than this are cut in the server instructions; get_project has them in full. */
 const RULES_INSTRUCTIONS_CHARS = 12_000;
+
+/** diff_document returns at most this many hunk lines, so a long diff doesn't flood the context (ST-129). */
+const MCP_DIFF_MAX_LINES = 200;
+/**
+ * …and about this many characters in all, so one huge line can't flood it either. The unified
+ * `diff` repeats every hunk line, so the lines get half of it (MCP_DIFF_MAX_LINE_CHARS).
+ */
+const MCP_DIFF_MAX_CHARS = 50_000;
+const MCP_DIFF_MAX_LINE_CHARS = MCP_DIFF_MAX_CHARS / 2;
 
 /**
  * The version the MCP server reports. Bumped when tool inputs or outputs change incompatibly:
@@ -1709,7 +1720,7 @@ function createMcpServer(
     "mark_duplicate",
     {
       description:
-        'Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment "Duplicate of KEY". Calling it again changes nothing (a comment given again is posted by itself); a task can\'t duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).',
+        'Mark a task as a duplicate of another in one step: link it (duplicates), move it to the first canceled status of its workflow and comment "Duplicate of KEY". Calling it again changes nothing (a comment given again is posted by itself, unless it repeats your latest comment); a task can\'t duplicate itself, close a cycle of duplicates, or duplicate a second original (unlink_tasks first).',
       inputSchema: {
         key: z.string().describe('The duplicate, e.g. "ST-12"'),
         of: z.string().describe('The original task, e.g. "ST-9"'),
@@ -1774,8 +1785,7 @@ function createMcpServer(
   server.registerTool(
     "diff_document",
     {
-      description:
-        "What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit `to` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version.",
+      description: `What changed in a document between two saved versions, as a unified diff of its lines (Markdown or HTML source). Omit \`to\` to compare with the current version. Use it to check what an agent changed; list_documents and get_document show the current version. Long diffs are cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_LINE_CHARS} characters of line text, about ${MCP_DIFF_MAX_CHARS} in all since the unified diff repeats the lines (truncated: true); a line cut short has cut: true, and a "\\ Line cut short" line follows it in the diff.`,
       inputSchema: {
         id: z.string().describe("Document id"),
         from: z.number().int().positive().describe("The older version number"),
@@ -1789,10 +1799,20 @@ function createMcpServer(
     },
     ({ id, from, to }) =>
       run(async () => {
-        // DocumentDiffView, as `spider doc diff --json`.
-        return documentDiffView(
-          await diffDocumentVersions(db, ctx, id, { from, to }),
+        // DocumentDiffView, as `spider doc diff --json`, cut at MCP_DIFF_MAX_LINES hunk lines or
+        // MCP_DIFF_MAX_LINE_CHARS characters of line text (the unified diff repeats them).
+        const diff = await diffDocumentVersions(db, ctx, id, { from, to });
+        const cut = truncateHunks(
+          diff.hunks,
+          MCP_DIFF_MAX_LINES,
+          MCP_DIFF_MAX_LINE_CHARS,
         );
+        if (!cut.truncated) return documentDiffView(diff);
+        return {
+          ...documentDiffView({ ...diff, hunks: cut.hunks }),
+          truncated: true,
+          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_LINE_CHARS} characters of line text; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
+        };
       }),
   );
 
@@ -1905,7 +1925,7 @@ function createMcpServer(
     "edit_document",
     {
       description:
-        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
+        "Change part of a document without resending it: replace a fragment ({ old, new }; old must occur exactly once, or pass all: true), append text ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }: up to the next heading of the same or a higher level; the heading stays). A section's new content may not contain a heading of the same or a higher level (it would end the section; repeating the section's own heading first is dropped), nor leave a code fence open (close a ``` or ~~~ fence with a line of the same character, at least as long, with nothing after it). Each text is at most 1 MB in UTF-8. Edits apply in order and save one new version. Without baseVersion they apply to the current version and fail if a fragment or section isn't there (a conflict: read the document again); with baseVersion they fail if anyone saved since.",
       inputSchema: {
         id: z.string().describe("Document id"),
         baseVersion: z
@@ -1915,32 +1935,10 @@ function createMcpServer(
           .optional()
           .describe("The version you read; omit to edit the current version"),
         edits: z
-          .array(
-            z.union([
-              z.strictObject({
-                old: z.string().describe("Exact text to replace"),
-                new: z.string().describe("Replacement text"),
-                all: z
-                  .boolean()
-                  .optional()
-                  .describe("Replace every occurrence"),
-              }),
-              z.strictObject({
-                append: z
-                  .string()
-                  .describe("Text added at the end, on a new line"),
-              }),
-              z.strictObject({
-                section: z
-                  .string()
-                  .describe('Heading of the section, e.g. "## Decisions"'),
-                content: z
-                  .string()
-                  .describe("The section's new body, without the heading"),
-              }),
-            ]),
-          )
-          .min(1),
+          .array(documentEditSchema)
+          .min(1)
+          .max(100)
+          .describe("At most 100 edits, applied in order"),
       },
     },
     ({ id, baseVersion, edits }) =>

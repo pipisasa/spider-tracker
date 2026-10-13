@@ -26,6 +26,14 @@ function headingText(raw: string): string {
 
 /** The ATX headings (`# …` to `###### …`) of Markdown text, fenced code excluded. */
 export function markdownHeadings(content: string): MarkdownHeading[] {
+  return scanMarkdown(content).headings;
+}
+
+/** The headings of Markdown text, and the opening marker of a code fence still open at its end. */
+function scanMarkdown(content: string): {
+  headings: MarkdownHeading[];
+  openFence: string | null;
+} {
   const headings: MarkdownHeading[] = [];
   let fence: string | null = null;
   let start = 0;
@@ -59,7 +67,7 @@ export function markdownHeadings(content: string): MarkdownHeading[] {
     }
     start = end;
   }
-  return headings;
+  return { headings, openFence: fence };
 }
 
 /** `"## Decisions"` names a level-2 heading; plain `"Decisions"` one of any level. */
@@ -122,7 +130,12 @@ function append(content: string, text: string): string {
   return `${content}\n${text}`;
 }
 
-/** Replaces the body under a heading, up to the next heading of the same or a higher level; the heading stays. */
+/**
+ * Replaces the body under a heading, up to the next heading of the same or a higher level; the
+ * heading stays. The body takes the document's line endings (CRLF when the document uses them),
+ * and may not contain a heading of the section's level or higher: that would end the section
+ * early and split it in two. Nor may it leave a code fence open, which would swallow what follows.
+ */
 function replaceSection(
   content: string,
   format: DocumentFormat,
@@ -162,22 +175,41 @@ function replaceSection(
   const next = headings.find(
     (h) => h.start > heading.start && h.level <= heading.level,
   );
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
   const before = content.slice(0, heading.end);
   const rest = next ? content.slice(next.start) : "";
 
   // A body that repeats the section's own heading doesn't add a second one.
-  let text = body;
-  const [first] = markdownHeadings(text.replace(/^(?:[ \t]*\r?\n)+/, ""));
+  let text = body.replace(/\r\n/g, "\n").replace(/^(?:[ \t]*\n)+/, "");
+  const [first] = markdownHeadings(text);
   if (
     first?.start === 0 &&
     first.level === heading.level &&
     first.text === heading.text
   ) {
-    text = text.replace(/^(?:[ \t]*\r?\n)+/, "").slice(first.end);
+    text = text.slice(first.end);
   }
-  text = text.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
+  text = text.replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+  const scanned = scanMarkdown(text);
+  // An unclosed fence would turn the rest of the document, its headings included, into code.
+  if (scanned.openFence) {
+    const { length } = scanned.openFence;
+    const marks = scanned.openFence.startsWith("`") ? "backticks" : "tildes";
+    throw new DomainError(
+      "validation",
+      `The new body of ${preview(section.trim())} leaves a code fence open. Close it with a line of at least ${length} ${marks} (${scanned.openFence}) and nothing after them`,
+    );
+  }
+  const breaking = scanned.headings.find((h) => h.level <= heading.level);
+  if (breaking) {
+    throw new DomainError(
+      "validation",
+      `The new body of ${preview(section.trim())} contains the heading ${preview(`${"#".repeat(breaking.level)} ${breaking.text}`)}, which would end the section. Use a lower-level heading, or edit the document with { old, new }`,
+    );
+  }
+  if (eol !== "\n") text = text.replace(/\n/g, eol);
 
-  return `${before.endsWith("\n") ? before : `${before}\n`}${text ? `\n${text}\n` : ""}${rest ? `\n${rest}` : ""}`;
+  return `${before.endsWith("\n") ? before : `${before}${eol}`}${text ? `${eol}${text}${eol}` : ""}${rest ? `${eol}${rest}` : ""}`;
 }
 
 /**

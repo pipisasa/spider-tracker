@@ -23,25 +23,29 @@ import {
   type Viewer,
 } from "./access";
 import { recordActivity } from "./activity";
+import type { WikiLabel } from "./anchors";
 import type {
   DocumentDiffDto,
   DocumentDto,
+  DocumentFormat,
   DocumentGraphDto,
   DocumentGraphTaskDto,
   DocumentLinkDto,
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
+  EditedDocumentDto,
   RelinkedDocumentsDto,
   UpdatedDocumentDto,
 } from "./contracts";
-import { diffHunks, diffLines } from "./diff";
+import { diffHunks, diffLines, textChanges } from "./diff";
 import { applyDocumentEdits } from "./document-edits";
 import { DomainError, isLockConflict } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
 import {
   documentIdLink,
+  documentIdTarget,
   isLinkableTitle,
   normalizeTitle,
   outgoingLinksIn,
@@ -198,6 +202,39 @@ export async function findDocument(
   if (!row || !visible)
     throw new DomainError("not_found", "Document not found");
   return { document: row.document, scope: scopeOf(row) };
+}
+
+/**
+ * What the unlabelled `[[doc:<id>]]` links of a Markdown document show `viewer`: the titles of
+ * the documents it can see (ST-115); others show their target. For matching comment quotes
+ * against the rendered text (ST-134).
+ */
+export async function documentLinkLabels(
+  db: Db | Tx,
+  viewer: Viewer,
+  content: string,
+  format: DocumentFormat,
+): Promise<WikiLabel> {
+  const ids = format === "md" ? outgoingLinksIn(content).documentIds : [];
+  if (!ids.length) return () => null;
+  const rows = await db
+    .select({ id: documents.id, title: documents.title })
+    .from(documents)
+    .leftJoin(tasks, eq(documents.taskId, tasks.id))
+    .where(
+      and(
+        eq(documents.orgId, orgIdOf(viewer)),
+        inArray(documents.id, ids),
+        isNull(documents.deletedAt),
+        or(isNull(documents.taskId), isNull(tasks.deletedAt)),
+        visibleIn(await projectScope(db, viewer)),
+      ),
+    );
+  const titles = new Map(rows.map((r) => [r.id, r.title]));
+  return (target) => {
+    const id = documentIdTarget(target.split("#")[0] ?? "");
+    return id ? (titles.get(id) ?? null) : null;
+  };
 }
 
 /**
@@ -476,6 +513,8 @@ async function lockRenameRows(
     .limit(1);
   if (!row || normalizeTitle(row.title) === normalizeTitle(newTitle)) return;
   const sources = await linkingSources(tx, id, row.title);
+  // Only rows the actor may write: relinkRenamed skips the others, so a scoped agent never
+  // holds locks on documents outside its projects.
   await tx
     .select({ id: documents.id })
     .from(documents)
@@ -483,6 +522,7 @@ async function lockRenameRows(
       and(
         eq(documents.orgId, ctx.orgId),
         inArray(documents.id, [id, ...sources.map((s) => s.id)]),
+        visibleIn(await projectScope(tx, ctx)),
       ),
     )
     .orderBy(asc(documents.id))
@@ -609,13 +649,14 @@ async function relinkRenamed(
  * saves the result as one new version. With `baseVersion` it fails on a newer save, like
  * updateDocument; without it the edits apply to the current version under the row lock, so a
  * concurrent save can't be overwritten: a fragment that is no longer there is a "conflict".
+ * `changed` says whether a new version was saved.
  */
 export async function editDocument(
   db: Db,
   ctx: ActorContext,
   id: string,
   input: unknown,
-): Promise<DocumentDto> {
+): Promise<EditedDocumentDto> {
   assertCanWrite(ctx);
   const data = parseInput(editDocumentInput, input);
 
@@ -634,7 +675,7 @@ export async function editDocument(
         "The edited document would be over 1 MB",
       );
     }
-    return saveGuarded(tx, ctx, current, () =>
+    const saved = await saveGuarded(tx, ctx, current, () =>
       saveVersion(
         tx,
         ctx,
@@ -648,6 +689,8 @@ export async function editDocument(
         },
       ),
     );
+    // No new version when the edits left the content as it was.
+    return { ...saved, changed: saved.version !== current.version };
   });
 }
 
@@ -892,6 +935,7 @@ export async function diffDocumentVersions(
     added: lines.filter((l) => l.kind === "added").length,
     removed: lines.filter((l) => l.kind === "removed").length,
     hunks: diffHunks(lines),
+    ...textChanges(a.content, b.content),
   };
 }
 
@@ -921,11 +965,13 @@ export async function listBacklinks(
         sql`lower(${documentLinks.target}) in (${normalizeTitle(document.title)}, ${byId})`,
       ),
     );
+  // `doc:` targets match in any case (`[[DOC:<ID>]]`), like the SQL above.
+  const isById = (target: string) => documentIdTarget(target) === document.id;
   const byIdLinks = new Set(
-    rows.filter((r) => r.target === byId).map((r) => r.documentId),
+    rows.filter((r) => isById(r.target)).map((r) => r.documentId),
   );
   const byTitleLinks = new Set(
-    rows.filter((r) => r.target !== byId).map((r) => r.documentId),
+    rows.filter((r) => !isById(r.target)).map((r) => r.documentId),
   );
   return visible.filter(
     (source) =>

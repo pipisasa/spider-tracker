@@ -34,6 +34,9 @@ const CLOSED: StatusCategory[] = ["done", "canceled"];
 
 const NAME_CONSTRAINT = "statuses_project_kind_lower_name_key";
 
+/** Tasks moved per UPDATE when a status is deleted (well under the bind-parameter limit). */
+const MOVE_CHUNK = 1000;
+
 /** A kind's statuses in board order. */
 const workflowRows = (tx: Tx, projectId: string, kind: TaskKind) =>
   tx
@@ -357,5 +360,3 @@ async function moveTasks(
   }
   return live.length;
 }
-
-const MOVE_CHUNK = 1000;

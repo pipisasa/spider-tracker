@@ -3,10 +3,10 @@ import { schema } from "@repo/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { assertCanWrite, type ActorContext, type Viewer } from "./access";
 import { recordActivity } from "./activity";
-import { quoteOccursIn } from "./anchors";
+import { documentSkeleton, quoteOccursInSkeleton } from "./anchors";
 import { assertCommentRate, mentionedActors, parseMentions } from "./comments";
 import type { DocumentCommentDto, DocumentInboxKind } from "./contracts";
-import { findDocument } from "./documents";
+import { documentLinkLabels, findDocument } from "./documents";
 import { DomainError } from "./errors";
 import { publish } from "./events";
 import { isUuid } from "./ids";
@@ -28,9 +28,36 @@ const { comments } = schema;
 type CommentRow = typeof comments.$inferSelect;
 type DocumentRow = Awaited<ReturnType<typeof findDocument>>["document"];
 
+/** Whether a quote occurs in the document as `viewer` reads it. */
+type QuoteCheck = (quote: string) => boolean;
+
+/**
+ * Checks quotes against a document, its readable text built once (not per comment), with
+ * `[[doc:<id>]]` links showing the titles the viewer sees, as the web app renders them.
+ */
+async function quoteCheck(
+  db: Db | Tx,
+  viewer: Viewer,
+  document: Pick<DocumentRow, "content" | "format">,
+): Promise<QuoteCheck> {
+  let built: ReturnType<typeof documentSkeleton> | undefined;
+  const label = await documentLinkLabels(
+    db,
+    viewer,
+    document.content,
+    document.format,
+  );
+  return (quote) =>
+    quoteOccursInSkeleton(
+      (built ??= documentSkeleton(document.content, document.format, label)),
+      quote,
+    );
+}
+
 function toDto(
   row: CommentRow,
-  document: Pick<DocumentRow, "id" | "content" | "format" | "version">,
+  document: Pick<DocumentRow, "id" | "version">,
+  occurs: QuoteCheck,
 ): DocumentCommentDto {
   return {
     id: row.id,
@@ -39,9 +66,7 @@ function toDto(
     authorId: row.authorId,
     body: row.body,
     quote: row.quote,
-    outdated:
-      row.quote !== null &&
-      !quoteOccursIn(document.content, document.format, row.quote),
+    outdated: row.quote !== null && !occurs(row.quote),
     documentVersion: row.documentVersion ?? document.version,
     resolvedAt: row.resolvedAt?.toISOString() ?? null,
     resolvedBy: row.resolvedBy,
@@ -65,7 +90,11 @@ export async function listDocumentComments(
   documentId: string,
 ): Promise<DocumentCommentDto[]> {
   const { document } = await findDocument(db, viewer, documentId);
-  return (await commentsOf(db, document.id)).map((row) => toDto(row, document));
+  const rows = await commentsOf(db, document.id);
+  const occurs = rows.some((row) => row.quote !== null)
+    ? await quoteCheck(db, viewer, document)
+    : () => true;
+  return rows.map((row) => toDto(row, document, occurs));
 }
 
 /** The top-level comment a comment's thread hangs from. */
@@ -90,6 +119,7 @@ function rootOf(
  * Comments on a document and notifies: mentioned members (`document_mention`), the author of the
  * comment replied to (`document_reply`), and the document's author and everyone else in the
  * thread (`document_comment`). A `quote` (top-level comments only) must occur in the document.
+ * A reply to a resolved thread reopens it, as in Google Docs: the reply would be hidden otherwise.
  */
 export async function addDocumentComment(
   db: Db,
@@ -109,8 +139,11 @@ export async function addDocumentComment(
     );
 
     const quote = data.quote ?? null;
+    // Only a top-level comment quotes, so only it reads the document's link labels.
+    let occurs: QuoteCheck = () => true;
     let parentAuthor: string | undefined;
     let threadAuthors: string[] = [];
+    let reopen: string | null = null;
     if (data.parentId) {
       if (quote !== null)
         throw new DomainError(
@@ -122,6 +155,7 @@ export async function addDocumentComment(
           id: comments.id,
           parentId: comments.parentId,
           authorId: comments.authorId,
+          resolvedAt: comments.resolvedAt,
         })
         .from(comments)
         .where(
@@ -139,14 +173,14 @@ export async function addDocumentComment(
       threadAuthors = thread
         .filter((c) => rootOf(byId, c.id) === root)
         .map((c) => c.authorId);
-    } else if (
-      quote !== null &&
-      !quoteOccursIn(document.content, document.format, quote)
-    ) {
-      throw new DomainError(
-        "validation",
-        "The quoted text isn't in the document's current version",
-      );
+      if (byId.get(root)?.resolvedAt) reopen = root;
+    } else if (quote !== null) {
+      occurs = await quoteCheck(tx, ctx, document);
+      if (!occurs(quote))
+        throw new DomainError(
+          "validation",
+          "The quoted text isn't in the document's current version. Quote plain text from it: a selection across a link, image or formatting may not match; select a shorter part",
+        );
     }
 
     const [comment] = await tx
@@ -162,6 +196,18 @@ export async function addDocumentComment(
       })
       .returning();
     if (!comment) throw new Error("Failed to add comment");
+    if (reopen) {
+      await tx
+        .update(comments)
+        .set({ resolvedAt: null, resolvedBy: null })
+        .where(eq(comments.id, reopen));
+      await recordActivity(tx, ctx, {
+        entityType: "document",
+        entityId: document.id,
+        action: "comment.reopened",
+        changes: { commentId: reopen, replyId: comment.id },
+      });
+    }
 
     const handles = parseMentions(data.body);
     const mentioned = await mentionedActors(tx, ctx, handles);
@@ -193,7 +239,7 @@ export async function addDocumentComment(
       documentId: document.id,
       ...scope,
     });
-    return toDto(comment, document);
+    return toDto(comment, document, occurs);
   });
 }
 
@@ -229,8 +275,10 @@ export async function resolveDocumentComment(
         "validation",
         "Only a thread's first comment can be resolved",
       );
+    const occurs =
+      current.quote === null ? () => true : await quoteCheck(tx, ctx, document);
     if ((current.resolvedAt !== null) === resolved)
-      return toDto(current, document);
+      return toDto(current, document, occurs);
 
     const [saved] = await tx
       .update(comments)
@@ -254,6 +302,6 @@ export async function resolveDocumentComment(
       documentId: document.id,
       ...scope,
     });
-    return toDto(saved, document);
+    return toDto(saved, document, occurs);
   });
 }

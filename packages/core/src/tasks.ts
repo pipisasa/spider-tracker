@@ -425,7 +425,22 @@ async function assertActorsInOrg(tx: Tx, orgId: string, actorIds: string[]) {
 
 const MAX_TASK_DEPTH = 20;
 
-/** The parent must exist in the organization, and must not be the task itself or one of its sub-tasks. */
+/**
+ * Serialises parent changes per organization until commit: otherwise two concurrent re-parents
+ * (A under B, B under A) each pass assertParent against the other's uncommitted state and form a
+ * cycle. Taken before any task row (the task's own, then its milestone's or release's), so no
+ * transaction holds a task row while it waits here (ST-147).
+ */
+async function lockParentChanges(tx: Tx, orgId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + orgId}))`,
+  );
+}
+
+/**
+ * The parent must exist in the organization, and must not be the task itself or one of its
+ * sub-tasks. Callers hold lockParentChanges first.
+ */
 async function assertParent(
   tx: Tx,
   orgId: string,
@@ -435,11 +450,6 @@ async function assertParent(
 ) {
   if (parentId === selfId)
     throw new DomainError("validation", "A task can't be its own parent");
-  // Serialise parent changes per organization until commit: otherwise two concurrent re-parents
-  // (A under B, B under A) each pass the check against the other's uncommitted state and form a cycle.
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${"task-parent:" + orgId}))`,
-  );
   let current: string | null = parentId;
   for (let depth = 0; current; depth++) {
     if (depth >= MAX_TASK_DEPTH)
@@ -548,6 +558,8 @@ export async function createTaskIn(
   projectKey: string,
   data: CreateTaskInput,
 ): Promise<TaskDto> {
+  // A sub-task takes the parent lock before any row (ST-147).
+  if (data.parentId) await lockParentChanges(tx, ctx.orgId);
   // Bumping the counter locks the project row, so numbers are unique and gap-free per project.
   const [project] = await tx
     .update(projects)
@@ -1004,9 +1016,15 @@ export async function applyTaskUpdate(
   const { projectKey } = found;
   // A date change re-reads the row under a lock: two concurrent updates each setting one date would
   // otherwise both pass the start ≤ target check and trip `tasks_dates_ordered` (a 500, ST-133).
+  // A parent change takes the org's parent lock first, then the row, then (when it settles them)
+  // milestone and release rows: no update holds a task row while it waits for the parent lock,
+  // which deadlocked with a concurrent re-parent (ST-147).
+  if (data.parentId !== undefined) await lockParentChanges(tx, ctx.orgId);
   const task =
-    data.startDate !== undefined || data.targetDate !== undefined
-      ? await lockTaskRow(tx, found.task.id)
+    data.startDate !== undefined ||
+    data.targetDate !== undefined ||
+    data.parentId !== undefined
+      ? await lockTaskRow(tx, found)
       : found.task;
   const scope = await projectScope(tx, ctx);
   const patch: Partial<typeof tasks.$inferInsert> = {};
@@ -1268,19 +1286,38 @@ async function assertBulkChanges(
   }
   const { parentId } = changes;
   if (parentId) {
-    const scope = await projectScope(db, ctx);
-    await db.transaction((tx) => assertParent(tx, ctx.orgId, scope, parentId));
+    // A plain read: each task's update checks the chain (cycles, depth) under the advisory lock.
+    const [parent] = await db
+      .select({ projectId: tasks.projectId })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.id, parentId),
+          eq(tasks.orgId, ctx.orgId),
+          isNull(tasks.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!parent || !inScope(await projectScope(db, ctx), parent.projectId))
+      throw new DomainError("validation", "Parent task not found");
   }
 }
 
-/** The task's row, read again and locked until commit (FOR NO KEY UPDATE: links and comments to it can still be added). */
-async function lockTaskRow(tx: Tx, taskId: string): Promise<TaskRow> {
+/**
+ * The task's row, read again and locked until commit (FOR NO KEY UPDATE: links and comments to it
+ * can still be added). not_found when the task was deleted while the update waited for the lock.
+ */
+async function lockTaskRow(tx: Tx, found: FoundTask): Promise<TaskRow> {
   const [row] = await tx
     .select()
     .from(tasks)
-    .where(eq(tasks.id, taskId))
+    .where(and(eq(tasks.id, found.task.id), isNull(tasks.deletedAt)))
     .for("no key update");
-  if (!row) throw new Error("Task disappeared while updating it");
+  if (!row)
+    throw new DomainError(
+      "not_found",
+      `Task ${found.projectKey}-${found.task.number} not found`,
+    );
   return row;
 }
 
@@ -1313,7 +1350,6 @@ export async function updateTasks(
     dryRun = false,
   } = parseInput(bulkUpdateTasksInput, input);
   const { status, ...changes } = set;
-  await assertBulkChanges(db, ctx, changes);
 
   let targets: string[];
   if (keys) {
@@ -1331,6 +1367,8 @@ export async function updateTasks(
   } else {
     throw new DomainError("validation", "Pass either keys or a filter");
   }
+  // After the filter resolves, so an unknown project is a 404 rather than a bad id's 400.
+  await assertBulkChanges(db, ctx, changes);
 
   // Statuses are per project and kind, so a status name is matched in each task's own workflow.
   const projectsByKey = new Map<string, Promise<ProjectDetailDto>>();

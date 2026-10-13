@@ -849,6 +849,11 @@ export interface UpdatedDocumentDto extends DocumentDto {
   relinked?: RelinkedDocumentsDto;
 }
 
+/** The result of partial edits (ST-116): `changed` is false when the edits left the content as it was (no new version). */
+export interface EditedDocumentDto extends DocumentDto {
+  changed: boolean;
+}
+
 /** Where a document link leads: a document, a task, or a title no document has (yet). */
 export type DocumentLinkTarget =
   | { type: "document"; id: string }
@@ -907,6 +912,8 @@ export interface DiffLineDto {
   oldLine: number | null;
   /** 1-based line number in the new text; null for removed lines. */
   newLine: number | null;
+  /** The text was cut short to fit a size budget (truncateHunks, MCP's diff_document); absent otherwise. */
+  cut?: true;
 }
 
 /** A run of changes with up to 3 lines of context around them, as in a unified diff's `@@` block. */
@@ -928,6 +935,10 @@ export interface DocumentDiffDto {
   removed: number;
   /** Empty when the contents match (the title or format may still differ). */
   hunks: DiffHunkDto[];
+  /** One version ends with a newline and the other doesn't; the lines don't show it (ST-129). */
+  trailingNewlineChanged: boolean;
+  /** One version has CRLF line endings and the other LF; lines compare without them (ST-129). */
+  lineEndingsChanged: boolean;
 }
 
 export type InvitationStatus = "active" | "expired" | "revoked" | "used_up";

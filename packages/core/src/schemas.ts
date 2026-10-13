@@ -583,6 +583,9 @@ const documentTitle = z
   .max(255, "At most 255 characters");
 const documentContent = z
   .string()
+  // UTF-8 bytes are never fewer than UTF-16 units: this rejects huge input early and keeps
+  // `maxLength` in the OpenAPI and MCP schemas; the byte check below is the real limit.
+  .max(MAX_DOCUMENT_BYTES, "At most 1 MB")
   .refine(
     (v) => new TextEncoder().encode(v).length <= MAX_DOCUMENT_BYTES,
     "At most 1 MB",
@@ -609,20 +612,33 @@ export const updateDocumentInput = z.object({
 
 export type UpdateDocumentInput = z.infer<typeof updateDocumentInput>;
 
+const editText = documentContent;
+
 /**
  * One partial edit of a document's content (ST-116): replace a fragment (`old` must occur
  * exactly once, or pass `all`), `append` to the end, or replace a Markdown `section`'s body
- * (the text under the heading up to the next heading of the same or a higher level).
+ * (the text under the heading up to the next heading of the same or a higher level). Each text,
+ * like the saved result, is at most MAX_DOCUMENT_BYTES in UTF-8.
  */
 export const documentEditSchema = z.union(
   [
     z.strictObject({
-      old: z.string(),
-      new: z.string(),
-      all: z.boolean().optional(),
+      old: editText.describe("Exact text to replace"),
+      new: editText.describe("Replacement text"),
+      all: z.boolean().optional().describe("Replace every occurrence"),
     }),
-    z.strictObject({ append: z.string() }),
-    z.strictObject({ section: z.string(), content: z.string() }),
+    z.strictObject({
+      append: editText.describe("Text added at the end, on a new line"),
+    }),
+    z.strictObject({
+      section: z
+        .string()
+        .max(1000, "At most 1000 characters")
+        .describe('Heading of the section, e.g. "## Decisions"'),
+      content: editText.describe(
+        "The section's new body, without the heading; it can't contain a heading of the same or a higher level",
+      ),
+    }),
   ],
   {
     error:

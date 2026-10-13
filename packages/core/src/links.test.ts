@@ -34,6 +34,31 @@ describe("wikiLinksIn", () => {
       { target: "A", label: null },
     ]);
   });
+  test("a 4-backtick fence holding 3-backtick lines ends at a line at least as long (ST-134)", () => {
+    const text =
+      "````md\n```\n[[Inside]]\n```\n[[Still]]\n`````\n[[After]]\n~~~\n[[Tilde]]\n```\n[[Open]]\n~~~~\n[[Last]]";
+    expect(wikiLinksIn(text).map((l) => l.target)).toEqual(["After", "Last"]);
+  });
+
+  test("a fence indented up to 3 spaces, as in a list item, is code (ST-134)", () => {
+    const text =
+      "- step:\n  ```sh\n  [[Listed]]\n  ```\n- [[Item]]\n    ```\n[[Indented]]";
+    expect(wikiLinksIn(text).map((l) => l.target)).toEqual([
+      "Item",
+      "Indented",
+    ]);
+  });
+
+  test("code spans pair equal backtick runs, never across a blank line (ST-134)", () => {
+    const text =
+      "A stray ` here\n\n[[One]] and ``[[Two]]`` then ```[[Three]]`` [[Four]] ` x\n\n[[Five]]";
+    expect(wikiLinksIn(text).map((l) => l.target)).toEqual([
+      "One",
+      "Three",
+      "Four",
+      "Five",
+    ]);
+  });
 });
 
 describe("outgoingLinksIn", () => {

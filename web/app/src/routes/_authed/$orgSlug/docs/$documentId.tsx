@@ -44,6 +44,8 @@ import type {
   DocumentFormat,
   RelinkedDocumentsDto,
 } from "@repo/core/contracts";
+import { range } from "@repo/core/diff";
+import { diffNotes } from "@repo/core/views";
 import {
   useQuery,
   useQueryClient,
@@ -513,7 +515,7 @@ function OldVersion({
     update.mutate(
       {
         baseVersion: doc.version,
-        title: old.title,
+        ...(old.title !== doc.title ? { title: old.title } : {}),
         format: old.format,
         content: old.content,
       },
@@ -629,6 +631,12 @@ function VersionDiff({
         </p>
       )}
       {diff &&
+        diffNotes(diff).map((note) => (
+          <p key={note} className="text-sm text-muted-foreground">
+            {note}.
+          </p>
+        ))}
+      {diff &&
         (diff.hunks.length ? (
           <div className="overflow-x-auto rounded-lg border font-mono text-xs">
             {diff.hunks.map((hunk, i) => (
@@ -661,7 +669,7 @@ function DiffHunk({ hunk }: { hunk: DiffHunkDto }) {
   return (
     <div className="border-b last:border-b-0">
       <div className="bg-muted/60 px-3 py-1 text-muted-foreground">
-        @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
+        {`@@ -${range(hunk.oldStart, hunk.oldLines)} +${range(hunk.newStart, hunk.newLines)} @@`}
       </div>
       {hunk.lines.map((line, i) => (
         <div key={i} className={`flex ${DIFF_LINE_STYLES[line.kind]}`}>
@@ -704,6 +712,7 @@ function DocumentEditor({
   wikiLinks: WikiLinkHost;
 }) {
   const [baseVersion] = useState(doc.version);
+  const [baseTitle] = useState(doc.title);
   const [title, setTitle] = useState(doc.title);
   const [format, setFormat] = useState<DocumentFormat>(doc.format);
   const [content, setContent] = useState(doc.content);
@@ -729,7 +738,13 @@ function DocumentEditor({
       return;
     }
     update.mutate(
-      { baseVersion, title, format, content },
+      {
+        baseVersion,
+        // Only a new title: sending it unchanged costs the server a rename check.
+        ...(title !== baseTitle ? { title } : {}),
+        format,
+        content,
+      },
       {
         onSuccess: (saved) => {
           if (saved.version !== baseVersion)

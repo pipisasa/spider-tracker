@@ -158,6 +158,26 @@ export const documentDiffView = (dto: DocumentDiffDto): DocumentDiffView => ({
   ),
 });
 
+/** What a document diff's lines don't show (ST-129): a changed final newline or line endings. */
+export function diffNotes(
+  dto: Pick<
+    DocumentDiffDto,
+    "from" | "to" | "trailingNewlineChanged" | "lineEndingsChanged"
+  >,
+): string[] {
+  const versions = `version ${dto.from.version} and ${dto.to.version}`;
+  return [
+    ...(dto.trailingNewlineChanged
+      ? [`The newline at the end differs between ${versions}`]
+      : []),
+    ...(dto.lineEndingsChanged
+      ? [
+          `Line endings differ between ${versions} (all LF, all CRLF or a mix of both)`,
+        ]
+      : []),
+  ];
+}
+
 /** A project's rules (ST-111) from the project and its rules document, as the API's ProjectRulesDto. */
 export const projectRulesView = (
   project: Pick<ProjectDto, "key" | "name">,

@@ -39,7 +39,7 @@ packages/
 
 ## Tests
 
-Database tests (`TEST_DATABASE_URL`) share one database across test files and packages, and Postgres returns rows without `ORDER BY` in no fixed order. A test that compares `activity` rows in order (`toEqual([...])`, `const [first] = …`, `.at(-1)`) reads them with `.orderBy(asc(schema.activity.id))`, or `desc(…)` with `.limit(1)` for the latest one. Ids are `uuidv7()`, so they follow insertion order, while `createdAt` can tie inside one transaction (ST-120, ST-121).
+Database tests (`TEST_DATABASE_URL`) share one database across test files and packages, and Postgres returns rows without `ORDER BY` in no fixed order. A test that compares `activity` rows in order (`toEqual([...])`, `const [first] = …`, `.at(-1)`) reads them with `.orderBy(asc(schema.activity.id))`, or `desc(…)` with `.limit(1)` for the latest one. `activity.id` is an identity column (one global sequence, `CACHE 1`), so it follows insertion order across connections, while `createdAt` (`now()`, the transaction start) ties inside one transaction (ST-120, ST-121).
 
 ## Services
 

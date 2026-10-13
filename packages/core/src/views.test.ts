@@ -4,6 +4,7 @@ import type { DocumentDiffDto, DocumentVersionDto, TaskDto } from "./contracts";
 import {
   actorHandle,
   commentView,
+  diffNotes,
   documentDiffView,
   documentVersionView,
   projectRulesView,
@@ -149,6 +150,8 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
           ],
         },
       ],
+      trailingNewlineChanged: false,
+      lineEndingsChanged: false,
     };
     expect(documentDiffView(dto)).toEqual({
       ...dto,
@@ -158,6 +161,17 @@ describe("views shared by the CLI and MCP (ST-107)", () => {
       "--- v1\n+++ v2\n@@ -1 +1 @@\n-old\n+new",
     );
     expect(documentDiffView({ ...dto, hunks: [] }).diff).toBe("");
+    expect(diffNotes(dto)).toEqual([]);
+    expect(
+      diffNotes({
+        ...dto,
+        trailingNewlineChanged: true,
+        lineEndingsChanged: true,
+      }),
+    ).toEqual([
+      "The newline at the end differs between version 1 and 2",
+      "Line endings differ between version 1 and 2 (all LF, all CRLF or a mix of both)",
+    ]);
 
     const document = {
       id: "d",

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 import { applyDocumentEdits, markdownHeadings } from "./document-edits";
+import { documentEditSchema, MAX_DOCUMENT_BYTES } from "./schemas";
 
 const plan = [
   "# Plan",
@@ -172,6 +174,110 @@ describe("applyDocumentEdits: sections", () => {
     ).toMatchObject({
       code: "validation",
     });
+  });
+});
+
+describe("applyDocumentEdits: section bodies", () => {
+  test("a CRLF document keeps CRLF line endings", () => {
+    const crlf = "# Plan\r\n\r\n## A\r\n\r\nold\r\n\r\n## B\r\n\r\nb\r\n";
+    const edited = applyDocumentEdits(crlf, "md", [
+      { section: "## A", content: "one\ntwo\r\n" },
+    ]);
+    expect(edited).toBe(
+      "# Plan\r\n\r\n## A\r\n\r\none\r\ntwo\r\n\r\n## B\r\n\r\nb\r\n",
+    );
+    expect(edited.replace(/\r\n/g, "")).not.toContain("\n");
+  });
+
+  test("an LF document takes the body with LF line endings", () => {
+    expect(
+      applyDocumentEdits("## A\n\nold\n", "md", [
+        { section: "## A", content: "one\r\ntwo" },
+      ]),
+    ).toBe("## A\n\none\ntwo\n");
+  });
+
+  test("a body with a heading of the same or a higher level is refused", () => {
+    for (const heading of ["## Other", "# Top"]) {
+      expect(
+        errorOf(() =>
+          applyDocumentEdits(plan, "md", [
+            { section: "## Next", content: `Soon.\n\n${heading}\n\nx` },
+          ]),
+        ),
+      ).toMatchObject({
+        code: "validation",
+        message: expect.stringContaining("would end the section"),
+      });
+    }
+  });
+
+  test("a lower-level heading, or one in a code fence, is fine", () => {
+    expect(
+      applyDocumentEdits("## A\n\nold\n", "md", [
+        {
+          section: "## A",
+          content: "### Sub\n\nx\n\n```\n# not a heading\n```",
+        },
+      ]),
+    ).toBe("## A\n\n### Sub\n\nx\n\n```\n# not a heading\n```\n");
+  });
+
+  test("a body that leaves a code fence open is refused (ST-123)", () => {
+    for (const content of ["x\n\n```ts\nconst a = 1;", "~~~\ncode\n```"]) {
+      expect(
+        errorOf(() =>
+          applyDocumentEdits(plan, "md", [{ section: "## Next", content }]),
+        ),
+      ).toMatchObject({
+        code: "validation",
+        message: expect.stringContaining("leaves a code fence open"),
+      });
+    }
+  });
+
+  test("a fence closes only on a line of its character, at least as long, with nothing after (ST-123)", () => {
+    // Four backticks aren't closed by three, nor by a line with an info string after them.
+    for (const content of [
+      "````md\n```\nnot closed\n```",
+      "```\ncode\n``` ts",
+    ]) {
+      const fence = content.split(/[a-z\n]/)[0] ?? "";
+      expect(
+        errorOf(() =>
+          applyDocumentEdits(plan, "md", [{ section: "## Next", content }]),
+        ),
+      ).toMatchObject({
+        code: "validation",
+        message: expect.stringContaining(
+          `Close it with a line of at least ${fence.length} backticks (${fence})`,
+        ),
+      });
+    }
+    expect(
+      applyDocumentEdits(plan, "md", [
+        { section: "## Next", content: "~~~~\n~~~\n~~~~~" },
+      ]),
+    ).toContain("~~~~\n~~~\n~~~~~");
+  });
+});
+
+describe("documentEditSchema", () => {
+  test("texts are limited in UTF-8 bytes, not characters (ST-123)", () => {
+    const fits = "é".repeat(MAX_DOCUMENT_BYTES / 2);
+    expect(documentEditSchema.safeParse({ append: fits }).success).toBe(true);
+    for (const edit of [
+      { append: `${fits}é` },
+      { old: "a", new: `${fits}é` },
+      { section: "## A", content: `${fits}é` },
+    ])
+      expect(documentEditSchema.safeParse(edit).success).toBe(false);
+  });
+
+  test("texts keep maxLength in the JSON schema (OpenAPI, MCP)", () => {
+    expect(
+      JSON.stringify(z.toJSONSchema(documentEditSchema, { io: "input" })),
+    ).toContain(`"maxLength":${MAX_DOCUMENT_BYTES}`);
   });
 });
 
