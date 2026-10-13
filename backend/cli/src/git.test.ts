@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createOrSwitchBranch,
   currentBranch,
+  fetchBranch,
   isDirty,
   originDefaultBranch,
   remoteRepo,
@@ -12,6 +13,33 @@ import {
   taskKeyFromBranch,
   type GitRunner,
 } from "./git";
+
+/**
+ * The environment for real git in these tests, without GIT_* variables: run from a git hook,
+ * GIT_DIR or GIT_WORK_TREE would point it at the outer repository (ST-126).
+ */
+const gitEnv: Record<string, string> = Object.fromEntries(
+  Object.entries(process.env).filter(
+    (entry): entry is [string, string] =>
+      !entry[0].startsWith("GIT_") && entry[1] !== undefined,
+  ),
+);
+
+/** Real git with gitEnv, for the tests that need a repository. */
+const realGit: GitRunner = (args, cwd) => {
+  const result = Bun.spawnSync({
+    cmd: ["git", ...args],
+    cwd,
+    env: gitEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+};
 
 describe("taskKeyFromBranch", () => {
   test.each([
@@ -36,12 +64,9 @@ describe("currentBranch", () => {
   test("reads the checked-out branch, or null outside a repository", () => {
     const dir = mkdtempSync(join(tmpdir(), "spider-cli-"));
     try {
-      expect(currentBranch(dir)).toBeNull();
-      Bun.spawnSync({
-        cmd: ["git", "init", "-q", "-b", "st-42-branch-key"],
-        cwd: dir,
-      });
-      expect(currentBranch(dir)).toBe("st-42-branch-key");
+      expect(currentBranch(dir, realGit)).toBeNull();
+      realGit(["init", "-q", "-b", "st-42-branch-key"], dir);
+      expect(currentBranch(dir, realGit)).toBe("st-42-branch-key");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -163,14 +188,11 @@ describe("branches", () => {
   test("createOrSwitchBranch tracks origin in a real repository", () => {
     const dir = mkdtempSync(join(tmpdir(), "spider-cli-"));
     const sh = (cmd: string[], cwd = dir) => {
-      const result = Bun.spawnSync({
-        cmd,
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-      return result.stdout.toString().trim();
+      const [bin, ...args] = cmd;
+      if (bin !== "git") throw new Error(`not git: ${cmd.join(" ")}`);
+      const result = realGit(args, cwd);
+      if (result.exitCode !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
     };
     try {
       const origin = join(dir, "origin");
@@ -194,12 +216,23 @@ describe("branches", () => {
         origin,
       );
       sh(["git", "clone", "-q", origin, clone]);
+      // Pushed from another machine after the clone: seen only after fetchBranch (ST-126).
+      sh(["git", "branch", "st-2-y"], origin);
+      expect(fetchBranch(clone, "st-9-none", realGit)).toMatchObject({
+        ok: false,
+        missing: true,
+      });
+      expect(fetchBranch(clone, "st-2-y", realGit)).toEqual({ ok: true });
+      expect(createOrSwitchBranch(clone, "st-2-y", realGit)).toEqual({
+        created: true,
+        tracking: "origin/st-2-y",
+      });
 
-      expect(createOrSwitchBranch(clone, "st-1-x")).toEqual({
+      expect(createOrSwitchBranch(clone, "st-1-x", realGit)).toEqual({
         created: true,
         tracking: "origin/st-1-x",
       });
-      expect(currentBranch(clone)).toBe("st-1-x");
+      expect(currentBranch(clone, realGit)).toBe("st-1-x");
       expect(
         sh(["git", "rev-parse", "--abbrev-ref", "st-1-x@{upstream}"], clone),
       ).toBe("origin/st-1-x");

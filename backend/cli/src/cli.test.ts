@@ -323,6 +323,8 @@ function fakeGit({
   remote = [] as string[],
   dirty = false,
   failSwitch = false,
+  /** Branches `git fetch origin <name>` finds (they then exist on origin); null: fetch fails. */
+  fetchable = [] as string[] | null,
 } = {}) {
   const state = { branch, branches: new Set(branches) };
   const calls: string[] = [];
@@ -341,6 +343,17 @@ function fakeGit({
         ? remote.includes(ref.slice("refs/remotes/origin/".length))
         : state.branches.has(ref.replace("refs/heads/", ""));
       return found ? ok() : fail();
+    }
+    if (command === "fetch") {
+      const name = rest.at(-1) ?? "";
+      if (fetchable === null)
+        return fail(
+          "fatal: unable to access 'https://github.com/': Could not resolve host",
+        );
+      if (!fetchable.includes(name))
+        return fail(`fatal: couldn't find remote ref ${name}`);
+      remote.push(name);
+      return ok();
     }
     if (command === "branch") return ok(`${state.branch}\n`);
     if (command === "status") return ok(dirty ? " M src/index.ts\n" : "");
@@ -460,8 +473,38 @@ describe("spider start", () => {
     const { git, state } = fakeGit({ dirty: true });
     const result = await start(["start", "ST-1"], git);
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain("uncommitted changes");
+    expect(result.stderr).toBe(
+      "Warning: the working tree has uncommitted changes; they come along to st-1-write-the-cli.\n",
+    );
     expect(state.branch).toBe("st-1-write-the-cli");
+  });
+
+  test("--fetch fetches the branch first, so one pushed elsewhere is tracked (ST-126)", async () => {
+    const pushed = fakeGit({ fetchable: ["st-1-write-the-cli"] });
+    const result = await start(["start", "ST-1", "--fetch"], pushed.git);
+    expect(result.code).toBe(0);
+    expect(pushed.calls).toContain("fetch --quiet origin st-1-write-the-cli");
+    expect(pushed.calls).toContain(
+      "switch -c st-1-write-the-cli --track origin/st-1-write-the-cli",
+    );
+    expect(result.stderr).toBe("");
+    // Not on origin: created from HEAD, quietly. Fetch failing: a warning, still created.
+    const fresh = fakeGit();
+    expect((await start(["start", "ST-1", "--fetch"], fresh.git)).stderr).toBe(
+      "",
+    );
+    expect(fresh.calls).toContain("switch -c st-1-write-the-cli");
+    const offline = fakeGit({ fetchable: null });
+    const warned = await start(["start", "ST-1", "--fetch"], offline.git);
+    expect(warned.code).toBe(0);
+    expect(warned.stderr).toContain(
+      "Warning: couldn't fetch st-1-write-the-cli from origin: fatal: unable to access",
+    );
+    expect(offline.state.branch).toBe("st-1-write-the-cli");
+    // Without --fetch nothing is fetched.
+    const plain = fakeGit({ fetchable: ["st-1-write-the-cli"] });
+    await start(["start", "ST-1"], plain.git);
+    expect(plain.calls.some((c) => c.startsWith("fetch"))).toBe(false);
   });
 
   test("a failed switch warns; the task is still started", async () => {

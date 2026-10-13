@@ -135,6 +135,7 @@ import {
 } from "@repo/core/git";
 import {
   createOrSwitchBranch,
+  fetchBranch,
   currentBranch,
   isDirty,
   isRepo,
@@ -4462,15 +4463,24 @@ function buildProgram(
   const checkoutTaskBranch = (
     key: string,
     title: string,
+    fetch: boolean,
   ): { branch: string | null; note?: string } => {
     if (!isRepo(cwd, git)) return { branch: null };
     const current = currentBranch(cwd, git);
     if (current && taskKeysIn(current).includes(key))
       return { branch: current };
     const name = branchNameFor(key, title);
+    // Opt-in (ST-126): a branch pushed from another machine is only seen as origin/<name> after a fetch.
+    if (fetch) {
+      const fetched = fetchBranch(cwd, name, git);
+      if (!fetched.ok && !fetched.missing)
+        stderr.write(
+          `Warning: couldn't fetch ${name} from origin: ${fetched.error}; using what git already knows\n`,
+        );
+    }
     if (isDirty(cwd, git))
       stderr.write(
-        "Warning: the working tree has uncommitted changes; they move to the new branch.\n",
+        `Warning: the working tree has uncommitted changes; they come along to ${name}.\n`,
       );
     try {
       const { created, tracking } = createOrSwitchBranch(cwd, name, git);
@@ -4492,7 +4502,7 @@ function buildProgram(
     }
   };
 
-  type StartOptions = JsonOption & { branch: boolean };
+  type StartOptions = JsonOption & { branch: boolean; fetch?: boolean };
   const startTask = async (key: string | undefined, opts: StartOptions) => {
     const resolved = taskKey(key, cwd, git);
     const { sdk, org, whoami, project, describe } = conn();
@@ -4510,7 +4520,7 @@ function buildProgram(
       }),
     );
     const { branch, note } = opts.branch
-      ? checkoutTaskBranch(resolved, started.title)
+      ? checkoutTaskBranch(resolved, started.title, opts.fetch === true)
       : { branch: null };
     output(opts, { ...started, branch }, () =>
       [taskLines([started]), ...(note ? [note] : [])].join("\n"),
@@ -4523,7 +4533,11 @@ function buildProgram(
           "assign me, move to the first in-progress status and switch to the task's git branch",
         )
         .argument("[key]")
-        .option("--no-branch", "don't create or switch git branches"),
+        .option("--no-branch", "don't create or switch git branches")
+        .option(
+          "--fetch",
+          "git fetch origin <branch> first, so a branch pushed from another machine is tracked instead of created from HEAD",
+        ),
     ).action(startTask);
 
   startCommand(task.command("start"));

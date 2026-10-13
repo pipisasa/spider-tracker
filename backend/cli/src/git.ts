@@ -53,8 +53,26 @@ export function isDirty(cwd: string, git: GitRunner = runGit): boolean {
 }
 
 /**
+ * Fetches branch `name` from `origin` (`spider start --fetch`), so a branch pushed from another
+ * machine is seen as `origin/<name>`. A branch origin doesn't have isn't an error (`missing`);
+ * other failures (no network, no origin) are returned for a warning.
+ */
+export function fetchBranch(
+  cwd: string,
+  name: string,
+  git: GitRunner = runGit,
+): { ok: true } | { ok: false; missing: boolean; error: string } {
+  const result = git(["fetch", "--quiet", "origin", name], cwd);
+  if (result.exitCode === 0) return { ok: true };
+  const error = result.stderr.trim() || `git fetch origin ${name} failed`;
+  return { ok: false, missing: /couldn't find remote ref/i.test(error), error };
+}
+
+/**
  * Switches to branch `name`: the local branch when it exists, else a new local branch tracking `origin/<name>` when
  * only the remote one exists, else a new branch from HEAD. Throws with git's message on failure.
+ * Only what git already knows of origin counts: a branch pushed elsewhere and not fetched yet is
+ * created from HEAD (fetch first, or `fetchBranch`).
  */
 export function createOrSwitchBranch(
   cwd: string,
