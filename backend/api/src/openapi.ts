@@ -2022,6 +2022,8 @@ const paths = {
       operationId: "addRelation",
       summary:
         "Link this task to another (blocks, blocked_by, relates, duplicates, duplicated_by)",
+      description:
+        "Refused: an existing link (409), two tasks blocking each other (400), a cycle of duplicates (400) and a second original for a duplicate (409; unlink the first).",
       requestBody: body("RelationInput"),
       responses: { "201": ok("Created link", "Relation"), ...errors },
     },
@@ -2051,7 +2053,7 @@ const paths = {
     post: {
       operationId: "markDuplicate",
       summary:
-        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing; self, cycles and a second original are refused',
+        'Mark as a duplicate of another task in one step: link it (duplicates), move it to the project\'s first canceled status and comment "Duplicate of KEY". A repeat changes nothing (a `comment` given again is posted by itself); self, cycles and a second original (409) are refused',
       requestBody: body("MarkDuplicateInput"),
       responses: { "200": ok("The task, canceled", "Task"), ...errors },
     },

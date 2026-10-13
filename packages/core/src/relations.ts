@@ -1,6 +1,6 @@
 import type { Db, Tx } from "@repo/db";
 import { schema } from "@repo/db";
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 import {
   assertCanWrite,
   inScope,
@@ -46,6 +46,59 @@ function toStored(
 export async function lockPair(tx: Tx, a: string, b: string) {
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext('relation:' || least(${a}::uuid, ${b}::uuid)::text || ':' || greatest(${a}::uuid, ${b}::uuid)::text))`,
+  );
+}
+
+/**
+ * Locks the task about to become a duplicate, so it gets one original at a time: two concurrent
+ * marks or links against different originals (different pairs) would otherwise both pass the
+ * "already a duplicate" check (ST-131). Take it before lockPair; "no key update" leaves link
+ * inserts that reference the task alone.
+ */
+export async function lockDuplicate(tx: Tx, taskId: string) {
+  await tx
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .for("no key update");
+}
+
+/**
+ * Refuses a second original: `duplicateId` already duplicates a live task other than `originalId`.
+ * The message names that original only when the caller can see its project (ST-131).
+ */
+async function assertSingleOriginal(
+  tx: Tx,
+  ctx: ActorContext,
+  duplicateId: string,
+  duplicateKey: string,
+  originalId: string,
+) {
+  const [elsewhere] = await tx
+    .select({
+      number: tasks.number,
+      projectId: tasks.projectId,
+      projectKey: projects.key,
+    })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(tasks.id, taskRelations.toTaskId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(
+      and(
+        eq(taskRelations.fromTaskId, duplicateId),
+        eq(taskRelations.type, "duplicates"),
+        ne(taskRelations.toTaskId, originalId),
+        isNull(tasks.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!elsewhere) return;
+  const visible = inScope(await projectScope(tx, ctx), elsewhere.projectId);
+  throw new DomainError(
+    "conflict",
+    visible
+      ? `${duplicateKey} is already a duplicate of ${elsewhere.projectKey}-${elsewhere.number}; unlink that first`
+      : `${duplicateKey} is already a duplicate of a task in a project you can't see`,
   );
 }
 
@@ -116,6 +169,8 @@ export async function addRelation(
     const other = await findTask(tx, ctx, otherKey);
     if (self.task.id === other.task.id)
       throw new DomainError("validation", "A task can't be related to itself");
+    if (kind === "duplicates") await lockDuplicate(tx, self.task.id);
+    if (kind === "duplicated_by") await lockDuplicate(tx, other.task.id);
     await lockPair(tx, self.task.id, other.task.id);
     return linkTasks(tx, ctx, self, other, kind);
   });
@@ -145,8 +200,9 @@ export async function duplicatesChain(
 }
 
 /**
- * The body of addRelation for two different tasks found in `tx` whose pair is locked (lockPair):
- * refuses an existing link, mutual blocking and duplicate cycles, then records and announces it.
+ * The body of addRelation for two different tasks found in `tx` whose pair is locked (lockPair), and
+ * for a duplicate link whose duplicate is locked too (lockDuplicate): refuses an existing link, mutual
+ * blocking, duplicate cycles and a second original, then records and announces it.
  */
 export async function linkTasks(
   tx: Tx,
@@ -179,6 +235,17 @@ export async function linkTasks(
     throw new DomainError(
       "validation",
       "That would make a cycle of duplicates: the original is already a duplicate of this task",
+    );
+  }
+  // A task duplicates one original; another one needs that link removed first.
+  if (link.type === "duplicates") {
+    const duplicate = kind === "duplicates" ? self : other;
+    await assertSingleOriginal(
+      tx,
+      ctx,
+      link.from,
+      `${duplicate.projectKey}-${duplicate.task.number}`,
+      link.to,
     );
   }
   const [inserted] = await tx
