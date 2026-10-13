@@ -24,6 +24,8 @@ const { projects, tasks } = schema;
 interface ReleaseRow {
   id: string;
   key: string;
+  /** The status the caller read, before the change. */
+  statusId: string;
 }
 
 async function announce(
@@ -46,7 +48,9 @@ async function announce(
  *   tasks get `shippedAt` (the release time) and a "task.shipped" activity entry, "shipped in <version>";
  * - out of done: the shipping is undone ("task.unshipped");
  * - into canceled: the included tasks leave the release, free for another one.
- * Any of these is refused when an included task is outside the actor's `scope`.
+ * Any of these is refused when an included task is outside the actor's `scope`. The release row is
+ * locked first, as adding and removing tasks do (releases.ts), so no task joins or leaves between
+ * the scope check and the writes, and the writes touch only the tasks that were checked.
  * Returns the release's own `shippedAt` when it changes (undefined when it doesn't).
  */
 export async function applyReleaseTransition(
@@ -60,7 +64,22 @@ export async function applyReleaseTransition(
 ): Promise<Date | null | undefined> {
   if (from === to) return undefined;
   if (to !== "done" && from !== "done" && to !== "canceled") return undefined;
+  // Lock order: the release row, then its tasks (as addToRelease and removeFromRelease take them).
+  const [locked] = await tx
+    .select({ statusId: tasks.statusId })
+    .from(tasks)
+    .where(eq(tasks.id, release.id))
+    .for("update");
+  if (!locked)
+    throw new DomainError("not_found", `Task ${release.key} not found`);
+  // Another change moved it while this one waited for the lock: `from` is no longer true.
+  if (locked.statusId !== release.statusId)
+    throw new DomainError(
+      "conflict",
+      `Release ${release.key} changed meanwhile; try again`,
+    );
   const included = await allReleaseTasks(tx, release.id);
+  const includedIds = included.map((t) => t.id);
   assertSeesWholeRelease(
     scope,
     release.key,
@@ -123,21 +142,24 @@ export async function applyReleaseTransition(
     );
     shippedAt = now;
   } else if (from === "done") {
-    const shipped = await tx
-      .update(tasks)
-      .set({ shippedAt: null, updatedAt: now })
-      .where(
-        and(
-          eq(tasks.releaseId, release.id),
-          isNotNull(tasks.shippedAt),
-          isNull(tasks.deletedAt),
-        ),
-      )
-      .returning({
-        id: tasks.id,
-        number: tasks.number,
-        projectId: tasks.projectId,
-      });
+    const shipped = includedIds.length
+      ? await tx
+          .update(tasks)
+          .set({ shippedAt: null, updatedAt: now })
+          .where(
+            and(
+              inArray(tasks.id, includedIds),
+              eq(tasks.releaseId, release.id),
+              isNotNull(tasks.shippedAt),
+              isNull(tasks.deletedAt),
+            ),
+          )
+          .returning({
+            id: tasks.id,
+            number: tasks.number,
+            projectId: tasks.projectId,
+          })
+      : [];
     for (const task of await withProjectKeys(tx, shipped)) {
       await recordActivity(tx, ctx, {
         entityType: "task",
@@ -150,11 +172,17 @@ export async function applyReleaseTransition(
     shippedAt = null;
   }
 
-  if (to === "canceled") {
+  if (to === "canceled" && includedIds.length > 0) {
     const freed = await tx
       .update(tasks)
       .set({ releaseId: null, updatedAt: now })
-      .where(and(eq(tasks.releaseId, release.id), isNull(tasks.deletedAt)))
+      .where(
+        and(
+          inArray(tasks.id, includedIds),
+          eq(tasks.releaseId, release.id),
+          isNull(tasks.deletedAt),
+        ),
+      )
       .returning({
         id: tasks.id,
         number: tasks.number,

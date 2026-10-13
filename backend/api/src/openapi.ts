@@ -1284,7 +1284,7 @@ const errors = {
   },
   "409": {
     description:
-      "Conflict: already exists, or a document saved since your baseVersion",
+      "Conflict: already exists, a document saved since your baseVersion, or a release moved while your change waited",
     ...json("Error"),
   },
   "429": {

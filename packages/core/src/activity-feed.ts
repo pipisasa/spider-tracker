@@ -14,7 +14,7 @@ import { repoVisibleIn } from "./repos";
 import { parseTaskKey } from "./schemas";
 import { findTask } from "./tasks";
 
-const { activity, apps, projects, repos, tasks } = schema;
+const { activity, projects, repos, tasks } = schema;
 
 /** What the id of a release the viewer can't see reads as in `releaseId` changes. */
 export const HIDDEN_RELEASE = "hidden";
@@ -70,7 +70,9 @@ const NO_RELEASE = { releaseId: null, release: null, version: null };
  *   read as `{ releaseId, release: <key>, version: <title> }`, all null when the viewer can't see it;
  * - a `releaseId` change naming a release the viewer can't see reads as "hidden";
  * - a release's `repos` and `apps` keep only those in repos the viewer can see, and "release.deployed"
- *   of an app in a hidden repo reads with nulls. `appRepos` (each app label's repo) is never returned.
+ *   of an app in a hidden repo reads with nulls. `appRepos` (each app label's repo) is never returned;
+ *   older entries without it don't say which repo an app label is in (two repos may each have a
+ *   "web"), so a scoped viewer gets none of their app labels.
  */
 async function activityView(
   db: Db,
@@ -148,9 +150,7 @@ async function activityView(
     const appRepos = isRecord(changes.appRepos) ? changes.appRepos : null;
     const seesApp = (label: string) => {
       const repo = appRepos?.[label];
-      if (typeof repo === "string") return seen.repos.has(repo.toLowerCase());
-      // Older entries don't name an app's repo: an app of that name in a visible repo is enough.
-      return seen.apps.has(label.slice(0, label.lastIndexOf(" ")));
+      return typeof repo === "string" && seen.repos.has(repo.toLowerCase());
     };
     const keep: Record<"repos" | "apps", (label: string) => boolean> = {
       repos: (name) => seen.repos.has(name.toLowerCase()),
@@ -219,15 +219,11 @@ async function releaseKeysInScope(
   );
 }
 
-/** The repos ("owner/name", lower case) and the names of their apps that a scoped viewer can see. */
+/** The repos ("owner/name", lower case) that a scoped viewer can see. */
 async function visibleRepos(db: Db, orgId: string, scope: ProjectScope) {
   const rows = await db
-    .select({ owner: repos.owner, name: repos.name, app: apps.name })
+    .select({ owner: repos.owner, name: repos.name })
     .from(repos)
-    .leftJoin(apps, eq(apps.repoId, repos.id))
     .where(and(eq(repos.orgId, orgId), repoVisibleIn(db, scope)));
-  return {
-    repos: new Set(rows.map((r) => repoFullName(r).toLowerCase())),
-    apps: new Set(rows.flatMap((r) => (r.app ? [r.app] : []))),
-  };
+  return { repos: new Set(rows.map((r) => repoFullName(r).toLowerCase())) };
 }
