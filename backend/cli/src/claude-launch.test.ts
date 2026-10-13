@@ -7,6 +7,8 @@ import {
   claudeCommand,
   flagValue,
   hookScripts,
+  InvalidSavedModeError,
+  quotedTildeWords,
   permissionLine,
   permissionModeFor,
 } from "./claude-launch";
@@ -42,16 +44,18 @@ describe("permissionModeFor", () => {
     });
   });
 
-  test("a saved mode Claude Code doesn't know is ignored and reported (ST-125)", () => {
-    expect(permissionModeFor(undefined, [], "yolo")).toEqual({
-      mode: "auto",
-      source: "default",
-      ignoredSaved: "yolo",
-    });
+  test("a saved mode Claude Code doesn't know fails closed when it would decide (ST-125)", () => {
+    expect(() => permissionModeFor(undefined, [], "yolo")).toThrow(
+      InvalidSavedModeError,
+    );
+    // An explicit mode wins, so the saved one isn't used.
     expect(permissionModeFor("plan", [], "yolo")).toEqual({
       mode: "plan",
       source: "option",
     });
+    expect(
+      permissionModeFor(undefined, ["--permission-mode", "plan"], "yolo"),
+    ).toEqual({ mode: "plan", source: "claude-args" });
   });
 
   test("flagValue: null when the flag has no value (ST-125)", () => {
@@ -161,6 +165,22 @@ describe("hooks", () => {
     ]);
     expect(hookScripts("node \"$HOME/d.js\" '$HOME/s.js'", env)).toEqual([
       "/home/me/d.js",
+    ]);
+    expect(hookScripts('node ${HOME}/b.js "${HOME}"/c.js', env)).toEqual([
+      "/home/me/b.js",
+      "/home/me/c.js",
+    ]);
+    // Quoted and unquoted parts are one word: not "/.claude/hooks/x.sh" on its own.
+    expect(
+      hookScripts('"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh', env),
+    ).toEqual([]);
+    expect(hookScripts("/opt/my\\ hooks/a.sh", env)).toEqual([
+      "/opt/my hooks/a.sh",
+    ]);
+    // A word starting quoted keeps its ~, even when the rest isn't quoted.
+    expect(hookScripts('node "~"/q.js', env)).toEqual([]);
+    expect(quotedTildeWords('node "~/q.js" "~/notes.txt" ~/u.js')).toEqual([
+      "~/q.js",
     ]);
   });
 

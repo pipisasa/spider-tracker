@@ -1338,29 +1338,62 @@ describe("saved agents", () => {
     }
   });
 
-  test("claude ignores a saved permission mode Claude Code doesn't know, with a warning (ST-125)", async () => {
+  test("claude refuses to start with a saved permission mode Claude Code doesn't know (ST-125)", async () => {
     const { home, env, cleanup } = savedAgents();
     const file = join(home, "config", "credentials.json");
     const store = JSON.parse(readFileSync(file, "utf8")) as Store;
     const reviewer = store.servers.prod?.orgs.acme?.agents.reviewer;
     if (!reviewer) throw new Error("expected the reviewer");
-    reviewer.permissionMode = "yolo";
+    reviewer.permissionMode = "plna";
     writeFileSync(file, JSON.stringify(store), { mode: 0o600 });
     const launched: string[][] = [];
+    const spawn: RunOptions["spawn"] = async (argv) => (launched.push(argv), 0);
+    const message =
+      'The permission mode saved for prod/acme/reviewer ("plna") isn\'t one Claude Code knows';
     try {
-      const started = await cli(["claude", "reviewer"], {
+      // Fails closed: a typo of a stricter mode never starts in auto.
+      const refused = await cli(["claude", "reviewer"], {
         env,
-        spawn: async (argv) => (launched.push(argv), 0),
+        spawn,
         self: ["spider"],
       });
-      expect(started.code).toBe(0);
-      expect(launched[0]).not.toContain("yolo");
-      expect(started.stderr).toContain(
-        'Warning: the permission mode saved for @reviewer ("yolo") isn\'t one Claude Code knows',
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toContain(message);
+      expect(refused.stderr).toContain(
+        "spider agents permission-mode prod/acme/reviewer --clear",
       );
-      expect(started.stderr).toContain(
-        "Permission mode: auto (spider default)",
+      expect(launched).toEqual([]);
+      // spider agents permission-mode reports the same.
+      const shown = await cli(["agents", "permission-mode", "reviewer"], {
+        env,
+      });
+      expect(shown.code).toBe(2);
+      expect(shown.stderr).toContain(message);
+      // A mode given explicitly decides instead; a bad one after -- is refused too.
+      expect(
+        (
+          await cli(["claude", "reviewer", "--permission-mode", "plan"], {
+            env,
+            spawn,
+            self: ["spider"],
+          })
+        ).code,
+      ).toBe(0);
+      const badAfterDash = await cli(
+        ["claude", "reviewer", "--", "--permission-mode", "yolo"],
+        { env, spawn, self: ["spider"] },
       );
+      expect(badAfterDash.code).toBe(2);
+      expect(badAfterDash.stderr).toContain(
+        "Unknown permission mode yolo after --",
+      );
+      expect(launched).toHaveLength(1);
+      // Clearing fixes it.
+      await cli(["agents", "permission-mode", "reviewer", "--clear"], { env });
+      expect(
+        (await cli(["claude", "reviewer"], { env, spawn, self: ["spider"] }))
+          .code,
+      ).toBe(0);
     } finally {
       cleanup();
     }

@@ -118,13 +118,16 @@ import {
 } from "./claude-setup";
 import {
   DEFAULT_PERMISSION_MODE,
+  InvalidSavedModeError,
   PERMISSION_MODES,
   brokenHooks,
   claudeCommand,
   flagValue,
   isPermissionMode,
   permissionLine,
+  invalidSavedModeMessage,
   permissionModeFor,
+  type PermissionChoice,
   type PermissionMode,
 } from "./claude-launch";
 import {
@@ -1691,6 +1694,9 @@ function buildProgram(
       }
       const current =
         mode ?? (opts.clear ? undefined : entry.saved.permissionMode);
+      // A saved value Claude Code doesn't know: reported like spider claude does (ST-125).
+      if (current !== undefined && !isPermissionMode(current))
+        throw usageError(invalidSavedModeMessage(entry.ref, current));
       output(
         opts,
         {
@@ -1906,9 +1912,15 @@ function buildProgram(
             "Give the permission mode once: spider claude --permission-mode, or after --, not both",
           );
         }
-        if (flagValue(extra, "--permission-mode") === null) {
+        const passedMode = flagValue(extra, "--permission-mode");
+        if (passedMode === null) {
           throw usageError(
             `--permission-mode after -- needs a mode (${PERMISSION_MODES.join(", ")}), or use spider claude --permission-mode <mode>`,
+          );
+        }
+        if (passedMode !== undefined && !isPermissionMode(passedMode)) {
+          throw usageError(
+            `Unknown permission mode ${passedMode} after --. Use one of ${PERMISSION_MODES.join(", ")}`,
           );
         }
         if (opts.tmux !== undefined) {
@@ -1964,11 +1976,18 @@ function buildProgram(
         const agentName = extra.includes("--agent")
           ? undefined
           : await claudeAgentFor(options.env, entry);
-        const permission = permissionModeFor(
-          opts.permissionMode,
-          extra,
-          entry.saved.permissionMode,
-        );
+        let permission: PermissionChoice;
+        try {
+          permission = permissionModeFor(
+            opts.permissionMode,
+            extra,
+            entry.saved.permissionMode,
+          );
+        } catch (err) {
+          if (err instanceof InvalidSavedModeError)
+            throw usageError(invalidSavedModeMessage(entry.ref, err.value));
+          throw err;
+        }
         const command = claudeCommand({
           claudeArgs: extra,
           agent: agentName,
@@ -1987,11 +2006,6 @@ function buildProgram(
         stderr.write(
           `Starting Claude Code as @${entry.agent} (${entry.ref}, ${scopeOf(entry)})${agentName ? ` with agent ${agentName}` : ""}\n`,
         );
-        if (permission.ignoredSaved !== undefined) {
-          stderr.write(
-            `Warning: the permission mode saved for @${entry.agent} ("${permission.ignoredSaved}") isn't one Claude Code knows (${PERMISSION_MODES.join(", ")}); using ${permission.mode ?? "the default"}. Change it with spider agents permission-mode, or pass --permission-mode.\n`,
-          );
-        }
         stderr.write(`${permissionLine(permission)}\n`);
         if (opts.channel) {
           stderr.write(

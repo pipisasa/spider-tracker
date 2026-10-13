@@ -31,8 +31,18 @@ export interface PermissionChoice {
   /** null when the claude arguments decide it (`--dangerously-skip-permissions`). */
   mode: string | null;
   source: PermissionSource;
-  /** Set when a saved mode was ignored (not one of PERMISSION_MODES), for a warning. */
-  ignoredSaved?: string;
+}
+
+/** The message for a saved permission mode Claude Code doesn't know (ST-125: fail closed). */
+export const invalidSavedModeMessage = (agent: string, value: string) =>
+  `The permission mode saved for ${agent} ("${value}") isn't one Claude Code knows (${PERMISSION_MODES.join(", ")}). Set it with spider agents permission-mode ${agent} <mode>, or remove it with spider agents permission-mode ${agent} --clear`;
+
+/** A saved permission mode that would decide the session isn't valid: nothing starts. */
+export class InvalidSavedModeError extends Error {
+  constructor(readonly value: string) {
+    super(`Invalid saved permission mode "${value}"`);
+    this.name = "InvalidSavedModeError";
+  }
 }
 
 /**
@@ -53,9 +63,9 @@ export function flagValue(
 /**
  * The mode a session starts in: `spider claude --permission-mode`, else one in the arguments for
  * claude, else the saved agent's, else auto. Always explicit, so Claude Code's own default (settings,
- * built-in, its version) never decides it. A saved mode Claude Code doesn't know is ignored (and
- * reported in `ignoredSaved`): the store keeps any string, so a typo or an older name never reaches
- * claude (ST-125).
+ * built-in, its version) never decides it. A saved mode Claude Code doesn't know, when it would
+ * decide, throws InvalidSavedModeError: it fails closed (ST-125), since a typo of a stricter mode
+ * must never start in auto. The store itself keeps any string.
  */
 export function permissionModeFor(
   option: string | undefined,
@@ -67,12 +77,11 @@ export function permissionModeFor(
     return { mode: null, source: "claude-args" };
   const passed = flagValue(claudeArgs, "--permission-mode");
   if (passed) return { mode: passed, source: "claude-args" };
-  if (saved && isPermissionMode(saved)) return { mode: saved, source: "agent" };
-  return {
-    mode: DEFAULT_PERMISSION_MODE,
-    source: "default",
-    ...(saved ? { ignoredSaved: saved } : {}),
-  };
+  if (saved !== undefined) {
+    if (!isPermissionMode(saved)) throw new InvalidSavedModeError(saved);
+    return { mode: saved, source: "agent" };
+  }
+  return { mode: DEFAULT_PERMISSION_MODE, source: "default" };
 }
 
 export interface LaunchPlan {
@@ -160,34 +169,88 @@ function commandHooks(settings: unknown): { event: string; command: string }[] {
 
 const SCRIPT = /\.(?:c?js|mjs|ts|sh|py)$/;
 
-/** A hook command's words, with the quote each was in (null when unquoted). */
-function hookWords(command: string): { text: string; quote: string | null }[] {
-  const words = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-  return words.map((w) => {
-    const quote = w.length >= 2 && /^(["'])[\s\S]*\1$/.test(w) ? w[0]! : null;
-    return { text: quote ? w.slice(1, -1) : w, quote };
-  });
+/** A word of a hook command, as a shell splits it, and how it starts. */
+interface HookWord {
+  /** The word with its quotes removed (adjacent quoted and unquoted parts joined). */
+  text: string;
+  /** The quote its first character was in: null when it starts unquoted. */
+  startQuote: '"' | "'" | null;
+  /** Its first part (before any quote changes), with how it was quoted. */
+  head: string;
 }
 
 /**
+ * Splits a hook command into words as a POSIX shell does (ST-125): quotes don't end a word, so
+ * `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` is one word; a backslash escapes the next character
+ * outside single quotes. Operators (`&&`, `;`, `|`) count as words when spaced, which is enough here.
+ */
+function hookWords(command: string): HookWord[] {
+  const words: HookWord[] = [];
+  let quote: '"' | "'" | null = null;
+  let current: HookWord | null = null;
+  let inHead = true;
+  const add = (char: string) => {
+    current ??= { text: "", startQuote: quote, head: "" };
+    current.text += char;
+    if (inHead) current.head += char;
+  };
+  const end = () => {
+    if (current) words.push(current);
+    current = null;
+    inHead = true;
+  };
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]!;
+    if (quote === "'") {
+      if (char === "'") {
+        quote = null;
+        inHead = false;
+      } else add(char);
+    } else if (quote === '"') {
+      if (char === '"') {
+        quote = null;
+        inHead = false;
+      } else if (char === "\\" && /["\\$`]/.test(command[i + 1] ?? ""))
+        add(command[++i]!);
+      else add(char);
+    } else if (/\s/.test(char)) end();
+    else if (char === "'" || char === '"') {
+      if (current) inHead = false;
+      else current = { text: "", startQuote: char, head: "" };
+      quote = char;
+    } else if (char === "\\" && i + 1 < command.length) add(command[++i]!);
+    else add(char);
+  }
+  end();
+  return words;
+}
+
+const HOME_PREFIX = /^(?:\$HOME|\$\{HOME\})(?=\/)/;
+
+/**
  * Script files a hook command runs by path (`node "/x/hook.js"`, `~/hooks/a.sh`), expanded as the
- * shell does: `~` only unquoted, `$HOME` unquoted or in double quotes, nothing in single quotes.
+ * shell does: `~` only when the word starts unquoted, `$HOME` / `${HOME}` when it starts unquoted or
+ * in double quotes, nothing in single quotes. Other variables aren't expanded, so such words
+ * (`"$CLAUDE_PROJECT_DIR"/…`) aren't checked.
  */
 export function hookScripts(command: string, env: Env): string[] {
   const home = env.HOME;
   return hookWords(command)
-    .map(({ text, quote }) => {
-      if (!home || quote === "'") return text;
-      const tilde = quote === null ? text.replace(/^~(?=\/)/, home) : text;
-      return tilde.replace(/^\$\{?HOME\}?(?=\/)/, home);
+    .map(({ text, startQuote }) => {
+      if (!home || startQuote === "'") return text;
+      const tilde = startQuote === null ? text.replace(/^~(?=\/)/, home) : text;
+      return tilde.replace(HOME_PREFIX, home);
     })
     .filter((w) => isAbsolute(w) && SCRIPT.test(w));
 }
 
-/** Quoted words starting with `~/`: the shell doesn't expand `~` in quotes, so they name no file. */
+/** Scripts named as a quoted `~/…`: the shell doesn't expand `~` in quotes, so they name no file. */
 export const quotedTildeWords = (command: string): string[] =>
   hookWords(command)
-    .filter((w) => w.quote !== null && w.text.startsWith("~/"))
+    .filter(
+      (w) =>
+        w.startQuote !== null && w.text.startsWith("~/") && SCRIPT.test(w.text),
+    )
     .map((w) => w.text);
 
 /**
