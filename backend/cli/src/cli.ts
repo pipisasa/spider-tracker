@@ -5034,14 +5034,12 @@ function buildProgram(
     const { sdk, org } = conn();
     const client = await sdk();
     const slug = await org();
-    const before =
-      baseVersion ?? (await client.documents.get(slug, id)).version;
     const saved = await client.documents.edit(slug, id, {
       baseVersion,
       edits: [edit],
     });
     output(opts, saved, () =>
-      saved.version === before
+      !saved.changed
         ? `No changes to ${saved.title}`
         : `Saved ${saved.title} as version ${saved.version}`,
     );

@@ -88,6 +88,10 @@ Done means finished, not shipped; releases ship Done tasks.
 - API: `GET|POST /v1/orgs/{org}/documents/{id}/comments` and `PATCH …/comments/{commentId}` (`{ resolved }`). `GET /inbox` returns `document_*` items only when `kinds` asks for them, so older CLIs are unaffected; inbox items' `document.projectKey` can now be null (an organization-wide document).
 - Database migration `0019_document_comments` (`comments.task_id` nullable, new `document_id`, `quote`, `document_version`, `resolved_at`, `resolved_by`, and two check constraints).
 
+### Documents: review follow-ups
+
+- **Partial edits (ST-123):** `POST …/documents/{id}/edit` (MCP `edit_document`, SDK `documents.edit`) returns the document with `changed` (false when the edits changed nothing), so `spider doc edit --old/--append/--section` no longer reads the document first to say "No changes". Each edit text is capped at 1 MB, and MCP `edit_document` now takes at most 100 edits, like the API. A section edit keeps a CRLF document's line endings, and a new section body with a heading of the section's level or higher (which would split the section) is refused with `400 validation`.
+
 ### Opening pull requests (ST-87)
 
 - **Safer `spider pr` (ST-144, behavior change):** it never pushes the origin's default branch (or `--base`) and pushes only the task's own branch (one whose name has its key); `--any-branch` pushes another branch. Both refusals exit 2 before pushing. A project-scoped agent can no longer name tasks outside its projects in the PR's branch, title or body (`404`, before GitHub is asked), and opening a PR moves only its own task at once; other tasks it names are linked.

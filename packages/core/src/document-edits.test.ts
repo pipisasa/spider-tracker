@@ -175,6 +175,53 @@ describe("applyDocumentEdits: sections", () => {
   });
 });
 
+describe("applyDocumentEdits: section bodies", () => {
+  test("a CRLF document keeps CRLF line endings", () => {
+    const crlf = "# Plan\r\n\r\n## A\r\n\r\nold\r\n\r\n## B\r\n\r\nb\r\n";
+    const edited = applyDocumentEdits(crlf, "md", [
+      { section: "## A", content: "one\ntwo\r\n" },
+    ]);
+    expect(edited).toBe(
+      "# Plan\r\n\r\n## A\r\n\r\none\r\ntwo\r\n\r\n## B\r\n\r\nb\r\n",
+    );
+    expect(edited.replace(/\r\n/g, "")).not.toContain("\n");
+  });
+
+  test("an LF document takes the body with LF line endings", () => {
+    expect(
+      applyDocumentEdits("## A\n\nold\n", "md", [
+        { section: "## A", content: "one\r\ntwo" },
+      ]),
+    ).toBe("## A\n\none\ntwo\n");
+  });
+
+  test("a body with a heading of the same or a higher level is refused", () => {
+    for (const heading of ["## Other", "# Top"]) {
+      expect(
+        errorOf(() =>
+          applyDocumentEdits(plan, "md", [
+            { section: "## Next", content: `Soon.\n\n${heading}\n\nx` },
+          ]),
+        ),
+      ).toMatchObject({
+        code: "validation",
+        message: expect.stringContaining("would end the section"),
+      });
+    }
+  });
+
+  test("a lower-level heading, or one in a code fence, is fine", () => {
+    expect(
+      applyDocumentEdits("## A\n\nold\n", "md", [
+        {
+          section: "## A",
+          content: "### Sub\n\nx\n\n```\n# not a heading\n```",
+        },
+      ]),
+    ).toBe("## A\n\n### Sub\n\nx\n\n```\n# not a heading\n```\n");
+  });
+});
+
 describe("applyDocumentEdits: several edits", () => {
   test("apply in order", () => {
     expect(

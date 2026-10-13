@@ -909,6 +909,18 @@ const schemas: Record<string, JsonSchema> = {
     url: webUrl("document"),
   }),
   Document: { allOf: [ref("DocumentSummary"), object({ content: string() })] },
+  EditedDocument: {
+    allOf: [
+      ref("Document"),
+      object({
+        changed: {
+          type: "boolean",
+          description:
+            "False when the edits left the content as it was (no new version)",
+        },
+      }),
+    ],
+  },
   UpdatedDocument: {
     allOf: [
       ref("Document"),
@@ -2532,7 +2544,10 @@ const paths = {
       summary:
         "Partial edits saved as one new version: replace a fragment ({ old, new, all? }; it must occur once unless all), append ({ append }), or replace a Markdown section's body ({ section: \"## Heading\", content }). With baseVersion, 409 if saved since; without, applies to the current version. 409 when a fragment or section isn't there, 400 when ambiguous",
       requestBody: body("EditDocumentInput"),
-      responses: { "200": ok("Edited document", "Document"), ...errors },
+      responses: {
+        "200": ok("Edited document", "EditedDocument"),
+        ...errors,
+      },
     },
   },
   "/v1/orgs/{orgSlug}/documents/{documentId}/move": {

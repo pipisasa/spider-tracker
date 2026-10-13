@@ -849,6 +849,11 @@ export interface UpdatedDocumentDto extends DocumentDto {
   relinked?: RelinkedDocumentsDto;
 }
 
+/** The result of partial edits (ST-116): `changed` is false when the edits left the content as it was (no new version). */
+export interface EditedDocumentDto extends DocumentDto {
+  changed: boolean;
+}
+
 /** Where a document link leads: a document, a task, or a title no document has (yet). */
 export type DocumentLinkTarget =
   | { type: "document"; id: string }

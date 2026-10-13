@@ -32,6 +32,7 @@ import type {
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
+  EditedDocumentDto,
   RelinkedDocumentsDto,
   UpdatedDocumentDto,
 } from "./contracts";
@@ -604,13 +605,14 @@ async function relinkRenamed(
  * saves the result as one new version. With `baseVersion` it fails on a newer save, like
  * updateDocument; without it the edits apply to the current version under the row lock, so a
  * concurrent save can't be overwritten: a fragment that is no longer there is a "conflict".
+ * `changed` says whether a new version was saved.
  */
 export async function editDocument(
   db: Db,
   ctx: ActorContext,
   id: string,
   input: unknown,
-): Promise<DocumentDto> {
+): Promise<EditedDocumentDto> {
   assertCanWrite(ctx);
   const data = parseInput(editDocumentInput, input);
 
@@ -629,7 +631,7 @@ export async function editDocument(
         "The edited document would be over 1 MB",
       );
     }
-    return saveGuarded(tx, ctx, current, () =>
+    const saved = await saveGuarded(tx, ctx, current, () =>
       saveVersion(
         tx,
         ctx,
@@ -643,6 +645,8 @@ export async function editDocument(
         },
       ),
     );
+    // No new version when the edits left the content as it was.
+    return { ...saved, changed: saved.version !== current.version };
   });
 }
 

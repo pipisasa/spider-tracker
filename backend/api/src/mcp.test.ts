@@ -833,6 +833,7 @@ withDb("MCP server", () => {
     expect(edited.json()).toMatchObject({
       id: doc.id,
       version: 2,
+      changed: true,
       authorId: agentIds[0],
     });
     const sectioned = await call(client, "edit_document", {
@@ -863,6 +864,12 @@ withDb("MCP server", () => {
     });
     expect(stale.isError).toBe(true);
     expect(stale.text).toContain("version 3");
+    // The core schema, with its limit of 100 edits.
+    const tooMany = await call(client, "edit_document", {
+      id: doc.id,
+      edits: Array.from({ length: 101 }, () => ({ append: "x" })),
+    });
+    expect(tooMany.isError).toBe(true);
   });
 
   test("diff_document: a unified diff between versions, or against the current one (ST-117)", async () => {

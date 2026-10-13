@@ -20,6 +20,7 @@ import type {
   DocumentSummaryDto,
   DocumentVersionDto,
   DocumentVersionSummaryDto,
+  EditedDocumentDto,
   InboxItemDto,
   InboxKind,
   DeviceCodeResponse,
@@ -741,9 +742,9 @@ export function createClient({
           `${org(orgSlug)}/documents/${seg(id)}`,
           input,
         ),
-      /** Partial edits (replace a fragment, append, replace a section), saved as one new version. */
+      /** Partial edits (replace a fragment, append, replace a section), saved as one new version; `changed` is false when nothing changed. */
       edit: (orgSlug: string, id: string, input: EditDocumentInput) =>
-        request<DocumentDto>(
+        request<EditedDocumentDto>(
           "POST",
           `${org(orgSlug)}/documents/${seg(id)}/edit`,
           input,

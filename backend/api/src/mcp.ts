@@ -34,6 +34,7 @@ import {
   createDocument,
   diffDocumentVersions,
   editDocument,
+  documentEditSchema,
   documentDiffView,
   getDocument,
   getDocumentGraph,
@@ -1909,32 +1910,10 @@ function createMcpServer(
           .optional()
           .describe("The version you read; omit to edit the current version"),
         edits: z
-          .array(
-            z.union([
-              z.strictObject({
-                old: z.string().describe("Exact text to replace"),
-                new: z.string().describe("Replacement text"),
-                all: z
-                  .boolean()
-                  .optional()
-                  .describe("Replace every occurrence"),
-              }),
-              z.strictObject({
-                append: z
-                  .string()
-                  .describe("Text added at the end, on a new line"),
-              }),
-              z.strictObject({
-                section: z
-                  .string()
-                  .describe('Heading of the section, e.g. "## Decisions"'),
-                content: z
-                  .string()
-                  .describe("The section's new body, without the heading"),
-              }),
-            ]),
-          )
-          .min(1),
+          .array(documentEditSchema)
+          .min(1)
+          .max(100)
+          .describe("At most 100 edits, applied in order"),
       },
     },
     ({ id, baseVersion, edits }) =>
