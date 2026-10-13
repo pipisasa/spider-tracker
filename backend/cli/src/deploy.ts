@@ -1,5 +1,5 @@
-import type { ReleaseDto } from "@repo/core/contracts";
 import { parseTaskKey } from "@repo/core/schemas";
+import { z } from "zod";
 import type { GitRunner } from "./git";
 import type { Writer } from "./cli";
 
@@ -37,9 +37,10 @@ export const DEPLOY_COMMANDS: Record<DeployApp, Record<string, string[]>> = {
 
 /** Files a deploy needs that aren't committed, by app and environment (relative to the root). */
 export const DEPLOY_REQUIRES: Partial<
-  Record<DeployApp, Record<string, string>>
+  Record<DeployApp, Record<string, string[]>>
 > = {
-  web: { staging: "web/app/.env.staging" },
+  // Either one: Vite reads .env.staging and .env.staging.local in staging mode.
+  web: { staging: ["web/app/.env.staging", "web/app/.env.staging.local"] },
 };
 
 export const DEPLOY_USAGE = `Usage: bun scripts/deploy.ts <web|api> [--env prod|staging] [--release ST-NN] [--commit <sha>] [--as <agent>]
@@ -125,6 +126,18 @@ function parseArgs(argv: string[]): DeployArgs {
   };
 }
 
+/** The part of `spider release view --json` the preflight reads. */
+const releaseView = z.object({
+  status: z.object({ category: z.string() }).optional(),
+  apps: z.array(
+    z.object({
+      name: z.string(),
+      repo: z.string(),
+      environments: z.array(z.string()),
+    }),
+  ),
+});
+
 /**
  * Before a deploy with --release (ST-142): reads the release (`spider release view <key> --json`) and
  * checks the app is in it with the environment among its environments, so bad credentials, a wrong
@@ -147,25 +160,36 @@ async function preflight(
   );
   if (view.code !== 0)
     return `Can't read release ${args.release} (spider exited ${view.code}); nothing deployed. Check the key and that you're signed in (--as <agent>)`;
-  let release: Pick<ReleaseDto, "key" | "apps">;
+  let json: unknown;
   try {
-    release = JSON.parse(view.stdout) as Pick<ReleaseDto, "key" | "apps">;
+    json = JSON.parse(view.stdout);
   } catch {
     return `Can't read release ${args.release}: spider release view didn't answer JSON; nothing deployed`;
   }
-  const apps = (release.apps ?? []).filter((a) => a.name === args.app);
+  const parsed = releaseView.safeParse(json);
+  if (!parsed.success)
+    return `Can't read release ${args.release}: unexpected answer from spider release view (${parsed.error.issues[0]?.message ?? "invalid"}); nothing deployed`;
+  const release = parsed.data;
+  if (release.status?.category === "canceled")
+    return `Release ${args.release} is canceled; nothing deployed`;
+  const apps = release.apps.filter((a) => a.name === args.app);
   if (apps.length === 0)
     return `Release ${args.release} doesn't include the ${args.app} app; add it first (spider release update ${args.release} --app ${args.app}=<version>); nothing deployed`;
-  if (!apps.some((a) => a.environments.includes(args.env))) {
-    const envs = [...new Set(apps.flatMap((a) => a.environments))];
-    return `The ${args.app} app has no "${args.env}" environment (${envs.length ? envs.join(", ") : "none"}), so it can't be recorded on ${args.release}; nothing deployed`;
-  }
+  // Two repos' apps with this name: which one this script deploys is ambiguous, so it stops.
+  if (apps.length > 1)
+    return `Release ${args.release} ships several ${args.app} apps (${apps.map((a) => a.repo).join(", ")}); this script deploys this repo's own, so record it with spider release deploy ${args.release} --app <owner/name>:${args.app} instead; nothing deployed`;
+  const [app] = apps;
+  if (!app?.environments.includes(args.env))
+    return `The ${args.app} app has no "${args.env}" environment (${app?.environments.length ? app.environments.join(", ") : "none"}), so it can't be recorded on ${args.release}; nothing deployed`;
   return null;
 }
 
 /** Untracked files `railway up` would upload with the API (it uploads the working tree). */
 function untrackedFiles(options: DeployOptions): string[] {
-  const status = options.git(["status", "--porcelain"], options.cwd);
+  const status = options.git(
+    ["status", "--porcelain", "--untracked-files=normal"],
+    options.cwd,
+  );
   if (status.exitCode !== 0) return [];
   return status.stdout
     .split("\n")
@@ -197,9 +221,9 @@ export async function deploy(options: DeployOptions): Promise<number> {
     return 2;
   }
   const required = DEPLOY_REQUIRES[args.app]?.[args.env];
-  if (required && !options.exists(required)) {
+  if (required && !required.some((path) => options.exists(path))) {
     stderr.write(
-      `${required} is missing: the ${args.env} build needs it. See "Staging" in docs/deployment.md\n`,
+      `${required.join(" (or ")}${required.length > 1 ? ")" : ""} is missing: the ${args.env} build needs it. See "Staging" in docs/deployment.md\n`,
     );
     return 2;
   }

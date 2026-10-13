@@ -23,6 +23,22 @@ import type { GitRunner } from "./git";
 
 const HEAD = "3f2c1ab9d0e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8";
 
+/** A release app as `release view --json` lists it. */
+const app = (name: string, environments: string[], repo = "acme/app") => ({
+  name,
+  repo,
+  environments,
+});
+/** The parts of `release view --json` the preflight reads. */
+const release = (
+  apps: ReturnType<typeof app>[],
+  category = "todo",
+): Record<string, unknown> => ({
+  key: "ST-7",
+  status: { id: "s", name: "Planned", category },
+  apps,
+});
+
 interface Fakes {
   spawned: { cmd: string[]; cwd: string }[];
   recorded: string[][];
@@ -39,9 +55,8 @@ function fakes(
     dirty?: boolean;
     untracked?: string[];
     files?: string[];
-    /** What `release view --json` answers: an exit code, or the release's apps. */
-    view?:
-      number | readonly { name: string; environments: readonly string[] }[];
+    /** What `release view --json` answers: an exit code, or the JSON it prints. */
+    view?: number | Record<string, unknown>;
   } = {},
 ) {
   const state: Fakes = {
@@ -74,14 +89,16 @@ function fakes(
     spider: async (args) => {
       if (args[0] === "release" && args[1] === "view") {
         state.viewed.push(args);
-        const view = overrides.view ?? [
-          { name: "web", environments: ["staging", "prod"] },
-          { name: "api", environments: ["staging", "prod"] },
-        ];
+        const view =
+          overrides.view ??
+          release([
+            app("web", ["staging", "prod"]),
+            app("api", ["staging", "prod"]),
+          ]);
         if (typeof view === "number") return { code: view, stdout: "" };
         return {
           code: 0,
-          stdout: JSON.stringify({ key: args[2], apps: view }),
+          stdout: JSON.stringify(view),
         };
       }
       state.recorded.push(args);
@@ -167,14 +184,32 @@ describe("scripts/deploy.ts (ST-94)", () => {
         "Can't read release ST-404 (spider exited 3); nothing deployed",
       ],
       [
-        [{ name: "api", environments: ["prod"] }],
+        release([app("api", ["prod"])]),
         ["web", "--release", "ST-7"],
         "Release ST-7 doesn't include the web app; add it first (spider release update ST-7 --app web=<version>)",
       ],
       [
-        [{ name: "web", environments: ["prod"] }],
+        release([app("web", ["prod"])]),
         ["web", "--env", "staging", "--release", "ST-7"],
         'The web app has no "staging" environment (prod), so it can\'t be recorded on ST-7',
+      ],
+      [
+        release([app("web", ["prod"])], "canceled"),
+        ["web", "--release", "ST-7"],
+        "Release ST-7 is canceled; nothing deployed",
+      ],
+      [
+        release([
+          app("web", ["prod"], "acme/app"),
+          app("web", ["prod"], "acme/site"),
+        ]),
+        ["web", "--release", "ST-7"],
+        "Release ST-7 ships several web apps (acme/app, acme/site)",
+      ],
+      [
+        { key: "ST-7", apps: [{ name: "web" }] },
+        ["web", "--release", "ST-7"],
+        "Can't read release ST-7: unexpected answer from spider release view",
       ],
     ] as const) {
       const { state, options } = fakes({
@@ -280,7 +315,13 @@ describe("scripts/deploy.ts (ST-94)", () => {
     }
     const noConfig = fakes({ files: [] });
     expect(await deploy(noConfig.options(["web", "--env", "staging"]))).toBe(2);
-    expect(noConfig.state.stderr).toContain("web/app/.env.staging is missing");
+    expect(noConfig.state.stderr).toContain(
+      "web/app/.env.staging (or web/app/.env.staging.local) is missing",
+    );
+    expect(noConfig.state.spawned).toEqual([]);
+    // Vite reads .env.staging.local too: either one will do.
+    const local = fakes({ files: ["web/app/.env.staging.local"] });
+    expect(await deploy(local.options(["web", "--env", "staging"]))).toBe(0);
     expect(noConfig.state.spawned).toEqual([]);
   });
 });

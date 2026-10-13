@@ -10,17 +10,22 @@ import { defineConfig } from "vite";
  * build would silently use the production API URL, so `vite build --mode staging` (and with it
  * `bun run build:staging` / `deploy:staging`, however they are run) fails instead.
  */
-const REQUIRED_ENV_FILES: Record<string, string> = { staging: ".env.staging" };
+const REQUIRED_ENV_FILES: Record<string, string[]> = {
+  // Either one: Vite reads both in staging mode.
+  staging: [".env.staging", ".env.staging.local"],
+};
 
 export default defineConfig(({ command, mode }) => {
   const required = REQUIRED_ENV_FILES[mode];
   if (
     command === "build" &&
     required &&
-    !existsSync(fileURLToPath(new URL(`./${required}`, import.meta.url)))
+    !required.some((file) =>
+      existsSync(fileURLToPath(new URL(`./${file}`, import.meta.url))),
+    )
   ) {
     throw new Error(
-      `web/app/${required} is missing: the ${mode} build needs it. See "Staging" in docs/deployment.md`,
+      `web/app/${required.join(" (or ")}) is missing: the ${mode} build needs it. See "Staging" in docs/deployment.md`,
     );
   }
   return {
