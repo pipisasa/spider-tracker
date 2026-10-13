@@ -103,6 +103,8 @@ Done means finished, not shipped; releases ship Done tasks.
 
 ### Branches, commits and pull requests on tasks (ST-84)
 
+- **Merges of main into a task branch (ST-143, fix):** a push's commits that GitHub marks `distinct: false` (already on another branch, such as main's commits in "Merge branch 'main' into st-12-…") are no longer linked to the branch's task; keys in their messages still link. `GET …/tasks/{key}/git`, MCP `get_task_git` and `spider task git` show only links in repos attached to the task's project (links of a detached repo are kept and come back when it is attached again).
+
 - GitHub `create`, `delete`, `push` and `pull_request` webhooks link branches named after a task, commits that mention it (or were pushed to its branch) and pull requests that name it in their branch, title or body. Only keys of tasks in projects attached to the repo count. Each link says how it was found (`via`: `closing`, `branch`, `title`, `body`, `message`). A `pull_request` event older than the stored PR changes nothing, and a merged PR stays merged. Subscribe the GitHub App to Create, Delete, Push and Pull request ([git-integration.md](docs/git-integration.md#linking-work-to-tasks-st-84)).
 - API: `GET /v1/orgs/{org}/tasks/{key}/git` → `TaskGitDto` `{ taskKey, pullRequests, branches, commits }`. SDK: `tasks.git(org, key)`. A new realtime event `task.git` announces changes.
 - MCP: new tool `get_task_git`. CLI: new `spider task git [key]` (default: the current branch's task); `--json` prints the same JSON as the tool.

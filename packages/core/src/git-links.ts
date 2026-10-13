@@ -19,6 +19,14 @@ import { findTask } from "./tasks";
 // the repo, which also drops look-alikes such as "UTF-8" and "SHA-256". Links are kept when a
 // branch is deleted; a pull request's links follow its latest title, body and branch.
 //
+// A push's commits cover its whole before..after range: a merge of main into a task branch lists
+// main's commits too, with `distinct: false` (already pushed elsewhere). The branch's key links
+// only distinct commits; keys in a commit's message link it whatever branch it arrives on (ST-143).
+//
+// Links stay when a branch is force-pushed (the old commits keep theirs) and when a repo is
+// detached from a project; reading a task's links shows only those of repos attached to its
+// project, so attaching the repo again brings them back.
+//
 // Webhooks can arrive out of order: a pull_request event older (by the PR's `updated_at`) than the
 // one stored changes nothing, and a merged PR stays merged.
 
@@ -195,11 +203,16 @@ interface CommitData {
   message: string;
   author: string | null;
   committedAt: Date | null;
+  /** False when the commit was already pushed elsewhere (main's commits in a merge of main into the branch). */
+  distinct: boolean;
 }
 
-/** Links commits to the tasks they name (and to the branch's task); the tasks with new or stronger links. */
+/**
+ * Links commits to the tasks they name (and, for commits new to the repo, to the branch's task);
+ * the tasks with new or stronger links.
+ */
 async function linkCommits(tx: Tx, repo: RepoRow, commits: CommitData[], branchKey: string | null): Promise<LinkedTask[]> {
-  const perCommit = commits.map((commit) => ({ commit, keys: commitKeys(commit.message, branchKey) }));
+  const perCommit = commits.map((commit) => ({ commit, keys: commitKeys(commit.message, commit.distinct ? branchKey : null) }));
   const found = await tasksOfKeys(
     tx,
     repo,
@@ -431,6 +444,7 @@ const pushPayload = z.object({
         message: z.string(),
         timestamp: timestamp.nullable().optional(),
         author: z.object({ name: z.string().optional(), username: z.string().optional() }).nullable().optional(),
+        distinct: z.boolean().optional(),
       }),
     )
     .nullable()
@@ -507,6 +521,7 @@ export const handlePush: GithubEventHandler = async (tx, e) => {
     message: c.message,
     author: c.author?.username ?? c.author?.name ?? null,
     committedAt: c.timestamp ? new Date(c.timestamp) : null,
+    distinct: c.distinct !== false,
   }));
   changed.push(...(await linkCommits(tx, repo, commits, branchTask ? branchKey : null)));
   await announce(tx, e.ctx.orgId, changed);
@@ -555,28 +570,36 @@ export const handlePullRequest: GithubEventHandler = async (tx, e) => {
 /** At most this many commits are listed, newest first. */
 const COMMITS_LISTED = 100;
 
-/** What is linked to a task in git: pull requests (recently updated first), branches and commits (newest first). */
+/**
+ * What is linked to a task in git: pull requests (recently updated first), branches and commits
+ * (newest first), only in repos attached to the task's project (a detached repo's links are kept,
+ * not shown).
+ */
 export async function getTaskGit(db: Db, viewer: Viewer, taskKey: string): Promise<TaskGitDto> {
   const { task, projectKey } = await findTask(db, viewer, taskKey);
   const repo = { owner: repos.owner, name: repos.name };
+  const attached = and(eq(projectRepos.repoId, gitLinks.repoId), eq(projectRepos.projectId, task.projectId));
 
   const prRows = await db
     .select({ repo, pr: pullRequests, via: gitLinks.via })
     .from(gitLinks)
     .innerJoin(pullRequests, eq(pullRequests.id, gitLinks.pullRequestId))
     .innerJoin(repos, eq(repos.id, gitLinks.repoId))
+    .innerJoin(projectRepos, attached)
     .where(and(eq(gitLinks.taskId, task.id), eq(gitLinks.kind, "pull_request")))
     .orderBy(desc(pullRequests.githubUpdatedAt), desc(pullRequests.number));
   const branchRows = await db
     .select({ repo, link: gitLinks })
     .from(gitLinks)
     .innerJoin(repos, eq(repos.id, gitLinks.repoId))
+    .innerJoin(projectRepos, attached)
     .where(and(eq(gitLinks.taskId, task.id), eq(gitLinks.kind, "branch")))
     .orderBy(desc(gitLinks.createdAt));
   const commitRows = await db
     .select({ repo, link: gitLinks })
     .from(gitLinks)
     .innerJoin(repos, eq(repos.id, gitLinks.repoId))
+    .innerJoin(projectRepos, attached)
     .where(and(eq(gitLinks.taskId, task.id), eq(gitLinks.kind, "commit")))
     .orderBy(sql`${gitLinks.occurredAt} desc nulls last`, desc(gitLinks.createdAt))
     .limit(COMMITS_LISTED);

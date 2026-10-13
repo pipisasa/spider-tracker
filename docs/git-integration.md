@@ -103,12 +103,15 @@ Branches, commits and pull requests link to tasks from the [webhooks](#webhooks-
 | From | Linked to |
 |---|---|
 | A branch (`create`, or a `push` to it) | The task in its name (`taskKeyFromBranch`): `st-12-fix-login` → ST-12. |
-| A commit (`push`) | Every task its message names, and the branch's task. |
+| A commit (`push`) | Every task its message names, and the branch's task when the commit is new to the repo (`distinct` isn't `false`). |
 | A pull request (`pull_request`, any action) | The task in its head branch's name, and every task its title or body names. |
 
 Each link records **how** the key was found (`via`), the strongest when several match: `closing` (a closing keyword, `Fixes ST-12`, in a commit message or PR title or body), `branch`, `title`, `body`, `message`. A commit seen again with a stronger match (the same commit on `main` with "Fixes ST-12") is upgraded, never downgraded. [Status automation](#status-automation-st-85) acts only on `closing`, `branch` and `title`.
 
+- **Merges into a task branch (ST-143):** a push lists every commit of its `before..after` range, so merging `main` into `st-12-…` lists main's commits too. GitHub marks those `distinct: false` (already pushed to another branch), and the branch's key links only distinct commits, so main's work isn't linked to ST-12; keys in those commits' own messages still link them.
+- **Force pushes:** commits of the history a force push replaced stay linked (their GitHub URLs may stop working once GitHub drops them).
 - **Branches** stay linked when deleted on GitHub (`delete`, or a `push` with `deleted`); they are shown as deleted, and live again if pushed again.
+- **Detached repos:** links are kept when a repo is detached from a project, but a task shows only the links in repos attached to its project (`getTaskGit`); attaching the repo again shows them again.
 - **Pull requests** are stored in `pull_requests` (only those that link to a task). Their links follow the latest title, body and branch: an edit that drops a key removes that task's link. The state is `open` (with `draft`), `closed` (without merging) or `merged`.
 - **Out of order:** GitHub doesn't guarantee delivery order. An event whose `pull_request.updated_at` is older than the stored PR's changes nothing (`ignored`); `merged` is final; with the same `updated_at` the state never goes back (closed stays closed until a later reopen).
 - Each change publishes `task.git` (realtime), so an open task page refreshes its Development panel.

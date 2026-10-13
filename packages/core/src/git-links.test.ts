@@ -8,7 +8,7 @@ import { commitKeys, getTaskGit, nextPullRequestState, pullRequestKeys } from ".
 import { handleGithubWebhook } from "./github-webhooks";
 import { createOrganization } from "./organizations";
 import { createProject, getProject } from "./projects";
-import { createRepo } from "./repos";
+import { attachRepo, createRepo, detachRepo } from "./repos";
 import { createTask, deleteTask } from "./tasks";
 
 describe("task keys in pull requests and commits (ST-84)", () => {
@@ -171,6 +171,40 @@ run("git links from GitHub webhooks (ST-84)", () => {
     expect((await git("ST-2")).commits.map((c) => c.via)).toEqual(["closing"]);
     // Tags are ignored.
     expect(await deliver("push", { ref: "refs/tags/v1", repository: repository(), commits: [commit(sha("d"), "ST-3")] })).toBe("ignored");
+  });
+
+  test("a merge of main into a task branch doesn't link main's commits to the task; their message keys still link (ST-143)", async () => {
+    const before = (await git("ST-2")).commits.map((c) => c.sha);
+    // As GitHub sends it: main's commits are listed with distinct: false, the merge commit is new.
+    const result = await deliver("push", {
+      ref: "refs/heads/st-2-second",
+      repository: repository(),
+      commits: [
+        { ...commit(sha("e"), "Unrelated work on main", "2026-10-12T13:00:00+02:00"), distinct: false },
+        { ...commit(sha("f"), "Tweak for ST-2 on main", "2026-10-12T14:00:00+02:00"), distinct: false },
+        { ...commit(sha("1"), "Merge branch 'main' into st-2-second", "2026-10-12T15:00:00+02:00"), distinct: true },
+        commit(sha("2"), "Polish", "2026-10-12T16:00:00+02:00"),
+      ],
+    });
+    expect(result).toBe("processed");
+    const second = (await git("ST-2")).commits;
+    expect(second.filter((c) => !before.includes(c.sha)).map((c) => [c.sha, c.via])).toEqual([
+      [sha("2"), "branch"],
+      [sha("1"), "branch"],
+      // Named in its message: linked by that, not by the branch.
+      [sha("f"), "message"],
+    ]);
+  });
+
+  test("links of a repo detached from the project stay but aren't shown; attached again they are", async () => {
+    expect((await git("ST-1")).commits.length).toBeGreaterThan(0);
+    await detachRepo(db, owner, "ST", "acme/web");
+    try {
+      expect(await git("ST-1")).toEqual({ taskKey: "ST-1", pullRequests: [], branches: [], commits: [] });
+    } finally {
+      await attachRepo(db, owner, "ST", { repo: "acme/web" });
+    }
+    expect((await git("ST-1")).commits.length).toBeGreaterThan(0);
   });
 
   test("a deleted branch stays linked, marked deleted; created again it is live again", async () => {
