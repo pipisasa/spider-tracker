@@ -942,19 +942,37 @@ describe("saved agents", () => {
         ["project", "status", "ANT"],
         ["project", "status", "add", "ANT", "QA", "--category", "in_review"],
         ["repo", "attach", "acme/web", "ANT"],
+        // An option's value before the positional isn't the project (ST-148).
+        ["project", "update", "--name", "ST", "ANT"],
+        ["roadmap", "ANT"],
+        ["milestone", "list", "--status", "ST", "ANT"],
+        // Id-only commands don't take the branch's project: nothing names one, so the hint stays.
+        ["doc", "view", "01a13587-0000-7000-8000-000000000000"],
       ]) {
         const viewed = await cli(argv, { env, git: onStBranch, cwd: "/work" });
         expect(viewed.stderr).toContain("which sees only ST");
       }
-      expect(
-        (
-          await cli(["project", "view", "ST"], {
-            env,
-            git: onStBranch,
-            cwd: "/work",
-          })
-        ).stderr,
-      ).not.toContain("acting as");
+      // In-scope requests that miss (everything is not found here) get the plain message.
+      const missing = () =>
+        Response.json(
+          { error: { code: "not_found", message: "Not found" } },
+          { status: 404 },
+        );
+      for (const argv of [
+        ["project", "view", "ST"],
+        ["project", "update", "--name", "ANT", "ST"],
+        ["--as", "reviewer", "roadmap"],
+        ["task", "view"],
+      ]) {
+        const { stderr } = await cli(argv, {
+          env,
+          git: onStBranch,
+          cwd: "/work",
+          fetch: missing,
+        });
+        expect(stderr).toMatch(/not found/i);
+        expect(stderr).not.toContain("acting as");
+      }
     } finally {
       cleanup();
     }
