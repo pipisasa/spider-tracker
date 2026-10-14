@@ -113,6 +113,36 @@ describe("quoteOccursIn", () => {
     expect(quoteOccursIn("a -> b", "md", "->")).toBe(true);
     expect(quoteOccursIn("a => b", "md", "->")).toBe(false);
   });
+
+  test("only real tags are dropped, so code between `<` and `>` stays (ST-134)", () => {
+    const md = "if a < b and `c` > d, <b>bold</b> <https://example.com>";
+    expect(quoteOccursIn(md, "md", "if a b and c d bold")).toBe(true);
+    expect(quoteOccursIn(md, "md", "example.com")).toBe(false);
+  });
+
+  test("a title can't pass for a code placeholder (ST-134)", () => {
+    const id = "01a13118-ef01-7aa0-bf37-10e38fb20956";
+    const md = `Use \`raw\` and [[doc:${id}]].`;
+    const label = () => "\uE0000\uE001 Plan";
+    expect(quoteOccursIn(md, "md", "Use raw and 0 Plan", label)).toBe(true);
+    expect(quoteOccursIn(md, "md", "and raw Plan", label)).toBe(false);
+  });
+
+  test("unclosed links, wiki links and tags take linear time (ST-134)", () => {
+    for (const [unit, format] of [
+      ["[", "md"],
+      ["[x](", "md"],
+      ["[[a|", "md"],
+      ["<a ", "md"],
+      ["<style>", "html"],
+      ["<", "html"],
+    ] as const) {
+      const text = unit.repeat(Math.floor(500_000 / unit.length));
+      const start = performance.now();
+      quoteOccursIn(text, format, "zzz");
+      expect(performance.now() - start).toBeLessThan(1000);
+    }
+  });
 });
 
 const url = process.env.TEST_DATABASE_URL;

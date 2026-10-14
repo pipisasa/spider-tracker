@@ -6,7 +6,7 @@
 // Browser-safe: no database imports.
 
 import type { DocumentFormat } from "./contracts";
-import { maskCode } from "./links";
+import { elementRanges, maskCode } from "./links";
 
 /**
  * The text an unlabelled `[[target]]` shows, when it isn't the target itself: a `[[doc:<id>]]`
@@ -53,20 +53,57 @@ function decodeEntities(text: string): string {
 
 /** Markdown outside code: links shown by their labels, `[[…]]` by what they show, tags dropped. */
 function readableMarkdown(content: string, label: WikiLabel): string {
+  // No class below crosses the character that opens its construct, so every scan stops at the
+  // next one and the whole pass stays linear on unclosed `[`, `[[` or `<` (ST-134).
   return decodeEntities(
     content
       // ![alt](src) and [label](href): only the alt text and label show.
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/!?\[([^[\]]*)\]\([^()]*\)/g, "$1")
       // [[target|label]] shows the label; [[target]] the target (a title or task key), or what
       // `label` says it shows (a document's title for [[doc:<id>]]).
-      .replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
-      .replace(/\[\[([^\]|]*)\]\]/g, (whole, target: string) => {
+      .replace(/\[\[([^[\]|]*)\|([^[\]]*)\]\]/g, "$2")
+      .replace(/\[\[([^[\]|]*)\]\]/g, (whole, target: string) => {
         const shown = label(target.trim());
-        return shown === null ? whole : ` ${shown} `;
+        // A title can't pass for a code placeholder, which is put back afterwards.
+        return shown === null
+          ? whole
+          : ` ${shown.replace(/[\uE000\uE001]/g, " ")} `;
       })
-      // <https://autolinks> and inline HTML tags (skipped when rendered).
-      .replace(/<[^>\n]*>/g, " "),
+      // <https://autolinks> and inline HTML tags (skipped when rendered). Only real tags: `a < b`
+      // followed by code and `>` keeps the code.
+      .replace(
+        /<\/?[A-Za-z][^<>\n\uE000\uE001]*>|<[A-Za-z][A-Za-z\d+.-]*:[^<>\s\uE000\uE001]*>/g,
+        " ",
+      ),
   );
+}
+
+/** `text` with these ranges replaced by a space. */
+function replaceRanges(text: string, ranges: Array<[number, number]>): string {
+  let out = "";
+  let last = 0;
+  for (const [start, end] of ranges) {
+    out += `${text.slice(last, start)} `;
+    last = end;
+  }
+  return out + text.slice(last);
+}
+
+/** `text` without HTML tags, each `<` up to the next `>` (`/<[^>]*>/g`), in linear time. */
+function withoutTags(text: string): string {
+  let out = "";
+  let last = 0;
+  for (
+    let open = text.indexOf("<");
+    open >= 0;
+    open = text.indexOf("<", last)
+  ) {
+    const close = text.indexOf(">", open + 1);
+    if (close < 0) break;
+    out += `${text.slice(last, open)} `;
+    last = close + 1;
+  }
+  return out + text.slice(last);
 }
 
 /** Private-use characters around a code run's index while the Markdown around it is read. */
@@ -85,9 +122,9 @@ function readableText(
 ): string {
   if (format === "html") {
     return decodeEntities(
-      content
-        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-        .replace(/<[^>]*>/g, " "),
+      withoutTags(
+        replaceRanges(content, elementRanges(content, ["script", "style"])),
+      ),
     );
   }
   // maskCode blanks code out with spaces: characters that differ from the content are code.
