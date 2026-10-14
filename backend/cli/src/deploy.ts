@@ -129,13 +129,16 @@ function parseArgs(argv: string[]): DeployArgs {
 /** The part of `spider release view --json` the preflight reads. */
 const releaseView = z.object({
   status: z.object({ category: z.string() }).optional(),
-  apps: z.array(
-    z.object({
-      name: z.string(),
-      repo: z.string(),
-      environments: z.array(z.string()),
-    }),
-  ),
+  // An older API without apps reads as none, so the deploy stops with "doesn't include the app".
+  apps: z
+    .array(
+      z.object({
+        name: z.string(),
+        repo: z.string(),
+        environments: z.array(z.string()),
+      }),
+    )
+    .default([]),
 });
 
 /**
