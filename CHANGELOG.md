@@ -4,6 +4,10 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 
 ## Unreleased
 
+## CLI 0.2.0, plugin 0.3.14 (2026-10-14)
+
+CLI 0.2.0 (breaking: `--json` output shapes, ST-107) and plugin 0.3.14 (`update_tasks` and `spider start --fetch` in the `tasks` skill); everything below shipped with them and with the API and web deploys of the same day.
+
 ### Review follow-ups
 
 - **API, MCP, CLI (ST-122):** bulk updates (`update_tasks`, `PATCH …/tasks`, multi-key `spider task update`) check `set.assigneeIds`, `set.tagIds` and the parent once: an unknown or other organization's id, or a parent outside the agent's projects, fails the request (`400 validation`, CLI exit 2) with one error instead of one per task, and nothing changes. A deactivated agent already assigned still stays assigned. Plugin: the `tasks` skill mentions `update_tasks` and multi-key `spider task update`.
