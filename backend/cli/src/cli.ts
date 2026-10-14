@@ -5413,6 +5413,8 @@ function buildProgram(
           "A document saved in the tracker since the file's version is reported as a conflict and not overwritten:",
           "merge the change into the file, set its version and publish again. Exit code 1 if any file is a conflict or failed.",
           "Files that aren't UTF-8 or are over 1 MB fail and are never rewritten; symbolic links are skipped with a warning.",
+          "A front matter block holding none of these keys is warned about too: its text isn't published.",
+          "With --json, the top-level warnings list these notes and the skipped files.",
         ].join("\n"),
       ),
   ).action(
