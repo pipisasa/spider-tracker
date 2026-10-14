@@ -143,6 +143,36 @@ describe("applyDocumentEdits: sections", () => {
     ).toBe("# A\n\n##  Next  ##\n\nnew\n");
   });
 
+  test("closing #s: dropped after a space, kept when part of the text", () => {
+    expect(
+      markdownHeadings(
+        "# A #\n## B ##   \n### C#\n#### #\n##### \t\n# D \\#\n",
+      ).map((h) => [h.level, h.text]),
+    ).toEqual([
+      [1, "A"],
+      [2, "B"],
+      [3, "C#"],
+      [4, ""],
+      [5, ""],
+      [1, "D \\#"],
+    ]);
+  });
+
+  test("a heading line with a long run of spaces takes linear time (ST-150)", () => {
+    for (const line of [
+      "# a" + " ".repeat(200_000) + "b",
+      "# a" + " ".repeat(200_000) + "#",
+      "#" + " \t".repeat(100_000) + "x",
+    ]) {
+      const start = performance.now();
+      markdownHeadings(line);
+      errorOf(() =>
+        applyDocumentEdits(line, "md", [{ section: "Zzz", content: "x" }]),
+      );
+      expect(performance.now() - start).toBeLessThan(1000);
+    }
+  });
+
   test("a missing section is a conflict; a heading inside code doesn't count", () => {
     const text = "# A\n\n```md\n## Hidden\n```\n";
     expect(markdownHeadings(text).map((h) => h.text)).toEqual(["A"]);

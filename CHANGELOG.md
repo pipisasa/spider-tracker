@@ -32,6 +32,7 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 - **API, MCP, CLI (ST-148, ST-123 follow-up):** a document text over 1 MB in characters is reported once ("At most 1 MB") and no longer encoded to count its bytes. The open code fence error now says the closing line may be followed by nothing but spaces.
 - **Deploy scripts (ST-148, ST-142 follow-up):** a release answer without `apps` (an older API) reads as no apps, so `--release` stops with "doesn't include the … app" instead of "unexpected answer".
 - **API, MCP, CLI (ST-148, ST-147 follow-up):** deleting a task takes the organization's parent lock first, so a concurrent move of a task under it can no longer leave that task under a deleted parent; the moved task becomes top-level like the deleted task's other sub-tasks.
+- **API, MCP, CLI (ST-150):** section edits (`edit_document` / `spider doc edit --section`) read Markdown headings in linear time; a heading line with a long run of spaces used to stall the request for seconds to minutes. Closing `#`s are dropped only after a space or tab, as before.
 
 ### MCP server (breaking: tool output shapes, ST-107)
 

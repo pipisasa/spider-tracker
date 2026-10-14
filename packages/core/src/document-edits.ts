@@ -14,14 +14,22 @@ export interface MarkdownHeading {
 }
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
+// Trailing whitespace and closing #s are dropped in code: a regex for them backtracks
+// quadratically on a heading line with a long run of spaces (ST-150).
+const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
 
 /** Heading text as matched: closing #s dropped, whitespace collapsed. */
 function headingText(raw: string): string {
-  return raw
-    .replace(/(?:^|[ \t]+)#+$/, "")
-    .trim()
-    .replace(/\s+/g, " ");
+  let text = raw.trimEnd();
+  let hashes = text.length;
+  while (hashes > 0 && text[hashes - 1] === "#") hashes--;
+  const before = text[hashes - 1];
+  if (
+    hashes < text.length &&
+    (hashes === 0 || before === " " || before === "\t")
+  )
+    text = text.slice(0, hashes);
+  return text.trim().replace(/\s+/g, " ");
 }
 
 /** The ATX headings (`# …` to `###### …`) of Markdown text, fenced code excluded. */
