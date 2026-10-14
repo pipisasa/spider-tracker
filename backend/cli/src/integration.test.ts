@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createApp } from "@repo/api/src/app";
 import { createAuth } from "@repo/api/src/auth";
 import { loadEnv } from "@repo/api/src/env";
@@ -3222,23 +3222,25 @@ withDb("spider CLI against the API", () => {
     expect(ready.items.map((m) => m.key)).toEqual([milestone.key]);
   });
 
-  // Compares every CLI --json read and write with its MCP tool (dozens of in-process requests), so it needs more
-  // than bun's default 5 s when other test packages share the machine.
-  test("CLI --json and MCP return tasks, documents, comments, document comments and projects in the same shape (ST-107)", async () => {
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`${env.API_ORIGIN}/mcp`),
-      {
-        fetch: async (url, init) => app.request(url, init),
-        requestInit: { headers: { Authorization: `Bearer ${token}` } },
-      },
-    );
+  // Every CLI --json read and write compared with its MCP tool (ST-107). Split by area so each test
+  // fits bun's default 5 s on a loaded machine (ST-148); the tests share the MCP client and the
+  // fixtures made in beforeAll, and run in order.
+  describe("CLI --json and MCP return the same shape (ST-107)", () => {
+    // Connected in beforeAll.
     const client = new Client({ name: "parity-test", version: "0.0.0" });
-    await client.connect(transport);
+    let childKey = "";
+    let doc: { id: string; version: number } | undefined;
+    let docComment = { id: "" };
+    let releaseKey = "";
+    let mcpRelease = { key: "" };
     const mcp = async (
       name: string,
       args: Record<string, unknown> = {},
     ): Promise<unknown> => {
-      const result = (await client.callTool({ name, arguments: args })) as {
+      const result = (await client.callTool({
+        name,
+        arguments: args,
+      })) as {
         content: { text: string }[];
         isError?: boolean;
       };
@@ -3262,9 +3264,17 @@ withDb("spider CLI against the API", () => {
             )
           : typeof value;
 
-    try {
+    beforeAll(async () => {
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`${env.API_ORIGIN}/mcp`),
+        {
+          fetch: async (url, init) => app.request(url, init),
+          requestInit: { headers: { Authorization: `Bearer ${token}` } },
+        },
+      );
+      await client.connect(transport);
       // A task with a sub-task, a link, a document and a comment, so every nested list has something.
-      const child = (
+      childKey = (
         await spider(
           "task",
           "create",
@@ -3280,10 +3290,23 @@ withDb("spider CLI against the API", () => {
           "2020-01-31",
           "--json",
         )
-      ).json();
-      await spider("link", "SPI-1", "relates", child.key as string);
+      ).json().key as string;
+      await spider("link", "SPI-1", "relates", childKey);
       await spider("comment", "SPI-1", "Parity check");
 
+      doc = (
+        (await cli("doc", "list", "--project", "SPI")) as {
+          items: { id: string; version: number }[];
+        }
+      ).items.find((d) => d.version > 1);
+      expect(doc).toBeDefined();
+    });
+
+    afterAll(async () => {
+      await client.close();
+    });
+
+    test("tasks, task lists, comments and git links", async () => {
       // Reads are the same, value for value.
       expect(await mcp("get_task", { key: "SPI-1" })).toEqual(
         await cli("task", "view", "SPI-1"),
@@ -3313,15 +3336,19 @@ withDb("spider CLI against the API", () => {
         )) as object),
         total: 1,
       });
+      expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(
+        await cli("comments", "SPI-1"),
+      );
+      // Git links (ST-84): TaskGitDto on both sides.
+      expect(await mcp("get_task_git", { key: "SPI-1" })).toEqual(
+        await cli("task", "git", "SPI-1"),
+      );
+    });
+
+    test("documents, versions, diffs, document comments, backlinks and the graph", async () => {
       expect(await mcp("list_documents", { project: "SPI" })).toEqual(
         await cli("doc", "list", "--project", "SPI"),
       );
-      const doc = (
-        (await cli("doc", "list", "--project", "SPI")) as {
-          items: { id: string; version: number }[];
-        }
-      ).items.find((d) => d.version > 1);
-      expect(doc).toBeDefined();
       expect(await mcp("get_document", { id: doc?.id })).toEqual(
         await cli("doc", "view", doc?.id ?? ""),
       );
@@ -3331,15 +3358,8 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("diff_document", { id: doc?.id, from: 1 })).toEqual(
         await cli("doc", "diff", doc?.id ?? "", "--from", "1"),
       );
-      expect(await mcp("list_comments", { key: "SPI-1" })).toEqual(
-        await cli("comments", "SPI-1"),
-      );
-      // Git links (ST-84): TaskGitDto on both sides.
-      expect(await mcp("get_task_git", { key: "SPI-1" })).toEqual(
-        await cli("task", "git", "SPI-1"),
-      );
       // Document comments (ST-118), with a quoted fragment, a reply and a resolved thread.
-      const docComment = (await cli(
+      docComment = (await cli(
         "doc",
         "comment",
         doc?.id ?? "",
@@ -3397,6 +3417,9 @@ withDb("spider CLI against the API", () => {
       expect(await mcp("get_document_graph")).toEqual(
         await cli("doc", "graph"),
       );
+    });
+
+    test("projects, rules and status automation", async () => {
       expect(await mcp("list_projects")).toEqual(await cli("projects"));
       // With rules (ST-111), get_project and project view give them as ProjectRulesDto.
       expect(
@@ -3456,7 +3479,9 @@ withDb("spider CLI against the API", () => {
           ]),
         ),
       });
+    });
 
+    test("repos and apps", async () => {
       // Repos and apps (ST-92): RepoDto and AppDto on both sides.
       expect(await mcp("list_repos")).toEqual(await cli("repo", "list"));
       expect(
@@ -3506,9 +3531,11 @@ withDb("spider CLI against the API", () => {
           "date",
         ),
       );
+    });
 
+    test("releases: views, candidates and edits", async () => {
       // Releases (ST-93): ReleaseView on both sides; candidates as tasks.
-      const releaseKey =
+      releaseKey =
         (
           (await cli("release", "list", "--project", "ST")) as {
             items: { key: string }[];
@@ -3523,7 +3550,7 @@ withDb("spider CLI against the API", () => {
       expect(
         await mcp("list_release_candidates", { projectKey: "SPI" }),
       ).toEqual(await cli("release", "candidates", "--project", "SPI"));
-      const mcpRelease = (await mcp("create_release", {
+      mcpRelease = (await mcp("create_release", {
         projectKey: "ST",
         title: "2026.11.01",
         apps: [
@@ -3586,6 +3613,9 @@ withDb("spider CLI against the API", () => {
       expect(addedMcp).toEqual(
         await cli("release", "add", mcpRelease.key, parityTask),
       );
+    });
+
+    test("release changelogs", async () => {
       // Changelogs (ST-95): the server's changelog on both sides (the CLI without its git grouping).
       expect(await mcp("get_release_changelog", { key: releaseKey })).toEqual(
         await cli("release", "changelog", releaseKey, "--no-git"),
@@ -3608,7 +3638,9 @@ withDb("spider CLI against the API", () => {
           "--no-git",
         ),
       ).toEqual({ ...(mcpWritten as object), written: "unchanged" });
+    });
 
+    test("milestones", async () => {
       // Milestones (ST-96): MilestoneView on both sides.
       const mcpMilestone = (await mcp("create_milestone", {
         projectKey: "SPI",
@@ -3626,20 +3658,16 @@ withDb("spider CLI against the API", () => {
         "2026-12-02",
       )) as { key: string };
       expect(shape(mcpMilestone)).toEqual(shape(cliMilestone));
-      await cli(
-        "task",
-        "update",
-        child.key as string,
-        "--milestone",
-        mcpMilestone.key,
-      );
+      await cli("task", "update", childKey, "--milestone", mcpMilestone.key);
       expect(await mcp("get_milestone", { key: mcpMilestone.key })).toEqual(
         await cli("milestone", "view", mcpMilestone.key),
       );
       expect(await mcp("list_milestones", { projectKey: "SPI" })).toEqual(
         await cli("roadmap", "SPI"),
       );
+    });
 
+    test("writes return the same fields", async () => {
       // Writes return the same fields.
       expect(
         shape(await mcp("update_task", { key: "SPI-1", priority: 1 })),
@@ -3749,10 +3777,8 @@ withDb("spider CLI against the API", () => {
           ),
         ),
       );
-    } finally {
-      await client.close();
-    }
-  }, 30_000);
+    });
+  });
 
   test("task update --status Todo --priority 1: works by name, category or number, and says why it fails (ST-107)", async () => {
     await spider(
