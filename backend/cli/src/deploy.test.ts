@@ -211,6 +211,12 @@ describe("scripts/deploy.ts (ST-94)", () => {
         ["web", "--release", "ST-7"],
         "Can't read release ST-7: unexpected answer from spider release view",
       ],
+      // An older API without apps: the clearer "doesn't include" message (ST-148).
+      [
+        { key: "ST-7" },
+        ["web", "--release", "ST-7"],
+        "Release ST-7 doesn't include the web app",
+      ],
     ] as const) {
       const { state, options } = fakes({
         view,

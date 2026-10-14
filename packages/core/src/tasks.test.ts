@@ -867,6 +867,30 @@ run("projects and tasks", () => {
     });
   });
 
+  test("deleting a parent while a task moves under it leaves no task under a deleted parent (ST-147)", async () => {
+    await createProject(db, ctx, { name: "Delete race", key: "DLR" });
+    const child = await createTask(db, ctx, "DLR", { title: "Child" });
+    const parent = await createTask(db, ctx, "DLR", { title: "Parent" });
+    // The re-parent takes the org's parent lock, checks the parent and queues on the child's row.
+    const release = await holdLock(
+      db,
+      sql`select 1 from tasks where id = ${child.id} for no key update`,
+    );
+    const moved = settle(
+      updateTask(db, ctx, child.key, { parentId: parent.id }),
+    );
+    await waitForLockWaiters(db, '"tasks"', 1);
+    // The delete waits on the parent lock until the move commits, then clears the new sub-task.
+    const deleted = settle(deleteTask(db, ctx, parent.key));
+    await waitForLockWaiters(db, ['"tasks"', "pg_advisory_xact_lock"], 2);
+    await release();
+    expect(await moved).toBeNull();
+    expect(await deleted).toBeNull();
+    expect(await getTask(db, ctx, child.key)).toMatchObject({
+      parentId: null,
+    });
+  });
+
   test("an update waiting on a task deleted meanwhile is not_found and writes nothing", async () => {
     await createProject(db, ctx, { name: "Gone", key: "GON" });
     const gone = await createTask(db, ctx, "GON", { title: "Gone" });

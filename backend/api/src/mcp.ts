@@ -1811,7 +1811,7 @@ function createMcpServer(
         return {
           ...documentDiffView({ ...diff, hunks: cut.hunks }),
           truncated: true,
-          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_LINE_CHARS} characters of line text; added and removed count all of it. For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
+          note: `The diff is cut at ${MCP_DIFF_MAX_LINES} lines or ${MCP_DIFF_MAX_LINE_CHARS} characters of line text; added and removed count all of it. A cut diff is for reading, not meant to be applied (git apply or patch would apply a line cut short). For the whole diff run: spider doc diff ${diff.documentId} --from ${diff.from.version} --to ${diff.to.version} --json`,
         };
       }),
   );

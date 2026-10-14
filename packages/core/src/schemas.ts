@@ -584,8 +584,9 @@ const documentTitle = z
 const documentContent = z
   .string()
   // UTF-8 bytes are never fewer than UTF-16 units: this rejects huge input early and keeps
-  // `maxLength` in the OpenAPI and MCP schemas; the byte check below is the real limit.
-  .max(MAX_DOCUMENT_BYTES, "At most 1 MB")
+  // `maxLength` in the OpenAPI and MCP schemas; the byte check below is the real limit. `abort`
+  // stops there, so an over-long text is reported once and never encoded.
+  .max(MAX_DOCUMENT_BYTES, { message: "At most 1 MB", abort: true })
   .refine(
     (v) => new TextEncoder().encode(v).length <= MAX_DOCUMENT_BYTES,
     "At most 1 MB",

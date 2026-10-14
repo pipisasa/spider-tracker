@@ -953,6 +953,7 @@ withDb("MCP server", () => {
     expect(diff.note).toContain(
       `spider doc diff ${doc.id} --from 1 --to 2 --json`,
     );
+    expect(diff.note).toContain("not meant to be applied");
   });
 
   test("diff_document: a diff of one huge line is cut to about 50,000 characters in all (ST-129)", async () => {

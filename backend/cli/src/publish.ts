@@ -76,9 +76,14 @@ function matchFrontMatter(text: string): RegExpExecArray | null {
   // The block ends with a line break, so the last element is "" (an empty block has only that).
   if (lines.length > 1) {
     const first = lines.findIndex((line) => !COMMENT_LINE.test(line));
-    const hasId = lines.some(
-      (line) => keyLine(line)?.key.toLowerCase() === "id",
-    );
+    // Only an id that parses rescues the block: `id: see below` in a paragraph doesn't.
+    const hasId = lines.some((line) => {
+      const kv = keyLine(line);
+      return (
+        kv?.key.toLowerCase() === "id" &&
+        documentIdTarget(`doc:${unquote(kv.value)}`) !== null
+      );
+    });
     if (!keyLine(lines[first] ?? "") && !hasId) return null;
   }
   return match;
@@ -92,7 +97,10 @@ export function frontMatterWithoutKnownKeys(raw: string): boolean {
   const text = raw.startsWith(BOM) ? raw.slice(BOM.length) : raw;
   const match = matchFrontMatter(text);
   if (!match) return false;
-  return !(match[1] ?? "").split(/\r?\n/).some((line) => {
+  const lines = (match[1] ?? "").split(/\r?\n/);
+  // An empty block (`---`, `---`) drops no text.
+  if (lines.every((line) => !line.trim())) return false;
+  return !lines.some((line) => {
     const key = keyLine(line)?.key.toLowerCase();
     return FRONT_MATTER_KEYS.some((k) => k === key);
   });
@@ -308,7 +316,7 @@ export async function readSourceFolder(root: string): Promise<SourceFolder> {
     folder.docs.push(parseSourceDoc(path, raw));
     if (frontMatterWithoutKnownKeys(raw))
       folder.warnings.push(
-        `${path} opens with a front matter block (between --- lines) holding none of the keys publish reads (id, version, hash, title, project, task); its text isn't part of the document`,
+        `${path} opens with a front matter block (between --- lines) holding none of the keys publish reads (${FRONT_MATTER_KEYS.join(", ")}); its text isn't part of the document`,
       );
   }
   return folder;

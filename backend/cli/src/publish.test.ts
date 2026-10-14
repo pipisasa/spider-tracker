@@ -135,6 +135,9 @@ describe("front matter", () => {
     expect(
       parseFrontMatter(`---\n# notes\n\nid: ${A}\nversion: 3\n---\nBody`),
     ).toEqual({ fields: { id: A, version: "3" }, body: "Body" });
+    // Only an id that parses rescues it (ST-148): a rule, a comment, a blank line and prose isn't.
+    const prose = "---\n# Plan\n\nId: see below.\n---\nBody";
+    expect(parseFrontMatter(prose)).toEqual({ fields: {}, body: prose });
     // A nested line before any key isn't YAML front matter.
     expect(parseFrontMatter("---\n  indented\n---\nBody").fields).toEqual({});
     // Comments first (ST-132): the keys are read and written back in place, without a second block.
@@ -374,8 +377,11 @@ describe("readSourceFolder", () => {
     );
     writeFileSync(join(root, "known.md"), "---\n# notes\ntitle: T\n---\nRest");
     writeFileSync(join(root, "rule.md"), "---\n\nIntro\n\n---\nRest");
+    // An empty block drops no text: no warning (ST-148).
+    writeFileSync(join(root, "empty.md"), "---\n---\nRest");
     const folder = await readSourceFolder(root);
     expect(folder.docs.map((d) => [d.path, d.body])).toEqual([
+      ["empty.md", "Rest"],
       ["known.md", "Rest"],
       ["note.md", "Rest"],
       ["rule.md", "---\n\nIntro\n\n---\nRest"],

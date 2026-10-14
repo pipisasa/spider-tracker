@@ -588,39 +588,91 @@ const projectKeyOf = (taskKey: string) =>
   parseTaskKey(taskKey)?.projectKey ?? taskKey.split("-")[0] ?? taskKey;
 
 /**
- * The project a command takes as a positional argument (ST-130): `project view|update|archive
- * <project>`, `status [list|add|update|delete] <project>`, `repo attach|detach <repo> <project>`.
+ * The command a command line runs and its positional arguments (ST-130), read against the
+ * program's own command tree: an option's value (`--name X`, of the command or a parent such as the
+ * global `--as`) is skipped, not taken for a positional.
  */
-function positionalProject(argv: string[]): string | undefined {
-  // The words before the command's own options, without the global --as / --server and their values.
-  const words: string[] = [];
+function parsedCommandLine(
+  program: Command,
+  argv: string[],
+): { path: string[]; command: Command; args: string[] } {
+  const path: string[] = [];
+  const args: string[] = [];
+  const chain = [program];
+  let command = program;
+  const takesValue = (flag: string) =>
+    chain.some((c) =>
+      c.options.some(
+        (o) => (o.long === flag || o.short === flag) && o.required,
+      ),
+    );
   for (let i = 0; i < argv.length; i++) {
     const word = argv[i] ?? "";
-    if (word === "--as" || word === "--server") i++;
-    else if (!word.startsWith("-")) words.push(word);
+    if (word === "--") {
+      args.push(...argv.slice(i + 1));
+      break;
+    }
+    if (word.startsWith("-")) {
+      if (!word.includes("=") && takesValue(word)) i++;
+      continue;
+    }
+    const sub =
+      args.length === 0
+        ? command.commands.find(
+            (c) => c.name() === word || c.aliases().includes(word),
+          )
+        : undefined;
+    if (sub) {
+      command = sub;
+      chain.push(sub);
+      path.push(word);
+    } else args.push(word);
   }
-  const [command, sub, first, second] = words;
+  return { path, command, args };
+}
+
+/**
+ * The project a command takes as a positional argument (ST-130): `project view|update|archive
+ * <project>`, `project status [list|add|update|delete] <project>`, `repo attach|detach <repo>
+ * <project>`, `roadmap [project]` and `milestone list [project]`.
+ */
+function positionalProject(path: string[], args: string[]): string | undefined {
+  const [command, sub] = path;
   if (
     command === "project" &&
-    ["view", "update", "archive"].includes(sub ?? "")
+    ["view", "update", "archive", "status"].includes(sub ?? "")
   )
-    return first;
-  if (command === "project" && sub === "status")
-    return ["list", "add", "update", "delete"].includes(first ?? "")
-      ? second
-      : first;
+    return args[0];
   if (command === "repo" && (sub === "attach" || sub === "detach"))
-    return second;
+    return args[1];
+  if (command === "roadmap" || (command === "milestone" && sub === "list"))
+    return args[0];
   return undefined;
 }
+
+/**
+ * Whether the command falls back to the current branch's task when no key or project is given
+ * (`task view [key]`, `roadmap [project]`, …). Id-only commands (`doc view <id>`) don't, so the
+ * branch says nothing about the project they touch.
+ */
+const defaultsToBranch = (path: string[], command: Command) =>
+  // `spider comment [key] text` takes its words as one variadic argument.
+  (path.length === 1 && path[0] === "comment") ||
+  command.registeredArguments.some(
+    (a) => !a.required && ["key", "keys", "project"].includes(a.name()),
+  );
 
 /**
  * The projects a command line names: those of its task keys, `--project` values and a positional
  * project argument (upper case).
  */
-function requestedProjects(argv: string[]): Set<string> {
+function requestedProjects(
+  argv: string[],
+  path: string[],
+  args: string[],
+): Set<string> {
   const found = new Set<string>();
-  const positional = positionalProject(argv);
+  const positional = positionalProject(path, args);
   if (positional?.trim()) found.add(positional.trim().toUpperCase());
   for (const [i, word] of argv.entries()) {
     const parsed = parseTaskKey(word.trim());
@@ -5361,6 +5413,8 @@ function buildProgram(
           "A document saved in the tracker since the file's version is reported as a conflict and not overwritten:",
           "merge the change into the file, set its version and publish again. Exit code 1 if any file is a conflict or failed.",
           "Files that aren't UTF-8 or are over 1 MB fail and are never rewritten; symbolic links are skipped with a warning.",
+          "A front matter block holding none of these keys is warned about too: its text isn't published.",
+          "With --json, the top-level warnings list these notes and the skipped files.",
         ].join("\n"),
       ),
   ).action(
@@ -5443,7 +5497,8 @@ function buildProgram(
    * For "not found" and "forbidden": which saved agent acted, when it sees only some projects. A task
    * in another project reads as missing, and the default agent is easy to use by mistake (ST-107).
    * Only when the request named a project outside the agent's saved scope (ST-130): a task key,
-   * `--project` or a positional project in the arguments, else the current branch's key. A missing task in a project the
+   * `--project` or a positional project in the arguments, else the current branch's key for a command
+   * that defaults to it (not for id-only ones such as `doc view <id>`). A missing task in a project the
    * agent sees gets the plain message; with no key to judge by, the hint stays.
    */
   const scopeHint = async (): Promise<string> => {
@@ -5451,8 +5506,9 @@ function buildProgram(
       ? (await api.credentials.catch(() => undefined))?.entry
       : undefined;
     if (!api || !entry?.saved.projects) return "";
-    const requested = requestedProjects(argv);
-    if (requested.size === 0) {
+    const { path, command, args } = parsedCommandLine(program, argv);
+    const requested = requestedProjects(argv, path, args);
+    if (requested.size === 0 && defaultsToBranch(path, command)) {
       const branch = currentBranch(cwd, git);
       const key = branch ? taskKeyFromBranch(branch) : null;
       if (key) requested.add(projectKeyOf(key).toUpperCase());
