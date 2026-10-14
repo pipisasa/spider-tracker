@@ -32,28 +32,153 @@ export function parseWikiLink(
 }
 
 /**
- * Code, in the order it is taken out: fenced blocks, HTML <pre>/<code> elements, inline code
- * spans. A fence may be indented up to 3 spaces (as in a list item) and is closed by a line of the
- * same character at least as long, or runs to the end. A code span is closed by a run of exactly
- * as many backticks, without a blank line in between (as in CommonMark).
+ * A fenced code block: indented up to 3 spaces (as in a list item), closed by a line of the same
+ * character at least as long, or running to the end.
  */
-const CODE = [
-  /^ {0,3}((`)\2{2,}|(~)\3{2,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:\2|\3)*[^\S\n]*$|(?![\s\S]))/gm,
-  /<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi,
-  /(?<!`)(`+)(?!`)(?:[^\n]|\n(?![^\S\n]*\n))*?(?<!`)\1(?!`)/g,
-];
+const FENCE =
+  /^ {0,3}((`)\2{2,}|(~)\3{2,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:\2|\3)*[^\S\n]*$|(?![\s\S]))/gm;
+
+/** Where code is in a text, as `[start, end)` ranges in order. */
+type Ranges = Array<[number, number]>;
+
+/**
+ * HTML elements of these names (lower-case), from the opening tag to the first closing tag of the
+ * same name, any case. One pass: a regex rescanned to the end for every unclosed tag (ST-134).
+ */
+export function elementRanges(
+  text: string,
+  names: readonly string[],
+): Array<[number, number]> {
+  const ranges: Ranges = [];
+  // The last `>` found, and the tag names no closing tag follows any more.
+  let gt = -1;
+  const unclosed = new Set<string>();
+  const open = new RegExp(`<(${names.join("|")})\\b`, "gi");
+  for (let match = open.exec(text); match; match = open.exec(text)) {
+    const name = (match[1] ?? "").toLowerCase();
+    const afterName = match.index + match[0].length;
+    if (gt < afterName) gt = text.indexOf(">", afterName);
+    if (gt < 0) break; // No `>` left, so no tag can open.
+    if (unclosed.has(name)) continue;
+    const close = new RegExp(`</${name}>`, "gi");
+    close.lastIndex = gt + 1;
+    const found = close.exec(text);
+    if (!found) {
+      unclosed.add(name);
+      continue;
+    }
+    const end = found.index + found[0].length;
+    ranges.push([match.index, end]);
+    open.lastIndex = end;
+  }
+  return ranges;
+}
+
+/** A run of backticks: where it starts and how many. */
+interface BacktickRun {
+  start: number;
+  length: number;
+}
+
+/** Pairs a paragraph's backtick runs into code spans, in order, adding them to `ranges`. */
+function pairRuns(runs: BacktickRun[], ranges: Ranges): void {
+  // Per length, the indexes of the runs of that length, and the first one not yet passed.
+  const byLength = new Map<number, number[]>();
+  runs.forEach((run, index) => {
+    const list = byLength.get(run.length);
+    if (list) list.push(index);
+    else byLength.set(run.length, [index]);
+  });
+  const passed = new Map<number, number>();
+  for (let i = 0; i < runs.length;) {
+    const run = runs[i];
+    if (!run) break;
+    const list = byLength.get(run.length) ?? [];
+    let next = passed.get(run.length) ?? 0;
+    while (next < list.length && (list[next] ?? Infinity) <= i) next++;
+    passed.set(run.length, next);
+    const closer = list[next];
+    const closing = closer === undefined ? undefined : runs[closer];
+    if (closer === undefined || !closing) {
+      i++; // Unpaired: literal backticks.
+      continue;
+    }
+    ranges.push([run.start, closing.start + closing.length]);
+    i = closer + 1;
+  }
+}
+
+/**
+ * Inline code spans, as in CommonMark: a run of backticks is closed by the next run of exactly as
+ * many backticks in the same paragraph (no blank line in between); a run left unpaired is literal.
+ * Linear: one pass collects the runs, then each paragraph pairs them by length (ST-134: a regex
+ * rescanned the paragraph for every unpaired run).
+ */
+function codeSpanRanges(text: string): Ranges {
+  const ranges: Ranges = [];
+  let runs: BacktickRun[] = [];
+  for (let i = 0; i < text.length;) {
+    const char = text[i];
+    if (char === "`") {
+      let end = i + 1;
+      while (text[end] === "`") end++;
+      runs.push({ start: i, length: end - i });
+      i = end;
+      continue;
+    }
+    if (char === "\n") {
+      // A blank line (only whitespace up to the next line break) ends the paragraph.
+      let j = i + 1;
+      while (j < text.length && text[j] !== "\n" && /\s/.test(text[j] ?? ""))
+        j++;
+      if (text[j] === "\n") {
+        pairRuns(runs, ranges);
+        runs = [];
+      }
+    }
+    i++;
+  }
+  pairRuns(runs, ranges);
+  return ranges;
+}
+
+/** `text` with each range replaced by what `replace` makes of it. */
+function replaceRanges(
+  text: string,
+  ranges: Ranges,
+  replace: (code: string) => string,
+): string {
+  let out = "";
+  let last = 0;
+  for (const [start, end] of ranges) {
+    out += text.slice(last, start) + replace(text.slice(start, end));
+    last = end;
+  }
+  return out + text.slice(last);
+}
+
+/**
+ * `text` with its code replaced, in the order it is taken out: fenced blocks, HTML <pre>/<code>
+ * elements, inline code spans. Each step is linear in the length of the text (ST-134).
+ */
+function replaceCode(text: string, replace: (code: string) => string): string {
+  const unfenced = text.replace(FENCE, replace);
+  const unhtml = replaceRanges(
+    unfenced,
+    elementRanges(unfenced, ["pre", "code"]),
+    replace,
+  );
+  return replaceRanges(unhtml, codeSpanRanges(unhtml), replace);
+}
 
 /** Text without code: fenced blocks, inline code spans and HTML <pre>/<code> elements. */
 function withoutCode(text: string): string {
-  return CODE.reduce((rest, code) => rest.replace(code, " "), text);
+  return replaceCode(text, () => " ");
 }
 
 /** The same code blanked out with spaces instead, so offsets into the text still hold. */
 export function maskCode(text: string): string {
-  return CODE.reduce(
-    (rest, code) => rest.replace(code, (match) => match.replace(/[^\n]/g, " ")),
-    text,
-  );
+  return replaceCode(text, (code) => code.replace(/[^\n]/g, " "));
 }
 
 /**

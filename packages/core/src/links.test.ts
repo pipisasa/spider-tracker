@@ -3,6 +3,7 @@ import {
   documentIdLink,
   documentIdTarget,
   isLinkableTitle,
+  maskCode,
   normalizeTitle,
   outgoingLinksIn,
   resolveDocumentLink,
@@ -58,6 +59,48 @@ describe("wikiLinksIn", () => {
       "Four",
       "Five",
     ]);
+  });
+});
+
+describe("maskCode (ST-134)", () => {
+  test("pairs each run with the next run of the same length; unpaired runs are literal", () => {
+    // ` pairs with the next `, across the `` inside; the last `` is left alone.
+    expect(maskCode("a ` b `` c ` d `` e")).toBe(
+      `a ${" ".repeat(10)} d \`\` e`,
+    );
+    expect(maskCode("``` x `` y")).toBe("``` x `` y");
+    expect(maskCode("`a\nb` `c\n \nd`")).toBe("  \n   `c\n \nd`");
+  });
+
+  test("keeps offsets: line breaks stay, code turns into spaces", () => {
+    const text = "x `[[A]]` y\n```\n[[B]]\n```\n<code>[[C]]</code>";
+    const masked = maskCode(text);
+    expect(masked.length).toBe(text.length);
+    expect(masked).toBe("x         y\n   \n     \n   \n                  ");
+  });
+
+  test("1,400 distinct backtick runs in one paragraph mask in linear time", () => {
+    const text = Array.from(
+      { length: 1400 },
+      (_, i) => `${"`".repeat(i + 1)} x `,
+    ).join("");
+    const start = performance.now();
+    expect(maskCode(text)).toBe(text);
+    expect(performance.now() - start).toBeLessThan(200);
+  });
+
+  test("unclosed fences and HTML code tags mask in linear time", () => {
+    for (const text of [
+      `\`\`\`\n${Array.from({ length: 20_000 }, (_, i) => `${"`".repeat((i % 40) + 3)}x`).join("\n")}`,
+      Array.from({ length: 50_000 }, () => "```a").join("\n"),
+      "<code>".repeat(100_000),
+      "<pre ".repeat(100_000),
+      "` ".repeat(500_000),
+    ]) {
+      const start = performance.now();
+      maskCode(text);
+      expect(performance.now() - start).toBeLessThan(1000);
+    }
   });
 });
 
