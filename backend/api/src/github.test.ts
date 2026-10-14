@@ -17,6 +17,13 @@ import { createGithubApp } from "./github";
 import { createFakeGithub } from "./github-fake";
 import type { Mailer } from "./mailer";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
 const baseEnv = {
@@ -76,6 +83,57 @@ describe("GitHub App settings (ST-82)", () => {
     expect(client.installUrl("a.b+c")).toBe(
       "https://github.com/apps/spider-tracker-test/installations/new?state=a.b%2Bc",
     );
+  });
+
+  test("GitHub's 4xx answers are read by status, not by RequestError class (ST-138)", async () => {
+    const config = githubAppConfig(loadEnv({ ...baseEnv, ...githubVars }));
+    if (!config) throw new Error("expected a config");
+    const client = createGithubApp(config, {
+      fetch: async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        const method = init?.method ?? "GET";
+        if (url.pathname === "/login/oauth/access_token")
+          return Response.json({ message: "Bad credentials" }, { status: 401 });
+        if (url.pathname === "/app/installations/404")
+          return Response.json({ message: "Not Found" }, { status: 404 });
+        if (url.pathname.endsWith("/access_tokens"))
+          return Response.json(
+            { token: "ghs_x", expires_at: "2099-01-01T00:00:00Z" },
+            { status: 201 },
+          );
+        if (method === "POST" && url.pathname === "/repos/acme/web/pulls")
+          return Response.json(
+            {
+              message: "Validation Failed",
+              errors: [{ message: "No commits between main and st-1" }],
+            },
+            { status: 422 },
+          );
+        return Response.json({ message: "Server Error" }, { status: 500 });
+      },
+    });
+    expect(await client.userCanAccessInstallation("code", 1)).toBe(false);
+    expect(await client.getInstallation(404)).toBeNull();
+    await expect(
+      client.createPullRequest({
+        installationId: 1,
+        owner: "acme",
+        name: "web",
+        head: "st-1",
+        base: "main",
+        title: "t",
+        body: "b",
+        draft: false,
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message:
+        "GitHub refused the pull request: No commits between main and st-1",
+    });
+    await expect(client.getInstallation(500)).rejects.toMatchObject({
+      name: "GithubUnavailableError",
+      failure: { status: 500 },
+    });
   });
 
   test("all or none, a numeric App ID and a real key", () => {
@@ -159,7 +217,7 @@ withDb("GitHub install flow (ST-82)", () => {
     `gh-member-${stamp}@example.com`,
     `gh-other-${stamp}@example.com`,
   ];
-  const installationId = stamp;
+  const installationId = uniqueInstallationId();
   let owner = "";
   let member = "";
   let otherOwner = "";

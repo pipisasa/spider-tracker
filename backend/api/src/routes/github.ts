@@ -11,7 +11,10 @@ import {
   createGithubInstallState,
   disconnectGithubInstallation,
   handleGithubWebhook,
+  isGithubDeliveryId,
+  isGithubEventName,
   listGithubInstallations,
+  pruneGithubDeliveries,
   resolveGithubSetup,
   saveGithubInstallation,
   verifyGithubSignature,
@@ -230,17 +233,33 @@ export function githubWebhookRoutes(
     return app;
   }
   const secret = webhookSecret;
+  const appSlug = github.slug;
+
+  // A refused delivery is lost (GitHub doesn't retry), so it is logged, never with the body. The
+  // request isn't authenticated yet: headers are logged only when they have the expected shape.
+  const refuseTooLarge = (c: Context<AppEnv>) => {
+    const delivery = c.req.header("X-GitHub-Delivery");
+    const event = c.req.header("X-GitHub-Event");
+    const length = c.req.header("Content-Length");
+    console.error(
+      `GitHub webhook refused: body over ${GITHUB_WEBHOOK_MAX_BYTES} bytes (delivery ${
+        isGithubDeliveryId(delivery) ? delivery : "?"
+      }, event ${isGithubEventName(event) ? event : "?"}, content-length ${
+        length && /^\d{1,20}$/.test(length) ? length : "none"
+      })`,
+    );
+    return c.json(tooLarge, 413);
+  };
 
   app.post(
     "/github",
     bodyLimit({
       maxSize: GITHUB_WEBHOOK_MAX_BYTES,
-      onError: (c) => c.json(tooLarge, 413),
+      onError: refuseTooLarge,
     }),
     async (c) => {
       const body = new Uint8Array(await c.req.arrayBuffer());
-      if (body.byteLength > GITHUB_WEBHOOK_MAX_BYTES)
-        return c.json(tooLarge, 413);
+      if (body.byteLength > GITHUB_WEBHOOK_MAX_BYTES) return refuseTooLarge(c);
       if (
         !verifyGithubSignature(
           secret,
@@ -270,7 +289,17 @@ export function githubWebhookRoutes(
         deliveryId,
         event,
         payload,
+        appSlug,
       });
+      // Retention (ST-138): each new delivery clears a batch of expired ones, after the answer
+      // (not awaited). A failure doesn't fail the delivery, which is already handled.
+      if (status !== "duplicate") {
+        void pruneGithubDeliveries(db).catch((err: unknown) => {
+          console.error(
+            `Pruning GitHub deliveries failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
       return c.json({ status });
     },
   );

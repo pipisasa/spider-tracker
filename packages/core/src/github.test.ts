@@ -25,6 +25,13 @@ import { attachRepo, createRepo, getRepo, listRepos } from "./repos";
 import { createAgentInput } from "./schemas";
 import { createTask } from "./tasks";
 
+/**
+ * A GitHub installation id for this test run. Ids are global on the shared test database, and
+ * `Date.now()` plus an offset collided between files and concurrent runs (ST-142): random instead.
+ */
+const uniqueInstallationId = () =>
+  10 ** 12 + Math.floor(Math.random() * 10 ** 12);
+
 const SECRET = "test-secret-test-secret-test-secret-123";
 
 describe("GitHub install state (ST-82)", () => {
@@ -112,8 +119,8 @@ run("GitHub installations (ST-82)", () => {
   const slugs = [`gh-${stamp}`, `gh-other-${stamp}`];
   const people: string[] = [];
   // GitHub ids are global: unique per run.
-  const installationId = stamp;
-  const otherInstallationId = stamp + 1;
+  const installationId = uniqueInstallationId();
+  const otherInstallationId = uniqueInstallationId();
   let owner: ActorContext;
   let other: ActorContext;
   let member: ActorContext;

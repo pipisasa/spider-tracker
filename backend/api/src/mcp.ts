@@ -202,6 +202,12 @@ const MCP_DIFF_MAX_CHARS = 50_000;
 const MCP_DIFF_MAX_LINE_CHARS = MCP_DIFF_MAX_CHARS / 2;
 
 /**
+ * The version the MCP server reports. Bumped when tool inputs or outputs change incompatibly:
+ * 0.2.0 for the CLI-shaped outputs (ST-107, ST-130).
+ */
+export const MCP_SERVER_VERSION = "0.2.0";
+
+/**
  * The server's instructions (ST-111): the rules of the agent's projects, so a new session has
  * them from its first MCP answer (Claude Code puts them in the system prompt).
  */
@@ -358,7 +364,7 @@ function createMcpServer(
   });
 
   const server = new McpServer(
-    { name: "spider-tracker", version: "0.1.0" },
+    { name: "spider-tracker", version: MCP_SERVER_VERSION },
     instructions ? { instructions } : undefined,
   );
 
@@ -2236,7 +2242,7 @@ function createMcpServer(
         limit: z.number().int().min(1).max(100).optional(),
       },
     },
-    ({ unread_only, after, wait_seconds, limit }) =>
+    ({ unread_only, after, wait_seconds, limit }, extra) =>
       run(async () => {
         const query = {
           unread: unread_only ?? true,
@@ -2245,16 +2251,33 @@ function createMcpServer(
           kinds: [...INBOX_KINDS],
         };
         const deadline = Date.now() + (wait_seconds ?? 0) * 1000;
-        let items = await listInbox(db, ctx, query);
-        while (items.length === 0 && Date.now() < deadline) {
-          await realtime.waitFor(
-            (e) =>
-              e.type === "inbox.created" &&
-              e.orgId === ctx.orgId &&
-              e.recipientIds.includes(ctx.actorId),
-            Math.min(5000, deadline - Date.now()),
-          );
+        // Listening starts before the first read, so an item created in between still wakes us.
+        const watch = wait_seconds
+          ? await realtime.watch(
+              (e) =>
+                e.type === "inbox.created" &&
+                e.orgId === ctx.orgId &&
+                e.recipientIds.includes(ctx.actorId),
+            )
+          : null;
+        let items: Awaited<ReturnType<typeof listInbox>>;
+        try {
           items = await listInbox(db, ctx, query);
+          // A cancelled request (or a closed connection) stops waiting.
+          while (
+            watch &&
+            items.length === 0 &&
+            Date.now() < deadline &&
+            !extra.signal.aborted
+          ) {
+            await watch.next(
+              Math.min(5000, deadline - Date.now()),
+              extra.signal,
+            );
+            items = await listInbox(db, ctx, query);
+          }
+        } finally {
+          watch?.close();
         }
         return items.map((i) => ({
           id: i.id,

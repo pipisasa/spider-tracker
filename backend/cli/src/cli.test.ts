@@ -323,6 +323,8 @@ function fakeGit({
   remote = [] as string[],
   dirty = false,
   failSwitch = false,
+  /** Branches `git fetch origin <name>` finds (they then exist on origin); null: fetch fails. */
+  fetchable = [] as string[] | null,
 } = {}) {
   const state = { branch, branches: new Set(branches) };
   const calls: string[] = [];
@@ -341,6 +343,30 @@ function fakeGit({
         ? remote.includes(ref.slice("refs/remotes/origin/".length))
         : state.branches.has(ref.replace("refs/heads/", ""));
       return found ? ok() : fail();
+    }
+    if (command === "ls-remote") {
+      const name = (rest.at(-1) ?? "").replace("refs/heads/", "");
+      if (fetchable === null)
+        return fail(
+          "fatal: unable to access 'https://github.com/': Could not resolve host",
+        );
+      return fetchable.includes(name)
+        ? ok(`abc\trefs/heads/${name}\n`)
+        : { exitCode: 2, stdout: "", stderr: "" };
+    }
+    if (command === "fetch") {
+      const name = (rest.at(-1) ?? "").replace(
+        /^.*:refs\/remotes\/origin\//,
+        "",
+      );
+      if (fetchable === null)
+        return fail(
+          "fatal: unable to access 'https://github.com/': Could not resolve host",
+        );
+      if (!fetchable.includes(name))
+        return fail(`fatal: couldn't find remote ref ${name}`);
+      remote.push(name);
+      return ok();
     }
     if (command === "branch") return ok(`${state.branch}\n`);
     if (command === "status") return ok(dirty ? " M src/index.ts\n" : "");
@@ -460,8 +486,40 @@ describe("spider start", () => {
     const { git, state } = fakeGit({ dirty: true });
     const result = await start(["start", "ST-1"], git);
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain("uncommitted changes");
+    expect(result.stderr).toBe(
+      "Warning: the working tree has uncommitted changes; they come along to st-1-write-the-cli.\n",
+    );
     expect(state.branch).toBe("st-1-write-the-cli");
+  });
+
+  test("--fetch fetches the branch first, so one pushed elsewhere is tracked (ST-126)", async () => {
+    const pushed = fakeGit({ fetchable: ["st-1-write-the-cli"] });
+    const result = await start(["start", "ST-1", "--fetch"], pushed.git);
+    expect(result.code).toBe(0);
+    expect(pushed.calls).toContain(
+      "fetch --quiet origin +refs/heads/st-1-write-the-cli:refs/remotes/origin/st-1-write-the-cli",
+    );
+    expect(pushed.calls).toContain(
+      "switch -c st-1-write-the-cli --track origin/st-1-write-the-cli",
+    );
+    expect(result.stderr).toBe("");
+    // Not on origin: created from HEAD, quietly. Fetch failing: a warning, still created.
+    const fresh = fakeGit();
+    expect((await start(["start", "ST-1", "--fetch"], fresh.git)).stderr).toBe(
+      "",
+    );
+    expect(fresh.calls).toContain("switch -c st-1-write-the-cli");
+    const offline = fakeGit({ fetchable: null });
+    const warned = await start(["start", "ST-1", "--fetch"], offline.git);
+    expect(warned.code).toBe(0);
+    expect(warned.stderr).toContain(
+      "Warning: couldn't fetch st-1-write-the-cli from origin: fatal: unable to access",
+    );
+    expect(offline.state.branch).toBe("st-1-write-the-cli");
+    // Without --fetch nothing is fetched.
+    const plain = fakeGit({ fetchable: ["st-1-write-the-cli"] });
+    await start(["start", "ST-1"], plain.git);
+    expect(plain.calls.some((c) => c.startsWith("fetch"))).toBe(false);
   });
 
   test("a failed switch warns; the task is still started", async () => {
@@ -528,9 +586,9 @@ describe("spider pr (ST-87)", () => {
         return origin
           ? ok(`${origin}\n`)
           : fail("error: No such remote 'origin'");
-      if (command === "symbolic-ref --short refs/remotes/origin/HEAD") {
+      if (command === "symbolic-ref refs/remotes/origin/HEAD") {
         return originHead
-          ? ok(`origin/${originHead}\n`)
+          ? ok(`refs/remotes/origin/${originHead}\n`)
           : fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref");
       }
       if (args[0] === "push")
@@ -656,7 +714,7 @@ describe("spider pr (ST-87)", () => {
     expect(api.bodies).toEqual([]);
   });
 
-  test("never pushes the origin's default branch or the base, whatever --any-branch says (ST-144)", async () => {
+  test("never pushes the origin's default branch, the base, main or master, whatever --any-branch says (ST-144, ST-146)", async () => {
     const api = prApi();
     const pushed = (calls: string[]) => calls.some((c) => c.startsWith("push"));
     for (const [options, argv] of [
@@ -681,19 +739,21 @@ describe("spider pr (ST-87)", () => {
       expect(result.stderr).toContain(`Not pushing ${options.branch}`);
       expect(pushed(calls)).toBe(false);
     }
-    // A known default other than main: main is then an ordinary branch (pushed with --any-branch).
-    const { git, calls } = prGit({ branch: "main", originHead: "trunk" });
-    expect(
-      (
-        await cli(["pr", "ST-1", "--any-branch"], {
-          git,
-          fetch: api.fetch,
-          cwd: "/work",
-        })
-      ).code,
-    ).toBe(0);
-    expect(calls).toContain("push --set-upstream origin main");
-    expect(api.bodies).toEqual([{ repo: "acme/app", head: "main" }]);
+    // A known default other than main: main and master are still never pushed (ST-146).
+    for (const branch of ["main", "master"]) {
+      const { git, calls } = prGit({ branch, originHead: "trunk" });
+      const result = await cli(["pr", "ST-1", "--any-branch"], {
+        git,
+        fetch: api.fetch,
+        cwd: "/work",
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain(
+        `Not pushing ${branch}: it is main or master, which spider pr never pushes`,
+      );
+      expect(pushed(calls)).toBe(false);
+    }
+    expect(api.bodies).toEqual([]);
   });
 
   test("pushes only the task's own branch, unless --any-branch (ST-144)", async () => {
@@ -857,6 +917,44 @@ describe("saved agents", () => {
         code: 3,
         stderr: "spider: Task not found\n",
       });
+      // A task truly missing in a project the agent sees: the plain message (ST-130).
+      const inScope = await cli(["task", "view", "st-999"], { env });
+      expect(inScope).toMatchObject({
+        code: 3,
+        stderr: "spider: Task not found\n",
+      });
+      const listed = await cli(["task", "list", "--project", "ST"], { env });
+      expect(listed).toMatchObject({
+        code: 3,
+        stderr: "spider: Task not found\n",
+      });
+      // An out-of-scope --project gets the hint.
+      const other = await cli(["task", "list", "--project", "ANT"], { env });
+      expect(other.stderr).toContain("which sees only ST");
+      // A positional project counts, before the branch's key: ANT on an ST branch gets the hint.
+      const onStBranch: GitRunner = (args) =>
+        args.join(" ") === "branch --show-current"
+          ? { exitCode: 0, stdout: "st-1-work\n", stderr: "" }
+          : { exitCode: 0, stdout: "true\n", stderr: "" };
+      for (const argv of [
+        ["project", "view", "ANT"],
+        ["--as", "reviewer", "project", "view", "ANT"],
+        ["project", "status", "ANT"],
+        ["project", "status", "add", "ANT", "QA", "--category", "in_review"],
+        ["repo", "attach", "acme/web", "ANT"],
+      ]) {
+        const viewed = await cli(argv, { env, git: onStBranch, cwd: "/work" });
+        expect(viewed.stderr).toContain("which sees only ST");
+      }
+      expect(
+        (
+          await cli(["project", "view", "ST"], {
+            env,
+            git: onStBranch,
+            cwd: "/work",
+          })
+        ).stderr,
+      ).not.toContain("acting as");
     } finally {
       cleanup();
     }
@@ -1273,6 +1371,82 @@ describe("saved agents", () => {
         (await cli(["agents", "permission-mode", "reviewer", "yolo"], { env }))
           .code,
       ).toBe(2);
+
+      // --permission-mode as the last word after --: a usage error, not "--permission-mode
+      // --permission-mode auto" (ST-125).
+      for (const last of ["--permission-mode", "--permission-mode="]) {
+        const dangling = await cli(["claude", "reviewer", "--", "-p", last], {
+          env,
+          spawn,
+          self,
+        });
+        expect(dangling.code).toBe(2);
+        expect(dangling.stderr).toContain(
+          "--permission-mode after -- needs a mode",
+        );
+      }
+      expect(launched).toHaveLength(6);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("claude refuses to start with a saved permission mode Claude Code doesn't know (ST-125)", async () => {
+    const { home, env, cleanup } = savedAgents();
+    const file = join(home, "config", "credentials.json");
+    const store = JSON.parse(readFileSync(file, "utf8")) as Store;
+    const reviewer = store.servers.prod?.orgs.acme?.agents.reviewer;
+    if (!reviewer) throw new Error("expected the reviewer");
+    reviewer.permissionMode = "plna";
+    writeFileSync(file, JSON.stringify(store), { mode: 0o600 });
+    const launched: string[][] = [];
+    const spawn: RunOptions["spawn"] = async (argv) => (launched.push(argv), 0);
+    const message =
+      'The permission mode saved for prod/acme/reviewer ("plna") isn\'t one Claude Code knows';
+    try {
+      // Fails closed: a typo of a stricter mode never starts in auto.
+      const refused = await cli(["claude", "reviewer"], {
+        env,
+        spawn,
+        self: ["spider"],
+      });
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toContain(message);
+      expect(refused.stderr).toContain(
+        "spider agents permission-mode prod/acme/reviewer --clear",
+      );
+      expect(launched).toEqual([]);
+      // spider agents permission-mode reports the same.
+      const shown = await cli(["agents", "permission-mode", "reviewer"], {
+        env,
+      });
+      expect(shown.code).toBe(2);
+      expect(shown.stderr).toContain(message);
+      // A mode given explicitly decides instead; a bad one after -- is refused too.
+      expect(
+        (
+          await cli(["claude", "reviewer", "--permission-mode", "plan"], {
+            env,
+            spawn,
+            self: ["spider"],
+          })
+        ).code,
+      ).toBe(0);
+      const badAfterDash = await cli(
+        ["claude", "reviewer", "--", "--permission-mode", "yolo"],
+        { env, spawn, self: ["spider"] },
+      );
+      expect(badAfterDash.code).toBe(2);
+      expect(badAfterDash.stderr).toContain(
+        "Unknown permission mode yolo after --",
+      );
+      expect(launched).toHaveLength(1);
+      // Clearing fixes it.
+      await cli(["agents", "permission-mode", "reviewer", "--clear"], { env });
+      expect(
+        (await cli(["claude", "reviewer"], { env, spawn, self: ["spider"] }))
+          .code,
+      ).toBe(0);
     } finally {
       cleanup();
     }

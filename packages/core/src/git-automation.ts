@@ -18,7 +18,8 @@ import { applyTaskUpdate } from "./tasks";
 // - Only ordinary tasks (kind "task") of projects that aren't archived move; releases and
 //   milestones never do.
 // - Only trusted pull requests move tasks: not from a fork, and by an owner, member or collaborator
-//   of the repo, or a bot (trustedPullRequest). Others still link.
+//   of the repo, or our own App's bot; other bots never (trustedPullRequest, ST-141). Others still
+//   link. Trust is the author's, not the merger's: an outside contributor's merged PR moves nothing.
 // - A merge counts only into the repo's default branch; a merge into another branch (a stacked
 //   PR, a release or feature branch) moves nothing. Opened, ready and draft events count whatever
 //   the base.
@@ -28,12 +29,15 @@ import { applyTaskUpdate } from "./tasks";
 //   The one exception is a PR converted to (or opened as) a draft, which moves a task from the
 //   `opened` status (In Review) back to the `draft` status (In Progress), unless another linked PR
 //   is still open and ready.
-// - A closing move (merged → Done) waits until no other linked PR is open.
+// - A closing move (merged → Done) waits until no other linked PR is open, counting only PRs in
+//   repos still attached to the task's project: a detached repo's links are kept but not shown,
+//   so its open PR doesn't hold the task back (ST-146).
 // - The target is the first status of the setting's category in the task's own project and kind.
 // - The activity entry names the pull request, the event and the GitHub login that sent it (who
 //   merged, for a merge).
 
-const { gitLinks, projects, pullRequests, statuses, tasks } = schema;
+const { gitLinks, projectRepos, projects, pullRequests, statuses, tasks } =
+  schema;
 
 /**
  * Moves the tasks a saved pull request event links to (by closing keyword, branch or title), in
@@ -85,6 +89,14 @@ export const automatePullRequest: PullRequestAutomation = async (
     })
     .from(gitLinks)
     .innerJoin(pullRequests, eq(pullRequests.id, gitLinks.pullRequestId))
+    .innerJoin(tasks, eq(tasks.id, gitLinks.taskId))
+    .innerJoin(
+      projectRepos,
+      and(
+        eq(projectRepos.repoId, gitLinks.repoId),
+        eq(projectRepos.projectId, tasks.projectId),
+      ),
+    )
     .where(
       and(
         inArray(

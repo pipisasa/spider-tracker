@@ -33,8 +33,49 @@ import { repoFullName } from "./remotes";
 
 const { githubDeliveries, githubInstallations, repos } = schema;
 
-/** The largest body the endpoint reads (GitHub caps payloads at 25 MB; ours are far smaller). */
-export const GITHUB_WEBHOOK_MAX_BYTES = 5 * 1024 * 1024;
+/**
+ * The largest body the endpoint reads: GitHub's own cap (25 MB), so a large `push` isn't lost
+ * (ST-138). Bodies over it are refused with 413 and logged without the body.
+ */
+export const GITHUB_WEBHOOK_MAX_BYTES = 25 * 1024 * 1024;
+
+/** How long delivery ids are kept (ST-138): GitHub redelivers only recent deliveries. */
+export const GITHUB_DELIVERY_RETENTION_DAYS = 30;
+
+/** The most rows one prune deletes, so a backlog is cleared over several deliveries. */
+const PRUNE_BATCH = 500;
+
+/**
+ * Deletes deliveries received more than GITHUB_DELIVERY_RETENTION_DAYS ago, at most a batch
+ * (ST-138), and returns how many. Called opportunistically after each new delivery, so the table
+ * can't grow forever (deliveries of installations nobody connected included) without a scheduler.
+ * Rows another prune is deleting are skipped.
+ */
+export async function pruneGithubDeliveries(
+  db: Db | Tx,
+  {
+    now = new Date(),
+    limit = PRUNE_BATCH,
+  }: { now?: Date; limit?: number } = {},
+): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - GITHUB_DELIVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+  // The batch is materialized first: `DELETE … WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP
+  // LOCKED)` can be planned as a semi join that re-runs the subquery and deletes more than n.
+  const deleted = await db.execute<{ id: string }>(sql`
+    with stale as materialized (
+      select ${githubDeliveries.id} as id from ${githubDeliveries}
+      where ${githubDeliveries.receivedAt} < ${cutoff.toISOString()}
+      order by ${githubDeliveries.receivedAt}
+      limit ${limit}
+      for update skip locked
+    )
+    delete from ${githubDeliveries} as d using stale
+    where d.id = stale.id
+    returning d.id`);
+  return deleted.length;
+}
 
 /**
  * Whether `signature` (X-Hub-Signature-256: `sha256=<hex>`) is the HMAC-SHA256 of the raw body
@@ -152,6 +193,8 @@ export interface GithubEvent {
   installation: InstallationRow;
   /** The organization's GitHub bot. */
   ctx: ActorContext;
+  /** Our GitHub App's slug: its bot's pull requests are trusted (ST-141). */
+  appSlug: string | null;
 }
 
 /** Handles one event inside the delivery's transaction; true when it changed something. */
@@ -286,7 +329,7 @@ const handleInstallationRepositories: GithubEventHandler = async (tx, e) => {
   return true;
 };
 
-/** repository: renamed or transferred (owner/name), edited (the default branch). */
+/** repository: renamed or transferred (owner/name), edited (the default branch), for the installation's repos. */
 const handleRepository: GithubEventHandler = async (tx, e) => {
   const data = parsePayload(repositoryPayload, "repository", e.payload);
   const { repository, changes } = data;
@@ -321,10 +364,14 @@ const handleRepository: GithubEventHandler = async (tx, e) => {
       sql`lower(${repos.owner}) = ${r.owner.toLowerCase()}`,
       sql`lower(${repos.name}) = ${r.name.toLowerCase()}`,
     );
+  // Only the installation's own repos: a repo added by URL, or granted by another installation,
+  // isn't this installation's to rename (ST-138). The name check below stays organization-wide.
   const [current] = await tx
     .select()
     .from(repos)
-    .where(byName(previous))
+    .where(
+      and(byName(previous), eq(repos.githubInstallationId, e.installation.id)),
+    )
     .for("update")
     .limit(1);
   if (!current) return false;
@@ -387,6 +434,14 @@ export type GithubWebhookResult = "processed" | "ignored" | "duplicate";
 const deliveryIdPattern = /^[A-Za-z0-9-]{1,100}$/;
 const eventPattern = /^[a-z_]{1,100}$/;
 
+/** Whether an X-GitHub-Delivery header has the shape we accept (and may be logged). */
+export const isGithubDeliveryId = (value: string | undefined) =>
+  value !== undefined && deliveryIdPattern.test(value);
+
+/** Whether an X-GitHub-Event header has the shape we accept (and may be logged). */
+export const isGithubEventName = (value: string | undefined) =>
+  value !== undefined && eventPattern.test(value);
+
 /**
  * Handles one verified delivery, once: "duplicate" when its id was seen before, "ignored" when
  * nothing was changed (ping, unhandled events and actions, installations no organization has
@@ -399,7 +454,14 @@ export async function handleGithubWebhook(
     deliveryId,
     event,
     payload,
-  }: { deliveryId: string; event: string; payload: unknown },
+    appSlug = null,
+  }: {
+    deliveryId: string;
+    event: string;
+    payload: unknown;
+    /** Our GitHub App's slug (from the API's config); without it no bot's PR moves tasks. */
+    appSlug?: string | null;
+  },
 ): Promise<GithubWebhookResult> {
   if (!deliveryIdPattern.test(deliveryId))
     throw new DomainError("validation", "Invalid X-GitHub-Delivery");
@@ -438,6 +500,7 @@ export async function handleGithubWebhook(
       payload,
       installation,
       ctx,
+      appSlug,
     });
     await tx
       .update(githubDeliveries)

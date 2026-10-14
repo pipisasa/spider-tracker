@@ -33,11 +33,29 @@ export interface PermissionChoice {
   source: PermissionSource;
 }
 
-/** The value after `flag` in args, or in `flag=value` form. */
-function flagValue(args: string[], flag: string): string | undefined {
+/** The message for a saved permission mode Claude Code doesn't know (ST-125: fail closed). */
+export const invalidSavedModeMessage = (agent: string, value: string) =>
+  `The permission mode saved for ${agent} ("${value}") isn't one Claude Code knows (${PERMISSION_MODES.join(", ")}). Set it with spider agents permission-mode ${agent} <mode>, or remove it with spider agents permission-mode ${agent} --clear`;
+
+/** A saved permission mode that would decide the session isn't valid: nothing starts. */
+export class InvalidSavedModeError extends Error {
+  constructor(readonly value: string) {
+    super(`Invalid saved permission mode "${value}"`);
+    this.name = "InvalidSavedModeError";
+  }
+}
+
+/**
+ * The value after `flag` in args, or in `flag=value` form; `null` when the flag is there without a
+ * value (the last word, or `flag=`), which callers refuse (ST-125).
+ */
+export function flagValue(
+  args: string[],
+  flag: string,
+): string | null | undefined {
   for (const [i, arg] of args.entries()) {
-    if (arg === flag) return args[i + 1];
-    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+    if (arg === flag) return args[i + 1] ?? null;
+    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1) || null;
   }
   return undefined;
 }
@@ -45,7 +63,9 @@ function flagValue(args: string[], flag: string): string | undefined {
 /**
  * The mode a session starts in: `spider claude --permission-mode`, else one in the arguments for
  * claude, else the saved agent's, else auto. Always explicit, so Claude Code's own default (settings,
- * built-in, its version) never decides it.
+ * built-in, its version) never decides it. A saved mode Claude Code doesn't know, when it would
+ * decide, throws InvalidSavedModeError: it fails closed (ST-125), since a typo of a stricter mode
+ * must never start in auto. The store itself keeps any string.
  */
 export function permissionModeFor(
   option: string | undefined,
@@ -57,7 +77,10 @@ export function permissionModeFor(
     return { mode: null, source: "claude-args" };
   const passed = flagValue(claudeArgs, "--permission-mode");
   if (passed) return { mode: passed, source: "claude-args" };
-  if (saved) return { mode: saved, source: "agent" };
+  if (saved !== undefined) {
+    if (!isPermissionMode(saved)) throw new InvalidSavedModeError(saved);
+    return { mode: saved, source: "agent" };
+  }
   return { mode: DEFAULT_PERMISSION_MODE, source: "default" };
 }
 
@@ -146,27 +169,112 @@ function commandHooks(settings: unknown): { event: string; command: string }[] {
 
 const SCRIPT = /\.(?:c?js|mjs|ts|sh|py)$/;
 
-/** Script files a hook command runs by path (`node "/x/hook.js"`, `~/hooks/a.sh`), `~` and $HOME expanded. */
+/** A character of a hook word: quoted or backslash-escaped characters are literal to the shell. */
+interface WordChar {
+  char: string;
+  quote: '"' | "'" | null;
+  escaped: boolean;
+}
+
+/**
+ * Splits a hook command into words as a POSIX shell does (ST-125), keeping how each character was
+ * quoted: quotes don't end a word, so `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` is one word; a
+ * backslash escapes the next character outside single quotes (in double quotes only `"`, `\`, `$`
+ * and a backtick). Operators (`&&`, `;`, `|`) count as words when spaced, which is enough here.
+ */
+function hookWords(command: string): WordChar[][] {
+  const words: WordChar[][] = [];
+  let quote: '"' | "'" | null = null;
+  let current: WordChar[] | null = null;
+  const add = (char: string, escaped = false) => {
+    current ??= [];
+    current.push({ char, quote, escaped });
+  };
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]!;
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      else add(char);
+    } else if (quote === '"') {
+      if (char === '"') quote = null;
+      else if (char === "\\" && /["\\$`]/.test(command[i + 1] ?? ""))
+        add(command[++i]!, true);
+      else add(char);
+    } else if (/\s/.test(char)) {
+      if (current) words.push(current);
+      current = null;
+    } else if (char === "'" || char === '"') {
+      current ??= [];
+      quote = char;
+    } else if (char === "\\" && i + 1 < command.length)
+      add(command[++i]!, true);
+    else add(char);
+  }
+  if (current) words.push(current);
+  return words;
+}
+
+const textOf = (word: WordChar[]) => word.map((c) => c.char).join("");
+
+/** `~/` at the start, both characters unquoted and unescaped: the only `~` a shell expands. */
+const expandsTilde = (word: WordChar[]) =>
+  word.length >= 2 &&
+  word[0]!.char === "~" &&
+  word[1]!.char === "/" &&
+  word.slice(0, 2).every((c) => c.quote === null && !c.escaped);
+
+const HOME_PREFIX = /^(?:\$HOME|\$\{HOME\})(?=\/)/;
+
+/** `$HOME/` or `${HOME}/` at the start, none of it single-quoted or escaped. */
+function homePrefixLength(word: WordChar[]): number {
+  const match = HOME_PREFIX.exec(textOf(word));
+  if (!match) return 0;
+  const prefix = word.slice(0, match[0].length);
+  return prefix.every((c) => c.quote !== "'" && !c.escaped)
+    ? match[0].length
+    : 0;
+}
+
+/**
+ * Script files a hook command runs by path (`node "/x/hook.js"`, `~/hooks/a.sh`), expanded as the
+ * shell does: `~/` only unquoted and unescaped, `$HOME` / `${HOME}` unquoted or in double quotes
+ * and unescaped; `\~/a.sh`, `~"/a.sh"`, `'~/a.sh'` and `\$HOME/a.sh` stay literal. Other variables
+ * aren't expanded, so such words (`"$CLAUDE_PROJECT_DIR"/…`) aren't checked.
+ */
 export function hookScripts(command: string, env: Env): string[] {
-  const words = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-  return words
-    .map((w) => w.replace(/^["']|["']$/g, ""))
-    .map((w) =>
-      env.HOME
-        ? w
-            .replace(/^~(?=\/)/, env.HOME)
-            .replace(/^\$\{?HOME\}?(?=\/)/, env.HOME)
-        : w,
-    )
+  const home = env.HOME;
+  return hookWords(command)
+    .map((word) => {
+      const text = textOf(word);
+      if (!home) return text;
+      if (expandsTilde(word)) return `${home}${text.slice(1)}`;
+      const length = homePrefixLength(word);
+      return length ? `${home}${text.slice(length)}` : text;
+    })
     .filter((w) => isAbsolute(w) && SCRIPT.test(w));
 }
 
-export interface BrokenHook {
+/**
+ * Scripts named as `~/…` with the `~` or its `/` quoted or escaped: the shell leaves them as is,
+ * so they name no file.
+ */
+export const quotedTildeWords = (command: string): string[] =>
+  hookWords(command)
+    .filter((word) => {
+      const text = textOf(word);
+      return text.startsWith("~/") && SCRIPT.test(text) && !expandsTilde(word);
+    })
+    .map(textOf);
+
+/**
+ * A hook that will fail: its script is `missing`, or it names a script as a quoted `~/…`
+ * (`quotedTilde`), which the shell leaves unexpanded (ST-125).
+ */
+export type BrokenHook = {
   settings: string;
   event: string;
   command: string;
-  missing: string;
-}
+} & ({ missing: string } | { quotedTilde: string });
 
 /**
  * Hooks in Claude Code's settings whose script is gone. Claude Code runs them anyway and shows a
@@ -185,6 +293,8 @@ export async function brokenHooks(
       continue;
     }
     for (const { event, command } of commandHooks(parsed)) {
+      for (const word of quotedTildeWords(command))
+        broken.push({ settings, event, command, quotedTilde: word });
       for (const script of hookScripts(command, env)) {
         const exists = await access(script).then(
           () => true,

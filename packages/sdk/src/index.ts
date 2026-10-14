@@ -168,6 +168,7 @@ export function createClient({
     method: string,
     path: string,
     body?: unknown,
+    { signal }: { signal?: AbortSignal } = {},
   ): Promise<T> {
     const headers = new Headers({ Accept: "application/json" });
     if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -180,6 +181,7 @@ export function createClient({
       body: body === undefined ? undefined : JSON.stringify(body),
       // Bearer tokens need no cookies; browser sessions do.
       ...(token ? {} : { credentials: "include" }),
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) {
       const error = (await res.json().catch(() => null)) as ApiErrorBody | null;
@@ -672,6 +674,7 @@ export function createClient({
       /**
        * Oldest first. `after` is a cursor (last id seen); `wait` holds the request up to 25 s for new items.
        * `kinds` defaults to the task kinds; ask for "rules" and the "document_*" kinds to get project rules changes and document comments too.
+       * `signal` aborts a waiting request (the server stops waiting and answers at once).
        */
       list: (
         orgSlug: string,
@@ -682,6 +685,7 @@ export function createClient({
           wait?: number;
           kinds?: InboxKind[];
         } = {},
+        { signal }: { signal?: AbortSignal } = {},
       ) => {
         const params = new URLSearchParams();
         for (const [key, value] of Object.entries(query))
@@ -690,6 +694,8 @@ export function createClient({
         return request<ListResponse<InboxItemDto>>(
           "GET",
           `${org(orgSlug)}/inbox${qs}`,
+          undefined,
+          { signal },
         );
       },
       /** `upTo` marks only `kinds` (default: the task kinds); pass the kinds you listed. */

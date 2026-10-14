@@ -38,7 +38,7 @@ The CLI can hold several saved agents (`spider agents` lists them); `--as <handl
 Before changing code, start the task: it assigns you and moves it to In Progress.
 
 - MCP: `start_task` with `key`.
-- CLI: `spider task start ST-12 --json`. It also **switches the git branch** of the current directory to the task's branch (creating it if needed; uncommitted changes come along), and its warnings go to stderr. `--json` reports the branch it checked out as `branch`.
+- CLI: `spider task start ST-12 --json`. It also **switches the git branch** of the current directory to the task's branch (creating it if needed; uncommitted changes come along), and its warnings go to stderr. If the task's branch may have been pushed from elsewhere, add `--fetch` (or run `git fetch` first) so it is checked out tracking origin instead of created from HEAD. `--json` reports the branch it checked out as `branch`.
 
 If you work in a shared working tree (other agents or the user use the same folder) or in a worktree you don't own, don't let the start move it: use MCP `start_task`, which never touches git, or `spider task start ST-12 --no-branch --json`. Switch branches yourself only in a tree that is yours.
 
