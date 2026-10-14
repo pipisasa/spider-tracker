@@ -1460,6 +1460,10 @@ export async function deleteTask(
 ): Promise<void> {
   assertCanWrite(ctx);
   await db.transaction(async (tx) => {
+    // Its sub-tasks lose their parent below: a concurrent re-parent under this task waits here and
+    // then finds it deleted, instead of leaving a task under a deleted parent (ST-147). Taken
+    // before any task row, like every parent change.
+    await lockParentChanges(tx, ctx.orgId);
     const { task, projectKey } = await findTask(tx, ctx, taskKey);
     const now = new Date();
     // Its milestone may be complete without it (ST-96); its sub-tasks leave with it.

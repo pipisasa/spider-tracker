@@ -30,6 +30,7 @@ Release notes for what reaches users and their scripts: the `spider` CLI (`backe
 - **CLI (ST-148, ST-132 follow-up):** `spider doc publish` reads a block that opens with a comment and a blank line as front matter only when its `id:` is a valid document id, so a `---`, `# Plan`, blank line, `Id: see below.`, `---` opening stays content. An empty front matter block (`---`, `---`) is no longer warned about. `doc publish --help` and interfaces.md say the top-level `warnings` hold these front matter notes.
 - **API, MCP, CLI (ST-148, ST-123 follow-up):** a document text over 1 MB in characters is reported once ("At most 1 MB") and no longer encoded to count its bytes. The open code fence error now says the closing line may be followed by nothing but spaces.
 - **Deploy scripts (ST-148, ST-142 follow-up):** a release answer without `apps` (an older API) reads as no apps, so `--release` stops with "doesn't include the … app" instead of "unexpected answer".
+- **API, MCP, CLI (ST-148, ST-147 follow-up):** deleting a task takes the organization's parent lock first, so a concurrent move of a task under it can no longer leave that task under a deleted parent; the moved task becomes top-level like the deleted task's other sub-tasks.
 
 ### MCP server (breaking: tool output shapes, ST-107)
 
