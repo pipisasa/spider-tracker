@@ -197,7 +197,7 @@ function replaceSection(
     const marks = scanned.openFence.startsWith("`") ? "backticks" : "tildes";
     throw new DomainError(
       "validation",
-      `The new body of ${preview(section.trim())} leaves a code fence open. Close it with a line of at least ${length} ${marks} (${scanned.openFence}) and nothing after them`,
+      `The new body of ${preview(section.trim())} leaves a code fence open. Close it with a line of at least ${length} ${marks} (${scanned.openFence}), followed by nothing but spaces`,
     );
   }
   const breaking = scanned.headings.find((h) => h.level <= heading.level);

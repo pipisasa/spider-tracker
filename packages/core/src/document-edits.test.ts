@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { applyDocumentEdits, markdownHeadings } from "./document-edits";
-import { documentEditSchema, MAX_DOCUMENT_BYTES } from "./schemas";
+import {
+  createDocumentInput,
+  documentEditSchema,
+  MAX_DOCUMENT_BYTES,
+} from "./schemas";
 
 const plan = [
   "# Plan",
@@ -250,7 +254,7 @@ describe("applyDocumentEdits: section bodies", () => {
       ).toMatchObject({
         code: "validation",
         message: expect.stringContaining(
-          `Close it with a line of at least ${fence.length} backticks (${fence})`,
+          `Close it with a line of at least ${fence.length} backticks (${fence}), followed by nothing but spaces`,
         ),
       });
     }
@@ -272,6 +276,16 @@ describe("documentEditSchema", () => {
       { section: "## A", content: `${fits}é` },
     ])
       expect(documentEditSchema.safeParse(edit).success).toBe(false);
+  });
+
+  test("a text over the limit in characters is reported once (ST-148)", () => {
+    const parsed = createDocumentInput.safeParse({
+      title: "Big",
+      content: "x".repeat(MAX_DOCUMENT_BYTES + 1),
+    });
+    expect(parsed.error?.issues.map((i) => i.message)).toEqual([
+      "At most 1 MB",
+    ]);
   });
 
   test("texts keep maxLength in the JSON schema (OpenAPI, MCP)", () => {
